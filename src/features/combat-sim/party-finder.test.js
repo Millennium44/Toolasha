@@ -894,6 +894,18 @@ describe('your party locked into every party', () => {
         expect(never.rows[0].duplicates).toEqual([]);
     });
 
+    test('aura options picked for a party member ride on its entry', () => {
+        const auras = [{ hrid: '/abilities/mystic_aura', level: 30 }];
+        const lock = planPartyLock({
+            members: [member('1', 'Captain'), member('2', 'Dawn')],
+            auraPicks: new Map([['party:1', { auras, includeAsBuilt: false }]]),
+        });
+        expect(lock.entries[0].auras).toEqual(auras);
+        expect(lock.entries[0].includeAsBuilt).toBe(false);
+        expect(lock.entries[1].auras).toEqual([]);
+        expect(lock.entries[1]).not.toHaveProperty('includeAsBuilt');
+    });
+
     test('more locked members than the zone takes: that zone is skipped with a note, the other still runs', () => {
         const lock = planPartyLock({
             members: [member('1', 'Captain'), member('2', 'Dawn'), member('3', 'Eve')],

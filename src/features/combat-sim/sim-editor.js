@@ -600,6 +600,17 @@ export class SimEditor {
     getPlayerInfo() {
         return this._editedPlayerInfo;
     }
+    /**
+     * Open one player's tab, as clicking it would.
+     * @param {string} hrid - e.g. `player2`
+     * @returns {boolean} Whether the editor holds that player
+     */
+    showPlayer(hrid) {
+        if (!(this._editedPlayerInfo || []).some((p) => p.hrid === hrid)) return false;
+        this._activeEditPlayer = hrid;
+        if (this._editorInitialized) this.renderEditor();
+        return true;
+    }
     getSelfHrid() {
         return this._selfHrid;
     }

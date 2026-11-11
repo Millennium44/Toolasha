@@ -327,6 +327,9 @@ export class PartyFinderTab {
         this._includeParty = true;
         /** Party member row id (`party:<characterID>`) → 'try' | 'always' | 'never' picked this session */
         this._partyChoices = new Map();
+        /** Party row id → aura options to try them with, this session only (never the saved roster) */
+        this._partyAuras = new Map();
+        this._partyAuraOpen = null;
         /** Your party's other members as last read: {characterID, characterName, dto|null}, and why there are none */
         this._partyMembers = [];
         this._partyNote = '';
@@ -438,6 +441,9 @@ export class PartyFinderTab {
         this._choices = {};
         this._includeParty = true;
         this._partyChoices = new Map();
+        /** Party row id → aura options to try them with, this session only (never the saved roster) */
+        this._partyAuras = new Map();
+        this._partyAuraOpen = null;
         this._partyMembers = [];
         this._partyNote = '';
         this._zones = [];
@@ -880,6 +886,7 @@ export class PartyFinderTab {
             savedEntries: this._roster.entries,
             includeParty: this._includeParty,
             neverIds: new Set([...this._partyChoices].filter(([, choice]) => choice === 'never').map(([id]) => id)),
+            auraPicks: this._partyAuras,
         });
     }
 
@@ -953,6 +960,27 @@ export class PartyFinderTab {
                     this._renderPlan();
                 });
                 line.appendChild(choice);
+                const auraCount = this._partyAuras.get(row.id)?.auras?.length || 0;
+                const auras = document.createElement('button');
+                auras.style.cssText = SMALL_BTN_STYLE;
+                auras.dataset.pfPartyAuras = row.id;
+                auras.textContent = auraCount ? `Auras (${auraCount})` : 'Auras';
+                auras.title = 'Aura options to try this party member with (this session only)';
+                auras.addEventListener('click', () => {
+                    this._partyAuraOpen = this._partyAuraOpen === row.id ? null : row.id;
+                    this._renderPartyRows();
+                });
+                line.appendChild(auras);
+                const edit = document.createElement('button');
+                edit.style.cssText = SMALL_BTN_STYLE;
+                edit.dataset.pfPartyEdit = row.id;
+                edit.textContent = 'Edit';
+                edit.title = 'Open them on the Configure tab';
+                edit.addEventListener('click', () => {
+                    const entry = this._partyLock().entries.find((e) => e.id === row.id);
+                    if (entry) this._onEditPartyMember(entry);
+                });
+                line.appendChild(edit);
                 if (row.duplicates.length) {
                     const dup = document.createElement('span');
                     dup.style.cssText = 'color:#888; font-size:11px;';
@@ -961,7 +989,37 @@ export class PartyFinderTab {
                 }
             }
             list.appendChild(line);
+            if (this._partyAuraOpen === row.id && row.status === 'ready') {
+                const entry = this._partyLock().entries.find((e) => e.id === row.id);
+                if (entry) list.appendChild(this._partyAuraEditor(entry));
+            }
         }
+    }
+
+    /**
+     * The aura editor for a party member: the roster's editor, kept in memory for this session instead of saved.
+     * @param {Object} entry - The party member's entry from {@link PartyFinderTab#_partyLock}
+     * @returns {HTMLElement}
+     * @private
+     */
+    _partyAuraEditor(entry) {
+        return this._auraEditor(entry, {
+            intro:
+                'Try this party member with each aura below as well. An aura takes their special ability slot, ' +
+                'replacing the special they wear. Kept for this session only.',
+            save: async (change) => {
+                const held = this._partyAuras.get(entry.id) || { auras: [] };
+                const next = change({ ...held, auras: held.auras.map((o) => ({ ...o })) });
+                const auras = normalizeAuraOptions(next?.auras);
+                if (auras.length > MAX_AURA_OPTIONS) {
+                    this._rosterNote(`At most ${MAX_AURA_OPTIONS} aura options, so that one was not added.`, true);
+                    return;
+                }
+                this._partyAuras.set(entry.id, { auras, includeAsBuilt: next?.includeAsBuilt });
+                this._renderPartyRows();
+                this._renderPlan();
+            },
+        });
     }
 
     /**
@@ -1686,6 +1744,39 @@ export class PartyFinderTab {
         // Taken to be of the live character's mode, whatever was saved with it
         editor.importPlayers([this._withAssumedMode(dto)], [entry.name]);
         this._rosterNote(`${entry.name} is in the editor. Change them there, then save back here with "replacing".`);
+        this.host._switchTab?.('configure');
+    }
+
+    /**
+     * Open a party member on the Configure tab: their tab if the editor already holds them (Reset to Party puts them
+     * there), else a copy of the build this tab uses for them. The party row keeps using their live build.
+     * @param {Object} entry - The party member's entry from {@link PartyFinderTab#_partyLock}
+     * @private
+     */
+    _onEditPartyMember(entry) {
+        const editor = this.host?._editor;
+        if (!editor) return;
+        const tip =
+            'The party search keeps using their live build; to try your changes, save them back here as a new ' +
+            'teammate.';
+        const held = (editor.isInitialized?.() ? editor.getPlayerInfo?.() || [] : []).find(
+            (p) =>
+                String(p?.name || '')
+                    .trim()
+                    .toLowerCase() === entry.name.trim().toLowerCase()
+        );
+        if (held && editor.showPlayer?.(held.hrid)) {
+            this._rosterNote(`${entry.name} is open on the Configure tab. ${tip}`);
+            this.host._switchTab?.('configure');
+            return;
+        }
+        if ((editor.playerCount?.() || 0) >= DUNGEON_MAX_PARTY) {
+            this._rosterNote('The editor already holds 5 players. Remove one on the Configure tab first.', true);
+            return;
+        }
+        if (!editor.isInitialized?.()) editor.resetToSelf?.();
+        editor.importPlayers([this._withAssumedMode(structuredClone(entry.dto))], [entry.name]);
+        this._rosterNote(`${entry.name} is in the editor. ${tip}`);
         this.host._switchTab?.('configure');
     }
 

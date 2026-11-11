@@ -2156,6 +2156,59 @@ describe('include my party', () => {
         }
     });
 
+    test('a party member gets aura options to try, kept in memory and never in the saved roster', async () => {
+        state.gameData.abilityDetailMap['/abilities/mystic_aura'] = {
+            name: 'Mystic Aura',
+            isSpecialAbility: true,
+            abilityEffects: [{ effectType: '/ability_effect_types/buff', targetType: 'allAllies', buffs: [{}] }],
+        };
+        state.gameData.levelExperienceTable = Array.from({ length: 201 }, (_, i) => i);
+        setParty([['c1', 'Captain', build(100)]]);
+        await mountTab();
+        expect(el('plan').textContent).toMatch(/^2 quick sims/);
+        tab.root.querySelector('[data-pf-party-auras="party:c1"]').click();
+        await flush();
+        tab.root.querySelector('[data-pf-aura-pick="party:c1"]').value = '/abilities/mystic_aura';
+        tab.root.querySelector('[data-pf-aura-level="party:c1"]').value = '30';
+        tab.root.querySelector('[data-pf-aura-add="party:c1"]').click();
+        await flush();
+        // You alone, You + Captain as built, You + Captain with Mystic Aura
+        expect(el('plan').textContent).toMatch(/^3 quick sims/);
+        expect(tab.root.querySelector('[data-pf-party-auras="party:c1"]').textContent).toBe('Auras (1)');
+        expect(state.db).toBeUndefined();
+        const writes = Object.keys(state.prefs).filter((k) => !k.startsWith('combatSimParty'));
+        expect(writes).toEqual([]);
+    });
+
+    test('Edit opens a party member already in the editor on their own tab', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        host._editor.players = [
+            { hrid: 'player1', name: 'Me', self: true, dto: build(90) },
+            { hrid: 'player2', name: 'Captain', dto: build(100) },
+        ];
+        host._editor.showPlayer = vi.fn(() => true);
+        try {
+            await mountTab();
+            tab.root.querySelector('[data-pf-party-edit="party:c1"]').click();
+            expect(host._editor.showPlayer).toHaveBeenCalledWith('player2');
+            expect(host._editor.importPlayers).not.toHaveBeenCalled();
+            expect(host._switchTab).toHaveBeenCalledWith('configure');
+            expect(el('roster-note').textContent).toMatch(/Captain is open on the Configure tab/);
+        } finally {
+            delete host._editor.showPlayer;
+        }
+    });
+
+    test('Edit imports a party member the editor does not hold', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        await mountTab();
+        tab.root.querySelector('[data-pf-party-edit="party:c1"]').click();
+        const [players, names] = host._editor.importPlayers.mock.calls[0];
+        expect(names).toEqual(['Captain']);
+        expect(players[0].magicLevel).toBe(100);
+        expect(host._switchTab).toHaveBeenCalledWith('configure');
+    });
+
     test('the party changing while the tab is open redraws', async () => {
         setParty([['c1', 'Captain', build(100)]]);
         await mountTab();

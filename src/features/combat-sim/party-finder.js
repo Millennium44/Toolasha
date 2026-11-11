@@ -800,11 +800,19 @@ const sameName = (a, b) =>
  * @param {Array<{id: string, name: string}>} [options.savedEntries] - The saved teammates
  * @param {boolean} [options.includeParty=true]
  * @param {Set<string>} [options.neverIds] - Party rows the player set to Never
+ * @param {Map<string, {auras: Array, includeAsBuilt?: boolean}>} [options.auraPicks] - Aura options picked
+ *   for each party row this session
  * @returns {{rows: Array<{id: string, characterId: string, name: string, status: 'ready'|'missing',
  *   duplicates: Array<string>}>, entries: Array<Object>, suppressed: Set<string>}} `entries` are the ready rows in
  *   roster shape, for {@link planSweep}
  */
-export function planPartyLock({ members, savedEntries = [], includeParty = true, neverIds = new Set() }) {
+export function planPartyLock({
+    members,
+    savedEntries = [],
+    includeParty = true,
+    neverIds = new Set(),
+    auraPicks = new Map(),
+}) {
     const out = { rows: [], entries: [], suppressed: new Set() };
     if (!includeParty) return out;
     for (const member of Array.isArray(members) ? members : []) {
@@ -821,7 +829,12 @@ export function planPartyLock({ members, savedEntries = [], includeParty = true,
             status: ready ? 'ready' : 'missing',
             duplicates,
         });
-        if (ready) out.entries.push({ id, name, dto: member.dto, auras: [], source: 'party' });
+        if (ready) {
+            const picks = auraPicks.get(id);
+            const entry = { id, name, dto: member.dto, auras: picks?.auras || [], source: 'party' };
+            if (picks && picks.includeAsBuilt === false) entry.includeAsBuilt = false;
+            out.entries.push(entry);
+        }
     }
     return out;
 }

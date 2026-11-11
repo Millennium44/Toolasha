@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Party tab includes your party and shows you in every row
 
-A new "Include my party" box, on by default, puts your in-game party members into every party the Party tab tries; set any of them to Try or Never. Result rows now read "You alone" and "You + …", so it is clear you are always in the party.
+A new "Include my party" box, on by default, puts your in-game party members into every party the Party tab tries; set any of them to Try or Never. Result rows now read "You alone" and "You + …", so it is clear you are always in the party. Party members have Auras and Edit buttons like saved teammates.
 
 ### Combat Sim adds a party member when their profile opens
 
