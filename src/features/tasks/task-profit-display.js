@@ -889,8 +889,39 @@ class TaskProfitDisplay {
      * Register DOM observers
      */
     registerDOMObservers() {
+        // React reuses cards on reroll. Clear only rows whose task identity changed,
+        // in the mutation microtask rather than after the socket's 250 ms redraw delay.
+        let observedList = null;
+        const identityObserver = new MutationObserver((mutations) => {
+            if (!this.isInitialized) return;
+            const cards = new Set();
+            for (const mutation of mutations) {
+                const target =
+                    mutation.target.nodeType === Node.ELEMENT_NODE ? mutation.target : mutation.target.parentElement;
+                if (target?.closest(TOOLASHA.TASK_PROFIT)) continue;
+                const card = target?.closest(GAME.TASK_INFO);
+                if (card?.isConnected) cards.add(card);
+            }
+            for (const card of cards) {
+                const marker = card.querySelector(`${TOOLASHA.TASK_PROFIT}[data-task-key]`);
+                if (!marker) continue;
+                const live = this.parseTaskData(card);
+                if (live && marker.dataset.taskKey === `${live.description}|${live.quantity}`) continue;
+                this._clearTaskProfit(card);
+                this._scheduleCardRefresh();
+            }
+        });
+        const observeList = (list) => {
+            if (!list || list === observedList) return;
+            identityObserver.disconnect();
+            observedList = list;
+            identityObserver.observe(list, { childList: true, characterData: true, subtree: true });
+        };
+        this.unregisterHandlers.push(() => identityObserver.disconnect());
+
         // Watch for task list appearing
-        const unregisterTaskList = domObserver.onClass('TaskProfitDisplay-TaskList', 'TasksPanel_taskList', () => {
+        const unregisterTaskList = domObserver.onClass('TaskProfitDisplay-TaskList', 'TasksPanel_taskList', (list) => {
+            observeList(list);
             this.updateTaskProfits();
             this.updateQueuedIndicators();
         });
@@ -908,6 +939,7 @@ class TaskProfitDisplay {
         // rendered during the readiness gap are not missed either.
         this.unregisterHandlers.push(
             domObserver.onReady('TaskProfitDisplayCatchUp', () => {
+                observeList(document.querySelector(GAME.TASK_LIST));
                 const existingTaskNodes = document.querySelectorAll('[class*="RandomTask_randomTask"]');
                 for (const taskNode of existingTaskNodes) {
                     this._setupTaskNode(taskNode);
@@ -1406,32 +1438,27 @@ class TaskProfitDisplay {
                     continue; // Same task, skip
                 }
 
-                // Task changed - clean up event listeners before removing
-                const listeners = this.eventListeners.get(existingProfit);
-                if (listeners) {
-                    listeners.forEach((listener, element) => {
-                        element.removeEventListener('click', listener);
-                    });
-                    this.eventListeners.delete(existingProfit);
-                }
-
-                // The card now describes a different task (the node is reused on a reroll), so the
-                // estimate for the old one must not stay primed for Go while the new rows are drawn
-                // or queued behind other simulations
-                this._cardEstimates.delete(taskNode);
-                this._staleGoEstimates.delete(taskNode);
-
-                // Remove ALL old profit displays (visible + hidden markers)
-                taskNode.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach((el) => {
-                    this._estimateLayouts.get(el)?.();
-                    this._estimateLayouts.delete(el);
-                    el.remove();
-                });
+                this._clearTaskProfit(taskNode);
             }
 
             this.addProfitToTask(taskNode);
             noteCardTaskDrawn(taskNode, 'profit');
         }
+    }
+
+    /** Remove a card's rows, owned layout, listeners and Go state together. */
+    _clearTaskProfit(taskNode) {
+        this._cardEstimates.delete(taskNode);
+        this._staleGoEstimates.delete(taskNode);
+        taskNode.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach((element) => {
+            this._combatEstimateRequests.delete(element);
+            const listeners = this.eventListeners.get(element);
+            listeners?.forEach((listener, target) => target.removeEventListener('click', listener));
+            this.eventListeners.delete(element);
+            this._estimateLayouts.get(element)?.();
+            this._estimateLayouts.delete(element);
+            element.remove();
+        });
     }
 
     /**
@@ -1501,7 +1528,9 @@ class TaskProfitDisplay {
         // below is stale and must not touch the DOM, even once a later initialize() has moved
         // isInitialized back to true for an unrelated, more recent render pass.
         const generation = this._renderGeneration;
-        const isStale = () => generation !== this._renderGeneration;
+        let taskData;
+        const isStale = () =>
+            generation !== this._renderGeneration || (taskData && !this._liveTaskData(taskNode, taskData));
         try {
             // Check if game data is ready
             if (!dataManager.getInitClientData()) {
@@ -1517,7 +1546,7 @@ class TaskProfitDisplay {
             }
 
             // Parse task data from DOM
-            const taskData = this.parseTaskData(taskNode);
+            taskData = this.parseTaskData(taskNode);
             if (!taskData) {
                 return;
             }
@@ -1593,6 +1622,8 @@ class TaskProfitDisplay {
             // Display profit
             this.displayTaskProfit(taskNode, profitData);
         } catch (error) {
+            // Rejections resume the old call too: do not add an error or clear a newer retry.
+            if (isStale()) return;
             console.error('[Task Profit Display] Failed to calculate profit:', error);
 
             // Display error state in UI

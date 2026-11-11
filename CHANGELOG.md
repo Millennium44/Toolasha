@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Rerolled tasks clear their old estimates immediately
+
+When a task changes, its previous estimate and overlay disappear without waiting for the normal refresh. Progress updates keep valid estimates, and an older calculation cannot put its result or error onto the replacement task.
+
 ### Saved parties in the Combat Sim
 
 Save the players in the editor as a named party, then lock it into every Party tab search or load it back into Configure later. Saved parties sync across your devices like saved builds.
