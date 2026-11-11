@@ -21,6 +21,7 @@
 export const MAX_TRIGGERS = 4;
 
 const DEP_SELF = '/combat_trigger_dependencies/self';
+const DEP_ALL_ALLIES = '/combat_trigger_dependencies/all_allies';
 const DEP_TARGETED_ENEMY = '/combat_trigger_dependencies/targeted_enemy';
 const DEP_ALL_ENEMIES = '/combat_trigger_dependencies/all_enemies';
 const COND_CURRENT_HP = '/combat_trigger_conditions/current_hp';
@@ -34,6 +35,8 @@ const CMP_LTE = '/combat_trigger_comparators/less_than_equal';
 /** Tunable row kinds */
 export const KIND_ENEMY_HP = 'enemy_hp';
 export const KIND_ENEMY_PCT = 'enemy_pct';
+/** An ability gated on the lowest HP % among the party (a heal's "someone is hurt" row) */
+export const KIND_ALLY_PCT = 'ally_pct';
 export const KIND_HP_POOL = 'hp_pool';
 export const KIND_MP_POOL = 'mp_pool';
 
@@ -100,18 +103,35 @@ const CONSUMABLE_SLOTS = new Set(['food', 'drinks']);
  *
  * Qualifying rows are the ones the design allows: on an ability, a threshold on
  * an enemy's HP (`targeted_enemy` or `all_enemies` current/missing HP, or the
- * `all_enemies` lowest-HP percentage); on a food or drink, a threshold on the
- * player's own HP or MP. The comparator has to actually read the value
- * (`>=` or `<=`) — `is_active` rows carry a meaningless 0.
+ * `all_enemies` lowest-HP percentage); on a heal ability, a threshold on the party's lowest-HP
+ * percentage (`all_allies`) or on the caster's own HP (`self` current/missing HP, the same reading a
+ * food's HP row tunes); on a food or drink, a threshold on the player's own HP or MP. The comparator
+ * has to actually read the value (`>=` or `<=`) — `is_active` rows carry a meaningless 0.
+ *
+ * The ally and self rows are limited to heal abilities (`options.heals`): for any other ability a
+ * threshold on the party's HP is not obviously a number worth searching.
  * @param {string} slotType - 'abilities', 'food' or 'drinks'
  * @param {Object} row - { dependencyHrid, conditionHrid, comparatorHrid }
+ * @param {Object} [options]
+ * @param {boolean} [options.heals] - The row's ability has a heal effect (`abilityHeals`)
  * @returns {string|null} A KIND_* constant, or null when the row is not tunable
  */
-export function tunableKind(slotType, row) {
+export function tunableKind(slotType, row, { heals = false } = {}) {
     if (!row) return null;
     if (row.comparatorHrid !== CMP_GTE && row.comparatorHrid !== CMP_LTE) return null;
 
     if (slotType === ABILITY_SLOT) {
+        if (heals) {
+            if (row.dependencyHrid === DEP_ALL_ALLIES && row.conditionHrid === COND_LOWEST_HP_PCT) {
+                return KIND_ALLY_PCT;
+            }
+            if (
+                row.dependencyHrid === DEP_SELF &&
+                (row.conditionHrid === COND_CURRENT_HP || row.conditionHrid === COND_MISSING_HP)
+            ) {
+                return KIND_HP_POOL;
+            }
+        }
         const enemy = row.dependencyHrid === DEP_TARGETED_ENEMY || row.dependencyHrid === DEP_ALL_ENEMIES;
         if (!enemy) return null;
         if (row.conditionHrid === COND_CURRENT_HP || row.conditionHrid === COND_MISSING_HP) return KIND_ENEMY_HP;
@@ -127,6 +147,26 @@ export function tunableKind(slotType, row) {
         if (row.conditionHrid === COND_CURRENT_MP || row.conditionHrid === COND_MISSING_MP) return KIND_MP_POOL;
     }
     return null;
+}
+
+/**
+ * Whether an ability heals someone: any of its effects is a heal.
+ * @param {Object} gameData - Game data payload
+ * @param {string} abilityHrid - Ability hrid
+ * @returns {boolean}
+ */
+export function abilityHeals(gameData, abilityHrid) {
+    const effects = gameData?.abilityDetailMap?.[abilityHrid]?.abilityEffects;
+    return Array.isArray(effects) && effects.some((e) => e?.effectType === '/ability_effect_types/heal');
+}
+
+/**
+ * Whether a kind is a percentage (0 to 100) rather than an HP, MP or pool-scaled amount.
+ * @param {string} kind - A KIND_* constant
+ * @returns {boolean}
+ */
+export function isPercentKind(kind) {
+    return kind === KIND_ENEMY_PCT || kind === KIND_ALLY_PCT;
 }
 
 /**
@@ -257,8 +297,9 @@ export function collectTunables({ playerDTOs, playerIndices, gameData, playerNam
                     (slotType === ABILITY_SLOT
                         ? gameData?.abilityDetailMap?.[slot.hrid]?.name
                         : gameData?.itemDetailMap?.[slot.hrid]?.name) || humanize(slot.hrid);
+                const heals = slotType === ABILITY_SLOT && abilityHeals(gameData, slot.hrid);
                 rows.forEach((row, rowIndex) => {
-                    const kind = tunableKind(slotType, row);
+                    const kind = tunableKind(slotType, row, { heals });
                     if (!kind) return;
                     tunables.push({
                         key: tunableKey(dto.hrid, slotType, slot.hrid, rowIndex),
@@ -333,7 +374,7 @@ export function applyTriggerValues(playerDTOs, tunables, overrides) {
  */
 export function clampValue(kind, value) {
     const v = Math.max(0, Math.round(Number(value) || 0));
-    return kind === KIND_ENEMY_PCT ? Math.min(100, v) : v;
+    return isPercentKind(kind) ? Math.min(100, v) : v;
 }
 
 function uniqueSorted(values) {
@@ -355,7 +396,7 @@ function uniqueSorted(values) {
  */
 export function gridMaximum(tunable, ctx) {
     const fallback = Math.max(1000, tunable.original * 2);
-    if (tunable.kind === KIND_ENEMY_PCT) return 100;
+    if (isPercentKind(tunable.kind)) return 100;
     if (tunable.kind === KIND_ENEMY_HP) {
         const allEnemies = tunable.dependencyHrid === DEP_ALL_ENEMIES;
         const fromMonsters = Number(allEnemies ? ctx?.enemyHp?.total : ctx?.enemyHp?.single);
@@ -377,7 +418,7 @@ export function gridMaximum(tunable, ctx) {
  */
 export function coarseStep(tunable, ctx) {
     const max = gridMaximum(tunable, ctx);
-    if (tunable.kind === KIND_ENEMY_PCT) return 10;
+    if (isPercentKind(tunable.kind)) return 10;
     if (tunable.kind === KIND_ENEMY_HP) return max / (COARSE_POINTS - 1);
     return max / POOL_STEPS;
 }
@@ -396,8 +437,7 @@ export function coarseStep(tunable, ctx) {
  */
 export function coarseGrid(tunable, ctx) {
     const step = coarseStep(tunable, ctx);
-    const count =
-        tunable.kind === KIND_ENEMY_PCT ? 11 : tunable.kind === KIND_ENEMY_HP ? COARSE_POINTS : POOL_STEPS + 1;
+    const count = isPercentKind(tunable.kind) ? 11 : tunable.kind === KIND_ENEMY_HP ? COARSE_POINTS : POOL_STEPS + 1;
     const values = [];
     for (let i = 0; i < count; i++) values.push(clampValue(tunable.kind, i * step));
     values.push(clampValue(tunable.kind, tunable.current ?? tunable.original));
@@ -415,13 +455,12 @@ export function coarseGrid(tunable, ctx) {
  * @returns {Array<number>} Ascending, unique
  */
 export function fineGrid(tunable, ctx, center, tried = new Set()) {
-    const offsets =
-        tunable.kind === KIND_ENEMY_PCT
-            ? [-5, -2, 2, 5]
-            : (() => {
-                  const step = coarseStep(tunable, ctx);
-                  return [-step / 2, -step / 4, step / 4, step / 2];
-              })();
+    const offsets = isPercentKind(tunable.kind)
+        ? [-5, -2, 2, 5]
+        : (() => {
+              const step = coarseStep(tunable, ctx);
+              return [-step / 2, -step / 4, step / 4, step / 2];
+          })();
     const values = offsets
         .map((o) => clampValue(tunable.kind, center + o))
         .filter((v) => v !== center && !tried.has(v));

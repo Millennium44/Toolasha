@@ -23,6 +23,7 @@
 import {
     CONFIRM_SEEDS_MIN,
     MAX_TRIGGERS,
+    abilityHeals,
     accepts,
     activeRows,
     confirmLooks,
@@ -32,11 +33,13 @@ import {
 } from './trigger-tuning.js';
 
 const DEP_SELF = '/combat_trigger_dependencies/self';
+const DEP_ALLIES = '/combat_trigger_dependencies/all_allies';
 const DEP_TARGET = '/combat_trigger_dependencies/targeted_enemy';
 const CMP_ACTIVE = '/combat_trigger_comparators/is_active';
 const CMP_INACTIVE = '/combat_trigger_comparators/is_inactive';
 const CMP_GTE = '/combat_trigger_comparators/greater_than_equal';
 const CMP_LTE = '/combat_trigger_comparators/less_than_equal';
+const COND_LOWEST_HP_PCT = '/combat_trigger_conditions/lowest_hp_percentage';
 const COND_CURRENT_HP = '/combat_trigger_conditions/current_hp';
 const COND_MISSING_HP = '/combat_trigger_conditions/missing_hp';
 const COND_CURRENT_MP = '/combat_trigger_conditions/current_mp';
@@ -44,6 +47,9 @@ const COND_MISSING_MP = '/combat_trigger_conditions/missing_mp';
 
 /** Most single conditions tried per ability or consumable, best-ranked first */
 export const CONDITION_CAP = 30;
+
+/** Lowest-ally HP percentages tried on a heal ability */
+const ALLY_HP_PERCENTS = [25, 50, 75];
 
 /** Seeds each candidate gets in the screen */
 export const SCREEN_SEEDS = 2;
@@ -254,6 +260,12 @@ export function buildConditionCandidates({ slot, dto, gameData, monsterHrids, po
     const mp = Math.max(0, Number(pools?.mp) || 0);
     const foe = Math.max(0, Number(enemyHp) || 0);
     const at = (pool, fraction) => Math.max(1, Math.round(pool * fraction));
+    // A heal is worth gating on how hurt the party is: the lowest ally's HP at or below a few percentages.
+    // Only for abilities with a heal effect (any target); the dependency reads the whole party, which for a
+    // solo player is that player.
+    if (slot.slotType === 'abilities' && abilityHeals(gameData, slot.itemHrid)) {
+        for (const percent of ALLY_HP_PERCENTS) push(row(DEP_ALLIES, COND_LOWEST_HP_PCT, CMP_LTE, percent));
+    }
     if (slot.slotType === 'abilities' && foe > 0) {
         push(row(DEP_TARGET, COND_CURRENT_HP, CMP_GTE, at(foe, 0.5)));
         push(row(DEP_TARGET, COND_CURRENT_HP, CMP_LTE, at(foe, 0.5)));
