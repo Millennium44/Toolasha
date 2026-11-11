@@ -465,6 +465,8 @@ export class PartyFinderTab {
         }
         this._runToken++;
         this._matchToken++;
+        // A wait begun before the tab closed must not resume against the next opening's root
+        this._profileWaits?.clear();
         this._running = false;
         clearTimeout(this._renderTimer);
         clearTimeout(this._pendingDeleteTimer);
@@ -904,8 +906,8 @@ export class PartyFinderTab {
     /**
      * A profile was opened in game: if a party member was waiting on theirs, look again once it is written. The
      * write lands behind the hook's profile chain at a time of its own, so this keeps looking, a little slower each
-     * time, for as long as the tab is open and that member is still waiting. A newer share for the same member
-     * hands the wait to itself; closing the tab or switching character ends it.
+     * time, for up to a minute, while the tab is open and that member is still waiting. A newer share for the same
+     * member takes over that member's wait; closing the tab or switching character ends it.
      * @param {Object} [data] - The `profile_shared` message
      * @private
      */
@@ -919,12 +921,16 @@ export class PartyFinderTab {
             this._partyMembers.some((m) => !m.dto && (sharedId == null || String(m.characterID) === String(sharedId)));
         if (!waiting()) return;
         const owner = dataManager.getCurrentCharacterId();
-        const ticket = (this._profileWaitTicket = (this._profileWaitTicket || 0) + 1);
+        // One wait per member: a share for B must not end the wait for A. Closing the tab clears them all.
+        const waitKey = sharedId == null ? '*' : String(sharedId);
+        if (!this._profileWaits) this._profileWaits = new Map();
+        const ticket = {};
+        this._profileWaits.set(waitKey, ticket);
         // A profile not written within a minute is not coming without a new share, and each look rebuilds the party
         const giveUpAt = Date.now() + PROFILE_WAIT_MS;
         const cancelled = () =>
             !this.root ||
-            ticket !== this._profileWaitTicket ||
+            this._profileWaits.get(waitKey) !== ticket ||
             dataManager.getCurrentCharacterId() !== owner ||
             Date.now() >= giveUpAt;
         for (let delay = 100; ; delay = Math.min(delay * 2, 2000)) {

@@ -2166,6 +2166,71 @@ describe('include my party', () => {
         }
     });
 
+    test("a share for one member does not end the wait for another's profile", async () => {
+        setParty([
+            ['c1', 'Captain', null],
+            ['c2', 'Bosun', null],
+        ]);
+        const handlers = [];
+        const onSpy = vi.spyOn(webSocketHook, 'on').mockImplementation((type, cb) => handlers.push([type, cb]));
+        try {
+            await mountTab();
+            const onProfile = handlers.find(([type]) => type === 'profile_shared')[1];
+            onProfile({ profile: { sharableCharacter: { id: 'c1', name: 'Captain' } } });
+            onProfile({ profile: { sharableCharacter: { id: 'c2', name: 'Bosun' } } });
+            // Bosun's lands at once, which ends Bosun's wait; Captain's lands later
+            setParty([
+                ['c1', 'Captain', null],
+                ['c2', 'Bosun', build(90)],
+            ]);
+            await new Promise((r) => setTimeout(r, 400));
+            setParty([
+                ['c1', 'Captain', build(100)],
+                ['c2', 'Bosun', build(90)],
+            ]);
+            await new Promise((r) => setTimeout(r, 1100));
+            expect(partyChoice('party:c1').value).toBe('always');
+        } finally {
+            onSpy.mockRestore();
+        }
+    });
+
+    test('closing the tab ends a profile wait, so reopening it does not resume the old one', async () => {
+        setParty([['c1', 'Captain', null]]);
+        const handlers = [];
+        const onSpy = vi.spyOn(webSocketHook, 'on').mockImplementation((type, cb) => handlers.push([type, cb]));
+        const offSpy = vi.spyOn(webSocketHook, 'off').mockImplementation(() => {});
+        try {
+            await mountTab();
+            const onProfile = handlers.find(([type]) => type === 'profile_shared')[1];
+            vi.useFakeTimers();
+            let builds = 0;
+            const realBuilt = state.built;
+            Object.defineProperty(state, 'built', {
+                configurable: true,
+                get: () => {
+                    builds++;
+                    return realBuilt;
+                },
+            });
+            onProfile({ profile: { sharableCharacter: { id: 'c1', name: 'Captain' } } });
+            await vi.advanceTimersByTimeAsync(1000);
+            const root = tab.root;
+            tab.detach();
+            // Reopened: the tab has a root again before the old wait's next look
+            tab.root = root || document.createElement('div');
+            await vi.advanceTimersByTimeAsync(1000);
+            const afterReopen = builds;
+            await vi.advanceTimersByTimeAsync(20000);
+            expect(builds).toBe(afterReopen);
+        } finally {
+            vi.useRealTimers();
+            delete state.built;
+            onSpy.mockRestore();
+            offSpy.mockRestore();
+        }
+    });
+
     test('a member whose profile is not loaded is said so and left out, never a blank build', async () => {
         seedRoster([['a', 'Ann', build(80)]]);
         setParty([['c1', 'Captain', null]]);
