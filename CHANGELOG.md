@@ -9,6 +9,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Combat Sim charts HP and MP
 
 Each wipe card now charts every player's HP and MP over the 30 seconds before the wipe. Under Healing & Mana, a chart shows each player's MP across the run, with the share of time each spent under 10% MP, so it is clear who runs dry.
+### Sim warns about triggers that can never fire
+
+A trigger that can never be true, such as "Lowest HP % >= 350" (HP % tops out at 100), is now marked in the sim editor and listed on the Results tab, so an ability that is never cast is no longer silent.
+
+### Combat Sim shows casts per hour for each ability
+
+The Results tab lists each player's abilities with casts per hour, and marks any ability the sim never cast.
+
+### Trigger tuning covers heal triggers and dungeon wipes
+
+Tuning now adjusts "allies' lowest HP %" triggers on heal abilities and tries them as new conditions. In a dungeon, the score now counts failed runs, so a change that prevents wipes ranks higher.
 
 ### Combat Sim comparison shows when each run was made
 
