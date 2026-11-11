@@ -1788,9 +1788,21 @@ export function dungeonClearRate({ usedOwn, clearsHere, fails, completions, fail
 }
 
 /**
+ * Mark whether a clear rate's row time already includes its wipes (the sim's time, or your time with failed
+ * attempts charged), so {@link withWipeRules} does not charge them a second time.
+ * @param {{rate: number, source: string}|null} info
+ * @param {boolean} timeHasWipes
+ * @returns {{rate: number, source: string, timeHasWipes: boolean}|null}
+ */
+export function wipeTimeInfo(info, timeHasWipes) {
+    return info ? { ...info, timeHasWipes } : null;
+}
+
+/**
  * Charge a dungeon zone for its wipes and carry its clear rate to the planner. Adjusted time is the
  * measured time x (1 + wipe share), so the zone's credits and clears per hour are divided by that. The
- * label and note say so (`+18% for wipes`); an unknown clear rate is said to be unknown and charges nothing.
+ * label and note say so (`+18% for wipes`); a row whose time already includes its wipes (`timeHasWipes`) keeps its
+ * time and only carries the rate; an unknown clear rate is said to be unknown and charges nothing.
  *
  * @param {Object} planZone - A planner zone from {@link bestiaryPlanZoneForRow}; one without `clearInfo` (not a dungeon) is returned as it is
  * @returns {Object} The zone with `clearRate`, `clearRateSource` and `wipePenaltyPercent`, and no `clearInfo`
@@ -1811,7 +1823,8 @@ export function withWipeRules(planZone) {
     }
     const wipeShare = Math.min(1, Math.max(0, 1 - info.rate));
     const out = { ...zone, clearRate: info.rate, clearRateSource: info.source, wipePenaltyPercent: 0 };
-    if (!(wipeShare > 0)) return out;
+    // A time that already includes its wipes is not charged twice; the rate still faces the minimum
+    if (!(wipeShare > 0) || info.timeHasWipes) return out;
     const factor = 1 + wipeShare;
     const scale = (rates) =>
         Object.fromEntries(Object.entries(rates || {}).map(([hrid, rate]) => [hrid, Number(rate) / factor]));
@@ -1929,7 +1942,11 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
     // The clear rate rides on the zone for {@link withWipeRules}, which `_buildBestiaryPlanZones` applies next
     const finish = (fields, usedOwn = false) => ({
         ...withNote(withNote({ ...zone, isDungeon: true, ...fields }, tierNote), partySizeNote),
-        clearInfo: dungeonClearRate({ usedOwn, clearsHere, fails, completions, failed }),
+        // Only your own clear time with no failure on record leaves its wipes out of the time
+        clearInfo: wipeTimeInfo(
+            dungeonClearRate({ usedOwn, clearsHere, fails, completions, failed }),
+            !(usedOwn && fails === 0)
+        ),
     });
     const atShare = (rates, share) =>
         Object.fromEntries(Object.entries(rates || {}).map(([hrid, rate]) => [hrid, rate * share]));
