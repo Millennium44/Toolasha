@@ -274,6 +274,8 @@ export const OWNED_KEY_PREFIXES = [
     'combatSim',
     'labSim',
     'simEditorLoadoutName',
+    // The remembered loadout's id travels with its name (restore uses the id only while the names match)
+    'simEditorLoadoutId',
 
     // Guild
     'guildShrinePlan',
