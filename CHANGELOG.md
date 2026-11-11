@@ -32,6 +32,9 @@ A sync pull that brings in changes to your custom inventory tabs or a guild tria
 ### Combat Sim Upgrade can analyze all players
 
 The Upgrade tab's Player box has an "All players" choice that runs the upgrade search for each party member in turn, with the total number of sims shown up front. Stop keeps the players already finished, members with no loaded profile are skipped and named, and Copy for chat covers every player.
+### Trigger tuning applies new conditions
+
+Conditions found by "Search new conditions" can now be applied to the sim with the Apply button, not only threshold changes. After applying, a Fine-tune button tunes the new condition's value instead of leaving it on the fixed 25/50/75% step.
 
 <!-- shipped in 3.84.0 -->
 
