@@ -470,6 +470,37 @@ describe('Load party', () => {
         expect(await editor.loadSavedEntry('roster', roster.id)).toBe(true);
         expect(editor._editedDTOs.player1.gameMode).toBe('ironcow');
         expect(editor._editedDTOs.player2.gameMode).toBe('standard');
+        // Only hand-edited data mixes modes: kept as it is, and said
+        expect(text(editor._editorEl)).toContain(
+            'Its players are saved in different game modes (Iron Cow, Standard); each keeps their own for prices and tax.'
+        );
+    });
+
+    test('a Standard roster loaded on an Iron Cow character keeps Standard and says so', async () => {
+        await saveRoster('Std', [
+            { name: 'Me', dto: build(150), gameMode: 'standard' },
+            { name: 'Ann', dto: build(101, { gameMode: 'standard' }) },
+        ]);
+        game.gameMode = 'ironcow';
+        const { editor } = loadedEditor();
+        const [roster] = (await loadSavedRosters()).parties;
+        expect(await editor.loadSavedEntry('roster', roster.id)).toBe(true);
+        expect(editor._editedDTOs.player1.gameMode).toBe('standard');
+        expect(editor._editedDTOs.player2.gameMode).toBe('standard');
+        expect(text(editor._editorEl)).toContain(
+            "Saved as Standard; you are playing Iron Cow — prices and tax follow the saved players' mode."
+        );
+    });
+
+    test('a roster in the mode you are playing says nothing about modes', async () => {
+        await saveRoster('Same', [{ name: 'Me', dto: build(150), gameMode: 'standard' }]);
+        game.gameMode = 'standard';
+        const { editor } = loadedEditor();
+        const [roster] = (await loadSavedRosters()).parties;
+        await editor.loadSavedEntry('roster', roster.id);
+        expect(text(editor._editorEl)).toContain('Loaded "Same".');
+        expect(text(editor._editorEl)).not.toContain('game mode');
+        expect(text(editor._editorEl)).not.toContain('Saved as');
     });
 
     test('a Party tab party member who cannot run is named and left out', async () => {

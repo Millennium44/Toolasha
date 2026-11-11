@@ -77,6 +77,35 @@ const MAX_COMMUNITY_BUFF_LEVEL = 20;
 const MAX_PARTY_SIZE = 5;
 
 /**
+ * A game mode as a player reads it.
+ * @param {string} mode - As the game sends it (`standard`, `ironcow`, …)
+ * @returns {string}
+ */
+function gameModeLabel(mode) {
+    if (mode.includes('ironcow')) return 'Iron Cow';
+    if (mode === 'standard') return 'Standard';
+    return mode;
+}
+
+/**
+ * What a loaded roster's saved game modes mean for its prices: each player keeps the mode they were saved with, so
+ * say when that is not the mode you are playing, or (only from hand-edited data) when the players disagree.
+ * @param {Array<Object>} players - The loaded builds
+ * @param {string|null|undefined} liveMode - The live character's mode
+ * @returns {string} A sentence starting with a space, or ''
+ */
+function savedModeNote(players, liveMode) {
+    const modes = [...new Set(players.map((dto) => dto?.gameMode).filter((m) => typeof m === 'string' && m))];
+    if (modes.length > 1) {
+        return ` Its players are saved in different game modes (${modes.map(gameModeLabel).join(', ')}); each keeps their own for prices and tax.`;
+    }
+    if (modes.length === 1 && liveMode && modes[0] !== liveMode) {
+        return ` Saved as ${gameModeLabel(modes[0])}; you are playing ${gameModeLabel(liveMode)} — prices and tax follow the saved players' mode.`;
+    }
+    return '';
+}
+
+/**
  * Escape a string for interpolation into this file's `innerHTML` templates.
  * Import text is pasted by the user, so an item hrid that reaches the DOM as a
  * fallback label is not trusted markup.
@@ -1424,7 +1453,8 @@ export class SimEditor {
                 [],
                 { note }
             );
-            this._setSavedNote(`Loaded "${entry.name}".${skippedText}`, skipped.length > 0);
+            const modeText = savedModeNote(players, dataManager.getCurrentCharacterGameMode?.());
+            this._setSavedNote(`Loaded "${entry.name}".${skippedText}${modeText}`, skipped.length > 0 || !!modeText);
             this.renderEditor();
             return true;
         }
