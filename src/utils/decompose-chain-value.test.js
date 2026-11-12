@@ -22,6 +22,23 @@ const engine = vi.hoisted(() => ({
     /** hrid -> what the sell-side resolver answers ({value, needsTax}); absent = null */
     sellResolved: {},
     shop: {},
+    /** hrid -> ask, read when the pricing mode trades on the ask (absent = no ask) */
+    asks: {},
+    /** hrid -> the book sides ('ask'|'bid') whose quote is only a value-map estimate */
+    estimatedOn: {},
+    /** The book side a profit mode trades on for a transaction side, as the real getPricingMode maps it */
+    basis(side) {
+        const mode = engine.override ?? engine.settings?.profitCalc_pricingMode ?? 'conservative';
+        if (mode === 'conservative') return side === 'buy' ? 'ask' : 'bid';
+        if (mode === 'optimistic') return side === 'buy' ? 'bid' : 'ask';
+        return mode === 'patientBuy' ? 'bid' : 'ask';
+    },
+    /** The patient tick on a quote: a buy at the bid goes up one, a sell at the ask goes down one */
+    tick(side, basis) {
+        if (side === 'buy' && basis === 'bid' && engine.settings?.profitCalc_patientTickBuy === true) return 1;
+        if (side === 'sell' && basis === 'ask' && engine.settings?.profitCalc_patientTickSell === true) return -1;
+        return 0;
+    },
 }));
 
 // The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
@@ -45,7 +62,7 @@ vi.mock('../core/data-manager.js', () => ({
 }));
 vi.mock('../core/config.js', () => ({
     default: {
-        getSettingValue: (key, fallback) => fallback,
+        getSettingValue: (key, fallback) => engine.settings?.[key] ?? fallback,
         // Cowbells count unless a test turns them off
         getSetting: (key) => engine.settings?.[key] ?? (key === 'expectedValue_includeCowbells' ? true : null),
     },
@@ -70,14 +87,39 @@ vi.mock('./market-data.js', () => ({
         const bid = engine.rawBids?.[hrid] ?? (engine.customs?.has(hrid) ? null : (engine.bids[hrid] ?? null));
         return bid === null ? null : { ask: null, bid, bidEstimated: engine.estimated.has(hrid) };
     },
-    getItemPriceInfo: (hrid) => ({
-        price: engine.bids[hrid] ?? null,
-        source: engine.customs?.has(hrid) ? 'custom' : engine.bids[hrid] != null ? 'book' : null,
-        estimated: engine.estimated.has(hrid),
-    }),
-    isPriceEstimated: (hrid) => engine.estimated.has(hrid),
-    getPricingMode: () => 'conservative',
-    withProfitPricingMode: (mode, fn) => fn(),
+    getItemPriceInfo: (hrid, options = {}) => {
+        const side = options.side ?? 'sell';
+        const basis = engine.basis(side);
+        const quote = basis === 'ask' ? engine.asks[hrid] : engine.bids[hrid];
+        return {
+            price: quote == null ? null : quote + engine.tick(side, basis),
+            source: engine.customs?.has(hrid) ? 'custom' : quote != null ? 'book' : null,
+            estimated: engine.estimated.has(hrid) || (engine.estimatedOn[hrid] ?? []).includes(basis),
+        };
+    },
+    isPriceEstimated: (hrid, options = {}) =>
+        engine.estimated.has(hrid) || (engine.estimatedOn[hrid] ?? []).includes(engine.basis(options.side ?? 'sell')),
+    // The raw order on the mode's sell side: a custom override hides nothing, an estimate is no order
+    getModeBookSellPrice: (hrid) => {
+        const basis = engine.basis('sell');
+        if (engine.estimated.has(hrid) || (engine.estimatedOn[hrid] ?? []).includes(basis)) return null;
+        const quote =
+            basis === 'ask'
+                ? engine.asks[hrid]
+                : (engine.rawBids?.[hrid] ?? (engine.customs?.has(hrid) ? null : engine.bids[hrid]));
+        return quote == null ? null : quote + engine.tick('sell', basis);
+    },
+    getPricingMode: (context, side) => engine.basis(side),
+    // A pinned mode wins over the player's setting for the length of the callback, as the real override does
+    withProfitPricingMode: (mode, fn) => {
+        const previous = engine.override;
+        engine.override = mode;
+        try {
+            return fn();
+        } finally {
+            engine.override = previous;
+        }
+    },
 }));
 vi.mock('../features/settings/custom-price-overrides.js', () => ({
     getCustomPriceVersion: () => 0,
@@ -90,7 +132,7 @@ vi.mock('./enhancement-pricing.js', async (importOriginal) => ({
     getProductionCost: () => 0,
 }));
 
-const { decomposeChain, clearDecomposeChainCaches, maximizeChainRatio, MAX_RATIO_ITERATIONS } =
+const { decomposeChain, clearDecomposeChainCaches, maximizeChainRatio, describeChainPricing, MAX_RATIO_ITERATIONS } =
     await import('./decompose-chain-value.js');
 const { selfUseDecomposeChain } = await import('./self-use-alchemy.js');
 
@@ -160,6 +202,9 @@ beforeEach(() => {
     engine.crates = {};
     engine.sellResolved = {};
     engine.shop = {};
+    engine.asks = {};
+    engine.estimatedOn = {};
+    engine.settings = undefined;
     clearDecomposeChainCaches();
 });
 
@@ -426,6 +471,170 @@ describe('fixtures where each step was already best stay as they were', () => {
         expect(chain.truncated).toBe(true);
         // 960 + 960 + the looped-back item_a at 480, less the 500 ask, over 1 s + 2 s
         expect(chain.netPerHour).toBeCloseTo(((960 * 2 + 480 - 500) * 3600) / 3);
+    });
+});
+
+describe('the chain follows the player pricing mode', () => {
+    const X = '/items/item_x';
+    const TERM = '/items/term_c';
+    /** item_x costs 500 and decomposes in one second to 2 term_c: a net of 2 x sale x 0.96 - 500 an action */
+    function oneStep() {
+        engine.itemDetails = { [X]: gear([[TERM, 2]]), [TERM]: { alchemyDetail: null } };
+        engine.candidates = { [X]: [setup(500, 3600)] };
+        engine.bids = { [TERM]: 1000 };
+        engine.asks = { [TERM]: 1500 };
+    }
+    const perHour = (sale) => (2 * sale * 0.96 - 500) * 3600;
+
+    test.each([
+        ['conservative', {}, 1000],
+        ['hybrid', {}, 1500],
+        ['optimistic', {}, 1500],
+        ['patientBuy', {}, 1000],
+        ['hybrid', { profitCalc_patientTickSell: true }, 1499],
+        ['optimistic', { profitCalc_patientTickSell: true, profitCalc_patientTickBuy: true }, 1499],
+        // An instant sale has no queue to jump, so the sell tick leaves it alone
+        ['conservative', { profitCalc_patientTickSell: true }, 1000],
+        ['patientBuy', { profitCalc_patientTickSell: true }, 1000],
+    ])('%s %j sells the output at %d', (mode, ticks, sale) => {
+        oneStep();
+        engine.settings = { profitCalc_pricingMode: mode, ...ticks };
+        const chain = decomposeChain(X);
+        expect(chain.netPerHour).toBeCloseTo(perHour(sale));
+        expect(chain.partial).toBe(false);
+    });
+
+    test('an output estimated on the mode sell side only is zero and a lower bound under that mode only', () => {
+        oneStep();
+        engine.estimatedOn = { [TERM]: ['ask'] };
+        engine.settings = { profitCalc_pricingMode: 'conservative' };
+        const instant = decomposeChain(X);
+        expect(instant.partial).toBe(false);
+        expect(instant.netPerHour).toBeCloseTo(perHour(1000));
+
+        engine.settings = { profitCalc_pricingMode: 'hybrid' };
+        const patient = decomposeChain(X);
+        expect(patient.partial).toBe(true);
+        expect(patient.partialItems).toEqual([TERM]);
+        expect(patient.netPerHour).toBeCloseTo(-500 * 3600);
+    });
+
+    test('a bid with no ask is an unpriced sale for a patient seller, and the reverse for an instant one', () => {
+        oneStep();
+        engine.asks = {};
+        engine.settings = { profitCalc_pricingMode: 'hybrid' };
+        const noAsk = decomposeChain(X);
+        expect(noAsk.partial).toBe(true);
+        expect(noAsk.netPerHour).toBeCloseTo(-500 * 3600);
+        engine.settings = { profitCalc_pricingMode: 'conservative' };
+        expect(decomposeChain(X).netPerHour).toBeCloseTo(perHour(1000));
+
+        oneStep();
+        engine.bids = {};
+        const noBid = decomposeChain(X);
+        expect(noBid.partial).toBe(true);
+        engine.settings = { profitCalc_pricingMode: 'hybrid' };
+        expect(decomposeChain(X).netPerHour).toBeCloseTo(perHour(1500));
+    });
+
+    test('the item to buy needs a real order on the mode buy side', () => {
+        oneStep();
+        // The bid is a value-map estimate; the ask is a real order
+        engine.estimatedOn = { [X]: ['bid'] };
+        engine.settings = { profitCalc_pricingMode: 'conservative' };
+        expect(decomposeChain(X).netPerHour).toBeCloseTo(perHour(1000));
+        // A patient buyer would pay the bid, which nobody has placed: no figure rather than a guess
+        engine.settings = { profitCalc_pricingMode: 'optimistic' };
+        expect(decomposeChain(X).netPerHour).toBeNull();
+        engine.settings = { profitCalc_pricingMode: 'patientBuy' };
+        expect(decomposeChain(X).netPerHour).toBeNull();
+        engine.settings = { profitCalc_pricingMode: 'hybrid' };
+        expect(decomposeChain(X).netPerHour).toBeCloseTo(perHour(1500));
+    });
+
+    test('a catalyst with no real order on the mode buy side is not a candidate under that mode', () => {
+        oneStep();
+        const withCatalyst = setup(500, 7200, { winningCatalystHrid: '/items/prime_catalyst' });
+        engine.candidates = { [X]: [withCatalyst, setup(500, 3600)] };
+        engine.estimatedOn = { '/items/prime_catalyst': ['bid'] };
+        engine.settings = { profitCalc_pricingMode: 'conservative' };
+        expect(decomposeChain(X).topStep).toBe(withCatalyst);
+        engine.settings = { profitCalc_pricingMode: 'patientBuy' };
+        expect(decomposeChain(X).topStep).not.toBe(withCatalyst);
+    });
+
+    test('the caches do not leak a figure across a mode or tick change', () => {
+        oneStep();
+        engine.settings = { profitCalc_pricingMode: 'conservative' };
+        expect(decomposeChain(X).netPerHour).toBeCloseTo(perHour(1000));
+        const walks = engine.calculatorCalls;
+        // The same mode asks the calculator nothing more
+        expect(decomposeChain(X).netPerHour).toBeCloseTo(perHour(1000));
+        expect(engine.calculatorCalls).toBe(walks);
+
+        // Nobody clears the caches: the module notices the dropdowns moved
+        engine.settings = { profitCalc_pricingMode: 'hybrid' };
+        expect(decomposeChain(X).netPerHour).toBeCloseTo(perHour(1500));
+        expect(engine.calculatorCalls).toBeGreaterThan(walks);
+        engine.settings = { profitCalc_pricingMode: 'hybrid', profitCalc_patientTickSell: true };
+        expect(decomposeChain(X).netPerHour).toBeCloseTo(perHour(1499));
+        engine.settings = { profitCalc_pricingMode: 'conservative', profitCalc_patientTickSell: true };
+        expect(decomposeChain(X).netPerHour).toBeCloseTo(perHour(1000));
+        engine.settings = { profitCalc_pricingMode: 'conservative', profitCalc_patientTickBuy: true };
+        expect(decomposeChain(X).netPerHour).toBeCloseTo(perHour(1000));
+    });
+
+    test('a bonus crate with partly priced contents is judged on the mode sell side', () => {
+        oneStep();
+        const CRATE = '/items/artisans_crate';
+        engine.candidates = {
+            [X]: [setup(500, 3600, { dropRevenues: [{ itemHrid: CRATE, isRare: true, dropsPerHour: 36 }] })],
+        };
+        engine.crates = {
+            [CRATE]: [
+                { itemHrid: '/items/gem', dropRate: 1, minCount: 1, maxCount: 1 },
+                { itemHrid: '/items/junk', dropRate: 1, minCount: 1, maxCount: 1 },
+            ],
+        };
+        engine.sellResolved = {
+            '/items/gem': { value: 400, source: 'market', needsTax: true },
+            '/items/junk': { value: 100, source: 'market', needsTax: true },
+        };
+        // The gem has both orders; junk has a bid only
+        engine.bids['/items/gem'] = 400;
+        engine.asks['/items/gem'] = 600;
+        engine.bids['/items/junk'] = 100;
+
+        engine.settings = { profitCalc_pricingMode: 'conservative' };
+        const instant = decomposeChain(X);
+        expect(instant.partial).toBe(false);
+        expect(instant.netPerHour).toBeCloseTo((perHour(1000) / 3600 + 0.01 * (400 + 100) * 0.96) * 3600);
+
+        engine.settings = { profitCalc_pricingMode: 'hybrid' };
+        const patient = decomposeChain(X);
+        // Junk has no ask to sell into: the crate counts at its priced part, flagged
+        expect(patient.partial).toBe(true);
+        expect(patient.partialItems).toEqual([CRATE]);
+        expect(patient.netPerHour).toBeCloseTo((perHour(1500) / 3600 + 0.01 * 600 * 0.96) * 3600);
+    });
+
+    test('describeChainPricing names the sides and ticks', () => {
+        engine.settings = { profitCalc_pricingMode: 'conservative' };
+        expect(describeChainPricing()).toMatchObject({ buy: 'ask', sell: 'bid', instantBuy: true, instantSell: true });
+        engine.settings = {
+            profitCalc_pricingMode: 'optimistic',
+            profitCalc_patientTickBuy: true,
+            profitCalc_patientTickSell: true,
+        };
+        expect(describeChainPricing()).toMatchObject({
+            buy: 'bid +1 tick',
+            sell: 'ask \u22121 tick',
+            instantBuy: false,
+            instantSell: false,
+        });
+        // A tick on a side the mode trades instantly changes nothing
+        engine.settings = { profitCalc_pricingMode: 'conservative', profitCalc_patientTickBuy: true };
+        expect(describeChainPricing().buy).toBe('ask');
     });
 });
 

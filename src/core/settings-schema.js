@@ -597,7 +597,7 @@ export const settingsGroups = {
                     { value: 'decomposeChainPerHour', label: 'Full decompose chain per hour (Decompose tab)' },
                     { value: 'chainOwnStock', label: 'Full decompose chain per hour, items you hold (Decompose tab)' },
                 ],
-                help: 'Which figure the best items table ranks by. The chain mode buys the item at its ask, decomposes it and everything it yields, and sells what is left at bid after tax; the buttons in the table change this too.',
+                help: 'Which figure the best items table ranks by. The chain mode buys the item, decomposes it and everything it yields, and sells what is left after tax, on the sides your Buy/Sell pricing settings trade on; the buttons in the table change this too.',
             },
             alchemy_bestItems_shopPrices: {
                 id: 'alchemy_bestItems_shopPrices',
@@ -605,6 +605,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Buys the item at the NPC shop price when that is below the market price, or when the market has no price at all. Only shop offers paid in coins count, only on the buy side, and only in Best Items. The same box sits in the table.',
+            },
+            alchemy_bestItems_gearOnly: {
+                id: 'alchemy_bestItems_gearOnly',
+                label: 'Alchemy panel: Best Items gear only (Decompose)',
+                type: 'checkbox',
+                default: false,
+                help: 'Hides every Decompose row whose item is not gear. Lumber, cheese, hide, tea, fiber and core only yield essences, and bury the gear chains. The same box sits in the table.',
             },
             alchemyBestItems_prefillLevelFilter: {
                 id: 'alchemyBestItems_prefillLevelFilter',
@@ -1672,7 +1679,7 @@ export const settingsGroups = {
                 help:
                     'Which figure the marketplace sort button ranks by. The alchemy modes insta-buy the item at ask, ' +
                     'run its best alchemy action, and insta-sell the outputs at bid, whatever the global pricing mode is. The chain mode decomposes the item and ' +
-                    'then everything it yields, selling what is left at bid after tax. ' +
+                    'then everything it yields, selling what is left after tax; unlike the alchemy modes it follows your Buy/Sell pricing settings. ' +
                     'The dropdown next to the sort button changes this too.',
             },
             fillMarketOrderPrice: {

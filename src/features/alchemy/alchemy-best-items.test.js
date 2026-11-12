@@ -38,6 +38,10 @@ const market = vi.hoisted(() => ({
     prices: {},
     /** itemHrid → bid, for the decompose chain (absent = unpriced) */
     bids: {},
+    /** itemHrid → ask, read when the pricing mode sells at the ask (absent = the bid) */
+    asks: {},
+    /** A pricing mode pinned by withProfitPricingMode while its callback runs */
+    override: undefined,
     /** hrids whose quote is a value-map estimate, not a book price */
     estimated: new Set(),
     /** itemHrid → decompose results, one per catalyst/tea candidate */
@@ -158,16 +162,37 @@ vi.mock('../../utils/experience-parser.js', () => ({
     calculateExperienceMultiplier: () => ({ totalMultiplier: experience.totalMultiplier }),
 }));
 
+/** The book side a profit mode trades on, as the real getPricingMode maps it */
+const modeBasis = (side) => {
+    const mode = market.override ?? settings.values.profitCalc_pricingMode;
+    if (mode === 'conservative') return side === 'buy' ? 'ask' : 'bid';
+    if (mode === 'optimistic') return side === 'buy' ? 'bid' : 'ask';
+    return mode === 'patientBuy' ? 'bid' : 'ask';
+};
+const modeSellPrice = (hrid) =>
+    modeBasis('sell') === 'ask' ? (market.asks[hrid] ?? market.bids[hrid]) : market.bids[hrid];
+
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => market.prices[hrid] ?? null,
     getItemPrices: (hrid) => (market.bids[hrid] != null ? { ask: null, bid: market.bids[hrid] } : null),
     getItemPriceInfo: (hrid) => ({
-        price: market.bids[hrid] ?? null,
+        price: modeSellPrice(hrid) ?? null,
         source: market.customs?.has(hrid) ? 'custom' : market.bids[hrid] != null ? 'book' : null,
         estimated: market.estimated.has(hrid),
     }),
     isPriceEstimated: (hrid) => market.estimated.has(hrid),
-    withProfitPricingMode: (mode, fn) => fn(),
+    getModeBookSellPrice: (hrid) => modeSellPrice(hrid) ?? null,
+    getPricingMode: (context, side) => modeBasis(side),
+    // A pinned mode wins over the player's setting while the callback runs, as the real override does
+    withProfitPricingMode: (mode, fn) => {
+        const previous = market.override;
+        market.override = mode;
+        try {
+            return fn();
+        } finally {
+            market.override = previous;
+        }
+    },
 }));
 
 /** What the item tooltip's own functions answer, and what the bag holds, for the own-stock sort */
@@ -332,10 +357,15 @@ beforeEach(() => {
     game.skills = [];
     market.prices = {};
     market.bids = {};
+    market.asks = {};
     market.estimated = new Set();
     market.candidates = {};
     shop.offers = {};
     delete settings.values.alchemy_bestItems_shopPrices;
+    delete settings.values.alchemy_bestItems_gearOnly;
+    settings.values.profitCalc_pricingMode = 'hybrid';
+    settings.values.profitCalc_patientTickBuy = false;
+    settings.values.profitCalc_patientTickSell = false;
     settings.values.alchemy_bestItems_sortMode = 'profit';
     // The mock answers true for unknown keys; this one defaults off in the schema
     settings.values.alchemyBestItems_prefillLevelFilter = false;
@@ -1480,12 +1510,13 @@ describe('the Decompose chain/hr sort', () => {
         expect(cell.title).toContain('Term C');
     });
 
-    test('the column header says it uses instant prices regardless of the dropdowns', () => {
+    test('the column header says it follows the Buy/Sell dropdowns', () => {
         fixture();
         bestItems.sortMode = 'decomposeChainPerHour';
         open([row('item_d', 1)]);
         const header = Array.from(bestItems.modal.querySelectorAll('th')).find((th) => th.textContent === 'Chain/hr');
-        expect(header.title).toContain('instant buy/sell prices');
+        expect(header.title).toContain('Follows the Buy/Sell price dropdowns');
+        expect(header.title).not.toContain('whatever the');
     });
 
     test('an estimated terminal bid counts at zero and marks every chain a lower bound', () => {
@@ -1508,6 +1539,80 @@ describe('the Decompose chain/hr sort', () => {
 
         const catalystCell = bestItems.modal.querySelector('tbody tr').children[3];
         expect(catalystCell.title).toBe('Decompose');
+    });
+
+    test("the Profit/hr cell shows the chain's first step, the figure its breakdown adds up to", () => {
+        fixture();
+        // The chain picks the fast setup for item_d; the profit table's winner (and its 900 figure) is the slow one
+        const slow = { ...step(500, 360), profitPerHour: 900 };
+        const fast = {
+            ...step(500, 3600),
+            profitPerHour: 777_000,
+            winningCatalystHrid: '/items/catalyst_of_decomposition',
+        };
+        market.candidates['/items/item_d'] = [slow, fast];
+        bestItems.sortMode = 'decomposeChainPerHour';
+        open([row('item_d', 900)]);
+
+        const cells = bestItems.modal.querySelector('tbody tr').children;
+        expect(cells[5].textContent).toBe(formatKMB(777_000));
+        // Off the chain sorts the cell is the row's own figure again
+        bestItems.sortMode = 'profit';
+        bestItems.renderTable();
+        expect(bestItems.modal.querySelector('tbody tr').children[4].textContent).toBe(formatKMB(900));
+    });
+
+    test('a chain top step with no figure of its own leaves the row profit in the cell', () => {
+        fixture();
+        market.candidates['/items/item_d'] = [step(500, 360)];
+        bestItems.sortMode = 'decomposeChainPerHour';
+        open([row('item_d', 900)]);
+        expect(bestItems.modal.querySelector('tbody tr').children[5].textContent).toBe(formatKMB(900));
+    });
+
+    test('Gear only hides non-gear Decompose rows before any chain is worked out', () => {
+        fixture();
+        game.items['/items/cheese'] = {
+            alchemyDetail: { decomposeItems: [{ itemHrid: '/items/term_c', count: 2 }] },
+        };
+        market.candidates['/items/cheese'] = [step(500, 360)];
+        bestItems.sortMode = 'decomposeChainPerHour';
+        open([row('item_d', 900), row('cheese', 2000)]);
+        expect(names()).toEqual(['cheese', 'item_d']);
+
+        const box = bestItems.modal.querySelector('[data-mwi-gear-only]');
+        expect(box.checked).toBe(false);
+        bestItems.chainValues.clear();
+        settings.values.alchemy_bestItems_gearOnly = true;
+        bestItems.renderTable();
+        expect(names()).toEqual(['item_d']);
+        expect(box.checked).toBe(true);
+        // The hidden row was never priced
+        expect(bestItems.chainValues.has('/items/cheese')).toBe(false);
+        expect(bestItems.chainValues.has('/items/item_d')).toBe(true);
+    });
+
+    test('Gear only is offered on the Decompose tab only, persists as a setting, and is off by default', () => {
+        fixture();
+        open([row('item_d', 900)]);
+        const label = bestItems.modal.querySelector('[data-mwi-gear-only-label]');
+        expect(label.style.display).toBe('flex');
+        expect(label.title).toContain('Hide every item that is not gear');
+        bestItems.currentType = 'coinify';
+        bestItems.cachedRankings.coinify = [row('item_d', 900)];
+        game.items['/items/item_d'] = { alchemyDetail: null };
+        // On another tab the option does not hide anything, even when it is on
+        settings.values.alchemy_bestItems_gearOnly = true;
+        bestItems.renderTable();
+        expect(label.style.display).toBe('none');
+        expect(names()).toEqual(['item_d']);
+
+        bestItems.currentType = 'decompose';
+        const box = bestItems.modal.querySelector('[data-mwi-gear-only]');
+        delete settings.values.alchemy_bestItems_gearOnly;
+        box.checked = true;
+        box.dispatchEvent(new Event('change'));
+        expect(settings.values.alchemy_bestItems_gearOnly).toBe(true);
     });
 
     test('falls back to profit on the other tabs and keeps the stored choice', () => {
@@ -1574,6 +1679,63 @@ describe('the Decompose chain/hr sort', () => {
 
         bestItems.disable();
         expect(marketListeners.list).toHaveLength(0);
+    });
+
+    test('the hover names the sides the dropdowns trade on, ticks included', () => {
+        fixture();
+        market.asks = { '/items/term_c': 1500 };
+        settings.values.profitCalc_pricingMode = 'optimistic';
+        settings.values.profitCalc_patientTickBuy = true;
+        settings.values.profitCalc_patientTickSell = true;
+        bestItems.sortMode = 'decomposeChainPerHour';
+        open([row('item_d', 1)]);
+        const hover = bestItems.modal.querySelector('[data-mwi-chain]').title;
+        expect(hover).toContain('bought at the bid +1 tick');
+        expect(hover).toContain('sold at the ask \u22121 tick after market tax');
+        expect(hover).toContain('buys at the bid +1 tick, sells outputs at the ask \u22121 tick');
+    });
+
+    test('a pricing-mode change re-prices the chain instead of serving the old mode', () => {
+        fixture();
+        market.asks = { '/items/term_c': 2000 };
+        settings.values.profitCalc_pricingMode = 'conservative';
+        bestItems.isInitialized = false;
+        bestItems.initialize();
+        bestItems.sortMode = 'decomposeChainPerHour';
+        open([row('item_a', 1)]);
+        const instant = bestItems.chainPerHour('/items/item_a');
+
+        // Selling at the ask now: the terminal is worth twice as much, and the open panel follows
+        settings.values.profitCalc_pricingMode = 'optimistic';
+        for (const cb of settings.changeListeners.profitCalc_pricingMode) cb('optimistic');
+        expect(bestItems.chainPerHour('/items/item_a')).toBeGreaterThan(instant);
+        // 2 x 2,000 after the 4% tax = 3,840 against the 500 asked: 3,340 over 3 s
+        expect(bestItems.chainPerHour('/items/item_a')).toBeCloseTo(((3840 - 500) / 3) * 3600, 0);
+
+        // Back to the bid: the earlier figure again, not the ask's leftover
+        settings.values.profitCalc_pricingMode = 'conservative';
+        for (const cb of settings.changeListeners.profitCalc_pricingMode) cb('conservative');
+        expect(bestItems.chainPerHour('/items/item_a')).toBeCloseTo(instant, 6);
+        bestItems.disable();
+    });
+
+    test('a patient-tick change alone drops the chain figures and walks the chain again', () => {
+        fixture();
+        settings.values.profitCalc_pricingMode = 'conservative';
+        bestItems.isInitialized = false;
+        bestItems.initialize();
+        bestItems.sortMode = 'decomposeChainPerHour';
+        open([row('item_a', 1)]);
+        const before = bestItems.chainPerHour('/items/item_a');
+        const cleared = vi.spyOn(bestItems, 'clearChainCaches');
+        settings.values.profitCalc_patientTickSell = true;
+        for (const cb of settings.changeListeners.profitCalc_patientTickSell) cb(true);
+        expect(cleared).toHaveBeenCalled();
+        // The stand-in book does not tick and the sell side is the bid: the same figure, from a fresh walk
+        expect(bestItems.chainValues.has('/items/item_a')).toBe(false);
+        expect(bestItems.chainPerHour('/items/item_a')).toBeCloseTo(before, 6);
+        cleared.mockRestore();
+        bestItems.disable();
     });
 
     test('the profit range is named for the figure it filters in chain mode', () => {
@@ -1721,6 +1883,7 @@ describe('the Chain/hr hover', () => {
         });
         market.candidates = { '/items/item_a': [step(500, 3600)], '/items/mid_b': [step(300, 1800)] };
         market.bids = { '/items/term_c': 1000 };
+        settings.values.profitCalc_pricingMode = 'conservative';
         bestItems.sortMode = 'decomposeChainPerHour';
         bestItems.createModal();
         bestItems.currentType = 'decompose';
@@ -1731,12 +1894,12 @@ describe('the Chain/hr hover', () => {
 
         const hover = bestItems.modal.querySelector('[data-mwi-chain]').title;
         // 2 x 1,000 at bid after the 4% tax = 1,920 against a 500 ask: 1,420 a chain, 3 s, 1.704M an hour
-        expect(hover).toContain(`Bought at ask ${formatKMB(500)}`);
-        expect(hover).toContain(`Outputs: ${formatKMB(1920)}, sold at bid after market tax`);
+        expect(hover).toContain(`Bought at the ask: ${formatKMB(500)}`);
+        expect(hover).toContain(`Outputs: ${formatKMB(1920)}, sold at the bid after market tax`);
         expect(hover).toContain(`Net per item: ${formatKMB(1420)}, over ${timeReadable(3)} per chain`);
         expect(hover).toContain(`${formatKMB(1_704_000)}/hr`);
-        expect(hover).toContain('buy at the ask now and sell outputs at bid');
-        expect(hover).toContain('whatever the Buy/Sell dropdowns say');
+        expect(hover).toContain('Follows your Buy/Sell dropdowns: buys at the ask, sells outputs at the bid');
+        expect(hover).not.toContain('whatever the');
         expect(hover).not.toContain('shop price');
         // A row whose single-step price came from the NPC shop is told the chain does not use it
         bestItems.cachedRankings.decompose[0].shopPriced = true;
@@ -1810,6 +1973,24 @@ describe('the Chain/hr (own stock) sort', () => {
         expect(cell.title).toContain(`${formatKMB(5_512_345)}/hr`);
         // The catalyst shown is the one the tooltip's chain settled on
         expect(bestItems.chainView(row('redwood_shield', 1)).catalyst).toBe('/items/prime_catalyst');
+    });
+
+    test("the Profit/hr cell is the tooltip chain's first step, or the row's own when that has no figure", async () => {
+        tooltip.held = { '/items/a': 1, '/items/b': 1 };
+        tooltip.chains = {
+            '/items/a': chain(5000, { topStep: { winningCatalystHrid: null, profitPerHour: 123_000 } }),
+            '/items/b': chain(4000),
+        };
+        await open([row('a', 900), row('b', 800)]);
+        const profitCell = (name) => {
+            const tr = Array.from(bestItems.modal.querySelectorAll('tbody tr')).find(
+                (r) => r.children[1]?.firstChild?.textContent === name
+            );
+            return tr.children[5].textContent;
+        };
+        expect(profitCell('a')).toBe(formatKMB(123_000));
+        // The top step carries no profitPerHour: the row's own figure stays
+        expect(profitCell('b')).toBe(formatKMB(800));
     });
 
     test('profitable-only judges the own-stock figure', async () => {

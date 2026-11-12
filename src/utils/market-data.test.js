@@ -12,6 +12,7 @@ import {
     getPricingMode,
     withProfitPricingMode,
     getItemPrices,
+    getModeBookSellPrice,
 } from './market-data.js';
 
 vi.mock('../api/marketplace.js', () => ({
@@ -464,5 +465,64 @@ describe('getItemPrices average', () => {
     test('a book with neither side is no price at all', () => {
         marketAPI.getPrice.mockReturnValue({ ask: null, bid: null });
         expect(getItemPrices('/items/thing')).toBeNull();
+    });
+});
+
+describe('getModeBookSellPrice', () => {
+    // The market-values mock is a flat ten-gold ladder: one tick is +-10
+    const setting = { mode: 'conservative', tickSell: false };
+    beforeEach(() => {
+        vi.clearAllMocks();
+        reconciled.result = null;
+        character.gameMode = 'standard';
+        getCustomPrice.mockReturnValue(null);
+        setting.mode = 'conservative';
+        setting.tickSell = false;
+        config.getSettingValue.mockImplementation((key, fallback) => {
+            if (key === 'profitCalc_patientTickSell') return setting.tickSell;
+            if (key === 'profitCalc_patientTickBuy') return false;
+            return setting.mode ?? fallback;
+        });
+        marketAPI.getPrice.mockReturnValue({ ask: 500, bid: 400 });
+    });
+
+    test.each([
+        ['conservative', 400],
+        ['patientBuy', 400],
+        ['hybrid', 500],
+        ['optimistic', 500],
+    ])('%s sells into the right side of the book', (mode, expected) => {
+        setting.mode = mode;
+        expect(getModeBookSellPrice('/items/cheese')).toBe(expected);
+    });
+
+    test('the sell tick moves a patient sale one tick down and leaves an instant one alone', () => {
+        setting.tickSell = true;
+        setting.mode = 'hybrid';
+        expect(getModeBookSellPrice('/items/cheese')).toBe(490);
+        setting.mode = 'conservative';
+        expect(getModeBookSellPrice('/items/cheese')).toBe(400);
+    });
+
+    test('a side filled in from the value map is no order, and the other side still answers', () => {
+        reconciled.result = { ask: 500, bid: 400, askSource: 'value', bidSource: 'book' };
+        setting.mode = 'hybrid';
+        expect(getModeBookSellPrice('/items/cheese')).toBeNull();
+        setting.mode = 'conservative';
+        expect(getModeBookSellPrice('/items/cheese')).toBe(400);
+    });
+
+    test('a book missing the side the mode sells on has no price', () => {
+        marketAPI.getPrice.mockReturnValue({ ask: null, bid: 400 });
+        reconciled.result = { ask: null, bid: 400, askSource: null, bidSource: 'book' };
+        setting.mode = 'hybrid';
+        expect(getModeBookSellPrice('/items/cheese')).toBeNull();
+        setting.mode = 'conservative';
+        expect(getModeBookSellPrice('/items/cheese')).toBe(400);
+    });
+
+    test('a custom override neither counts nor hides the real order', () => {
+        getCustomPrice.mockReturnValue(99);
+        expect(getModeBookSellPrice('/items/cheese')).toBe(400);
     });
 });

@@ -6,7 +6,7 @@
 
 import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
-import { getItemPrice, getItemPriceInfo, getItemPrices } from './market-data.js';
+import { getItemPrice, getItemPriceInfo, getItemPrices, getModeBookSellPrice } from './market-data.js';
 import { isPatientTickOn, patientTickPrice } from './patient-tick.js';
 
 /** Essence a dungeon token falls back to when its shop prices nothing. */
@@ -16,6 +16,13 @@ const TOKEN_ESSENCE_MAP = {
     '/items/enchanted_token': '/items/enchanted_essence',
     '/items/pirate_token': '/items/pirate_essence',
 };
+
+/**
+ * Stands in for `respectModeSetting` when a caller sells for real: price each shop reward off the raw order book
+ * on the side the profit pricing mode sells on (the bid, or the ask one tick better when the patient-sell tick is
+ * on), counting no custom price, Iron Cow figure or value-map estimate.
+ */
+export const MODE_BOOK_SELL = 'modeBookSell';
 
 /** The four dungeon currency tokens; each can be valued through its own token shop. */
 export const DUNGEON_TOKEN_HRIDS = new Set(Object.keys(TOKEN_ESSENCE_MAP));
@@ -147,6 +154,7 @@ export function tokenPriceOf(pricingModeSetting, respectModeSetting, forcedSide 
             return prices && !prices.source && !prices.bidEstimated && prices.bid > 0 ? prices.bid : null;
         };
     }
+    if (respectModeSetting === MODE_BOOK_SELL) return (hrid) => (hrid ? getModeBookSellPrice(hrid) : null);
     const mode = tokenPricingSide(pricingModeSetting, respectModeSetting);
     // Following the global mode, a sale at the ask is a patient one and takes the
     // +1 tick like every other profit price. Respect switched off pins the bid,
