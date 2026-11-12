@@ -42,6 +42,8 @@ const game = vi.hoisted(() => ({
     itemDetailMap: null,
     /** Where the party record came from ('party' after a party_updated, 'login' before) */
     partyInfoSource: 'party',
+    /** When the login party record arrived, or null */
+    partyInfoReceivedAt: null,
     /** The roster a fight named, as data-manager keeps it, or null */
     battleRoster: null,
     /** What buildGameDataPayload answers, or null for the empty default */
@@ -61,6 +63,9 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentActions: () => game.actions || [],
         get partyInfoSource() {
             return game.partyInfoSource;
+        },
+        get partyInfoReceivedAt() {
+            return game.partyInfoReceivedAt;
         },
         get battlePartyRoster() {
             return game.battleRoster;
@@ -294,6 +299,7 @@ beforeEach(() => {
     game.actions = null;
     game.gameData = null;
     game.partyInfoSource = 'party';
+    game.partyInfoReceivedAt = null;
     game.battleRoster = null;
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
     game.houseRooms = null;
@@ -4002,6 +4008,26 @@ describe('Reset to Party picks your party loadout and the party zone', () => {
         await editor.resetToParty({ fromButton: true });
         expect(onResetToParty).not.toHaveBeenCalled();
         expect(el.textContent).toContain('You are not in a party');
+    });
+
+    test('a party still forming never lends its member a solo fight zone', async () => {
+        game.partyInfoSource = 'login';
+        game.actions = [{ actionHrid: '/actions/combat/golem_cave', difficultyTier: 2, isDone: false, ordinal: 1 }];
+        for (const status of ['creating', 'recruiting']) {
+            const { el, editor, onResetToParty } = setup(partyInfo({ actionHrid: '', status }));
+            await editor.resetToParty({ fromButton: true });
+            expect(onResetToParty).not.toHaveBeenCalled();
+            expect(el.textContent).toContain('The party has no zone set');
+        }
+    });
+
+    test('a roster older than the login record does not reject it', async () => {
+        game.partyInfoSource = 'login';
+        game.partyInfoReceivedAt = 2000;
+        game.battleRoster = { members: [{ characterID: 'me', characterName: 'Milkman' }], updatedAt: 1000 };
+        const { editor, onResetToParty } = setup(partyInfo({ tier: 1 }));
+        await editor.resetToParty({ fromButton: true });
+        expect(onResetToParty).toHaveBeenCalledWith({ zoneHrid: ZONE, tier: 1 });
     });
 
     test('a fresh party_updated still wins over what the queue holds', async () => {

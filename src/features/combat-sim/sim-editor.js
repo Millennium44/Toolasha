@@ -1932,7 +1932,10 @@ export class SimEditor {
             .sort()
             .join(',');
         const roster = dataManager.battlePartyRoster?.members;
-        if (slotIds && roster?.length) {
+        // Only a roster at least as new as the login record can say it moved on (as getPartyMembers decides)
+        const receivedAt = Number.isFinite(dataManager.partyInfoReceivedAt) ? dataManager.partyInfoReceivedAt : null;
+        const rosterIsNewer = receivedAt === null || dataManager.battlePartyRoster?.updatedAt >= receivedAt;
+        if (slotIds && roster?.length && rosterIsNewer) {
             const rosterIds = roster
                 .map((member) => String(member.characterID))
                 .sort()
@@ -1968,7 +1971,9 @@ export class SimEditor {
             const tier = Number(party.difficultyTier);
             return { zone: { zoneHrid, tier: Number.isInteger(tier) && tier >= 0 ? tier : 0 }, note: '' };
         }
-        const running = runningCombatAction(dataManager.getCurrentActions?.() || []);
+        // A party still forming is not in any fight: a running combat action is then this character's own solo one
+        const fighting = party.status === 'battling' || slots.length === 0;
+        const running = fighting ? runningCombatAction(dataManager.getCurrentActions?.() || []) : null;
         if (running) {
             const tier = Number(running.difficultyTier);
             return {
