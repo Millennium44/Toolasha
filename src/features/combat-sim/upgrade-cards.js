@@ -283,10 +283,13 @@ export function buildUpgradeCards({
     let kept = 0;
     const cards = [];
     const rankable = entries.filter((e) => !e.baseline).length;
+    const foldedTotal = entries.filter((e) => !e.baseline && e.folded).length;
     entries.forEach((entry, index) => {
         const n = seen.get(entry.key) || 0;
         seen.set(entry.key, n + 1);
         const id = `${section}:${entry.key}${n ? `#${n}` : ''}`;
+        // A folded entry (see upgrade-fold.js) is the section's "+N more": drawn, and numbered, only under Show all
+        if (!entry.baseline && !showAll && entry.folded) return;
         if (!entry.baseline) rank += 1;
         if (!entry.baseline && !showAll && ++kept > top) return;
 
@@ -342,7 +345,8 @@ export function buildUpgradeCards({
         top,
         total: rankable,
         shown: cards.filter((c) => !c.baseline).length,
-        canToggle: rankable > top,
+        canToggle: rankable > top || foldedTotal > 0,
+        folded: foldedTotal,
         showAll: Boolean(showAll),
         glossary: sectionGlossary(cards),
         cards,
@@ -610,7 +614,7 @@ export function upgradeCardsHtml(
     if (model.total) {
         bar += `<span class="mwi-ucards-count">${
             model.showAll || !model.canToggle ? `All ${model.total}` : `Top ${model.shown} of ${model.total}`
-        }</span>`;
+        }${model.folded && !model.showAll ? `, ${model.folded} folded` : ''}</span>`;
     }
     const glossary = model.glossary?.length ? glossaryHtml(model.section, model.glossary, glossaryOpen) : '';
     const body = model.cards.length

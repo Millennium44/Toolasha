@@ -110,6 +110,17 @@ describe('topUpgradeTexts', () => {
         ]);
     });
 
+    test('a cheaper coffee swap, which the Score ranks at 0, is never named as a top upgrade', () => {
+        const cheaper = row('Ultra Melee Coffee → Defense Coffee', 0, {
+            candidate: { description: 'Ultra Melee Coffee → Defense Coffee', type: 'drink' },
+            cost: 0,
+            deltas: { dps: -17.4 },
+        });
+        expect(topUpgradeTexts({ results: [cheaper, row('Ring', 30)] })).toEqual([
+            'Top upgrade: Ring (score 30, +3.1% DPS)',
+        ]);
+    });
+
     test('leaves out unpriced, combat-level, ability-order and unscored rows, and a flat DPS change', () => {
         const texts = topUpgradeTexts({
             results: [

@@ -2226,6 +2226,136 @@ describe('the panel', () => {
         });
     });
 
+    describe('drink swaps fold behind +N more', () => {
+        const NOISY = { dps: false, xp: false, profit: false, encounters: false, deaths: false };
+        /** A swap of the worn Ultra Melee Coffee in `slot`. `sig` names the deltas that cleared their error bar */
+        const swap = (name, { slot = 0, deltas = {}, sig = {}, gain = 0 } = {}) => {
+            const r = row(`Ultra Melee Coffee → ${name}`, { cost: 0, type: 'drink', profitGain: gain });
+            r.candidate = {
+                ...r.candidate,
+                currentHrid: '/items/ultra_melee_coffee',
+                upgradeHrid: `/items/${name}`,
+                drinkIndex: slot,
+            };
+            r.deltas = { dps: 0, xp: 0, profit: 0, deaths: 0, encounters: 0, ...deltas };
+            r.goldPer = { dps: Infinity, xp: Infinity, profit: Infinity, deaths: Infinity, encounters: Infinity };
+            r.noise = { dps: 1, xp: 1, profit: 1, encounters: 1, deaths: 1 };
+            r.significantBy = { ...NOISY, ...sig };
+            r.significant = Boolean(sig.dps || sig.xp || sig.profit);
+            return r;
+        };
+        const lose = (name, slot = 0) =>
+            swap(name, { slot, deltas: { dps: -10 - name.length / 100 }, sig: { dps: true } });
+        const draw = (rows) => {
+            ui._upgradeBudget = 0;
+            ui._upgradeSort = undefined;
+            ui._foldOpen = new Set();
+            ui._viewChoices = { wide: 'table', narrow: 'table' };
+            return ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
+        };
+        const container = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+        const drawn = () => [...container().querySelectorAll('tr[data-upgrade-row]')].map((tr) => tr.textContent);
+        const toggles = () => [...container().querySelectorAll('[data-fold-toggle]')];
+
+        test('keeps the best three per slot and folds the rest into +N more', () => {
+            draw([...'ABCDEFGH'].map((n) => lose(`Coffee ${n}`)));
+            expect(drawn()).toHaveLength(3);
+            expect(toggles()).toHaveLength(1);
+            expect(toggles()[0].textContent).toBe('+5 more');
+            expect(container().textContent).toContain('5 folded');
+            toggles()[0].click();
+            expect(drawn()).toHaveLength(8);
+            expect(toggles()[0].textContent).toBe('Hide');
+            toggles()[0].click();
+            expect(drawn()).toHaveLength(3);
+        });
+
+        test('each slot folds on its own', () => {
+            draw([...'ABCDE'].map((n) => lose(`Coffee ${n}`, 0)).concat([...'ABCDE'].map((n) => lose(`Tea ${n}`, 1))));
+            expect(drawn()).toHaveLength(6);
+            expect(toggles().map((b) => b.textContent)).toEqual(['+2 more', '+2 more']);
+        });
+
+        test('a replacement that clears the noise as an improvement is never folded, even ranked 4th', () => {
+            const rows = [...'ABCDEFGH'].map((n) => lose(`Coffee ${n}`));
+            rows[3] = swap('Real gain', { deltas: { dps: 2 }, sig: { dps: true } });
+            draw(rows);
+            expect(drawn().some((t) => t.includes('Real gain'))).toBe(true);
+            expect(drawn().length).toBeGreaterThanOrEqual(4);
+        });
+
+        test('three or fewer in a slot draw no +N more', () => {
+            draw([...'ABC'].map((n) => lose(`Coffee ${n}`)));
+            expect(toggles()).toHaveLength(0);
+            expect(drawn()).toHaveLength(3);
+        });
+
+        test('a pinned row stays on screen while folded siblings do not', () => {
+            const rows = [...'ABCDEFGH'].map((n) => lose(`Coffee ${n}`));
+            ui._budgetConstraints().pins.set(candidateKey(rows[6]), rows[6].candidate.description);
+            draw(rows);
+            expect(drawn().some((t) => t.includes('Coffee G'))).toBe(true);
+            expect(drawn().some((t) => t.includes('Coffee H'))).toBe(false);
+            ui._clearBudgetConstraints();
+        });
+
+        test('a cheaper swap says what it saves and what it costs, and is not ranked', () => {
+            const cheaper = swap('Defense Coffee', {
+                deltas: { dps: -17.4, profit: 2 },
+                sig: { dps: true, profit: true },
+                gain: 80_000,
+            });
+            draw([cheaper, lose('Coffee B')]);
+            const note = container().querySelector('[data-cheaper-swap]');
+            expect(note.textContent).toMatch(/^saves 80\.0?K\/hr, costs 17\.4% DPS$/);
+            expect(cheaper.score).toBe(0);
+        });
+
+        test('cards: folded swaps wait behind Show all, the same ones the table folds', () => {
+            const rows = [...'ABCDEFGH'].map((n) => lose(`Coffee ${n}`));
+            draw(rows);
+            ui._viewChoices = { wide: 'cards', narrow: 'cards' };
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            const cards = () => container().querySelectorAll('[data-upgrade-cards="gold"] [data-card-id]');
+            expect(cards()).toHaveLength(3);
+            expect(container().textContent).toContain('5 folded');
+            container().querySelector('[data-card-showall="gold"]').click();
+            expect(cards()).toHaveLength(8);
+        });
+
+        test('the CSV exports every row, says which were folded and carries the cheaper-swap note', () => {
+            const rows = [...'ABCDEFGH'].map((n) => lose(`Coffee ${n}`));
+            rows[7] = swap('Defense Coffee', {
+                deltas: { dps: -17.4, profit: 2 },
+                sig: { dps: true, profit: true },
+                gain: 80_000,
+            });
+            const exported = [];
+            const original = ui._addCsvExport.bind(ui);
+            vi.spyOn(ui, '_addCsvExport').mockImplementation((c, stem, build) => {
+                exported.push(build);
+                return original(c, stem, build);
+            });
+            draw(rows);
+            const sheet = exported[exported.length - 1]();
+            expect(sheet.rows).toHaveLength(8);
+            expect(sheet.rows.filter((r) => r.folded === 'yes')).toHaveLength(5);
+            expect(sheet.rows.find((r) => r.upgrade.includes('Defense')).tradeNote).toContain('saves');
+            expect(sheet.columns.map((c) => c.key)).toEqual(expect.arrayContaining(['folded', 'tradeNote']));
+        });
+
+        test('the budget plan is fed every row, folded or not', () => {
+            const rows = [...'ABCDEFGH'].map((n) => lose(`Coffee ${n}`));
+            rows[6] = swap('Coffee G', { deltas: { dps: 3 }, sig: { dps: true }, gain: 500 });
+            ui._upgradeBudget = 1_000_000;
+            ui._viewChoices = { wide: 'table', narrow: 'table' };
+            ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
+            expect(ui._lastBudgetPlan.picks.length).toBeGreaterThan(0);
+            expect(ui._lastBudgetPlan.picks.some((p) => p.candidate.description.includes('Coffee G'))).toBe(true);
+            ui._upgradeBudget = 0;
+        });
+    });
+
     describe('the Ability order section', () => {
         /** An ability_order row: free, with its own measured gains and a noise of `se` percent */
         const orderRow = (
@@ -2321,6 +2451,7 @@ describe('the panel', () => {
 
         test('EPH within-noise uses the EPH noise, not the DPS noise', () => {
             ui._abilityOrderRank = 'eph';
+            ui._abilityOrderShowAll = true; // the within-noise order is folded by default
             draw([
                 orderRow('A → B', { ephPct: 2, se: 0.1, ephSe: 50, sig: false }),
                 orderRow('C → D', { ephPct: 2, se: 50, ephSe: 0.1 }),
@@ -2331,6 +2462,7 @@ describe('the panel', () => {
         });
 
         test('the current order is a marked baseline row and a noisy gain says within noise', () => {
+            ui._abilityOrderShowAll = true; // the noisy order is folded by default
             draw([orderRow('A → B', { profit: 20, se: 50, sig: false }), orderRow('C → D', { profit: 900, se: 1 })]);
             expect(section().querySelector('[data-order-current]').textContent).toContain('current');
             const rows = [...section().querySelectorAll('[data-order-row]')];
@@ -2338,17 +2470,37 @@ describe('the panel', () => {
             expect(rows.find((r) => r.textContent.includes('C → D')).textContent).not.toContain('within noise');
         });
 
-        test('top five plus the current row, with Show all N, and the choice survives a redraw', () => {
-            const orders = [1, 2, 3, 4, 5, 6, 7].map((i) => orderRow(`X${i} → Y${i}`, { profit: i * 100 }));
-            draw(orders);
-            expect(section().querySelectorAll('[data-order-row]')).toHaveLength(5);
+        test('only the orders that clear the noise show, the rest fold behind +N more, and the choice survives a redraw', () => {
+            const clear = [1, 2].map((i) => orderRow(`X${i} → Y${i}`, { profit: i * 100 }));
+            const noisy = [3, 4, 5, 6, 7].map((i) =>
+                orderRow(`X${i} → Y${i}`, { profit: i * 100, se: 900, sig: false })
+            );
+            draw([...clear, ...noisy]);
+            expect(section().querySelectorAll('[data-order-row]')).toHaveLength(2);
             expect(section().querySelectorAll('[data-order-current]')).toHaveLength(1);
             const button = section().querySelector('#mwi-csim-order-showall');
-            expect(button.textContent).toBe('Show all 7');
+            expect(button.textContent).toBe('+5 more');
             button.click();
             expect(section().querySelectorAll('[data-order-row]')).toHaveLength(7);
             ui._renderUpgradeResults(ui._upgradeResultsData);
             expect(section().querySelectorAll('[data-order-row]')).toHaveLength(7);
+        });
+
+        test('no order clears the noise: the top three by the ranked metric show, the rest fold', () => {
+            const orders = [1, 2, 3, 4, 5, 6].map((i) =>
+                orderRow(`X${i} → Y${i}`, { profit: i * 100, se: 900, sig: false })
+            );
+            draw(orders);
+            const shown = [...section().querySelectorAll('[data-order-row]')].map((r) => r.children[0].textContent);
+            expect(shown).toHaveLength(3);
+            expect(shown[0]).toContain('X6 → Y6');
+            expect(section().querySelector('#mwi-csim-order-showall').textContent).toBe('+3 more');
+        });
+
+        test('three or fewer orders fold nothing and draw no +N more button', () => {
+            draw([1, 2, 3].map((i) => orderRow(`X${i} → Y${i}`, { profit: i * 100, se: 900, sig: false })));
+            expect(section().querySelectorAll('[data-order-row]')).toHaveLength(3);
+            expect(section().querySelector('#mwi-csim-order-showall')).toBeNull();
         });
 
         test('the section minimizes and everything persists and restores', async () => {
@@ -2426,6 +2578,7 @@ describe('the panel', () => {
             };
 
             test('the section labels a small gain within noise and a large one not', () => {
+                ui._abilityOrderShowAll = true; // the small gain is folded by default
                 draw([be('A → B', 5_000), be('C → D', 2_000_000)], { baseline: BREAKEVEN });
                 const rows = [...section().querySelectorAll('[data-order-row]')];
                 expect(rows.find((r) => r.textContent.includes('A → B')).textContent).toContain('within noise');
@@ -2463,6 +2616,7 @@ describe('the panel', () => {
 
             test('the section: a deaths-only gain within deaths noise is within noise, a real dps gain is not', () => {
                 ui._abilityOrderRank = 'balanced';
+                ui._abilityOrderShowAll = true; // the deaths-only order is folded by default
                 draw([fewerDeaths(), realDps()], { baseline: DEADLY });
                 expect(rowText('A → B')).toContain('within noise');
                 expect(rowText('C → D')).not.toContain('within noise');
@@ -2485,7 +2639,10 @@ describe('the panel', () => {
             ui._collapsedSections = { abilityOrder: true };
             ui._renderUpgradeResults(ui._upgradeResultsData);
             expect(section().querySelector('[data-collapse-summary]').textContent).toBe('best +300 Profit/hr');
-            // every measured row stays displayed in rank order
+            // the noisy top is folded; it is still one press away, in rank order
+            expect(names()[0]).toContain('B → A');
+            expect(names().join()).not.toContain('A → B');
+            section().querySelector('#mwi-csim-order-showall').click();
             expect(names()[0]).toContain('A → B');
         });
 
@@ -19296,7 +19453,8 @@ describe('upgrade results as cards', () => {
             expect(stateOf(baseline)).toBe('Baseline');
             expect(baseline.querySelector('[data-card-verify]')).toBeNull();
             const ranked = cards.filter((c) => !c.hasAttribute('data-card-baseline'));
-            expect(ranked.map((c) => c.querySelector('.mwi-ucard-rank').textContent)).toEqual(['#1', '#2', '#3']);
+            // E → F is within noise, so it is folded in both views
+            expect(ranked.map((c) => c.querySelector('.mwi-ucard-rank').textContent)).toEqual(['#1', '#2']);
             const fromCards = names();
             showTable();
             expect(tableNames().map(stem)).toEqual(fromCards.map(stem));
@@ -19316,16 +19474,22 @@ describe('upgrade results as cards', () => {
             el.dispatchEvent(new Event('change', { bubbles: true }));
             expect(names()[0]).toContain('A → B');
             expect(cardsOf('order')[0].querySelector('.mwi-ucard-gain .mwi-ucard-fl').textContent).toBe('DPS');
+            // the noisy order is folded until the section's +N more is pressed
+            expect(cardsOf('order').some((c) => c.textContent.includes('E → F'))).toBe(false);
+            container().querySelector('#mwi-csim-order-showall').click();
             const noisy = cardsOf('order').find((c) => c.textContent.includes('E → F'));
             expect(noisy.querySelector('.mwi-ucard-within')).toBeTruthy();
         });
 
-        test("Show all keeps the table's rule of five", () => {
-            const orders = Array.from({ length: 7 }, (_, i) => orderRow(`X${i} → Y${i}`, { profit: 100 * (i + 1) }));
-            draw({}, orders);
+        test("+N more keeps the table's rule: orders that clear the noise show, the rest fold", () => {
+            const clear = Array.from({ length: 2 }, (_, i) => orderRow(`X${i} → Y${i}`, { profit: 100 * (i + 1) }));
+            const noisy = Array.from({ length: 5 }, (_, i) =>
+                orderRow(`N${i} → M${i}`, { profit: 10 * (i + 1), se: 900, sig: false })
+            );
+            draw({}, [...clear, ...noisy]);
             showCards();
-            // five ranked orders and the baseline
-            expect(cardsOf('order')).toHaveLength(6);
+            // two clearing orders and the baseline
+            expect(cardsOf('order')).toHaveLength(3);
             container().querySelector('#mwi-csim-order-showall').click();
             expect(cardsOf('order')).toHaveLength(8);
         });

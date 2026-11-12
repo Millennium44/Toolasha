@@ -34,6 +34,7 @@ import {
 import { runSimulation, runLabyrinthSimulation, getMaxWorkers } from './combat-sim-runner.js';
 import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
+import { isCheaperSwap } from './upgrade-fold.js';
 import { generateLabArmorCandidates, getWeaponStyleFamily, labelItemWithLevel } from './lab-armor-candidates.js';
 import { buildGuidePlan } from './build-guide.js';
 import {
@@ -2318,6 +2319,51 @@ export function slotWarnings(playerDTO, gameData) {
 }
 
 /**
+ * Which drink buffs this build can use, so the advisor does not simulate a coffee that cannot change the fight:
+ * a Magic or Ranged coffee for a melee-only build produced the same -17% as any other coffee that merely
+ * replaced a good one, one row per tier per slot. A level buff counts only when the weapon's style, or an
+ * equipped ability's damage style, reads that level (engine/combat-unit.js: melee, ranged and magic damage each
+ * use their own level). Intelligence counts when any equipped ability costs mana, and cast speed when any ability
+ * is equipped. Anything the data cannot settle (no weapon, an ability missing from the game data) is kept.
+ * @param {Object} playerDTO - Player DTO
+ * @param {Object} gameData - Game data payload
+ * @returns {(buffType: string) => boolean}
+ */
+export function drinkBuffUsability(playerDTO, gameData) {
+    const weapon = getPlayerCombatStyle(playerDTO || {}, gameData || { itemDetailMap: {} });
+    const abilities = (Array.isArray(playerDTO?.abilities) ? playerDTO.abilities : []).filter((a) => a?.hrid);
+    const details = abilities.map((a) => gameData?.abilityDetailMap?.[a.hrid]);
+    const known = weapon !== 'unknown' && details.every(Boolean);
+    if (!known) return () => true;
+
+    const styles = new Set([weapon]);
+    for (const detail of details) {
+        for (const effect of detail.abilityEffects || []) {
+            if (effect.combatStyleHrid) styles.add(effect.combatStyleHrid.split('/').pop());
+        }
+    }
+    const melee = ['stab', 'slash', 'smash'];
+    const usesMelee = melee.some((style) => styles.has(style));
+    const usesMana = details.some((detail) => !Number.isFinite(detail.manaCost) || detail.manaCost > 0);
+    return (type) => {
+        switch (type) {
+            case '/buff_types/ranged_level':
+                return styles.has('ranged');
+            case '/buff_types/magic_level':
+                return styles.has('magic');
+            case '/buff_types/melee_level':
+                return usesMelee;
+            case '/buff_types/intelligence_level':
+                return usesMana;
+            case '/buff_types/cast_speed':
+                return details.length > 0;
+            default:
+                return true;
+        }
+    };
+}
+
+/**
  * Compare one drink-slot change at a time, including cross-family swaps and every available tier.
  * Lower tiers can win on net profit, so item level alone never removes one. This is a linear single-slot
  * search, not an exhaustive search of three-drink combinations; Confirm together measures a chosen basket.
@@ -2338,7 +2384,9 @@ export function generateDrinkCandidates(playerDTO, gameData) {
     // The engine applies these seven buffs before rebuilding combat stats. Keep this drink-specific so the
     // house/shrine relevance rules do not change along with a coffee search.
     const levelBuffs = new Set(COMBAT_LEVEL_SKILLS.map(({ key }) => `/buff_types/${key.replace('Level', '_level')}`));
-    const relevant = (entry) => entry.buffTypes.some((type) => COMBAT_BUFF_TYPES.has(type) || levelBuffs.has(type));
+    const usable = drinkBuffUsability(playerDTO, gameData);
+    const relevant = (entry) =>
+        entry.buffTypes.some((type) => (COMBAT_BUFF_TYPES.has(type) || levelBuffs.has(type)) && usable(type));
     const entries = new Map([...pools.values()].flat().map((entry) => [entry.hrid, entry]));
     const drinks = Array.isArray(playerDTO?.drinks) ? playerDTO.drinks : [];
     const capacity = drinkCapacity(playerDTO, gameData);
@@ -6897,7 +6945,14 @@ export const SCORE_METRICS = [
     { key: 'xp', label: 'Gold/0.01% EXP', lowerIsBetter: true, value: (r) => r.goldPer?.xp },
     { key: 'profit', label: 'Gold/0.01% Profit', lowerIsBetter: true, value: (r) => r.goldPer?.profit },
     { key: 'encounters', label: 'Gold/0.01% EPH', lowerIsBetter: true, value: (r) => r.goldPer?.encounters },
-    { key: 'deaths', label: 'Gold/0.01% DPH', lowerIsBetter: true, value: (r) => r.goldPer?.deaths },
+    {
+        key: 'deaths',
+        label: 'Gold/0.01% DPH',
+        lowerIsBetter: true,
+        // A deaths change inside its Poisson error bar is a count of one or two deaths, not a measurement: it
+        // scores nothing. A row with no verdict (an older run) keeps the figure it had.
+        value: (r) => (r.significantBy?.deaths === false ? Infinity : r.goldPer?.deaths),
+    },
     { key: 'repay', label: 'Repay time', lowerIsBetter: true, value: (r) => r.economics?.repayHours },
     { key: 'roi', label: 'ROI (1yr)', lowerIsBetter: false, value: (r) => r.economics?.roiAnnualPct },
 ];
@@ -6954,14 +7009,16 @@ export function assignRankScores(results, options = {}) {
         delete row.scoreParts;
         row.score = 0;
     }
+    // A cheaper-coffee swap is a trade, not an upgrade: it scores 0 and takes no placing from a real one
+    const ranked = results.filter((row) => !isCheaperSwap(row));
 
     for (const metric of metrics) {
-        const ladder = [...new Set(results.map(metric.value).filter((v) => Number.isFinite(v)))]
+        const ladder = [...new Set(ranked.map(metric.value).filter((v) => Number.isFinite(v)))]
             .sort((a, b) => (metric.lowerIsBetter ? a - b : b - a))
             .slice(0, places);
         if (!ladder.length) continue;
 
-        for (const row of results) {
+        for (const row of ranked) {
             const index = ladder.indexOf(metric.value(row));
             if (index === -1) continue;
             row.rankPoints[metric.key] = { label: metric.label, place: index + 1, points: places - index };
@@ -7070,19 +7127,21 @@ export function assignScores(results, options = {}) {
         delete row.rankPoints;
         row.score = 0;
     }
+    // A cheaper-coffee swap is a trade, not an upgrade: it scores 0 and is not what the others are measured against
+    const ranked = results.filter((row) => !isCheaperSwap(row));
 
     let counted = 0;
     for (const metric of metrics) {
-        const column = percentOfBest(results.map(metric.value), metric.lowerIsBetter);
+        const column = percentOfBest(ranked.map(metric.value), metric.lowerIsBetter);
         if (!column) continue;
         counted++;
-        results.forEach((row, i) => {
+        ranked.forEach((row, i) => {
             row.scoreParts[metric.key] = { label: metric.label, ...column[i] };
             row.score += column[i].pct;
         });
     }
 
-    if (counted) for (const row of results) row.score /= counted;
+    if (counted) for (const row of ranked) row.score /= counted;
     return results;
 }
 

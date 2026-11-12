@@ -56,6 +56,14 @@ import {
     signTone,
     figure,
 } from './upgrade-cards.js';
+import {
+    FOLD_KEEP,
+    cheaperSwapTrade,
+    foldGroupOf,
+    isCheaperSwap,
+    orderEntriesToShow,
+    planFold,
+} from './upgrade-fold.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
@@ -380,7 +388,6 @@ export function balancedScoreNoise(row, baseline) {
     return Math.sqrt(rate * rate + deathPoints * deathPoints);
 }
 /** Orders shown before "Show all" */
-const ABILITY_ORDER_TOP = 5;
 /** The panel field holding each Upgrade section's sort, which a card's Rank by writes (the table's header click writes the same) */
 const CARD_SORT_STATE = {
     gold: '_upgradeSort',
@@ -1275,6 +1282,19 @@ export function resimSummaryText(resim) {
 const ROW_NOTE_STYLE = 'font-size:9px; margin-left:4px; padding:0 3px; border-radius:2px; vertical-align:middle;';
 
 /**
+ * What a cheaper coffee swap trades, in the row's own words: "saves 80.8K/hr, costs 17.4% DPS".
+ * @param {Object} result - A row for which `isCheaperSwap` is true
+ * @returns {string}
+ */
+export function cheaperSwapText(result) {
+    const { saves, dpsPct, xpPct } = cheaperSwapTrade(result);
+    const costs = [];
+    if (dpsPct !== null) costs.push(`${dpsPct.toFixed(1)}% DPS`);
+    if (xpPct !== null) costs.push(`${xpPct.toFixed(1)}% EXP`);
+    return `saves ${formatKMB(Math.round(saves))}/hr, costs ${costs.join(' and ')}`;
+}
+
+/**
  * The qualifiers a row cannot be read correctly without.
  *
  * Both of them were previously invisible or buried in a tab tooltip:
@@ -1343,6 +1363,14 @@ export function upgradeRowNotesHtml(result) {
     if (candidate.caveat) {
         notes.push(
             `<span title="${candidate.caveat}" style="${ROW_NOTE_STYLE} background:${GAME_COLORS.raisedMore}; color:#8ab4f8;">on task</span>`
+        );
+    }
+
+    // A coffee swap that earns its profit by being cheaper, at the cost of power: said on the row, and not ranked
+    if (isCheaperSwap(result)) {
+        const text = cheaperSwapText(result);
+        notes.push(
+            `<span data-cheaper-swap title="${escapeAttribute(`${text}. The coffee is cheaper, so the profit rises, but the fight gets worse beyond the sampling error. Not ranked by Score.`)}" style="${ROW_NOTE_STYLE} background:rgba(232,168,124,0.18); color:#e8a87c;">${escapeAttribute(text)}</span>`
         );
     }
 
@@ -3916,6 +3944,9 @@ class CombatSimUI {
         this._viewChoices = normalizeViewChoices(null);
         this._openCards = new Set();
         this._cardShowAll = new Set();
+        this._foldOpen = new Set();
+        this._foldedRows = null;
+        this._orderFolded = null;
         this._openGlossaries = new Set();
         this._cardRegistry = new Map();
         this._cardPending = null;
@@ -11486,6 +11517,9 @@ class CombatSimUI {
         this._unwatchNarrowWindow();
         this._openCards = new Set();
         this._cardShowAll = new Set();
+        this._foldOpen = new Set();
+        this._foldedRows = null;
+        this._orderFolded = null;
         this._openGlossaries = new Set();
         this._cardRegistry = new Map();
         this._cardPending = null;
@@ -15187,10 +15221,31 @@ class CombatSimUI {
             best.set(c.key, winner);
         }
 
+        // Rows folded behind a "+N more" line, per drink slot. Display only: `sorted` keeps every row, so the row
+        // numbers, Verify, the planner, Pin and Exclude, the CSV and Copy for chat see the whole list. A pinned,
+        // excluded or verified row stays, so does anything that clears the noise as an improvement.
+        const verdictsForFold = this._verifyEntries(
+            this._upgradeResultsData,
+            this._goldVerifyMetric(column.key).metric
+        );
+        const { pins: foldPins, excludes: foldExcludes } = this._budgetConstraints();
+        const foldPlan = planFold(sorted, {
+            isProtected: (r) =>
+                foldPins.has(candidateKey(r)) ||
+                foldExcludes.has(candidateKey(r)) ||
+                Boolean(verdictsForFold[verifyKeyOf(r)]),
+        });
+        this._foldedRows = foldPlan.folded;
+        const foldOpen = this._foldOpen || (this._foldOpen = new Set());
+        const isHidden = (r) => foldPlan.folded.has(r) && !foldOpen.has(foldGroupOf(r));
+        const foldedCount = foldPlan.folded.size;
+
         const goldHead = collapseHeaderHtml({
             key: 'gold',
             title: 'Upgrades',
-            summary: `${rows.length} candidate${rows.length === 1 ? '' : 's'}`,
+            summary:
+                `${rows.length} candidate${rows.length === 1 ? '' : 's'}` +
+                (foldedCount ? `, ${foldedCount} folded` : ''),
             style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:6px;`,
         });
         // Verify measures one metric: the sort column's when it is one of the four, else profit. Chips show only
@@ -15212,7 +15267,7 @@ class CombatSimUI {
             `<div style="display:flex; align-items:center; flex-wrap:wrap; column-gap:10px;">${goldHead}` +
             `${this._renderUpgradeColumnMenu()}${verifyBar}<div style="flex:1 1 100%; min-width:0;">`;
         if (this._upgradeView() === 'cards') {
-            return `${head}${this._goldCards({ sorted, baseline, allColumns, column, verifyInfo, verdicts })}</div></div>`;
+            return `${head}${this._goldCards({ sorted, baseline, allColumns, column, verifyInfo, verdicts, foldPlan })}</div></div>`;
         }
         let html = `${head}
         <div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:10px;">
@@ -15227,7 +15282,34 @@ class CombatSimUI {
         html += `<th style="${thBase} text-align:left; cursor:default;" title="Re-measured on fresh seeds (${verifyInfo.label})">Verify</th>`;
         html += '</tr></thead><tbody>';
 
+        // The last row drawn of each fold group is where its "+N more" line goes
+        const lastDrawn = new Map();
         sorted.forEach((r, i) => {
+            const group = foldGroupOf(r);
+            if (group !== null && !isHidden(r)) lastDrawn.set(group, i);
+        });
+        const foldLine = (group, r) => {
+            const info = foldPlan.groups.get(group);
+            if (!info?.folded.length) return '';
+            const open = foldOpen.has(group);
+            const slot =
+                group === 'drink-add'
+                    ? 'coffees to add'
+                    : `swaps for ${String(r.candidate.description).split(' \u2192 ')[0]}`;
+            return (
+                `<tr data-fold-row><td colspan="${columns.length + 1}" style="${tdBase} text-align:left; color:${GAME_COLORS.textDim};">` +
+                `<button type="button" data-fold-toggle="${escapeAttribute(group)}" aria-expanded="${open}" ` +
+                `style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; border-radius:3px; ` +
+                `padding:0 6px; font-size:10px; cursor:pointer; font-family:inherit;" ` +
+                `title="Kept in the analysis, the CSV and the budget plan; folded only here. Anything that clears the noise as an improvement is never folded.">` +
+                `${open ? 'Hide' : `+${info.folded.length} more`}</button> ` +
+                `${open ? `${info.folded.length} folded ${escapeAttribute(slot)} shown` : `${escapeAttribute(slot)}, ranked below the best ${FOLD_KEEP}`}` +
+                `</td></tr>`
+            );
+        };
+
+        sorted.forEach((r, i) => {
+            if (isHidden(r)) return;
             const rowColor = r.deltas.dps > 0 || r.deltas.profit > 0 ? '#e0e0e0' : '#888';
             const rowKey = upgradeRowKey(r);
 
@@ -15258,6 +15340,8 @@ class CombatSimUI {
                     ${this._renderUpgradeDetailCells(r, baseline)}</div>
                 </td>
             </tr>`;
+            const group = foldGroupOf(r);
+            if (group !== null && lastDrawn.get(group) === i) html += foldLine(group, r);
         });
 
         return html + '</tbody></table></div></div></div>';
@@ -17595,12 +17679,15 @@ class CombatSimUI {
         const entries = [...measured, { current: true, gain: 0 }].sort(
             (a, b) => b.gain - a.gain || (a.current ? -1 : 1)
         );
-        const shown = this._abilityOrderShowAll
-            ? entries
-            : (() => {
-                  let kept = 0;
-                  return entries.filter((e) => e.current || ++kept <= ABILITY_ORDER_TOP);
-              })();
+        // Only the orders that clear the noise as an improvement show (the first few by the ranked metric when none
+        // does); the rest fold behind "+N more". A confirmed verify keeps its order on screen.
+        const orderShown = orderEntriesToShow(measured, {
+            isConfirmed: (row) => verdictOf(row)?.verdict === 'confirmed',
+        });
+        const orderFolded = measured.filter((e) => !orderShown.has(e));
+        this._orderFolded = new Set(orderFolded.map((e) => e.r));
+        for (const e of entries) e.folded = !e.current && !orderShown.has(e);
+        const shown = this._abilityOrderShowAll ? entries : entries.filter((e) => !e.folded);
 
         const td =
             'padding:3px 6px; border-bottom:1px solid ' +
@@ -17670,12 +17757,12 @@ class CombatSimUI {
                   `<th style="${th} text-align:left;">Order</th><th style="${th}">ΔProfit/hr</th><th style="${th}">ΔEXP/hr</th>` +
                   `<th style="${th}">ΔDPS</th><th style="${th}">ΔEPH</th><th style="${th}">ΔDeaths/hr</th><th style="${th}">Noise</th></tr></thead>` +
                   `<tbody>${rowsHtml}</tbody></table></div>`;
-        const toggle =
-            total > ABILITY_ORDER_TOP
-                ? `<button id="mwi-csim-order-showall" style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; ` +
-                  `border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; margin-top:6px;">` +
-                  `${this._abilityOrderShowAll ? `Show top ${ABILITY_ORDER_TOP}` : `Show all ${total}`}</button>`
-                : '';
+        const toggle = orderFolded.length
+            ? `<button id="mwi-csim-order-showall" style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; ` +
+              `border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; margin-top:6px;" ` +
+              `title="Orders that do not clear the noise as an improvement are folded here; they are all in the CSV.">` +
+              `${this._abilityOrderShowAll ? 'Hide the rest' : `+${orderFolded.length} more`}</button>`
+            : '';
         return card(
             head(summary) +
                 `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">Every order of your ordinary abilities, simulated. ` +
@@ -17759,6 +17846,9 @@ class CombatSimUI {
             this._cardNotes = null;
         }
         this._upgradeResultsData = results;
+        // Set by whichever tables draw, so the CSV says what the screen folded
+        this._foldedRows = null;
+        this._orderFolded = null;
         this._refreshAnalysisNote();
         // The analysis scores with the defaults; re-rank here so a saved score
         // selection applies to results that were computed before it was loaded
@@ -17934,6 +18024,7 @@ class CombatSimUI {
         wireUpgradeRowActions(container);
         this._wireAbilityOrder(container);
         this._wireCards(container);
+        this._wireFolds(container);
         this._enhanceCollapsibles(container);
 
         // Every measured figure, whatever the ⚙ menu is currently showing — the
@@ -17977,6 +18068,8 @@ class CombatSimUI {
                     { key: 'measured', label: 'Clears the noise' },
                     { key: 'costUnpriced', label: 'Unpriced running cost' },
                     { key: 'costUnpricedBaseline', label: 'Unpriced replaced drink' },
+                    { key: 'tradeNote', label: 'Cheaper swap' },
+                    { key: 'folded', label: 'Folded on screen' },
                 ],
                 // Infinity is not a number a spreadsheet can hold; blank says the
                 // same thing ("never repays") without pretending to be a measurement
@@ -18021,6 +18114,9 @@ class CombatSimUI {
                         // The items nothing priced: the profit columns of such a row are a ceiling
                         costUnpriced: (r.costUnpriced || []).join('; '),
                         costUnpricedBaseline: (r.costUnpricedBaseline || []).join('; '),
+                        tradeNote: isCheaperSwap(r) ? cheaperSwapText(r) : '',
+                        // Every row is exported; this says which the screen folded behind "+N more"
+                        folded: this._foldedRows?.has(r) || this._orderFolded?.has(r) ? 'yes' : '',
                     };
                 }),
             }),
@@ -18147,7 +18243,7 @@ class CombatSimUI {
         const model = buildUpgradeCards({
             section,
             entries,
-            top: isOrder ? ABILITY_ORDER_TOP : undefined,
+            top: isOrder ? Number.MAX_SAFE_INTEGER : undefined,
             showAll: isOrder ? Boolean(this._abilityOrderShowAll) : this._cardShowAll.has(section),
             open: this._openCards,
             remembered: this._isRememberedResults(results),
@@ -18177,7 +18273,7 @@ class CombatSimUI {
      * @returns {string} HTML
      * @private
      */
-    _goldCards({ sorted, baseline, allColumns, column, verifyInfo, verdicts }) {
+    _goldCards({ sorted, baseline, allColumns, column, verifyInfo, verdicts, foldPlan = null }) {
         const results = this._upgradeResultsData;
         const canVerify = this._canVerifyResults(results);
         const col = (key) => allColumns.find((c) => c.key === key);
@@ -18217,6 +18313,8 @@ class CombatSimUI {
             return {
                 row: r,
                 key: upgradeRowKey(r),
+                // Shown only under Show all, the cards' version of "+N more"
+                folded: Boolean(foldPlan?.folded.has(r)),
                 name: r.candidate.description,
                 nameHtml: simCandidateLabelHtml(r.candidate),
                 notesHtml: upgradeRowNotesHtml(r),
@@ -18509,6 +18607,7 @@ class CombatSimUI {
             return {
                 row: r,
                 key: upgradeRowKey(r),
+                folded: Boolean(e.folded),
                 name: nameOf(r),
                 headline: figure(rankLabel, fmtGain(e.gain), signTone(e.gain), ''),
                 within: e.within,
@@ -18540,6 +18639,23 @@ class CombatSimUI {
             section: 'order',
             entries: list,
             emptyText: 'No orders to show.',
+        });
+    }
+
+    /**
+     * Wire the "+N more" lines of the gold table. The open groups live on the panel, so a redraw keeps them.
+     * @param {HTMLElement} container - Upgrade results container
+     * @private
+     */
+    _wireFolds(container) {
+        container.querySelectorAll('[data-fold-toggle]').forEach((btn) => {
+            btn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const group = btn.getAttribute('data-fold-toggle');
+                if (this._foldOpen.has(group)) this._foldOpen.delete(group);
+                else this._foldOpen.add(group);
+                if (this._upgradeResultsData) this._renderUpgradeResults(this._upgradeResultsData);
+            });
         });
     }
 

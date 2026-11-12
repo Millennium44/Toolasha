@@ -11881,3 +11881,193 @@ describe('combat drink replacements and tier comparisons', () => {
         expect(candidates.every((candidate) => !candidateAppliesToDTO(candidate, player, gameData()))).toBe(true);
     });
 });
+
+describe('upgrade trims: Score and drink relevance', () => {
+    const NOISY = { dps: false, xp: false, profit: false, encounters: false, deaths: false };
+    const scored = (name, { goldPer, sig = {}, deltas = {}, swap = false, gain = 0 }) => ({
+        candidate: swap
+            ? { type: 'drink', description: name, currentHrid: '/items/ultra_melee_coffee', drinkIndex: 0 }
+            : { description: name },
+        goldPer: { dps: Infinity, xp: Infinity, profit: Infinity, encounters: Infinity, deaths: Infinity, ...goldPer },
+        economics: { repayHours: Infinity, profitGainPerHour: gain },
+        significantBy: { ...NOISY, ...sig },
+        deltas: { dps: 0, xp: 0, profit: 0, deaths: 0, encounters: 0, ...deltas },
+    });
+
+    describe('a deaths change counts toward Score only when it clears the noise', () => {
+        const rows = () => [
+            // deaths 0.06 -> 0.03/hr: a one or two death difference, inside its Poisson error
+            scored('noise deaths', { goldPer: { deaths: 0 }, deltas: { deaths: -50 }, sig: { deaths: false } }),
+            scored('real dps', { goldPer: { dps: 5 }, deltas: { dps: 2 }, sig: { dps: true } }),
+        ];
+
+        test('points scale: a noisy deaths drop earns nothing', () => {
+            const r = rows();
+            assignRankScores(r);
+            expect(r[0].score).toBe(0);
+            expect(r[0].rankPoints.deaths).toBeUndefined();
+            expect(r[1].score).toBeGreaterThan(0);
+        });
+
+        test('percent-of-best scale: a noisy deaths drop earns nothing', () => {
+            const r = rows();
+            assignScores(r);
+            // no row has a deaths figure left, so the column says nothing about anyone
+            expect(r[0].scoreParts.deaths).toBeUndefined();
+            expect(r[0].score).toBe(0);
+            expect(r[1].score).toBe(100);
+        });
+
+        test('a real deaths drop that clears the noise still scores', () => {
+            const r = [
+                scored('real deaths', { goldPer: { deaths: 0 }, deltas: { deaths: -80 }, sig: { deaths: true } }),
+                scored('other', { goldPer: { dps: 5 }, sig: { dps: true } }),
+            ];
+            assignRankScores(r);
+            expect(r[0].rankPoints.deaths).toMatchObject({ place: 1 });
+        });
+
+        test('a row from an older run, with no verdict, keeps the deaths figure it had', () => {
+            const r = [scored('old', { goldPer: { deaths: 0 } })];
+            delete r[0].significantBy;
+            assignRankScores(r);
+            expect(r[0].rankPoints.deaths).toMatchObject({ place: 1 });
+        });
+    });
+
+    describe('a cheaper coffee swap is not ranked as an upgrade', () => {
+        const cheaper = () =>
+            scored('Ultra Melee Coffee → Defense Coffee', {
+                swap: true,
+                gain: 80_000,
+                goldPer: { dps: Infinity, profit: 0 },
+                deltas: { dps: -17, profit: 2 },
+                sig: { dps: true, profit: true },
+            });
+        const real = () =>
+            scored('Ring', { goldPer: { dps: 50, profit: 50 }, deltas: { dps: 1, profit: 1 }, sig: { dps: true } });
+
+        test('it scores 0 and takes no placing from a real upgrade', () => {
+            const r = [cheaper(), real()];
+            assignRankScores(r);
+            expect(r[0].score).toBe(0);
+            expect(r[1].rankPoints.profit).toMatchObject({ place: 1, points: RANK_PLACES });
+        });
+
+        test('on the percent scale it does not become the column best the others are measured against', () => {
+            const r = [cheaper(), real()];
+            assignScores(r);
+            expect(r[0].score).toBe(0);
+            expect(r[1].scoreParts.profit.pct).toBe(100);
+        });
+
+        test('a swap that also improves something beyond noise stays ranked', () => {
+            const wisdom = scored('Ultra Melee Coffee → Wisdom Coffee', {
+                swap: true,
+                gain: 100,
+                goldPer: { xp: 0, profit: 0 },
+                deltas: { dps: -17, xp: 5, profit: 0.4 },
+                sig: { dps: true, xp: true },
+            });
+            const r = [wisdom, real()];
+            assignRankScores(r);
+            expect(r[0].score).toBeGreaterThan(0);
+        });
+    });
+
+    describe('drinks the build cannot use are not simulated', () => {
+        const SWORD = '/items/test_sword';
+        const buff = (type) => [{ uniqueHrid: `/buff_uniques/${type}`, typeHrid: `/buff_types/${type}` }];
+        const coffee = (hrid, name, type) => [
+            hrid,
+            {
+                name,
+                itemLevel: 20,
+                categoryHrid: '/item_categories/drink',
+                consumableDetail: {
+                    hitpointRestore: 0,
+                    manapointRestore: 0,
+                    cooldownDuration: 300,
+                    buffs: buff(type),
+                    defaultCombatTriggers: [{ dependencyHrid: '/combat_trigger_dependencies/self' }],
+                },
+            },
+        ];
+        const ability = (style, manaCost = 10) => ({
+            manaCost,
+            abilityEffects: [
+                { effectType: '/ability_effect_types/damage', combatStyleHrid: `/combat_styles/${style}` },
+            ],
+        });
+        const data = (weaponStats = { slashDamage: 10 }, abilities = { '/abilities/frenzy': ability('slash') }) => ({
+            abilityDetailMap: abilities,
+            itemDetailMap: {
+                [SWORD]: { name: 'Sword', equipmentDetail: { combatStats: weaponStats } },
+                ...Object.fromEntries([
+                    coffee('/items/ultra_melee_coffee', 'Ultra Melee Coffee', 'melee_level'),
+                    coffee('/items/magic_coffee', 'Magic Coffee', 'magic_level'),
+                    coffee('/items/ranged_coffee', 'Ranged Coffee', 'ranged_level'),
+                    coffee('/items/intelligence_coffee', 'Intelligence Coffee', 'intelligence_level'),
+                    coffee('/items/channeling_coffee', 'Channeling Coffee', 'cast_speed'),
+                    coffee('/items/wisdom_coffee', 'Wisdom Coffee', 'wisdom'),
+                    coffee('/items/lucky_coffee', 'Lucky Coffee', 'rare_find'),
+                    coffee('/items/defense_coffee', 'Defense Coffee', 'defense_level'),
+                ]),
+            },
+        });
+        const player = (abilities = ['/abilities/frenzy']) => ({
+            equipment: { '/equipment_types/main_hand': { hrid: SWORD }, ...FULL_POUCH },
+            abilities: abilities.map((hrid) => ({ hrid })),
+            drinks: [{ hrid: '/items/ultra_melee_coffee' }, null, null],
+        });
+        const offered = (dto, gd) =>
+            generateDrinkCandidates(dto, gd)
+                .filter((c) => c.currentHrid)
+                .map((c) => c.upgradeHrid);
+
+        test('a melee-only build is not offered Magic or Ranged coffee, and keeps the rest', () => {
+            const list = offered(player(), data());
+            expect(list).not.toContain('/items/magic_coffee');
+            expect(list).not.toContain('/items/ranged_coffee');
+            expect(list).toEqual(
+                expect.arrayContaining([
+                    '/items/defense_coffee',
+                    '/items/wisdom_coffee',
+                    '/items/lucky_coffee',
+                    '/items/intelligence_coffee',
+                    '/items/channeling_coffee',
+                ])
+            );
+        });
+
+        test('an equipped magic ability keeps the Magic coffee in play for a melee weapon', () => {
+            const gd = data(
+                { slashDamage: 10 },
+                { '/abilities/frenzy': ability('slash'), '/abilities/fire': ability('magic') }
+            );
+            const list = offered(player(['/abilities/frenzy', '/abilities/fire']), gd);
+            expect(list).toContain('/items/magic_coffee');
+            expect(list).not.toContain('/items/ranged_coffee');
+        });
+
+        test('a magic weapon keeps Magic coffee and drops Ranged', () => {
+            const list = offered(player(), data({ magicDamage: 10 }));
+            expect(list).toContain('/items/magic_coffee');
+            expect(list).not.toContain('/items/ranged_coffee');
+        });
+
+        test('no ability costs mana: Intelligence coffee has no use; no abilities at all: Channeling has none', () => {
+            const free = offered(player(), data({ slashDamage: 10 }, { '/abilities/frenzy': ability('slash', 0) }));
+            expect(free).not.toContain('/items/intelligence_coffee');
+            const none = offered({ ...player([]) }, data());
+            expect(none).not.toContain('/items/channeling_coffee');
+            expect(none).not.toContain('/items/intelligence_coffee');
+        });
+
+        test('when the data cannot settle it (no weapon, an ability missing from the game data), everything is kept', () => {
+            const noWeapon = { ...player(), equipment: FULL_POUCH };
+            expect(offered(noWeapon, data())).toContain('/items/magic_coffee');
+            expect(offered(player(['/abilities/unknown']), data())).toContain('/items/ranged_coffee');
+        });
+    });
+});
