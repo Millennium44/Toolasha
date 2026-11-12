@@ -78,12 +78,13 @@ function defaultPriceMaterial(itemHrid) {
 }
 
 /**
- * Default acquisition price for the base item a refinement upgrades.
+ * Default acquisition price for the base item a refinement upgrades: the player's Buy side, like the
+ * materials beside it.
  * @param {string} itemHrid - Item HRID
  * @returns {number|null} Price, or null when unpriced
  */
 function defaultPriceBase(itemHrid) {
-    const resolved = resolveItemPrice(itemHrid, { side: 'buy', mode: 'ask', context: 'profit' });
+    const resolved = resolveItemPrice(itemHrid, { side: 'buy', context: 'profit' });
     return resolved.missing || !(resolved.price > 0) ? null : resolved.price;
 }
 
