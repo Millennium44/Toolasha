@@ -9,6 +9,9 @@ import {
     formatPlanHours,
     formatPlanText,
     clearRateLeftOutReason,
+    routeVersusSingle,
+    ROUTE_SLOWER_RATIO,
+    ROUTE_FEWER_RATIO,
 } from './bestiary-plan.js';
 import { pointsFromCount, monsterCreditsPerHour, resolvePartySize } from './bestiary.js';
 import { fightsForKillConfidence } from './fight-confidence.js';
@@ -1306,5 +1309,106 @@ describe('the minimum clear rate', () => {
         expect(clearRateLeftOutReason({ clearRate: 0.5, clearRateSource: 'your runs' }, 70)).toBe(
             'clears 50% (your runs) < 70% minimum'
         );
+    });
+});
+
+describe('a route much worse than the best single zone', () => {
+    // Fast: three monsters at 100 kills/hour, so one hour there earns every first-kill point at once.
+    // Slow: one monster at 1 kill/hour, but a far higher Score, so a loose Tolerance takes it first.
+    const fast = { ...zone('fast', { '/monsters/a': 100, '/monsters/b': 100, '/monsters/c': 100 }), score: 1 };
+    const slow = { ...zone('slow', { '/monsters/z': 1 }), score: 1000 };
+    // Its first point is 950,000 hours away, inside a 100-times window of the sluggish zone's 10,000, and eats
+    // enough of the planner's patience limit (1e6 hours) that the route runs out before it arrives
+    const frozen = { ...zone('frozen', { '/monsters/z': 1 / 950000 }), score: 1000 };
+    const sluggish = {
+        ...zone('sluggish', { '/monsters/a': 1e-4, '/monsters/b': 1e-4, '/monsters/c': 1e-4 }),
+        score: 1,
+    };
+
+    test('tolerance 100 is held to 0.99: it plans exactly as 99 does, and as 150', () => {
+        const at = (tolerancePercent) =>
+            planBestiaryRoute({ zones: [fast, slow], counts: {}, targetPoints: 3, tolerancePercent });
+        expect(at(100)).toEqual(at(99));
+        expect(at(150)).toEqual(at(99));
+        expect(at(100).hoursUsed).toBeGreaterThan(at(0).hoursUsed);
+    });
+
+    test('points mode: a route over 1.25 times the single zone is flagged, one under it is not', () => {
+        const loose = planBestiaryRoute({ zones: [fast, slow], counts: {}, targetPoints: 3, tolerancePercent: 100 });
+        expect(loose.bestSingle.zoneHrid).toBe('fast');
+        expect(loose.hoursUsed).toBeGreaterThan(ROUTE_SLOWER_RATIO * loose.bestSingle.hours);
+        expect(routeVersusSingle(loose)).toMatchObject({
+            kind: 'slower',
+            zoneHrid: 'fast',
+            singleHours: loose.bestSingle.hours,
+            routeHours: loose.hoursUsed,
+        });
+        const strict = planBestiaryRoute({ zones: [fast, slow], counts: {}, targetPoints: 3, tolerancePercent: 0 });
+        expect(routeVersusSingle(strict)).toBeNull();
+    });
+
+    test('the 1.25 line itself: at it no note, past it a note', () => {
+        const plan = (hoursUsed) => ({
+            mode: 'points',
+            hoursUsed,
+            unreachable: false,
+            cappedOut: false,
+            totalPoints: 5,
+            bestSingle: { zoneHrid: 'z', name: 'Z', points: 5, hours: 8 },
+        });
+        expect(routeVersusSingle(plan(8 * ROUTE_SLOWER_RATIO))).toBeNull();
+        expect(routeVersusSingle(plan(8 * ROUTE_SLOWER_RATIO + 0.01))?.kind).toBe('slower');
+    });
+
+    test('a route that never arrives while a single zone does says so', () => {
+        const plan = planBestiaryRoute({
+            zones: [sluggish, frozen],
+            counts: {},
+            targetPoints: 9,
+            tolerancePercent: 100,
+        });
+        expect(plan.unreachable).toBe(true);
+        expect(plan.cappedOut).toBe(true);
+        expect(routeVersusSingle(plan)).toMatchObject({ kind: 'never', zoneHrid: 'sluggish' });
+    });
+
+    test('no single zone reaches the goal: no note (the footer already says so)', () => {
+        expect(
+            routeVersusSingle({
+                mode: 'points',
+                hoursUsed: 99,
+                unreachable: true,
+                cappedOut: true,
+                totalPoints: 0,
+                bestSingle: { zoneHrid: 'z', name: 'Z', points: 0, hours: null },
+            })
+        ).toBeNull();
+        expect(routeVersusSingle({ mode: 'points', bestSingle: null })).toBeNull();
+        expect(routeVersusSingle(null)).toBeNull();
+    });
+
+    test('hours mode: a route under 80 percent of the single zone points is flagged', () => {
+        const loose = planBestiaryRoute({ zones: [fast, slow], counts: {}, hours: 0.5, tolerancePercent: 100 });
+        expect(loose.totalPoints).toBeLessThan(ROUTE_FEWER_RATIO * loose.bestSingle.points);
+        expect(routeVersusSingle(loose)).toMatchObject({ kind: 'fewer', zoneHrid: 'fast' });
+        const strict = planBestiaryRoute({ zones: [fast, slow], counts: {}, hours: 0.5, tolerancePercent: 0 });
+        expect(routeVersusSingle(strict)).toBeNull();
+        const edge = (totalPoints) => ({
+            mode: 'hours',
+            totalPoints,
+            hoursUsed: 5,
+            bestSingle: { zoneHrid: 'z', name: 'Z', points: 10 },
+        });
+        expect(routeVersusSingle(edge(8))).toBeNull();
+        expect(routeVersusSingle(edge(7))?.kind).toBe('fewer');
+        // A single zone that earns nothing is nothing to beat
+        expect(routeVersusSingle({ ...edge(0), bestSingle: { zoneHrid: 'z', name: 'Z', points: 0 } })).toBeNull();
+    });
+
+    test('a one-zone plan is a real plan with segments, and carries no note', () => {
+        const only = planBestiaryRoute({ zones: [fast], counts: {}, targetPoints: 3, tolerancePercent: 100 });
+        expect(only.segments.map((segment) => segment.zoneHrid)).toEqual(['fast']);
+        expect(only.hoursUsed).toBeCloseTo(only.bestSingle.hours, 9);
+        expect(routeVersusSingle(only)).toBeNull();
     });
 });

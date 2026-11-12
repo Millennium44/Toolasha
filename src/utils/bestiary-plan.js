@@ -994,6 +994,49 @@ export function planBestiaryRoute({
     };
 }
 
+/** A route slower than this many times the best single zone's time earns a note (points and total modes) */
+export const ROUTE_SLOWER_RATIO = 1.25;
+
+/** A route that earns less than this share of the best single zone's points earns a note (hours mode) */
+export const ROUTE_FEWER_RATIO = 0.8;
+
+/**
+ * Whether the route is much worse than just staying in the best single zone, and how.
+ *
+ * The route picks each hop by pace within the tolerance and never looks at the total, so a high Tolerance (or a
+ * short-sighted hop at a low one) can leave it far behind one zone held the whole way. The plan already carries
+ * that zone as `bestSingle`; this only judges the two figures.
+ *
+ * - `never`: points or total mode, the route runs dry (or hits the planner's patience limit) and a single zone
+ *   gets there
+ * - `slower`: points or total mode, the route takes more than {@link ROUTE_SLOWER_RATIO} times as long
+ * - `fewer`: hours mode, the route earns under {@link ROUTE_FEWER_RATIO} of what the single zone does
+ * @param {ReturnType<typeof planBestiaryRoute>|null} plan
+ * @returns {{kind: 'never'|'slower'|'fewer', zoneHrid: string, name: string, singleHours: number|null,
+ *   routeHours: number, singlePoints: number, routePoints: number}|null} Null when the route is fine, or no single
+ *   zone reaches the goal (the footer already says so)
+ */
+export function routeVersusSingle(plan) {
+    const single = plan?.bestSingle;
+    if (!single) return null;
+    const base = {
+        zoneHrid: single.zoneHrid,
+        name: single.name,
+        singleHours: Number.isFinite(single.hours) ? single.hours : null,
+        routeHours: plan.hoursUsed,
+        singlePoints: single.points,
+        routePoints: plan.totalPoints,
+    };
+    if (plan.mode === 'points') {
+        if (!Number.isFinite(single.hours)) return null;
+        if (plan.unreachable || plan.cappedOut) return { kind: 'never', ...base };
+        if (plan.hoursUsed > ROUTE_SLOWER_RATIO * single.hours) return { kind: 'slower', ...base };
+        return null;
+    }
+    if (single.points > 0 && plan.totalPoints < ROUTE_FEWER_RATIO * single.points) return { kind: 'fewer', ...base };
+    return null;
+}
+
 /**
  * Why a zone is left out of the route for its clear rate, or null when it stays in.
  * Only a zone with a known `clearRate` (a fraction, 0-1) can be left out; exactly the minimum stays.

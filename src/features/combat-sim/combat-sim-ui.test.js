@@ -11622,6 +11622,8 @@ describe('the score tie-break tolerance in the Bestiary planner', () => {
         combatMonsterDetailMap: {
             '/monsters/fly': { name: 'Fly' },
             '/monsters/bee': { name: 'Bee' },
+            '/monsters/rat': { name: 'Rat' },
+            '/monsters/wasp': { name: 'Wasp' },
         },
     };
     const click = (selector) =>
@@ -11682,6 +11684,92 @@ describe('the score tie-break tolerance in the Bestiary planner', () => {
         // Picked over the faster Farm because of Score — the table says so
         expect(nameCell.title).toContain('Score');
         expect(nameCell.innerHTML).toContain('<span');
+    });
+
+    describe('a route much worse than the best single zone', () => {
+        // Farm kills three monsters 100 times an hour; Hive kills one wasp once an hour but scores far higher,
+        // so at Tolerance 100 the route goes to Hive first
+        const farm = () => resultXP('Farm', { '/monsters/fly': 100, '/monsters/bee': 100, '/monsters/rat': 100 }, 100);
+        const hive = () => resultXP('Hive', { '/monsters/wasp': 1 }, 1e6);
+        const note = () => ui.panel.querySelector('#mwi-csim-bestiary-plan-note');
+        const rowNames = () =>
+            [...ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td:nth-child(2)')].map((td) =>
+                td.textContent.trim()
+            );
+        const plan = async ({ mode = 'points', value = '3', tolerance = '100' } = {}) => {
+            mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 0 }];
+            await ui._displayAllZonesResults([farm(), hive()], 1, gameData);
+            const select = ui.panel.querySelector('#mwi-csim-bestiary-plan-mode');
+            select.value = mode;
+            select.dispatchEvent(new window.Event('change', { bubbles: true }));
+            ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = value;
+            ui.panel.querySelector('#mwi-csim-bestiary-plan-tolerance').value = tolerance;
+            change('#mwi-csim-bestiary-plan-tolerance');
+            click('#mwi-csim-bestiary-plan-btn');
+        };
+
+        test('Tolerance 100 against a faster single zone: the note, the times, and the button', async () => {
+            await plan();
+            expect(rowNames()[0]).toContain('Hive');
+            expect(note()).not.toBeNull();
+            expect(note().style.color).not.toBe('');
+            expect(note().textContent).toMatch(
+                /A single zone is faster: Farm T0 reaches 3 in .* against the route's .*/
+            );
+            expect(note().textContent).toContain('Your Tolerance trades pace for Score.');
+            // Above the table
+            const out = ui.panel.querySelector('#mwi-csim-bestiary-plan-out');
+            expect(note().compareDocumentPosition(out.querySelector('table')) & 4).toBeTruthy();
+            expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-only').textContent).toBe('Plan Farm T0 only');
+        });
+
+        test('Plan X only draws a real one-zone plan in place, with a way back to the route', async () => {
+            await plan();
+            const routeHours = ui._currentBestiaryPlan().hoursUsed;
+            click('#mwi-csim-bestiary-plan-only');
+            expect(rowNames()).toEqual(['Farm T0▶']);
+            expect(note()).toBeNull();
+            expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-only-note').textContent).toContain(
+                'Showing Farm T0 alone.'
+            );
+            // Copy and the footer describe the same one-zone plan
+            expect(ui._bestiaryPlanText()).toContain('Farm T0');
+            expect(ui._bestiaryPlanText()).not.toContain('Hive');
+            expect(ui._currentBestiaryPlan().hoursUsed).toBeLessThan(routeHours);
+            click('#mwi-csim-bestiary-plan-route');
+            expect(rowNames()[0]).toContain('Hive');
+            expect(note()).not.toBeNull();
+        });
+
+        test('a new Plan, another mode or Tolerance puts the route back', async () => {
+            await plan();
+            click('#mwi-csim-bestiary-plan-only');
+            expect(ui._bestiaryPlanOnly).not.toBeNull();
+            click('#mwi-csim-bestiary-plan-btn');
+            expect(ui._bestiaryPlanOnly).toBeNull();
+            expect(rowNames()[0]).toContain('Hive');
+            click('#mwi-csim-bestiary-plan-only');
+            ui.panel.querySelector('#mwi-csim-bestiary-plan-tolerance').value = '50';
+            change('#mwi-csim-bestiary-plan-tolerance');
+            expect(ui._bestiaryPlanOnly).toBeNull();
+        });
+
+        test('no note when the route is fine (Tolerance 0 takes the single zone anyway)', async () => {
+            await plan({ tolerance: '0' });
+            expect(rowNames()).toEqual(['Farm T0▶']);
+            expect(note()).toBeNull();
+            expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-only-note')).toBeNull();
+        });
+
+        test('hours mode: a route that earns far fewer points than one zone says so', async () => {
+            await plan({ mode: 'hours', value: '0.5' });
+            expect(note().textContent).toMatch(
+                /A single zone earns more: Farm T0 earns \d+ points, against the route's 0\./
+            );
+            click('#mwi-csim-bestiary-plan-only');
+            expect(rowNames()).toEqual(['Farm T0▶']);
+            expect(note()).toBeNull();
+        });
     });
 });
 

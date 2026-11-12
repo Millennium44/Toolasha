@@ -105,6 +105,7 @@ import {
     formatPlanText,
     parseBestiaryZoneKey,
     clearRateLeftOutReason,
+    routeVersusSingle,
 } from '../../utils/bestiary-plan.js';
 import { isClearRun, RUN_RESULT_FAIL } from '../../utils/dungeon-run-result.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
@@ -3933,6 +3934,8 @@ class CombatSimUI {
         this._bestiaryPlanPoints = BESTIARY_PLAN_DEFAULT_POINTS;
         this._bestiaryPlanTotal = BESTIARY_PLAN_DEFAULT_TOTAL;
         this._bestiaryPlanTolerance = BESTIARY_PLAN_DEFAULT_TOLERANCE;
+        // The zone the plan is narrowed to by "Plan X only" (null: the whole route)
+        this._bestiaryPlanOnly = null;
         this._bestiaryPlanMinClear = BESTIARY_PLAN_DEFAULT_MIN_CLEAR;
         // What the displayed results were actually run on, so a re-sort keeps
         // saying so and a saved comparison can never be read as a real-loadout run
@@ -6096,6 +6099,8 @@ class CombatSimUI {
         }
         this._allZonesDetailCols = cols;
         if (newRun || !this._bestiaryPlanOpen) this._bestiaryPlanOpen = new Set();
+        // A new simulation has new zones and rates: a narrowing from the last one means nothing
+        if (newRun) this._bestiaryPlanOnly = null;
 
         // Find max values per numeric column for highlighting
         const maxVals = {};
@@ -6655,6 +6660,7 @@ class CombatSimUI {
         modeSelect.addEventListener('change', (event) => {
             event.stopPropagation();
             readInput();
+            this._bestiaryPlanOnly = null;
             this._bestiaryPlanMode =
                 modeSelect.value === 'points' ? 'points' : modeSelect.value === 'total' ? 'total' : 'hours';
             const nowPoints = this._bestiaryPlanMode === 'points';
@@ -6689,6 +6695,7 @@ class CombatSimUI {
             event.stopPropagation();
             const value = parseFloat(event.target.value);
             this._bestiaryPlanTolerance = value >= 0 ? value : BESTIARY_PLAN_DEFAULT_TOLERANCE;
+            this._bestiaryPlanOnly = null;
             event.target.value = String(this._bestiaryPlanTolerance);
             this._persistBestiaryPlanPrefs();
             if (this._bestiaryPlanActive) this._drawBestiaryPlan();
@@ -6697,6 +6704,7 @@ class CombatSimUI {
             event.stopPropagation();
             const value = parseFloat(event.target.value);
             this._bestiaryPlanMinClear = value >= 0 && value <= 100 ? value : BESTIARY_PLAN_DEFAULT_MIN_CLEAR;
+            this._bestiaryPlanOnly = null;
             event.target.value = String(this._bestiaryPlanMinClear);
             this._persistBestiaryPlanPrefs();
             if (this._bestiaryPlanActive) this._drawBestiaryPlan();
@@ -6708,8 +6716,9 @@ class CombatSimUI {
             readInput();
             this._persistBestiaryPlanPrefs();
             this._bestiaryPlanActive = true;
-            // A new plan: nothing stays expanded from the last one
+            // A new plan: nothing stays expanded from the last one, and it is the route again
             this._bestiaryPlanOpen = new Set();
+            this._bestiaryPlanOnly = null;
             this._drawBestiaryPlan();
         });
         const copyBtn = box.querySelector('#mwi-csim-bestiary-plan-copy');
@@ -6817,8 +6826,13 @@ class CombatSimUI {
             if (!totals || totals.gap <= 0) return null;
             targetPoints = totals.gap;
         }
+        // "Plan X only": a real one-zone plan (the same budget, rules and fight padding), not the comparison
+        // figure, which has no segments. A zone no longer among the planner's zones is ignored.
+        const only = this._bestiaryPlanOnly
+            ? this._bestiaryPlanZones.filter((zone) => zone.zoneHrid === this._bestiaryPlanOnly)
+            : [];
         return planBestiaryRoute({
-            zones: this._bestiaryPlanZones,
+            zones: only.length ? only : this._bestiaryPlanZones,
             counts: this._bestiaryPlanCounts,
             hours: this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS,
             targetPoints,
@@ -6826,6 +6840,47 @@ class CombatSimUI {
                 this._bestiaryPlanTolerance >= 0 ? this._bestiaryPlanTolerance : BESTIARY_PLAN_DEFAULT_TOLERANCE,
             minClearPercent: this._bestiaryMinClear(),
         });
+    }
+
+    /**
+     * The note above the plan table: either the route is much worse than one zone held the whole way (with a
+     * button that plans that zone alone), or the plan on screen is that one zone (with a way back).
+     * @param {Object|null} plan
+     * @param {function(*): string} esc - HTML escaper
+     * @returns {string} Empty when the route is fine
+     * @private
+     */
+    _bestiaryRouteNoteHtml(plan, esc) {
+        if (!plan) return '';
+        const box = 'font-size:11px; margin-bottom:4px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;';
+        const button = (id, label, zone = '') =>
+            `<button id="${id}"${zone ? ` data-zone="${esc(zone)}"` : ''} style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; border-radius:3px; padding:1px 8px; font-size:11px; cursor:pointer; font-family:inherit;">${label}</button>`;
+        if (
+            this._bestiaryPlanOnly &&
+            plan.segments.length &&
+            plan.segments.every((s) => s.zoneHrid === this._bestiaryPlanOnly)
+        ) {
+            return `<div id="mwi-csim-bestiary-plan-only-note" style="${box} color:#888;"><span>Showing ${esc(plan.segments[0].name)} alone.</span>${button('mwi-csim-bestiary-plan-route', 'Show the route')}</div>`;
+        }
+        const verdict = routeVersusSingle(plan);
+        if (!verdict) return '';
+        const totals = this._bestiaryPlanMode === 'total' ? this._bestiaryTotalGap() : null;
+        const goal = totals ? `${totals.wanted} total` : `${plan.targetPoints}`;
+        const name = esc(verdict.name);
+        let text;
+        if (verdict.kind === 'never') {
+            text = `${name} reaches ${goal} in ${formatPlanHours(verdict.singleHours, { unit: true })}; the route does not.`;
+        } else if (verdict.kind === 'slower') {
+            text =
+                `A single zone is faster: ${name} reaches ${goal} in ${formatPlanHours(verdict.singleHours, { unit: true })}, ` +
+                `against the route's ${formatPlanHours(verdict.routeHours, { unit: true })}.`;
+        } else {
+            text = `A single zone earns more: ${name} earns ${verdict.singlePoints} points, against the route's ${verdict.routePoints}.`;
+        }
+        const tolerance =
+            this._bestiaryPlanTolerance >= 0 ? this._bestiaryPlanTolerance : BESTIARY_PLAN_DEFAULT_TOLERANCE;
+        if (tolerance > 0) text += ' Your Tolerance trades pace for Score.';
+        return `<div id="mwi-csim-bestiary-plan-note" style="${box} color:#ffb74d;"><span>${text}</span>${button('mwi-csim-bestiary-plan-only', `Plan ${name} only`, verdict.zoneHrid)}</div>`;
     }
 
     /** @private */
@@ -6888,6 +6943,7 @@ class CombatSimUI {
                   .map((left) => `${esc(left.name)} — ${esc(left.reason)}`)
                   .join('; ')}.</div>`
             : '';
+        const routeNote = this._bestiaryRouteNoteHtml(plan, esc);
         if (!plan || !plan.segments.length) {
             const none = plan?.leftOut?.length
                 ? 'No zone left in the route earns a Bestiary point.'
@@ -7045,6 +7101,7 @@ class CombatSimUI {
                 .mwi-csim-plan-row:focus-visible { outline: 1px solid #ffb74d; }
             </style>
             ${skippedNote}
+            ${routeNote}
             <div class="mwi-utable-wrap" style="overflow-x:auto;">
                 <table style="width:100%; border-collapse:collapse; min-width:360px;">
                     <thead><tr>${th('#')}${th('Zone', 'left')}${th('Time')}${th('Fights')}${th('Points')}${th('Thresholds crossed', 'left')}</tr></thead>
@@ -7065,6 +7122,18 @@ class CombatSimUI {
             </div>
         `;
         this._wireBestiaryNotify(out);
+        out.querySelector('#mwi-csim-bestiary-plan-only')?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this._bestiaryPlanOnly = event.currentTarget.dataset.zone || null;
+            this._bestiaryPlanOpen = new Set();
+            this._drawBestiaryPlan();
+        });
+        out.querySelector('#mwi-csim-bestiary-plan-route')?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this._bestiaryPlanOnly = null;
+            this._bestiaryPlanOpen = new Set();
+            this._drawBestiaryPlan();
+        });
 
         // Disclosure: toggle in place (no redraw, so keyboard focus stays on the row)
         const activate = (el, handler) => {
