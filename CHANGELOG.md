@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### More profit figures follow your Buy/Sell pricing
+
+The Goal Planner, Enhancing XP/hr profit, the Enhancement Tracker and Loot Log enhancing figures, the Collection optimizer, the Marketplace alchemy sort, house build costs and ROI, consumable cost per day and per HP/MP, guild shrine costs and the Combat Sim food optimizer now use your Buy and Sell dropdowns instead of always the ask or bid.
+
+### Task cowbells and the action bar run value
+
+Cowbell rewards in task profit are now worth a Bag of 10 Cowbells' sell price after its 18% tax, so they read lower than before. The action bar's "This run" value now uses your sell pricing after market tax, and marks drops it could not price with \*.
+
 ### Shop Max sets the enhancement level on the test server
 
 In the tester shop's buy dialog for equipment, the Max beside Enhancement Level now fills +10, the highest level the shop sells, instead of doing nothing; the Max beside Quantity still fills the most you can afford.
