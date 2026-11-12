@@ -96,9 +96,9 @@ describe('character 30404 against the server', () => {
     test('every combat stat the server reports is what the engine builds', () => {
         const { combatDetails } = build(dtoFor());
         const wrong = [];
-        // The engine folds four things into its combatStats that the server keeps outside the list (all
-        // unrelated to talismans): cast speed gains attackLevel / 2000, threat sits on a base of 100, and the
-        // regen stats on a base of 0.01
+        // Stand-in gear (see the file header); the real-gear check is talisman-combat-real-gear.test.js. The
+        // stand-in holds the server's regen, which already includes the 0.01 base, so the engine adds it a
+        // second time here; cast speed gains attackLevel / 2000 and threat sits on a base of 100
         const engineOffset = { castSpeed: 151 / 2000, threat: 100, hpRegenPer10: 0.01, mpRegenPer10: 0.01 };
         for (const [stat, serverValue] of Object.entries(SERVER_COMBAT_STATS)) {
             if (stat === 'smite') continue; // carried, not modeled
