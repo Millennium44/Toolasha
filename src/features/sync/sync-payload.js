@@ -2404,7 +2404,8 @@ function cleaningRemoved(entries, cleaned) {
  * @returns {{text: string, remoteAdds: boolean, dropsFromRemote: boolean}} The merged payload; whether it holds
  *   anything this device does not (so its next startup pull has something to take); and whether it leaves out
  *   stores the gist holds that this device's scope does not sync (so it is worth uploading even when it adds
- *   nothing)
+ *   nothing); and `mergeFailed`, the records whose fold threw and so went up as the gist's copy alone (an upload
+ *   containing any is not a complete exchange of this device's data)
  * @throws {Error} When the gist's payload is not one this build can apply
  */
 export function mergeForUpload(localText, remoteText, baseline, options = {}) {
@@ -2462,6 +2463,8 @@ function* mergeForUploadSteps(localText, remoteText, baseline, { revisionFold = 
     // upload keeps — another script's keys, a device-local key or a token an
     // older build uploaded — so those count too, or the gist would keep them
     let dropsFromRemote = droppedUnowned;
+    // Records whose fold threw: the gist's copy went up whole, so this device's contribution to them did not
+    const mergeFailed = [];
     if (uploadScope !== 'everything') {
         for (const storeName of Object.keys(remote.stores)) {
             if (storeName === SETTINGS_STORE) continue;
@@ -2548,6 +2551,7 @@ function* mergeForUploadSteps(localText, remoteText, baseline, { revisionFold = 
                         `[Sync] Merging ${storeName}/${key} for upload failed; keeping the gist's copy:`,
                         error
                     );
+                    mergeFailed.push({ store: storeName, key, label: registration.label ?? `${storeName}/${key}` });
                 }
                 continue;
             }
@@ -2582,7 +2586,7 @@ function* mergeForUploadSteps(localText, remoteText, baseline, { revisionFold = 
     // device's own cap would drop on arrival are not news it can take
     yield;
     const remoteAdds = yield* addsToRemoteSteps(text, localText, { forUpload: false });
-    return { text, remoteAdds, dropsFromRemote };
+    return { text, remoteAdds, dropsFromRemote, mergeFailed };
 }
 
 /**

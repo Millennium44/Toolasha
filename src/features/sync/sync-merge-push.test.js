@@ -263,6 +263,17 @@ registerSyncMerge({
     label: 'Test history',
 });
 
+// A history whose fold can be made to throw, for the upload that must not call a failed merge synced
+registerSyncMerge({
+    store: 'xpHistory',
+    base: 'flakyLog',
+    merge: (local, incoming) => {
+        if (world.foldFails) throw new Error('fold broke');
+        return [...new Set([...(local || []), ...(incoming || [])])];
+    },
+    label: 'Flaky log',
+});
+
 const MAP = 'script_settingsMap_c1';
 const STAMPS = `settings_changedAt_${MAP}`;
 const BASE_MS = Date.parse('2026-05-01T00:00:00.000Z');
@@ -407,6 +418,83 @@ beforeEach(() => {
 
 afterEach(() => {
     vi.useRealTimers();
+});
+
+describe('an upload merge whose fold fails is not remembered as synced', () => {
+    afterEach(() => {
+        world.foldFails = false;
+    });
+
+    /** B pushed its own flaky log; A holds a different one, never pushed */
+    async function split() {
+        const { a, b } = await syncedPair();
+        await as(b, async () => {
+            b.db.xpHistory.flakyLog_c1 = ['b'];
+            expect((await auto.push()).ok).toBe(true);
+        });
+        a.db.xpHistory.flakyLog_c1 = ['a'];
+        return { a, b };
+    }
+
+    test('a fail-once fold is retried by the next automatic push, with no other edit', async () => {
+        const { a } = await split();
+        world.foldFails = true;
+        const first = await as(a, auto.push);
+        expect(first.ok).toBe(true);
+        // The gist kept its copy: A's entry is not there yet
+        expect(gistStores().xpHistory.flakyLog_c1).toEqual(['b']);
+        expect(a.db.settings.toolasha_sync_lastHash ?? null).toBeNull();
+
+        world.foldFails = false;
+        await as(a, auto.push);
+        expect(new Set(gistStores().xpHistory.flakyLog_c1)).toEqual(new Set(['a', 'b']));
+    });
+
+    test('a permanent failure writes nothing more and stays retryable', async () => {
+        const { a } = await split();
+        world.foldFails = true;
+        await as(a, auto.push);
+        const writes = gist.writes;
+        for (let i = 0; i < 3; i += 1) await as(a, auto.push);
+        expect(gist.writes).toBe(writes);
+        expect(a.db.settings.toolasha_sync_lastHash ?? null).toBeNull();
+    });
+
+    test('a failing record does not hold back a healthy one in the same upload', async () => {
+        const { a } = await split();
+        world.foldFails = true;
+        a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+        await as(a, auto.push);
+        expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1', 'a-sample']);
+        expect(gistStores().xpHistory.flakyLog_c1).toEqual(['b']);
+        expect(a.db.settings.toolasha_sync_lastHash ?? null).toBeNull();
+        world.foldFails = false;
+        await as(a, auto.push);
+        expect(new Set(gistStores().xpHistory.flakyLog_c1)).toEqual(new Set(['a', 'b']));
+    });
+
+    test('a pressed merge says which record could not be combined', async () => {
+        await split();
+        // A device that never synced, merging by choice into the gist
+        const fresh = makeDevice('C');
+        fresh.db.xpHistory.flakyLog_c1 = ['c'];
+        world.foldFails = true;
+        toasts.length = 0;
+        dialog.answer = 'merge';
+        await as(fresh, () => syncManager.push({ unattended: false, silent: false }));
+        expect(toasts.some((t) => /Flaky log/.test(t.message))).toBe(true);
+        expect(fresh.db.settings.toolasha_sync_lastHash ?? null).toBeNull();
+    });
+
+    test('with every fold healthy the merge is remembered and the next push is skipped', async () => {
+        const { a } = await split();
+        await as(a, auto.push);
+        expect(new Set(gistStores().xpHistory.flakyLog_c1)).toEqual(new Set(['a', 'b']));
+        expect(a.db.settings.toolasha_sync_lastHash).toBeTruthy();
+        const writes = gist.writes;
+        expect((await as(a, auto.push)).skipped).toBe(true);
+        expect(gist.writes).toBe(writes);
+    });
 });
 
 describe('an automatic push merges a gist that moved past it', () => {

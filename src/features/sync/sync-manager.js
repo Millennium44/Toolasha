@@ -485,8 +485,8 @@ class SyncManager {
      *   confirmation dialog left open, a hung request) — see `_stillOwns`.
      * @param {boolean} [unattended=false] - Nobody pressed a button for this push; see `push`. An unattended
      *   push that finds the gist ahead of this device merges it into the upload rather than writing over it.
-     * @param {{text: string, localText: string, known: Object|null, remoteAdds: boolean, remoteAt: string|null,
-     *   remoteSeq: number|null}|null} [merged=null] - An upload `_mergeIntoUpload` built: the merged payload,
+     * @param {{text: string, localText: string, known: Object|null, remoteAdds: boolean, mergeFailed?: boolean,
+     *   remoteAt: string|null, remoteSeq: number|null}|null} [merged=null] - An upload `_mergeIntoUpload` built: the merged payload,
      *   this device's own payload it was built from, and the gist version it was merged with. Finding the gist
      *   moved past that version again stands down for the next interval, so one tick merges at most once.
      *   `raceRound` counts the re-merges made after finding this push's write replaced another device's.
@@ -819,7 +819,9 @@ class SyncManager {
         await this._remember({
             gistId: written.id,
             exportedAt,
-            hash: localHash,
+            // A merged upload that kept the gist's copy of a record whose fold failed did not carry this
+            // device's data, so it is not remembered as handled: the next automatic push merges again
+            hash: merged?.mergeFailed ? null : localHash,
             chunkCount: chunks.length,
             // What the manifest actually carries: the write raises it above a
             // gist another device has since moved further along
@@ -857,7 +859,8 @@ class SyncManager {
         // The fingerprint just stored is of the payload built above, so the
         // database as it stood then is clean. A merged upload's local text was
         // built by an earlier call; its next push builds once to say so.
-        if (builtAtGeneration !== null) markSyncClean({ generation: builtAtGeneration, lastHash: localHash, scope });
+        if (builtAtGeneration !== null && !merged?.mergeFailed)
+            markSyncClean({ generation: builtAtGeneration, lastHash: localHash, scope });
 
         if (!silent) {
             showToast(`Synced to GitHub (${scope === 'everything' ? 'everything' : 'settings only'}).`);
@@ -958,6 +961,26 @@ class SyncManager {
         // adds nothing, yet is the write that stops every device downloading them
         const changesRemote = merged.dropsFromRemote || (await addsToRemoteSliced(merged.text, remote.payload));
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
+        // Records whose fold threw went up as the gist's copy alone. This device's data is then not
+        // fully exchanged, so no fingerprint of it is remembered below and the next automatic push tries again
+        const mergeFailed = merged.mergeFailed?.length ? merged.mergeFailed : null;
+        if (mergeFailed) {
+            console.warn(
+                '[Sync] Some records could not be merged for upload; this device will try again:',
+                mergeFailed.map((entry) => entry.label).join(', ')
+            );
+            if (!unattended) {
+                showToast(
+                    `Sync could not combine ${mergeFailed.map((entry) => entry.label).join(', ')} with the gist, so ` +
+                        "the gist's copy was kept for now. Push again to retry.",
+                    { kind: 'warn', duration: 0 }
+                );
+            }
+        }
+        if (!changesRemote && !merged.remoteAdds && mergeFailed) {
+            // Looks like nothing to exchange, but only because the failed records kept the gist's copy
+            return { ok: true, skipped: true, reason: 'merge-failed' };
+        }
         if (!changesRemote && !merged.remoteAdds) {
             // The two hold the same data: another device pushed nothing this
             // one lacks. Settle on that version exactly as a pull finding
@@ -993,7 +1016,8 @@ class SyncManager {
             const seenHash = await contentHashSliced(localText);
             if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
             await rememberLocal({
-                [KEY_LAST_HASH]: seenHash,
+                // Not stamped while a fold failed: the next automatic push must build and merge again
+                [KEY_LAST_HASH]: mergeFailed ? null : seenHash,
                 [KEY_UNAPPLIED]: { since: remote.manifest?.exportedAt ?? null },
                 ...(remote.seen ? { [KEY_GIST_VERSION]: remote.seen } : {}),
             });
@@ -1016,6 +1040,7 @@ class SyncManager {
                 localText,
                 known: remote.seen,
                 remoteAdds: merged.remoteAdds,
+                mergeFailed: Boolean(mergeFailed),
                 remoteAt: remote.manifest?.exportedAt ?? null,
                 remoteSeq: readSeq(remote.manifest?.syncSeq),
             },
@@ -1097,6 +1122,7 @@ class SyncManager {
         const baseline = await storage.get(KEY_BASELINE, STORE, null);
         let text = uploadedText;
         let remoteAdds = Boolean(merged?.remoteAdds);
+        let mergeFailed = Boolean(merged?.mergeFailed);
         for (const version of written.intervening) {
             try {
                 // A replaced write from the other game server (a confirmed pressed Push there) is never
@@ -1104,7 +1130,9 @@ class SyncManager {
                 const replaced = await this._readRemote(token, gistId, null, null, version, {
                     refuseOtherServer: true,
                 });
-                text = (await mergeForUploadSliced(text, replaced.payload, baseline)).text;
+                const folded = await mergeForUploadSliced(text, replaced.payload, baseline);
+                text = folded.text;
+                if (folded.mergeFailed?.length) mergeFailed = true;
             } catch (error) {
                 // The gist goes back to the newest replaced write as it was, which for the usual race is
                 // the other server's own; this device records no success, and `_run` says so once.
@@ -1157,6 +1185,7 @@ class SyncManager {
                 server: serverKind(),
             }),
             remoteAdds,
+            mergeFailed,
             remoteAt: exportedAt,
             remoteSeq: Number.isSafeInteger(written.syncSeq) ? written.syncSeq : null,
             raceRound: round,
