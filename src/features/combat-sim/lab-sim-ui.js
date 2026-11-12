@@ -7,6 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { runInBackground } from '../../utils/background-work.js';
 import { upgradeRequirementHtml } from '../../utils/item-requirements.js';
 import { characterKey, readScoped, readScopedChecked, writeScoped } from '../../utils/character-key.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
@@ -2223,7 +2224,17 @@ class LabSimUI {
         void this._restoreTokenBuffLevels();
         void this._loadViewChoices();
         this._watchNarrowWindow();
-        void this._restoreUpgradeResults();
+        // After feature startup rather than during the build: the saved results are a large record and the
+        // panel is hidden until opened (the Combat Sim does the same). The restore already stands down when a
+        // run or a pull has drawn a table by the time it lands and draws into the hidden Upgrade tab when it
+        // does arrive; the panel and character are rechecked first because the key is built when the read
+        // starts, not when it was asked for.
+        const restorePanel = this.panel;
+        const restoreOwner = dataManager.getCurrentCharacterId();
+        void runInBackground('labSimUpgradeResults', async () => {
+            if (!this.panel || this.panel !== restorePanel || !this._stillSameCharacter(restoreOwner)) return;
+            await this._restoreUpgradeResults();
+        });
         this._wireSwapBars();
         this._wireLabSections();
         void this._restoreCheckedSwaps();

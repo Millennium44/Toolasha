@@ -462,6 +462,52 @@ describe('the Lab Sim panel remembers where it was left', () => {
         ui.destroy();
     });
 
+    test('building the panel does not wait on the saved upgrade results, and they draw when they arrive', async () => {
+        game.rememberUpgradeResults = true;
+        storage.values = {
+            'labSimUpgradeResults-fullkit_me': { data: { results: [{}], label: 'Saved run' }, savedAt: 1 },
+        };
+        const render = vi.spyOn(ui, '_renderUpgradeResults').mockImplementation((data, container) => {
+            container.innerHTML = `<table><tr><td>${data.label}</td></tr></table>`;
+        });
+        vi.useFakeTimers();
+        try {
+            ui.buildPanel();
+            await vi.advanceTimersByTimeAsync(0);
+            const container = ui.panel.querySelector('#mwi-labsim-upgrade-results');
+            // Feature startup has not finished, so the read has not been made
+            expect(container.textContent).not.toContain('Saved run');
+
+            await vi.advanceTimersByTimeAsync(12_000);
+            expect(container.textContent).toContain('Saved run');
+        } finally {
+            vi.useRealTimers();
+            render.mockRestore();
+            game.rememberUpgradeResults = false;
+            storage.values = {};
+        }
+    });
+
+    test('a panel torn down before the deferred restore runs is not drawn into', async () => {
+        game.rememberUpgradeResults = true;
+        storage.values = {
+            'labSimUpgradeResults-fullkit_me': { data: { results: [{}], label: 'Saved run' }, savedAt: 1 },
+        };
+        const render = vi.spyOn(ui, '_renderUpgradeResults');
+        vi.useFakeTimers();
+        try {
+            ui.buildPanel();
+            ui.destroy();
+            await vi.advanceTimersByTimeAsync(12_000);
+            expect(render).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+            render.mockRestore();
+            game.rememberUpgradeResults = false;
+            storage.values = {};
+        }
+    });
+
     test('building the panel installs the Upgrade tab phone rules too, without the Combat Sim panel', () => {
         document.getElementById('mwi-sim-upgrade-phone-layout')?.remove();
         ui.buildPanel();
