@@ -1538,9 +1538,15 @@ class DataManager {
                     const index = this._itemIndexOf(endItem.id);
                     if (index !== -1) {
                         // Update existing item
+                        this._noteDrinkStockChange(
+                            endItem.itemHrid ?? this.characterItems[index].itemHrid,
+                            this._inventoryCountOf(this.characterItems[index]),
+                            endItem.count || 0
+                        );
                         this.characterItems[index].count = endItem.count;
                     } else {
                         // Add new item to inventory
+                        this._noteDrinkStockChange(endItem.itemHrid, 0, endItem.count || 0);
                         this._pushItem(endItem);
                     }
                 }
@@ -1650,6 +1656,12 @@ class DataManager {
                 for (const item of data.endCharacterItems) {
                     const index = this._itemIndexOf(item.id);
                     if (index !== -1) {
+                        const held = this.characterItems[index];
+                        this._noteDrinkStockChange(
+                            item.itemHrid ?? held.itemHrid,
+                            this._inventoryCountOf(held),
+                            this._inventoryCountOf({ ...held, ...item })
+                        );
                         if (item.count === 0) {
                             // count 0 means removed from this location (e.g. equipped from inventory)
                             this.characterItems.splice(index, 1);
@@ -1663,6 +1675,7 @@ class DataManager {
                         }
                     } else if (item.count > 0) {
                         // New item in inventory or equipment slot
+                        this._noteDrinkStockChange(item.itemHrid, 0, this._inventoryCountOf(item));
                         this._pushItem(item);
                     }
                 }
@@ -2215,6 +2228,33 @@ class DataManager {
         if (equipmentChanged) {
             this.buffStateVersion++;
         }
+    }
+
+    /**
+     * How many of a character item sit in the inventory (0 for an equipped or slotted record).
+     * @param {Object} record - Character item record
+     * @returns {number} Inventory count
+     * @private
+     */
+    _inventoryCountOf(record) {
+        return record?.itemLocationHrid === '/item_locations/inventory' ? record.count || 0 : 0;
+    }
+
+    /**
+     * A drink going from none to some in the inventory (or back) changes which drink slots buff
+     * the next action, and so every figure keyed on the buff version: the Artisan Tea discount in
+     * a production cost, a tea's Gathering or Efficiency in a rate. Only that edge moves the
+     * version: the inventory changes on nearly every action, and a count going 7 to 6 changes nothing.
+     * Drinks only, found by category, so a saved loadout's drink (not in the live slots) counts too.
+     * @param {string} itemHrid - The item whose inventory count changed
+     * @param {number} before - Inventory count before the change
+     * @param {number} after - Inventory count after the change
+     * @private
+     */
+    _noteDrinkStockChange(itemHrid, before, after) {
+        if (!itemHrid || before > 0 === after > 0) return;
+        if (this.getItemDetails(itemHrid)?.categoryHrid !== '/item_categories/drink') return;
+        this.buffStateVersion++;
     }
 
     /**
