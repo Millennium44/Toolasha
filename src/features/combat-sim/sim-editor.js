@@ -1935,7 +1935,11 @@ export class SimEditor {
         // Only a roster at least as new as the login record can say it moved on (as getPartyMembers decides)
         const receivedAt = Number.isFinite(dataManager.partyInfoReceivedAt) ? dataManager.partyInfoReceivedAt : null;
         const rosterIsNewer = receivedAt === null || dataManager.battlePartyRoster?.updatedAt >= receivedAt;
-        if (slotIds && roster?.length && rosterIsNewer) {
+        // A roster of one is this character's own solo fight, which says nothing about who is in the party: a
+        // member of a party still recruiting fights alone (seen live 2026-11-12 on the test server)
+        const selfId = dataManager.getCurrentCharacterId?.() ?? null;
+        const soloFight = roster?.length === 1 && String(roster[0]?.characterID) === String(selfId);
+        if (slotIds && roster?.length && rosterIsNewer && !soloFight) {
             const rosterIds = roster
                 .map((member) => String(member.characterID))
                 .sort()

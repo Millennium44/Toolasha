@@ -4038,7 +4038,7 @@ describe('Reset to Party picks your party loadout and the party zone', () => {
         expect(onResetToParty).toHaveBeenCalledWith({ zoneHrid: ZONE, tier: 3 });
     });
 
-    test('a fight roster naming you does not make a login-time record current', async () => {
+    test('your own solo fight does not make a login-time record out of date (a recruiting party, seen live)', async () => {
         bridge.snapshots = [
             { id: 900401, name: 'FromSlot', actionTypeHrid: COMBAT },
             { id: 555, name: 'FromAction', actionTypeHrid: COMBAT },
@@ -4046,9 +4046,24 @@ describe('Reset to Party picks your party loadout and the party zone', () => {
         game.actions = [{ actionHrid: ZONE, characterLoadoutID: 555, isDone: false, ordinal: 1 }];
         game.partyInfoSource = 'login';
         game.battleRoster = { members: [{ characterID: 'me', characterName: 'Milkman' }] };
+        const { el, editor, onResetToParty } = setup(partyInfo({ status: 'recruiting', tier: 0 }));
+        await editor.resetToParty({ fromButton: true });
+        // The loadout path still distrusts a login record; the zone follows the party's chosen one
+        expect(editor.getSelectedLoadoutName()).toBe('FromAction');
+        expect(onResetToParty).toHaveBeenCalledWith({ zoneHrid: ZONE, tier: 0 });
+        expect(el.textContent).not.toContain('Your party data is out of date');
+    });
+
+    test('a fight roster naming other people than the slots still marks a login-time record out of date', async () => {
+        game.partyInfoSource = 'login';
+        game.battleRoster = {
+            members: [
+                { characterID: 'me', characterName: 'Milkman' },
+                { characterID: 'stranger', characterName: 'Someone' },
+            ],
+        };
         const { el, editor, onResetToParty } = setup(partyInfo());
         await editor.resetToParty({ fromButton: true });
-        expect(editor.getSelectedLoadoutName()).toBe('FromAction');
         expect(onResetToParty).not.toHaveBeenCalled();
         expect(el.textContent).toContain('Your party data is out of date');
     });
