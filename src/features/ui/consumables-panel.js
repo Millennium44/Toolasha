@@ -66,7 +66,15 @@ import {
     drinkRatePerDay,
     buyStrategy,
 } from '../../utils/consumable-forecast.js';
-import { dungeonEntryKey, heldInInventory, keyConsumableEntry } from '../../utils/dungeon-key-forecast.js';
+import { dungeonEntryKey, heldInInventory } from '../../utils/dungeon-key-forecast.js';
+import {
+    describeKeyCostCached,
+    dropKeyCostCache,
+    partyKeyCounts,
+    keyRowsForData,
+    withLiveCounts,
+    chestKeyForEntryKey,
+} from '../../utils/dungeon-party-keys.js';
 import {
     COMBAT_ACTION_TYPE,
     actionTypeLabel,
@@ -82,7 +90,6 @@ import {
     memberLimit,
     memberReadiness,
     mergePartyRoster,
-    formatKeyShortfall,
     formatKeyShortfalls,
     nextRunStep,
     parseRunsPlanned,
@@ -92,7 +99,6 @@ import {
 import {
     KEY_PRICING_MODES,
     KEY_PRICING_SETTING,
-    describeKeyCost,
     invalidateKeyCostCache,
     resolveKeyPricing,
 } from '../../utils/key-cost.js';
@@ -117,7 +123,8 @@ import { estimateFillSeconds } from '../../utils/order-book.js';
 import { openShoppingList } from './consumables-shopping-list.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
-import { dungeonTracker, queueLengthEstimator } from '../../utils/bundle-bridge.js';
+import { missingMaterialsButton, queueLengthEstimator } from '../../utils/bundle-bridge.js';
+import { DUNGEON_CHEST_CHEST_KEYS, DUNGEON_CHEST_ENTRY_KEYS } from '../../utils/dungeon-keys.js';
 import { getDrinkConcentration } from '../../utils/tea-parser.js';
 import { readScoped, writeScoped, characterKey } from '../../utils/character-key.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
@@ -304,9 +311,6 @@ function centeredPanelPosition() {
 const DUNGEON_RUN_STEPS = [1, 3, 5, 10, 25, 50, 100, 250, 500, 1000];
 const DEFAULT_DUNGEON_RUNS = 100;
 
-/** How long a key's buy-versus-craft costing is reused before it is re-priced */
-const KEY_COST_TTL_MS = 60_000;
-
 /**
  * What each stored key pricing mode is called on the card's chip.
  *
@@ -384,8 +388,8 @@ class ConsumablesPanel {
         this._labFightAttemptsOwner = null;
         /** Same purpose as `_idlePinsGeneration`, for `_refreshStoredReadings()` */
         this._storedReadingsGeneration = 0;
-        /** The entry key's buy-versus-craft costing, and when it was priced */
-        this._keyCostCache = null;
+        // The entry key's buy-versus-craft costing lives in utils/dungeon-party-keys.js
+        dropKeyCostCache();
         // The same mechanism the missing-materials features use: park a quantity,
         // and the buy modal fills itself in when it appears
         this.autofill = createAutofillManager('Consumables');
@@ -558,6 +562,8 @@ class ConsumablesPanel {
         // Through the same validator the typed box uses: a stored value is not
         // more trustworthy than a typed one — it *was* a typed one, and a
         // hand-edited setting could be anything
+        // Whether the craft route's materials list also covers the chest keys; off by default
+        this._craftChestKeys = (await storage.get('consumablesCraftChestKeys', 'settings', false)) === true;
         this._dungeonRuns =
             parseRunsPlanned(await storage.get('consumablesDungeonRuns', 'settings', DEFAULT_DUNGEON_RUNS)) ??
             DEFAULT_DUNGEON_RUNS;
@@ -573,7 +579,7 @@ class ConsumablesPanel {
         // artisan tea, efficiency and gear all move it — so an alt must not
         // inherit the figure priced for whoever was logged in before.
         this._readinessMemo = null;
-        this._keyCostCache = null;
+        dropKeyCostCache();
     }
 
     /**
@@ -651,9 +657,19 @@ class ConsumablesPanel {
         if (!data?.players?.length) return [];
 
         const duration = data.durationSeconds || 0;
+        // Each player's stats once: the key rows below need yours for the clear rate
+        const statsByPlayer = new Map(data.players.map((player) => [player, calculatePlayerStats(player, duration)]));
+        const statsOf = (player) => statsByPlayer.get(player);
+
+        // The dungeon's entry key for everyone who has a count to show — yours from
+        // the bag, a member's from the party's key-count message, and none for a
+        // member nobody has stated — and your chest key, which is shown and costed
+        // but is never in `forecasts`: running out of it stops nothing
+        const keys = keyRowsForData(data, statsOf).rows;
+
         return data.players
             .map((player) => {
-                const stats = calculatePlayerStats(player, duration);
+                const stats = statsOf(player);
                 const forecasts = forecastAll(
                     this._liveCounts(this._exactRates(stats?.consumableBreakdown, player), player),
                     (hrid) => getItemPrices(hrid),
@@ -662,62 +678,18 @@ class ConsumablesPanel {
                     }
                 );
 
-                // The dungeon's entry key, for the character whose inventory is
-                // visible — a run stops on an empty key pile exactly as it does
-                // on an empty coffee slot, so it belongs in the same list
-                if (player.isCurrentPlayer) {
-                    const key = this._keyForecast(stats, data, player);
-                    if (key) forecasts.push(key);
-                }
+                const keyRows = keys.get(player);
+                if (keyRows?.entry) forecasts.push(keyRows.entry);
 
                 return {
                     name: player.name || 'Unknown',
                     isCurrent: !!player.isCurrentPlayer,
                     forecasts,
+                    chestKey: keyRows?.chest || null,
                 };
             })
-            .filter((entry) => entry.forecasts.length)
+            .filter((entry) => entry.forecasts.length || entry.chestKey)
             .sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent));
-    }
-
-    /**
-     * The current dungeon's entry key as a forecast, or null outside a dungeon.
-     *
-     * Null is the whole answer for a zone: the panel must render exactly as it
-     * always has when no keys are being spent. The rate is the session's own
-     * measurement — one entry key per regular chest, over the run's duration,
-     * the same arithmetic the combat stats price keys with — and a session that
-     * has not dropped a chest yet honestly has no rate, which the row shows as
-     * "—" while still counting what is held.
-     *
-     * @param {Object} stats - From `calculatePlayerStats`, for its `keyBreakdown`
-     * @param {Object} data - The collector's snapshot, for the action and duration
-     * @param {Object} player - The current player's raw loot map, including unpriced chests
-     * @returns {Object|null} A forecast like any other, or null when not a dungeon
-     */
-    _keyForecast(stats, data, player) {
-        try {
-            const actionHrid = data?.actionHrid;
-            if (!actionHrid) return null;
-
-            const keyHrid = dungeonEntryKey(actionHrid, dataManager.getActionDetails?.(actionHrid));
-            if (!keyHrid) return null;
-
-            const prices = getItemPrices(keyHrid);
-            const entry = keyConsumableEntry({
-                itemHrid: keyHrid,
-                itemName: dataManager.getItemDetails?.(keyHrid)?.name,
-                held: heldInInventory(dataManager.getInventory?.(), keyHrid),
-                keyBreakdown: stats?.keyBreakdown,
-                lootMap: player?.loot,
-                durationSeconds: data.durationSeconds || 0,
-                fallbackPrice: prices?.ask,
-            });
-            return forecast(entry, prices);
-        } catch (error) {
-            console.error('[ConsumablesPanel] Building the entry-key row failed:', error);
-            return null;
-        }
     }
 
     /** How many runs the readiness card is sized for */
@@ -835,29 +807,7 @@ class ConsumablesPanel {
      * @returns {Object|null} From `describeKeyCost`, or null when it cannot run
      */
     _keyCost(keyHrid) {
-        if (!keyHrid) return null;
-        // Part of the cache identity, not just of the answer: a key priced at
-        // ask is not the same costing as the same key priced at craft cost, and
-        // a mode changed on the Settings page must not read stale for a minute.
-        // The resolved pricing, not the stored word: 'synced' and 'craft' both
-        // take their market side from `profitCalc_pricingMode`, so that setting
-        // moving underneath them changes the costing without changing the name
-        // of the mode.
-        const resolved = resolveKeyPricing();
-        const pricing = `${resolved.setting}|${resolved.priceSide}|${resolved.basis}`;
-        const cached = this._keyCostCache;
-        if (cached?.keyHrid === keyHrid && cached.pricing === pricing && Date.now() - cached.at < KEY_COST_TTL_MS) {
-            return cached.cost;
-        }
-
-        let cost = null;
-        try {
-            cost = describeKeyCost(keyHrid);
-        } catch (error) {
-            console.error('[ConsumablesPanel] Pricing the entry key failed:', error);
-        }
-        this._keyCostCache = { keyHrid, pricing, at: Date.now(), cost };
-        return cost;
+        return describeKeyCostCached(keyHrid);
     }
 
     /**
@@ -890,7 +840,7 @@ class ConsumablesPanel {
         config.setSetting(KEY_PRICING_SETTING, next);
 
         invalidateKeyCostCache();
-        this._keyCostCache = null;
+        dropKeyCostCache();
         this._readinessMemo = null;
         this._render();
     }
@@ -940,14 +890,7 @@ class ConsumablesPanel {
      * @returns {Object} Name to key count; empty when no message has arrived
      */
     _partyKeyCounts(actionHrid) {
-        try {
-            const run = dungeonTracker()?.getCurrentRun?.();
-            if (!run || run.dungeonHrid !== actionHrid) return {};
-            return run.keyCountsMap || {};
-        } catch (error) {
-            console.error('[ConsumablesPanel] Reading the party key counts failed:', error);
-            return {};
-        }
+        return partyKeyCounts(actionHrid);
     }
 
     /**
@@ -1174,6 +1117,7 @@ class ConsumablesPanel {
         // be part of what the memo is a function of. `_keyCost` is a cache hit
         // on almost every redraw, so this is a map lookup, not a recipe walk.
         const keyCost = this._keyCost(keyHrid);
+        const chest = keyHrid ? this._chestKeyStatus(context, keyHrid) : null;
 
         const signature = [
             context.actionHrid,
@@ -1191,6 +1135,7 @@ class ConsumablesPanel {
                 .sort()
                 .join(','),
             keysHeld,
+            chest ? `${chest.held}/${chest.ratio === null ? '-' : chest.ratio.toFixed(3)}` : '',
             `${keyCost?.pricingMode ?? '?'}:${keyCost?.basis ?? '?'}:` +
                 `${keyCost?.buyPrice ?? '?'}:${keyCost?.craftCost ?? '?'}`,
             Object.entries(context.keyCounts)
@@ -1272,6 +1217,22 @@ class ConsumablesPanel {
             runLength,
         });
 
+        // The chests the plan earns against the chest keys held. Nothing here is a member row: no
+        // message states anyone else's chest keys.
+        model.chestKeys = null;
+        if (chest) {
+            const runs = model.runsPlanned;
+            const expectedChests = Math.ceil(runs * (chest.ratio ?? 1) - 1e-9);
+            model.chestKeys = {
+                itemName: chest.itemName,
+                held: chest.held,
+                runs,
+                expectedChests,
+                short: Math.max(0, expectedChests - chest.held),
+                measured: chest.ratio !== null,
+            };
+        }
+
         if (context.stale) {
             model.footnotes.unshift(
                 'The dungeon and tier come from the party block the game sent at login — no party update has arrived since, ' +
@@ -1341,6 +1302,8 @@ class ConsumablesPanel {
         // for it is in front of you here, and nowhere else in this panel is
         // a key being priced.
         heading.append(name, runsBtn, editBtn, this._keyPricingChip());
+        const chestChip = this._chestKeyCraftChip();
+        if (chestChip) heading.appendChild(chestChip);
         section.appendChild(heading);
 
         if (model.keys) {
@@ -1373,20 +1336,31 @@ class ConsumablesPanel {
             );
             const routeNote = this._keyRouteNote(plan);
             if (routeNote) section.appendChild(routeNote);
-            const shortfalls = this._keyShortfallBlock(model);
-            if (shortfalls) section.appendChild(shortfalls);
+            const chest = this._chestKeyLine(model);
+            if (chest) section.appendChild(chest);
         }
 
+        const copyHead = this._keyCopyHead(model);
+        if (copyHead) section.appendChild(copyHead);
+
+        // One row per member: what they hold, how many runs that and their food cover, and how many
+        // keys short of the plan they are. The three states stay apart on the face of it — unknown
+        // with a reason, keys without food, both — and a member's key count is never made up.
+        const shortByName = new Map((model.keyShortfalls || []).map((row) => [row.name, row]));
         for (const member of model.members) {
             const label = member.isSelf ? `${member.name} (you)` : member.name;
             const limit = memberLimit(member);
+            const shortRow = shortByName.get(member.name) || null;
+            const shortKeys = shortRow && shortRow.short > 0 ? shortRow.short : 0;
+            const shortSegment = shortKeys
+                ? { text: `short ${formatWithSeparator(shortKeys)}`, color: ROW_COLORS.bad }
+                : null;
 
             if (!limit.source) {
                 section.appendChild(
-                    this._readinessLine(
+                    this._memberLine(
                         label,
-                        `unknown — ${member.unknown}`,
-                        COLORS.textDim,
+                        [{ text: `unknown — ${member.unknown}`, color: COLORS.textDim }],
                         member.isSelf
                             ? `Your food and drinks do not have a complete rate estimate: ${member.unknown}.`
                             : `Food and drinks travel in the battle payload, which only arrives once the run has started: ${member.unknown}.`
@@ -1395,6 +1369,7 @@ class ConsumablesPanel {
                 continue;
             }
 
+            const held = { text: `${formatWithSeparator(member.keysHeld)} keys`, color: COLORS.text };
             const short = limit.runs !== null && limit.runs < model.runsPlanned;
 
             // Keys without food is half a reading, and must not go green: the
@@ -1402,10 +1377,17 @@ class ConsumablesPanel {
             // stopping point. Their food could take the party down first.
             if (member.unknown) {
                 section.appendChild(
-                    this._readinessLine(
+                    this._memberLine(
                         label,
-                        `${formatWithSeparator(member.keysHeld)} keys · food unknown`,
-                        short ? ROW_COLORS.bad : COLORS.textDim,
+                        [
+                            held,
+                            {
+                                text: `${formatWithSeparator(member.keyRunsCovered)} run${member.keyRunsCovered === 1 ? '' : 's'}`,
+                                color: short ? ROW_COLORS.bad : COLORS.textDim,
+                            },
+                            { text: 'food unknown', color: COLORS.textDim },
+                            shortSegment,
+                        ],
                         `Keys stated by ${member.keysFrom} — one per clear, so they cover ` +
                             `${formatWithSeparator(member.keyRunsCovered)} ` +
                             `runs. Food and drinks are incomplete: ${member.unknown}.`
@@ -1419,10 +1401,15 @@ class ConsumablesPanel {
                     ? shortDuration(limit.secondsLeft)
                     : `${formatWithSeparator(limit.runs)} run${limit.runs === 1 ? '' : 's'}`;
             section.appendChild(
-                this._readinessLine(
+                this._memberLine(
                     label,
-                    `${runs}${limit.label ? ` · ${limit.label}` : ''}`,
-                    short ? ROW_COLORS.bad : ROW_COLORS.good,
+                    [
+                        member.keysHeld === null ? { text: 'keys unknown', color: COLORS.textDim } : held,
+                        { text: runs, color: short || shortKeys ? ROW_COLORS.bad : ROW_COLORS.good },
+                        // The key's own name is the held figure's unit now; only food is worth naming
+                        limit.source === 'keys' ? null : { text: limit.label, color: COLORS.text },
+                        shortSegment,
+                    ],
                     limit.source === 'keys'
                         ? `Their keys run out before their food does — stated by ${member.keysFrom}.`
                         : `Measured from the ${member.measuredFrom}, converted with your recorded run length.`
@@ -1470,33 +1457,163 @@ class ConsumablesPanel {
     }
 
     /**
-     * Who in the party is short of keys, worded for party chat.
+     * The chest key this dungeon opens its chests with, what is held, and how many chests a run earns.
      *
-     * The figure above says the party is short; this says which member and by
-     * how much. Members at the count are not listed — the reader is looking for
-     * the exception — and a member nobody has heard a key count for is listed as
-     * unknown rather than as zero, because asking somebody for keys they already
-     * hold is the one way this block could cost the party time.
+     * The chests per run are measured from this session's loot when a regular chest has dropped:
+     * regular and refinement chests both take a chest key, so the ratio of all chests to regular ones
+     * is the chests a clear earns. Without a measurement it is one per clear, which is the floor.
      *
-     * The copy button exists because the lines are for somebody else to read.
+     * @param {Object} context - From `_dungeonContext`
+     * @param {string} keyHrid - The dungeon's entry key
+     * @returns {{itemHrid: string, itemName: string, held: number, ratio: number|null}|null}
+     */
+    _chestKeyStatus(context, keyHrid) {
+        const itemHrid = chestKeyForEntryKey(keyHrid);
+        if (!itemHrid) return null;
+
+        let ratio = null;
+        try {
+            const data = combatStatsDataCollector.getLatestData?.();
+            if (data?.actionHrid === context.actionHrid) {
+                const self = (data.players || []).find((player) => player?.isCurrentPlayer);
+                let regular = 0;
+                let chests = 0;
+                for (const loot of Object.values(self?.loot || {})) {
+                    const count = Number(loot?.count);
+                    if (!(count >= 0)) continue;
+                    if (DUNGEON_CHEST_ENTRY_KEYS[loot.itemHrid] === keyHrid) regular += count;
+                    if (DUNGEON_CHEST_CHEST_KEYS[loot.itemHrid] === itemHrid) chests += count;
+                }
+                if (regular > 0) ratio = chests / regular;
+            }
+        } catch {
+            ratio = null;
+        }
+
+        return {
+            itemHrid,
+            itemName: dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop().replace(/_/g, ' '),
+            held: heldInInventory(dataManager.getInventory?.(), itemHrid),
+            ratio,
+        };
+    }
+
+    /**
+     * The chest-key line of the readiness card: chests the plan earns, keys held, keys short.
+     * @param {Object} model - From `_readinessModel`
+     * @returns {HTMLElement|null}
+     */
+    _chestKeyLine(model) {
+        const chest = model?.chestKeys;
+        if (!chest) return null;
+
+        const plural = (n, word) => `${formatWithSeparator(n)} ${word}${n === 1 ? '' : 's'}`;
+        const verdict = chest.short > 0 ? `${formatWithSeparator(chest.short)} short` : 'enough';
+        return this._readinessLine(
+            chest.itemName,
+            `${plural(chest.runs, 'run')} earn ~${plural(chest.expectedChests, 'chest')} · you hold ` +
+                `${plural(chest.held, 'chest key')} · ${verdict}`,
+            chest.short > 0 ? ROW_COLORS.bad : ROW_COLORS.good,
+            (chest.measured
+                ? "Chests per run measured from this session's drops (regular and refinement chests both take a chest key)."
+                : 'No chest has dropped yet this session, so this assumes one chest per run — refinement chests would add more.') +
+                '\nRunning out of chest keys does not stop a run; it leaves chests unopened.'
+        );
+    }
+
+    /**
+     * The chip that says whether the craft route's materials list also covers the chest keys.
+     * Only on the craft basis: with a market basis there is no materials list to widen.
+     * @returns {HTMLElement|null}
+     */
+    _chestKeyCraftChip() {
+        if (resolveKeyPricing().basis !== 'craft') return null;
+
+        const chip = document.createElement('button');
+        styleGameButton(chip, 'quiet', true);
+        chip.textContent = `⚙ chest keys: ${this._craftChestKeys ? 'in' : 'not in'} materials`;
+        chip.title =
+            "Whether the materials list for crafting missing keys also includes the chest keys' materials. " +
+            'Click to switch.';
+        chip.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this._craftChestKeys = !this._craftChestKeys;
+            storage.set('consumablesCraftChestKeys', this._craftChestKeys, 'settings').catch(() => {});
+            this._render();
+        });
+        return chip;
+    }
+
+    /**
+     * Open the marketplace on the materials for crafting the keys a row is short of.
+     *
+     * The bill is built by the Missing Materials feature (Artisan applied per craft, materials held
+     * netted off) so this panel does not keep its own copy of that arithmetic. When that feature is not
+     * available the keys are bought instead, which is always possible.
+     *
+     * @param {Array<Object>} rows - Key forecasts on the craft route
+     * @returns {Promise<void>}
+     */
+    async _openKeyMaterials(rows) {
+        const crafts = [];
+        for (const row of rows || []) {
+            const need = refillFor(row, this.target.seconds);
+            if (!need.count || !row.craftActionHrid) continue;
+            const output = (dataManager.getActionDetails?.(row.craftActionHrid)?.outputItems || []).find(
+                (item) => item?.itemHrid === row.itemHrid
+            );
+            const perCraft = Math.max(1, Number(output?.count) || 1);
+            crafts.push({ actionHrid: row.craftActionHrid, numActions: Math.ceil(need.count / perCraft) });
+        }
+        if (!crafts.length) return;
+
+        try {
+            const openBill = missingMaterialsButton()?.openCraftBill;
+            if (typeof openBill !== 'function') {
+                // The Missing Materials feature is off or not loaded
+                this._openShoppingList(
+                    (rows || [])
+                        .map((row) => ({
+                            ...refillFor(row, this.target.seconds),
+                            itemHrid: row.itemHrid,
+                            name: row.name,
+                            secondsLeft: row.secondsLeft,
+                        }))
+                        .filter((item) => item.count > 0)
+                );
+                return;
+            }
+            this.hide();
+            await openBill(crafts);
+        } catch (error) {
+            console.error('[ConsumablesPanel] Opening the key materials failed:', error);
+        }
+    }
+
+    /**
+     * The control that puts the key shortfall on the clipboard, worded for party chat.
+     *
+     * The member rows say who is short and by how much; this carries the same
+     * lines to somebody else. Members at the count are not in the text — the
+     * reader is looking for the exception — and a member nobody has heard a key
+     * count for is listed as unknown rather than as zero, because asking somebody
+     * for keys they already hold is the one way this could cost the party time.
      * Retyping five names off a panel into chat is where a readiness check stops
-     * being used.
+     * being used. The text is `formatKeyShortfalls` of the model's rows, exactly
+     * as before the member rows absorbed the old list.
      *
      * @param {Object} model - From `_readinessModel`
-     * @returns {HTMLElement|null} Null when there is nothing to say
+     * @returns {HTMLElement|null} Null when there is nothing to copy
      */
-    _keyShortfallBlock(model) {
+    _keyCopyHead(model) {
         const rows = model?.keyShortfalls || [];
         if (!rows.length) return null;
-
-        const block = document.createElement('div');
-        block.style.marginTop = '3px';
 
         const head = document.createElement('div');
         Object.assign(head.style, { display: 'flex', alignItems: 'baseline', gap: '6px', fontSize: '0.9em' });
 
         const heading = document.createElement('span');
-        heading.textContent = 'Short of keys';
+        heading.textContent = 'Party';
         heading.style.color = COLORS.textDim;
         heading.style.flex = '1';
 
@@ -1510,15 +1627,32 @@ class ConsumablesPanel {
         });
 
         head.append(heading, copyBtn);
-        block.appendChild(head);
+        return head;
+    }
 
-        for (const row of rows) {
-            block.appendChild(
-                this._readinessNote(formatKeyShortfall(row), row.short === null ? COLORS.textDim : ROW_COLORS.bad)
-            );
-        }
-
-        return block;
+    /**
+     * One member's row of the readiness card: their name, then several figures
+     * each in its own color, so "short 23" can be red beside a green run count.
+     *
+     * @param {string} label - The member
+     * @param {Array<{text: string, color: string}|null>} segments - Left to right; nulls are skipped
+     * @param {string} [title] - What the figures are measured from
+     * @returns {HTMLElement}
+     */
+    _memberLine(label, segments, title = '') {
+        const line = this._readinessLine(label, '', COLORS.text, title);
+        const right = line.lastChild;
+        right.textContent = '';
+        segments
+            .filter((segment) => segment && segment.text)
+            .forEach((segment, index) => {
+                if (index) right.appendChild(document.createTextNode(' · '));
+                const span = document.createElement('span');
+                span.textContent = segment.text;
+                span.style.color = segment.color;
+                right.appendChild(span);
+            });
+        return line;
     }
 
     /**
@@ -1577,7 +1711,7 @@ class ConsumablesPanel {
     _keyRouteNote(plan) {
         if (!plan) return null;
 
-        const gold = (value) => `${formatLargeNumber(Math.round(value))}c`;
+        const gold = (value) => formatLargeNumber(Math.round(value));
         const basis = plan.priceBasis === 'bid' ? 'bid' : 'ask';
 
         if (plan.cheaper === null) {
@@ -1706,14 +1840,7 @@ class ConsumablesPanel {
      * @returns {Array<Object>} The same entries, own counts read live
      */
     _liveCounts(breakdown, player) {
-        if (!player?.isCurrentPlayer) return breakdown;
-        const inventory = dataManager.getInventory?.();
-        if (!Array.isArray(inventory) || !inventory.length) return breakdown;
-
-        return (breakdown || []).map((entry) => {
-            if (!entry?.itemHrid) return entry;
-            return { ...entry, inventoryAmount: heldInInventory(inventory, entry.itemHrid) };
-        });
+        return withLiveCounts(breakdown, player, dataManager.getInventory?.());
     }
 
     /**
@@ -3405,14 +3532,31 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         const section = document.createElement('div');
         section.style.marginBottom = '12px';
 
+        // Only your own shortfall is buyable - a party member's supplies are
+        // theirs to buy. Their sections still say what they are short of and
+        // what it costs, as plain text with nothing to click.
+        const readOnly = !player.isCurrent;
+
+        // On the craft route the key is not bought: its shortfall is crafted from
+        // materials, so it leaves the buy list, the Buy all walk and the footer's
+        // count, and is carried to the footer as a craft instead
+        const keyRow = player.forecasts.find((entry) => entry.isKey) || null;
+        const crafted = [keyRow, player.chestKey && this._craftChestKeys ? player.chestKey : null].filter(
+            (entry) => entry && entry.route === 'craft' && !readOnly
+        );
+        const buyable = player.forecasts.filter((entry) => !(crafted.includes(entry) && entry.isKey));
+
         const soonest = firstToRunOut(player.forecasts);
-        const sides = costPerDaySides(player.forecasts);
-        const need = refillAll(player.forecasts, this.target.seconds);
+        // The chest key is costed (it is a run cost, as in the combat stats) but is
+        // not in `forecasts`, so it cannot be what stops the run
+        const sides = costPerDaySides(player.chestKey ? [...player.forecasts, player.chestKey] : player.forecasts);
+        const need = refillAll(buyable, this.target.seconds);
+        const craftCount = crafted.reduce((sum, row) => sum + (refillFor(row, this.target.seconds).count || 0), 0);
 
         // What each row is short of — the list the marketplace tabs, the Buy
         // all walk and the footer are all built from, worked out once so none
         // of them can differ from the rows
-        const shortfall = player.forecasts
+        const shortfall = buyable
             .map((entry) => ({
                 ...refillFor(entry, this.target.seconds),
                 itemHrid: entry.itemHrid,
@@ -3458,18 +3602,18 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             stops.style.color = COLORS.textDim;
         }
 
-        // Only your own shortfall is walkable — a party member's supplies are
-        // theirs to buy, so their sections stay read-only
-        if (player.isCurrent) this._registerBuyQueue(player.name || 'You', shortfall);
+        if (!readOnly) this._registerBuyQueue(player.name || 'You', shortfall);
         heading.append(name, stops);
         section.appendChild(heading);
 
         section.appendChild(this._columnHeadings());
         for (const entry of player.forecasts) {
-            section.appendChild(this._entryRow(entry, entry === soonest));
+            section.appendChild(this._entryRow(entry, entry === soonest, { readOnly }));
         }
+        // Drawn dim and last: it is costed but it never stops anything
+        if (player.chestKey) section.appendChild(this._entryRow(player.chestKey, false, { readOnly }));
 
-        section.appendChild(this._footer(sides, need, shortfall));
+        section.appendChild(this._footer(sides, need, shortfall, { readOnly, crafted, craftCount }));
         return section;
     }
 
@@ -3510,12 +3654,19 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
      * @param {boolean} isLimiting - Whether this is the one that stops the run
      * @returns {HTMLElement}
      */
-    _entryRow(entry, isLimiting) {
+    _entryRow(entry, isLimiting, { readOnly = false } = {}) {
         const row = this._grid();
         row.style.padding = '2px 0';
 
+        // A chest key is costed but never stops a run: drawn dim throughout
+        const dim = Boolean(entry.isChestKey);
+        const textColor = dim ? COLORS.textDim : COLORS.text;
+
         const held = this._cell(formatLargeNumber(entry.held));
-        held.style.color = isLimiting ? ROW_COLORS.bad : COLORS.text;
+        held.style.color = isLimiting ? ROW_COLORS.bad : textColor;
+        if (entry.statedCount) {
+            held.title = 'The count from the last party key-count message, not read from their inventory.';
+        }
 
         const icon = itemIcon(entry.itemHrid, 18);
         linkToMarketplace(icon, entry.itemHrid, navigateToMarketplace);
@@ -3526,7 +3677,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
-            color: isLimiting ? ROW_COLORS.bad : COLORS.text,
+            color: isLimiting ? ROW_COLORS.bad : textColor,
         });
         linkToMarketplace(name, entry.itemHrid, navigateToMarketplace);
 
@@ -3548,6 +3699,9 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         } else {
             cost.appendChild(this._side('Ask', sides.ask));
             cost.appendChild(this._side('Bid', sides.bid));
+            if (entry.route === 'craft') {
+                cost.title = "Priced at the key's craft cost, because the key pricing setting is craft cost.";
+            }
         }
 
         const need = refillFor(entry, this.target.seconds);
@@ -3558,7 +3712,32 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             buy.title = 'Rate unknown. A food sim or dungeon chest measurement is needed to calculate a refill.';
         }
 
-        if (need.count) {
+        if (need.count && readOnly) {
+            // Their shortfall, for reading: nobody can buy for them from here
+            buy.textContent = formatLargeNumber(need.count);
+            buy.style.color = COLORS.textDim;
+            buy.title = 'What they are short of for this duration. Only they can buy it.';
+        } else if (need.count && entry.isKey && entry.route === 'craft') {
+            if (entry.isChestKey && !this._craftChestKeys) {
+                buy.textContent = formatLargeNumber(need.count);
+                buy.style.color = COLORS.textDim;
+                buy.title =
+                    'Your key pricing is craft cost, and chest keys are left out of the materials list. ' +
+                    'Switch "chest keys" on beside the key pricing chip in the readiness card to include them.';
+            } else {
+                buy.textContent = `${formatLargeNumber(need.count)} ⚒`;
+                buy.style.cursor = 'pointer';
+                buy.style.textDecoration = 'underline dotted';
+                buy.title =
+                    `Craft ${need.count.toLocaleString()} ${entry.name}.\nOpens the marketplace with the materials ` +
+                    'still missing for them, net of what you hold, with Artisan applied. ' +
+                    'The readiness card has the craft-versus-buy verdict.';
+                buy.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    this._openKeyMaterials([entry]);
+                });
+            }
+        } else if (need.count) {
             // No sell listing at all (empty, or only the game's market value standing in for one) is told
             // apart from a priced one, so a bid-only book is bought by order
             const realBid = entry.costPerDaySides.bid && !entry.bidEstimated ? entry.costPerDaySides.bid : null;
@@ -3591,7 +3770,8 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
                 (need.cost === null ? '' : ` for about ${Math.round(need.cost).toLocaleString()} coins`) +
                 `.\n${strategy.mode === 'order' ? 'Place an order' : 'Buy now'}: ${strategy.reason}` +
                 opens +
-                (strategy.measured ? '' : '\nOpen it in the marketplace once to measure its queue.');
+                (strategy.measured ? '' : '\nOpen it in the marketplace once to measure its queue.') +
+                (entry.routeNote ? `\n${entry.routeNote}` : '');
             buy.addEventListener('click', (event) => {
                 event.stopPropagation();
                 this._buy(entry, need.count, strategy);
@@ -3601,7 +3781,10 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         const lasts = this._cell(
             !entry.rateKnown ? '?' : Number.isFinite(entry.secondsLeft) ? shortDuration(entry.secondsLeft) : '∞'
         );
-        if (!Number.isFinite(entry.secondsLeft)) lasts.style.color = COLORS.textDim;
+        if (entry.isChestKey && Number.isFinite(entry.held)) {
+            lasts.title = `Opens up to ${formatLargeNumber(entry.held)} chest${entry.held === 1 ? '' : 's'} (one key each).`;
+        }
+        if (dim || !Number.isFinite(entry.secondsLeft)) lasts.style.color = COLORS.textDim;
         // Measured against the target rather than a fixed hour: with "3 days"
         // chosen, something lasting two of them is exactly what you opened this
         // to find, and green was the panel disagreeing with its own Buy column
@@ -3681,7 +3864,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
      * @param {Array<Object>} shortfall - What to buy, per item
      * @returns {HTMLElement}
      */
-    _footer(sides, need, shortfall) {
+    _footer(sides, need, shortfall, { readOnly = false, crafted = [], craftCount = 0 } = {}) {
         const footer = document.createElement('div');
         Object.assign(footer.style, {
             display: 'flex',
@@ -3708,14 +3891,36 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         const buy = document.createElement('span');
         Object.assign(buy.style, { marginLeft: 'auto', minWidth: '0', overflowWrap: 'anywhere', textAlign: 'right' });
 
-        if (need.items) {
+        if (readOnly) {
+            // What it would cost them to restock, for reading: not a control
+            if (need.items) {
+                buy.textContent =
+                    `Short ${formatLargeNumber(need.items)}` +
+                    (need.unrated ? ` known · ${need.unrated} rate unknown` : '') +
+                    ` · ${formatLargeNumber(Math.round(need.cost))}`;
+                buy.style.color = COLORS.textDim;
+                buy.title =
+                    'What they are short of for this duration and what it would cost. Only they can buy it.' +
+                    (need.unpriced ? `\n${need.unpriced} item(s) could not be priced and are not in this total.` : '');
+            } else if (need.unrated) {
+                buy.textContent = `Rate unknown for ${need.unrated} item${need.unrated === 1 ? '' : 's'}`;
+                buy.style.color = COLORS.textDim;
+            } else {
+                buy.textContent = 'Stocked ✓';
+                buy.style.color = ROW_COLORS.good;
+            }
+        } else if (need.items || craftCount) {
             // The whole restock in one gesture. Buying it a row at a time means
             // a trip back to this panel between each one, and this panel is
             // behind the marketplace you would be standing in.
-            buy.textContent =
-                `Buy all ${formatLargeNumber(need.items)}` +
-                (need.unrated ? ` known · ${need.unrated} rate unknown` : '') +
-                ` · ${formatLargeNumber(Math.round(need.cost))}`;
+            const buyText = need.items
+                ? `Buy all ${formatLargeNumber(need.items)}` +
+                  (need.unrated ? ` known · ${need.unrated} rate unknown` : '') +
+                  ` · ${formatLargeNumber(Math.round(need.cost))}`
+                : '';
+            // Keys on the craft route are not part of the count above: they are shopped as materials
+            const craftText = craftCount ? `${buyText ? ' + ' : 'Craft '}${formatLargeNumber(craftCount)} keys ⚒` : '';
+            buy.textContent = buyText + craftText;
             buy.style.color = ROW_COLORS.gold;
             buy.style.cursor = 'pointer';
             buy.style.textDecoration = 'underline dotted';
@@ -3725,7 +3930,8 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
                 (need.unrated ? `\n${need.unrated} item(s) have unknown consumption rates.` : '');
             buy.addEventListener('click', (event) => {
                 event.stopPropagation();
-                this._openShoppingList(shortfall);
+                if (shortfall.length) this._openShoppingList(shortfall);
+                if (craftCount) this._openKeyMaterials(crafted);
             });
         } else if (need.unrated) {
             buy.textContent = `Rate unknown for ${need.unrated} item${need.unrated === 1 ? '' : 's'}`;

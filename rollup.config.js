@@ -283,6 +283,9 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/drop-sources.js')), 'Toolasha.Utils.dropSources'],
     [normalize(join(__dirname, 'src/utils/dungeon-key-forecast.js')), 'Toolasha.Utils.dungeonKeyForecast'],
     [normalize(join(__dirname, 'src/utils/dungeon-keys.js')), 'Toolasha.Utils.dungeonKeys'],
+    // The party's key rows (yours from the bag, a member's from the key-count message): the
+    // consumables panel (ui) and the overlay's Consumables tile (combat) draw the same ones
+    [normalize(join(__dirname, 'src/utils/dungeon-party-keys.js')), 'Toolasha.Utils.dungeonPartyKeys'],
     [normalize(join(__dirname, 'src/utils/dungeon-level-gap.js')), 'Toolasha.Utils.dungeonLevelGap'],
     // The dungeon chest expectation and its refinement-chest split, reached
     // from the combat bundle (the ROI board) and the sim bundle (expected drops)

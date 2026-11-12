@@ -2568,6 +2568,42 @@ export async function openMissingMaterials(
 }
 
 /**
+ * Open the marketplace on the materials for crafting several things at once.
+ *
+ * The Consumables panel's craft route for dungeon keys: the entry key and, if
+ * asked, the chest key are made by different actions that share materials, so
+ * the bill is the SUM of each action's requirement and the stock held is netted
+ * off once. Each action's requirement comes from the same calculator the panel
+ * button uses, which applies Artisan per craft (rounded per craft, not per unit)
+ * — summing the shortfalls instead would net shared materials against stock
+ * twice.
+ *
+ * @param {Array<{actionHrid: string, numActions: number}>} crafts - What to craft and how many actions of each
+ * @returns {Promise<boolean>} Whether the marketplace opened with at least one line
+ */
+export async function openCraftBill(crafts) {
+    const totals = new Map();
+    for (const craft of crafts || []) {
+        const numActions = Math.max(0, Math.floor(Number(craft?.numActions) || 0));
+        if (!craft?.actionHrid || numActions <= 0) continue;
+        for (const line of calculateMaterialRequirements(craft.actionHrid, numActions, false)) {
+            // A line that names an enhancement level is a different stack
+            const level = Math.max(0, Math.floor(Number(line.enhancementLevel) || 0));
+            const key = `${line.itemHrid}@${level}`;
+            const total = totals.get(key) || { itemHrid: line.itemHrid, enhancementLevel: level, count: 0 };
+            total.count += line.required;
+            totals.set(key, total);
+        }
+    }
+    const lines = [...totals.values()].map((line) => ({
+        itemHrid: line.itemHrid,
+        count: line.count,
+        ...(line.enhancementLevel > 0 ? { enhancementLevel: line.enhancementLevel } : {}),
+    }));
+    return openMaterialsList(lines);
+}
+
+/**
  * Open the marketplace on one Alchemy action's bill for an item, exactly as the Alchemy panel's
  * button does for the panel's selection. Navigation only: nothing is bought.
  *
@@ -2586,6 +2622,7 @@ export default {
     cleanup,
     openMissingMaterials,
     openMaterialsList,
+    openCraftBill,
     openBillOwner,
     openTesterShopPage,
 };

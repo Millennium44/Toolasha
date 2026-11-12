@@ -329,7 +329,8 @@ describe('the key line, which is the one exact figure', () => {
         await render();
 
         const body = text();
-        expect(body).toContain('3 keys · food unknown');
+        // One merged row: held, runs covered, and how far short of the plan
+        expect(body).toContain('3 keys · 3 runs · food unknown · short 7');
         // One "to buy" on the card, and it is yours
         expect(body.match(/to buy/g)).toHaveLength(1);
     });
@@ -346,7 +347,7 @@ describe('what the lobby cannot see', () => {
         expect(body).toContain('Stranger');
         // Your own keys are in your inventory, so your line is never blank —
         // but your food is still unmeasured and the line says so
-        expect(body).toContain('4 keys · food unknown');
+        expect(body).toContain('4 keys · 4 runs · food unknown');
         expect(body.match(/unknown — not in party data/g)).toHaveLength(2);
     });
 
@@ -419,7 +420,7 @@ describe('what the lobby cannot see', () => {
 
         const body = text();
         // Four keys against twelve runs of coffee: the keys bind
-        expect(body).toContain('4 runs · Chimerical Entry Key');
+        expect(body).toContain('4 keys · 4 runs');
         expect(body).toContain('Stops first');
     });
 
@@ -443,7 +444,7 @@ describe('the party key counts the game itself broadcasts', () => {
         await render();
 
         const body = text();
-        expect(body).toContain('3 keys · food unknown');
+        expect(body).toContain('3 keys · 3 runs · food unknown');
         // Counting a member's keys does not count them as read
         expect(body).toContain('keys only for');
         expect(body).toContain('key-count message in party chat');
@@ -756,9 +757,9 @@ describe('buying the missing keys against crafting them', () => {
         const body = text();
         // Six missing: the route on the key line, and both totals under it
         expect(body).toContain('6 to buy');
-        expect(body).toContain('craft 4Kc vs buy 6Kc');
+        expect(body).toContain('craft 4K vs buy 6K');
         expect(body).toContain('priced to buy at your key setting');
-        expect(body).toContain('crafting would save 2Kc');
+        expect(body).toContain('crafting would save 2K');
         // Buying is the route taken, so there is no crafting time to report
         expect(body).not.toContain('at the bench');
         expect(body).toContain('both at ask');
@@ -958,9 +959,11 @@ describe('which member is short of keys, and by how much', () => {
         await render();
 
         const body = text();
-        expect(body).toContain('Stranger needs 9 more keys (has 1 of 10)');
-        expect(body).toContain('Ally needs 3 more keys (has 7 of 10)');
-        expect(body.indexOf('Stranger needs 9')).toBeLessThan(body.indexOf('Ally needs 3'));
+        // One row each, merged: held, runs covered and the shortfall in red
+        expect(body).toContain('Stranger1 keys · 1 run · food unknown · short 9');
+        expect(body).toContain('Ally7 keys · 7 runs · food unknown · short 3');
+        expect(body).not.toContain('Short of keys');
+        expect(body).not.toContain('needs 9 more keys');
     });
 
     test('a member nobody has heard from is unknown, not nine short', async () => {
@@ -970,8 +973,10 @@ describe('which member is short of keys, and by how much', () => {
         await render();
 
         const body = text();
-        expect(body).toContain('Stranger key count unknown (needs 10)');
+        // Unknown stays unknown on the member's row; it is not nine short
+        expect(body).toContain('Strangerunknown — not in party data');
         expect(body).not.toContain('Stranger needs');
+        expect(body).not.toContain('Strangershort');
     });
 
     test('a party that is all stocked gets no lines at all', async () => {
@@ -982,6 +987,7 @@ describe('which member is short of keys, and by how much', () => {
         await render();
 
         expect(text()).not.toContain('Short of keys');
+        expect(text()).not.toContain('short ');
     });
 
     test('the copy button puts the joined lines on the clipboard', async () => {

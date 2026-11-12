@@ -40,6 +40,7 @@ import {
     partyOutlook,
     drinkRatePerDay,
 } from '../../utils/consumable-forecast.js';
+import { keyRowsForData, withLiveCounts } from '../../utils/dungeon-party-keys.js';
 import { isSkillingActionType, runningActionTypeHrid, skillingConsumables } from '../../utils/skilling-consumables.js';
 import { currentTarget, loadTarget } from '../../utils/consumable-target.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
@@ -102,6 +103,13 @@ let consumableCachedAt = 0;
 dataManager.on('character_switching', () => {
     cached = null;
     cachedAt = 0;
+    consumableCache = null;
+    consumableCachedAt = 0;
+});
+
+// A purchase (or a use) changes what is held now, and the forecast reads the live inventory for
+// you: dropping the cache lets the overlay's next tick draw it instead of waiting out CACHE_MS.
+dataManager.on('items_updated', () => {
     consumableCache = null;
     consumableCachedAt = 0;
 });
@@ -616,7 +624,7 @@ registerRow({
         const payload = consumablesPayload();
         if (!payload) return 'blank';
 
-        const { you, party, partyName, limiting, sides, youUnknown, partyUnknown } = payload;
+        const { you, party, partyName, limiting, sides, youUnknown, partyUnknown, heldSignature } = payload;
         return [
             you ? `${shortDuration(you.secondsLeft)}@${runOutColor(you)}` : '--',
             party ? `${shortDuration(party.secondsLeft)}@${runOutColor(party)}` : '--',
@@ -625,6 +633,11 @@ registerRow({
             partyName || '',
             limiting.itemHrid,
             limiting.held,
+            // A member's key count moves on every key-count message
+            // Every one of your rows, so a purchase of anything redraws the tile
+            heldSignature,
+            you?.held ?? '',
+            party?.held ?? '',
             runOutColor(limiting),
             sides.ask === null ? 'unknown' : Math.round(sides.ask),
             sides.bid === null ? 'unknown' : Math.round(sides.bid),
@@ -991,8 +1004,10 @@ function consumablesPayload() {
     // Costed through the same forecast the panel uses, so the tile can show
     // both sides of the book the way the panel does and the two are read off
     // one calculation rather than two that happen to agree
-    const mine = players.find((player) => player.isCurrent)?.forecasts || [];
     const youPlayer = players.find((player) => player.isCurrent);
+    // Your keys are a cost you pay: the entry key row is in the forecasts, the
+    // chest key joins the cost only, so it can never be the item that stops you
+    const mine = [...(youPlayer?.forecasts || []), ...(youPlayer?.chestKey ? [youPlayer.chestKey] : [])];
     const otherPlayers = players.filter((player) => !player.isCurrent);
     const youUnknown = !!youPlayer?.forecasts.some((entry) => !entry.rateKnown);
     const partyUnknown = otherPlayers.some((player) => player.forecasts.some((entry) => !entry.rateKnown));
@@ -1003,6 +1018,7 @@ function consumablesPayload() {
         you,
         party,
         partyName,
+        heldSignature: mine.map((entry) => entry.held).join(','),
         youUnknown,
         partyUnknown,
         limiting: you || party || unknown,
@@ -1019,15 +1035,35 @@ function forecastPlayers() {
     if (!data?.players?.length) return [];
 
     const duration = data.durationSeconds || 0;
-    return data.players.map((player) => ({
-        name: player.name || 'Unknown',
-        isCurrent: !!player.isCurrentPlayer,
-        forecasts: forecastAll(
-            exactDrinkRates(calculatePlayerStats(player, duration)?.consumableBreakdown, player),
+    const statsByPlayer = new Map(data.players.map((player) => [player, calculatePlayerStats(player, duration)]));
+    // The entry key belongs in every countdown (a run stops on an empty key pile
+    // as it does on an empty coffee slot) and the chest key in the cost only.
+    // The same builder the Consumables panel draws from.
+    const keys = keyRowsForData(data, (player) => statsByPlayer.get(player)).rows;
+
+    return data.players.map((player) => {
+        const forecasts = forecastAll(
+            // Your counts from the live inventory, as the panel reads them: the collector's
+            // only move on a new battle or a use, so a purchase would not show for minutes
+            withLiveCounts(
+                exactDrinkRates(statsByPlayer.get(player)?.consumableBreakdown, player),
+                player,
+                dataManager.getInventory?.()
+            ),
             (hrid) => getItemPrices(hrid),
             { keepOrder: true }
-        ),
-    }));
+        );
+        const keyRows = keys.get(player);
+        if (keyRows?.entry) forecasts.push(keyRows.entry);
+
+        return {
+            name: player.name || 'Unknown',
+            isCurrent: !!player.isCurrentPlayer,
+            forecasts,
+            // Never in `forecasts`: running out of chest keys stops nothing
+            chestKey: keyRows?.chest || null,
+        };
+    });
 }
 
 /**
