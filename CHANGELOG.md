@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Decompose chain figures follow your Buy/Sell pricing
+
+The Decompose chain/hr sorts in Alchemy Best Items and the Marketplace now price with your Buy and Sell dropdowns, ticks included, instead of always buying at the ask and selling at the bid, so they agree with the item tooltip's chain line. In chain mode a row's Profit/hr now matches its expanded breakdown.
+
+### Gear only filter for Best Items decompose
+
+A new "Gear only" box on the Best Items Decompose tab hides materials such as lumbers, cheeses, hides and teas, which only yield essences, so the gear worth decomposing is easier to spot.
+
 ### Combat talismans count in the Combat Sim on the test server
 
 Simulated players now carry their slotted combat talismans, scaled by their belt's Talisman Power: you use your live slots or the chosen loadout's, and party members use the talismans on their shared profile. The editor lists them under the belt. Echo, Smite, Shatter, Fortify and Overkill are not simulated yet.
