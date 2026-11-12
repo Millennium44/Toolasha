@@ -2,6 +2,7 @@
 import { addStyles } from '../../utils/dom.js';
 import { GAME_COLORS } from '../../utils/game-look.js';
 import { simEntityLabelHtml } from './sim-entity-label.js';
+import { enhanceSimEntitySelect, releaseSimEntitySelect } from './sim-entity-select-fallback.js';
 
 const CLASS_NAME = 'toolasha-sim-entity-select';
 const STYLE_ID = 'toolasha-sim-entity-select-styles';
@@ -44,6 +45,7 @@ const CSS_TEXT = `
 export function populateSimEntitySelect(select, entries) {
     const rich = Boolean(globalThis.CSS?.supports?.('appearance', 'base-select'));
     select.replaceChildren();
+    if (rich) releaseSimEntitySelect(select);
     select.classList.toggle(CLASS_NAME, rich);
     if (rich) {
         addStyles(CSS_TEXT, STYLE_ID);
@@ -61,4 +63,6 @@ export function populateSimEntitySelect(select, entries) {
         else option.textContent = entry.name;
         select.appendChild(option);
     }
+    // Browsers without customizable selects (Firefox) get a Toolasha-drawn icon dropdown over the same select.
+    if (!rich) enhanceSimEntitySelect(select);
 }
