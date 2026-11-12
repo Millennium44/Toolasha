@@ -8,6 +8,7 @@ const game = vi.hoisted(() => ({
     setting: true,
     equipment: new Map(),
     keys: new Map(),
+    wrapperKeys: new Map(),
     handlers: new Map(),
     onClass: null,
 }));
@@ -41,7 +42,16 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/react-click.js', () => ({
     fiberFor: (modal) => {
         const rows = [...modal.querySelectorAll('[class*="TalismanModal_modifierRow"]')];
-        const nodes = rows.map((row) => ({ key: game.keys.get(row), stateNode: row, child: null, sibling: null }));
+        const nodes = rows.map((row) => ({
+            key: game.keys.get(row),
+            stateNode: row,
+            child: null,
+            sibling: null,
+            // A key that sits on a wrapping component fiber instead of the row's own
+            return: game.wrapperKeys.has(row)
+                ? { key: game.wrapperKeys.get(row), stateNode: null, return: null }
+                : null,
+        }));
         nodes.forEach((n, i) => (n.sibling = nodes[i + 1] || null));
         return { child: nodes[0] || null };
     },
@@ -82,6 +92,7 @@ beforeEach(() => {
     game.setting = true;
     game.equipment = new Map([['/item_locations/belt', large10]]);
     game.keys = new Map();
+    game.wrapperKeys = new Map();
     game.handlers = new Map();
     document.body.innerHTML = '';
 });
@@ -120,6 +131,25 @@ describe('the window', () => {
         expect(armor.querySelector('.toolasha-talisman-scaled').textContent).toBe('→ +2.52');
         // The game's own value element is left alone
         expect(speed.querySelector('[class*="TalismanModal_value"]').textContent).toBe('+4.5%');
+    });
+
+    test('a key on a wrapping component fiber still names the row', () => {
+        feature.initialize();
+        const modal = openModal();
+        const speed = row(modal, undefined, 2, '+4.5%');
+        game.wrapperKeys.set(speed, '/talisman_modifiers/milking_speed');
+        game.onClass(modal);
+        vi.advanceTimersByTime(100);
+        expect(speed.querySelector('.toolasha-talisman-scaled').textContent).toBe('→ +5.66%');
+    });
+
+    test('a row with no key anywhere above it up to the list is left alone', () => {
+        feature.initialize();
+        const modal = openModal();
+        const speed = row(modal, undefined, 2, '+4.5%');
+        game.onClass(modal);
+        vi.advanceTimersByTime(100);
+        expect(speed.querySelector('.toolasha-talisman-scaled')).toBeNull();
     });
 
     test('a special line is left alone', () => {

@@ -8,6 +8,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { runInBackground } from '../../utils/background-work.js';
+import { talismanBonusesOf } from '../../utils/talisman-bonuses.js';
 import { upgradeRequirementHtml } from '../../utils/item-requirements.js';
 import { characterKey, readScoped, readScopedChecked, writeScoped } from '../../utils/character-key.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
@@ -5563,7 +5564,7 @@ class LabSimUI {
         const targetSkill = this.panel.querySelector('#mwi-labsim-skilling-filter')?.value || null;
         const skillEquipmentMap = this._scopeSkillEquipmentMap(
             this._buildSkillEquipmentMap(gameData),
-            dto,
+            this._withSkillTalismans(dto),
             targetSkill,
             gameData
         );
@@ -11373,6 +11374,36 @@ class LabSimUI {
     }
 
     /**
+     * Put each skill's assigned-loadout talismans on the editor player (`skillTalismans`), where the skilling
+     * tiles read them next to the per-skill equipment map. A skill with no loadout reads the player's own.
+     * @param {Object} dto - The editor's player (a copy the run owns)
+     * @returns {Object} The same player
+     */
+    _withSkillTalismans(dto) {
+        const perSkill = dto ? this._buildSkillTalismanMap() : null;
+        if (perSkill && Object.keys(perSkill).length > 0) dto.skillTalismans = perSkill;
+        return dto;
+    }
+
+    /**
+     * The slotted talismans' noncombat stats of each skill's assigned loadout (see `_withSkillTalismans`).
+     * @returns {Object} { '/skills/woodcutting': { woodcuttingSpeed: 0.05, ... }, ... }
+     */
+    _buildSkillTalismanMap() {
+        const store = loadoutSnapshot() || bundledLoadoutSnapshot;
+        const allSnapshots = store.getAllSnapshots();
+        const talismanMap = {};
+        for (const [skillHrid, loadoutName] of Object.entries(this._skillLoadouts)) {
+            if (!loadoutName) continue;
+            const snapshot = allSnapshots.find((s) => s.name === loadoutName);
+            if (!snapshot?.equipment?.length) continue;
+            // Same loadouts as _buildSkillEquipmentMap; an empty set is an answer (this loadout has none)
+            talismanMap[skillHrid] = { ...talismanBonusesOf(store.equipmentMapOf?.(snapshot)).noncombat };
+        }
+        return talismanMap;
+    }
+
+    /**
      * Build per-skill equipment map from loadout assignments.
      * @param {Object} gameData
      * @returns {Object} { '/skills/woodcutting': { '/equipment_types/...': { hrid, enhancementLevel } }, ... }
@@ -11461,6 +11492,7 @@ class LabSimUI {
 
         const crateHrids = this._getSkillingCrates();
         const skillEquipmentMap = this._buildSkillEquipmentMap(gameData);
+        this._withSkillTalismans(dto);
         const results = computeSkillingClearRatesFromEditor(roomLevel, dto, crateHrids, gameData, skillEquipmentMap);
         const targetSkill = this.panel.querySelector('#mwi-labsim-skilling-filter')?.value || null;
         const filtered = targetSkill ? results.filter((r) => r.skillHrid === targetSkill) : results;
@@ -11646,7 +11678,7 @@ class LabSimUI {
         const targetSkill = this.panel.querySelector('#mwi-labsim-skilling-filter')?.value || null;
         const skillEquipmentMap = this._scopeSkillEquipmentMap(
             this._buildSkillEquipmentMap(gameData),
-            dto,
+            this._withSkillTalismans(dto),
             targetSkill,
             gameData
         );

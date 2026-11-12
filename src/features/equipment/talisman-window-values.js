@@ -60,6 +60,31 @@ export function scaledLineText(hrid, grade, power, modifierDetailMap) {
 }
 
 /**
+ * The React key of a row: its own fiber's, else the nearest keyed fiber above it, so a key that sits on a wrapping
+ * component (the row rendered by a child component keyed by the map) still counts. The climb stops at the list
+ * container, so a key from outside the list is never taken for a row's.
+ * @param {Object} fiber - The row's fiber
+ * @returns {string|null}
+ */
+function keyOf(fiber) {
+    let current = fiber;
+    for (let hops = 0; current && hops < 4; hops++, current = current.return) {
+        if (current.key !== null && current.key !== undefined) return String(current.key);
+        const node = current.stateNode;
+        if (
+            current !== fiber &&
+            node &&
+            node.nodeType === 1 &&
+            typeof node.className === 'string' &&
+            node.className.includes('TalismanModal_modifiers')
+        ) {
+            return null;
+        }
+    }
+    return null;
+}
+
+/**
  * The React keys (modifier hrids) of the rows under a window, by DOM element.
  * @param {Element} modal - The window element
  * @returns {Map<Element, string>}
@@ -75,14 +100,13 @@ function rowKeys(modal) {
         if (!fiber) continue;
         const node = fiber.stateNode;
         if (
-            fiber.key !== null &&
-            fiber.key !== undefined &&
             node &&
             node.nodeType === 1 &&
             typeof node.className === 'string' &&
             node.className.includes('TalismanModal_modifierRow')
         ) {
-            keys.set(node, String(fiber.key));
+            const key = keyOf(fiber);
+            if (key !== null) keys.set(node, key);
         }
         if (fiber.child) stack.push(fiber.child);
         if (fiber.sibling) stack.push(fiber.sibling);

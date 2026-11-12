@@ -355,3 +355,45 @@ describe('the crates a skilling forecast is run under', () => {
         expect(overrides.crateBuffs).toEqual([wisdom]);
     });
 });
+
+describe('the kit talismans reach the room like the labyrinth loadout reader sums them', () => {
+    const ITEMS = {
+        '/items/axe': {
+            equipmentDetail: { type: '/equipment_types/woodcutting_tool', noncombatStats: { woodcuttingSpeed: 0.2 } },
+        },
+    };
+    const kit = { '/equipment_types/woodcutting_tool': { hrid: '/items/axe', enhancementLevel: 0 } };
+    const talismans = {
+        woodcuttingSpeed: 0.05661,
+        skillingSpeed: 0.01258,
+        woodcuttingEfficiency: 0.03,
+        skillingEfficiency: 0.01,
+        gatheringQuantity: 0.02,
+        milkingSpeed: 0.5, // another skill's line: not this room's
+    };
+    const byType = (buffs) => Object.fromEntries(buffs.map((b) => [b.typeHrid, b]));
+
+    test('speed, efficiency and gathering add to the gear, and another skill line does not', () => {
+        const buffs = byType(buildEquipmentBuffsForSkill(kit, '/action_types/woodcutting', ITEMS, talismans));
+        expect(buffs['/buff_types/action_speed'].flatBoost).toBeCloseTo(0.2 + 0.05661 + 0.01258, 10);
+        expect(buffs['/buff_types/efficiency'].flatBoost).toBeCloseTo(0.04, 10);
+        expect(buffs['/buff_types/gathering'].flatBoost).toBeCloseTo(0.02, 10);
+    });
+
+    test('no talismans (a live server, no belt, a loadout without any) leaves the gear figures untouched', () => {
+        const without = buildEquipmentBuffsForSkill(kit, '/action_types/woodcutting', ITEMS);
+        expect(buildEquipmentBuffsForSkill(kit, '/action_types/woodcutting', ITEMS, null)).toEqual(without);
+        expect(buildEquipmentBuffsForSkill(kit, '/action_types/woodcutting', ITEMS, {})).toEqual(without);
+        expect(byType(without)['/buff_types/action_speed'].flatBoost).toBeCloseTo(0.2, 10);
+    });
+
+    test('buildOverridesForSkill passes the editor state talismans through', () => {
+        const overrides = buildOverridesForSkill(
+            { equipment: kit, talismanNoncombat: talismans },
+            '/action_types/woodcutting',
+            [],
+            { itemDetailMap: ITEMS, houseRoomDetailMap: {}, labyrinthCrateDetailMap: {} }
+        );
+        expect(byType(overrides.equipmentBuffs)['/buff_types/action_speed'].flatBoost).toBeCloseTo(0.2 + 0.06919, 10);
+    });
+});

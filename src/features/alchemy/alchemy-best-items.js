@@ -337,10 +337,14 @@ class AlchemyBestItems {
     equipmentSignature() {
         const worn = dataManager.getEquipment?.();
         if (!worn) return '';
-        return [...worn.entries()]
-            .map(([slot, item]) => `${slot}:${item?.itemHrid ?? ''}:${item?.enhancementLevel ?? 0}`)
-            .sort()
-            .join('|');
+        // The buff state version stands for the talismans, which ride on the Map rather than its entries
+        const version = dataManager.getBuffStateVersion?.() ?? 0;
+        return (
+            [...worn.entries()]
+                .map(([slot, item]) => `${slot}:${item?.itemHrid ?? ''}:${item?.enhancementLevel ?? 0}`)
+                .sort()
+                .join('|') + `|v${version}`
+        );
     }
 
     /**

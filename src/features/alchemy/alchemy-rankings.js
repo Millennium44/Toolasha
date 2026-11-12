@@ -408,12 +408,15 @@ function stateFingerprint(priceStamp) {
     const houseRooms = dataManager.getHouseRooms();
     const house = houseRooms ? Array.from(houseRooms.values()).reduce((sum, room) => sum + (room?.level || 0), 0) : 0;
 
+    // Slotted talismans and the belt scale the rates, and ride on getEquipment()'s Map rather than its entries
+    const talismanVersion = dataManager.getBuffStateVersion?.() ?? 0;
+
     const community = (dataManager.characterData?.communityBuffs || [])
         .map((buff) => `${buff?.hrid || ''}:${buff?.level || 0}`)
         .sort()
         .join(',');
 
-    return `${level}|${priceStamp}|${drinks}|${gear}|${stock}|${pricingMode}|${getCapeBaseValueMode()}|${house}|${community}`;
+    return `${level}|${priceStamp}|${drinks}|${gear}|${stock}|${pricingMode}|${getCapeBaseValueMode()}|${house}|${community}|${talismanVersion}`;
 }
 
 /**
