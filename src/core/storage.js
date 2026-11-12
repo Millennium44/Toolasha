@@ -2688,12 +2688,33 @@ class Storage {
     }
 
     /**
+     * Read a whole object store and say whether the read was complete.
+     *
+     * `getAll` answers `{}` or the rows read before an abort when IndexedDB fails, which suits callers that
+     * tolerate a short answer but lets a backup pass off a partial store as the whole of it. This answers
+     * `{ ok: true, rows }` only when the cursor walked to its end; any error, abort, missing connection or
+     * timed-out read is `{ ok: false, error }`. Used by the full backup only.
+     * @param {string} storeName - Object store name
+     * @returns {Promise<{ok: true, rows: Object}|{ok: false, error: string}>} The checked read
+     */
+    async getAllChecked(storeName = 'settings') {
+        if (!this.db && !(await this._awaitConnection())) {
+            return { ok: false, error: 'database not available' };
+        }
+
+        return this._guardedRead('getAllChecked', storeName, storeName, { ok: false, error: 'read timed out' }, () =>
+            this._runGetAll(storeName, true)
+        );
+    }
+
+    /**
      * The body of `getAll` — one cursor walk, settling from its events.
      * @param {string} storeName - Object store name
-     * @returns {Promise<Object>} Map of key → value
+     * @param {boolean} [checked] - Settle as `{ok, rows|error}` and never hand back a partial walk
+     * @returns {Promise<Object>} Map of key → value (or the checked result)
      * @private
      */
-    _runGetAll(storeName) {
+    _runGetAll(storeName, checked = false) {
         return new Promise((resolve, _reject) => {
             try {
                 const transaction = this.db.transaction([storeName], 'readonly');
@@ -2707,24 +2728,26 @@ class Storage {
                         result[cursor.key] = cursor.value;
                         cursor.continue();
                     } else {
-                        resolve(result);
+                        resolve(checked ? { ok: true, rows: result } : result);
                     }
                 };
 
                 cursorRequest.onerror = () => {
                     console.error(`[Storage] Failed to get all from ${storeName}:`, cursorRequest.error);
-                    resolve({});
+                    resolve(checked ? { ok: false, error: String(cursorRequest.error || 'cursor error') } : {});
                 };
 
                 // A cursor walk aborted part way has read whatever it read;
                 // hand that back rather than leaving the caller waiting
                 transaction.onabort = () => {
                     console.warn(`[Storage] GetAll transaction aborted for ${storeName}:`, transaction.error);
-                    resolve(result);
+                    resolve(
+                        checked ? { ok: false, error: String(transaction.error || 'transaction aborted') } : result
+                    );
                 };
             } catch (error) {
                 console.error(`[Storage] GetAll transaction failed for store ${storeName}:`, error);
-                resolve(isConnectionGone(error) ? READ_WEDGED : {});
+                resolve(isConnectionGone(error) ? READ_WEDGED : checked ? { ok: false, error: String(error) } : {});
             }
         });
     }

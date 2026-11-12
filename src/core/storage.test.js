@@ -1502,6 +1502,92 @@ describe('read transactions that abort', () => {
     });
 });
 
+describe('getAllChecked tells a complete store read from a partial one', () => {
+    /**
+     * A database whose cursor walks `rows`, then ends one of three ways.
+     * @param {Array<[string, *]>} rows - Rows the cursor yields
+     * @param {'end'|'abort'|'error'} ending - How the walk finishes
+     * @returns {object} Fake IDBDatabase
+     */
+    function createCursorDb(rows, ending) {
+        return {
+            objectStoreNames: ['settings'],
+            transaction() {
+                const txn = { onabort: null, error: new Error('boom') };
+                const request = { onsuccess: null, onerror: null, error: new Error('cursor failed') };
+                let i = 0;
+                const step = () => {
+                    if (i < rows.length) {
+                        const [key, value] = rows[i++];
+                        request.onsuccess({
+                            target: { result: { key, value, continue: () => queueMicrotask(step) } },
+                        });
+                    } else if (ending === 'end') {
+                        request.onsuccess({ target: { result: null } });
+                    } else if (ending === 'abort') {
+                        txn.onabort?.();
+                    } else {
+                        request.onerror?.();
+                    }
+                };
+                queueMicrotask(() => queueMicrotask(step));
+                return {
+                    objectStore: () => ({ openCursor: () => request }),
+                    get error() {
+                        return txn.error;
+                    },
+                    set onabort(fn) {
+                        txn.onabort = fn;
+                    },
+                    set onerror(fn) {
+                        txn.onerror = fn;
+                    },
+                };
+            },
+        };
+    }
+
+    afterEach(() => {
+        storage.db = null;
+    });
+
+    test('a complete walk is ok with every row', async () => {
+        storage.db = createCursorDb(
+            [
+                ['a', 1],
+                ['b', 2],
+                ['c', 3],
+            ],
+            'end'
+        );
+        await expect(storage.getAllChecked('settings')).resolves.toEqual({ ok: true, rows: { a: 1, b: 2, c: 3 } });
+    });
+
+    test('an empty store that read completely is ok and empty', async () => {
+        storage.db = createCursorDb([], 'end');
+        await expect(storage.getAllChecked('settings')).resolves.toEqual({ ok: true, rows: {} });
+    });
+
+    test('an abort after some rows is a failure, not the rows read so far', async () => {
+        storage.db = createCursorDb([['a', 1]], 'abort');
+        const result = await storage.getAllChecked('settings');
+        expect(result.ok).toBe(false);
+        expect(result.rows).toBeUndefined();
+    });
+
+    test('a cursor error before the first row is a failure, not an empty store', async () => {
+        storage.db = createCursorDb([], 'error');
+        expect((await storage.getAllChecked('settings')).ok).toBe(false);
+    });
+
+    test('generic getAll keeps its tolerant answers', async () => {
+        storage.db = createCursorDb([['a', 1]], 'abort');
+        await expect(storage.getAll('settings')).resolves.toEqual({ a: 1 });
+        storage.db = createCursorDb([], 'error');
+        await expect(storage.getAll('settings')).resolves.toEqual({});
+    });
+});
+
 describe('putAll waits out a lost connection like every other write', () => {
     afterEach(() => {
         storage.db = null;

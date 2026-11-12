@@ -21,6 +21,8 @@ function storageDefaults() {
     return {
         listStores: () => Promise.resolve(Array.from(db.keys())),
         getAll: (storeName) => Promise.resolve(Object.fromEntries(db.get(storeName) || new Map())),
+        getAllChecked: (storeName) =>
+            Promise.resolve({ ok: true, rows: Object.fromEntries(db.get(storeName) || new Map()) }),
         flushAll: () => Promise.resolve(),
         beginRestore: () => Promise.resolve(),
         finishRestore: () => {},
@@ -157,6 +159,39 @@ describe('chunked history records', () => {
     });
 });
 
+describe('a backup never passes off a partial store read as complete', () => {
+    beforeEach(seedDb);
+
+    const failXp = () =>
+        storageMock.getAllChecked.mockImplementation((name) =>
+            name === 'xpHistory'
+                ? Promise.resolve({ ok: false, error: 'AbortError' })
+                : Promise.resolve({ ok: true, rows: Object.fromEntries(db.get(name) || new Map()) })
+        );
+
+    test('JSON export fails, naming the store, when one store read fails among healthy ones', async () => {
+        failXp();
+        await expect(exportEverythingJSON()).rejects.toThrow(/xpHistory/);
+    });
+
+    test('object export fails the same way', async () => {
+        failXp();
+        await expect(exportEverything()).rejects.toThrow(/xpHistory/);
+    });
+
+    test('a genuinely empty store that read completely is exported as empty', async () => {
+        db.set('emptyStore', new Map());
+        const parsed = JSON.parse(await exportEverythingJSON());
+        expect(parsed.stores.emptyStore).toEqual({});
+        expect((await exportEverything()).stores.emptyStore).toEqual({});
+    });
+
+    test('a malformed answer (no ok flag) is treated as failed', async () => {
+        storageMock.getAllChecked.mockImplementation(() => Promise.resolve(undefined));
+        await expect(exportEverythingJSON()).rejects.toThrow(/settings/);
+    });
+});
+
 describe('exportEverythingJSON', () => {
     beforeEach(seedDb);
 
@@ -175,13 +210,17 @@ describe('exportEverythingJSON', () => {
 
     test('reads one store at a time, which is the whole point of it', async () => {
         const storage = (await import('../core/storage.js')).default;
-        storage.getAll.mockClear();
+        storage.getAllChecked.mockClear();
 
         await exportEverythingJSON();
 
         // One read per store, never a read of everything at once
-        expect(storage.getAll).toHaveBeenCalledTimes(3);
-        expect(storage.getAll.mock.calls.map(([name]) => name)).toEqual(['settings', 'xpHistory', 'dungeonRuns']);
+        expect(storage.getAllChecked).toHaveBeenCalledTimes(3);
+        expect(storage.getAllChecked.mock.calls.map(([name]) => name)).toEqual([
+            'settings',
+            'xpHistory',
+            'dungeonRuns',
+        ]);
     });
 
     test('both exports land the debounced writes before they read', async () => {

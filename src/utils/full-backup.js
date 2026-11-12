@@ -366,6 +366,20 @@ async function landPendingWrites() {
 }
 
 /**
+ * Read one store for a backup, failing when the read was not complete.
+ * @param {string} storeName - Object store name
+ * @returns {Promise<Object>} The store's rows, exclusions stripped
+ * @throws {Error} Naming the store when the read failed, aborted or was cut short
+ */
+async function readStoreForBackup(storeName) {
+    const read = await storage.getAllChecked(storeName);
+    if (!read?.ok) {
+        throw new Error(`could not read store "${storeName}" completely (${read?.error || 'unknown error'})`);
+    }
+    return stripExcludedKeys(storeName, read.rows);
+}
+
+/**
  * Export the whole database as JSON text, one store at a time.
  *
  * The object form held every store's values live at once and then handed the
@@ -391,7 +405,7 @@ export async function exportEverythingJSON() {
 
     let first = true;
     for (const storeName of storeNames) {
-        const entries = stripExcludedKeys(storeName, await storage.getAll(storeName));
+        const entries = await readStoreForBackup(storeName);
         parts.push(`${first ? '' : ','}${JSON.stringify(storeName)}:${JSON.stringify(entries)}`);
         first = false;
     }
@@ -416,7 +430,7 @@ export async function exportEverything() {
     const stores = {};
 
     for (const storeName of storeNames) {
-        stores[storeName] = stripExcludedKeys(storeName, await storage.getAll(storeName));
+        stores[storeName] = await readStoreForBackup(storeName);
     }
 
     return {
