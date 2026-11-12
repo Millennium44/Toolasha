@@ -12,6 +12,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import loadoutSnapshot from './loadout-snapshot.js';
+import { resolveLoadoutTalismans } from '../../utils/talisman-bonuses.js';
 import { getAnnotationContainer } from './labyrinth-annotations.js';
 import { SKIP_THRESHOLD_RANGE } from './labyrinth-formulas.js';
 import {
@@ -329,13 +330,24 @@ export const recommendationMethods = {
             // owned" mode: enhancing an item changes what it puts on without
             // changing anything above, and a sim cached against the old level
             // would otherwise outlive the upgrade that made it wrong
+            const owned = dataManager.getCharacterTalismans?.() || [];
             const worn = Object.values(loadoutSnapshot.snapshots || {})
-                .map((snapshot) =>
-                    loadoutSnapshot
+                .map((snapshot) => {
+                    const gear = loadoutSnapshot
                         .resolveEquipment(snapshot)
                         .map((equip) => `${equip.itemHrid}+${equip.enhancementLevel}`)
-                        .join(',')
-                )
+                        .join(',');
+                    // A loadout's talismans are named by id and an id outlives a reroll, so the stored
+                    // snapshot cannot see one: the resolved lines go in, and only when there are some, so a
+                    // character without talismans keeps the fingerprint it already has
+                    const lines = resolveLoadoutTalismans(snapshot.talismanIdMap, owned)
+                        .sort((x, y) => x.slotIndex - y.slotIndex)
+                        .map(
+                            (t) => `${t.slotIndex}:${(t.modifiers || []).map((m) => `${m.hrid}@${m.grade}`).join('+')}`
+                        )
+                        .join(';');
+                    return lines ? `${gear}~${lines}` : gear;
+                })
                 .join('|');
             const levels = this._combatLevelsFingerprintPart();
             const build = this._simBuildInputs?.({ wornKit }) ?? null;

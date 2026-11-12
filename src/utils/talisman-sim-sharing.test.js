@@ -68,3 +68,18 @@ describe('loadoutSignature', () => {
         expect(loadoutSignature(snapshot, [], worn(1))).toBe(loadoutSignature(snapshot, [], worn(1)));
     });
 });
+
+describe('malformed input never throws', () => {
+    test('sharedSlottedTalismans drops non-object lines and non-list line sets', () => {
+        const rows = [
+            { slotIndex: 1, modifiers: [null, 3, 'x', { grade: 2 }, { hrid: '/a', grade: 2 }] },
+            { slotIndex: 2, modifiers: {} },
+            { slotIndex: 3, modifiers: [null] },
+        ];
+        expect(() => sharedSlottedTalismans(rows)).not.toThrow();
+        expect(sharedSlottedTalismans(rows)).toEqual([
+            { slotIndex: 1, modifiers: [{ hrid: '/a', grade: 2 }] },
+            { slotIndex: 3, modifiers: [] },
+        ]);
+    });
+});

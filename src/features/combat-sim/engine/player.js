@@ -208,7 +208,7 @@ class Player extends CombatUnit {
             signature += piece ? `${slots[i]}=${piece.hrid}+${piece.enhancementLevel || 0};` : `${slots[i]}=;`;
         }
         // Talismans scale by the belt (already in the signature) and are applied only when the game data says so
-        signature += `|t=${getGameData()?.talismansEnabled ? JSON.stringify(this.talismans) : ''}`;
+        signature += `|t=${getGameData()?.talismansEnabled ? this._talismansSignature() : ''}`;
         if (this._equipmentStatsSignature === signature) return this._equipmentStatsCache;
 
         const pieces = [];
@@ -240,6 +240,21 @@ class Player extends CombatUnit {
         this._equipmentStatsSignature = signature;
         this._equipmentStatsCache = stats;
         return stats;
+    }
+
+    /**
+     * The talisman part of the equipment-stats cache key. Talismans do not change during a run, and
+     * `_equipmentStats` runs on nearly every swing, so the text is made once per talisman list: it is kept
+     * against the list it was made from, and a replaced list makes a new one.
+     * @returns {string}
+     * @private
+     */
+    _talismansSignature() {
+        if (this._talismansSignatureFor !== this.talismans) {
+            this._talismansSignatureFor = this.talismans;
+            this._talismansSignatureText = JSON.stringify(this.talismans);
+        }
+        return this._talismansSignatureText;
     }
 
     /**

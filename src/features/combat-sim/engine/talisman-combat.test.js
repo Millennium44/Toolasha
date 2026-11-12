@@ -8,7 +8,7 @@
  * server reports. Equality of the gear half against real item definitions is not covered here.
  */
 
-import { describe, test, expect, beforeEach } from 'vitest';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 import Player, { TALISMAN_MODELED_STATS } from './player.js';
 import { setGameData } from './game-data.js';
 import { computeTalismanCombat, TALISMAN_MECHANICS } from './talisman-combat.js';
@@ -268,5 +268,34 @@ describe('every combat modifier the game describes', () => {
 describe('unslotted records in the owned list', () => {
     test('the fixture rows really are unslotted', () => {
         expect(UNSLOTTED_TALISMANS.every((t) => t.slotIndex === 0)).toBe(true);
+    });
+});
+
+describe('malformed saved builds', () => {
+    test('a talisman whose modifiers are not a list, or hold non-objects, builds the plain player', () => {
+        const talismans = [{ slotIndex: 1, modifiers: {} }, { slotIndex: 2, modifiers: [null, 4, 'x'] }, null];
+        const dto = { ...dtoFor(), talismans };
+        expect(() => build(dto)).not.toThrow();
+        expect(build(dto).combatDetails.combatStats.armor).toBe(72);
+    });
+});
+
+describe('the equipment-stats cache key', () => {
+    test('the talisman list is serialized once, not on every stat rebuild', () => {
+        const player = build(dtoFor());
+        const spy = vi.spyOn(JSON, 'stringify');
+        for (let i = 0; i < 50; i++) player.updateCombatDetails();
+        const calls = spy.mock.calls.length;
+        spy.mockRestore();
+        expect(calls).toBe(0);
+    });
+
+    test('replacing the list changes the stats', () => {
+        const player = build(dtoFor());
+        const before = player.combatDetails.combatStats.armor;
+        player.talismans = [{ slotIndex: 1, modifiers: [{ hrid: '/talisman_modifiers/armor', grade: 6 }] }];
+        player.updateCombatDetails();
+        expect(player.combatDetails.combatStats.armor).not.toBe(before);
+        expect(player.combatDetails.combatStats.armor).toBeCloseTo(72 + 8 * 1.258, 9);
     });
 });
