@@ -117,7 +117,7 @@ export function countProtections(levelCounts, protectFrom, targetLevel, success)
  * @param {(baseHrid: string) => number} deps.protectionPrice - Cheapest protection
  *   unit price for the item (0 when none applies)
  * @param {(hrid: string, level: number) => number|null} deps.itemValue - Market
- *   resale (bid) value of the item at a level, or null when unlisted
+ *   resale value of the item at a level on the player's Sell side, or null when unlisted or only estimated
  * @param {Object} deps.itemDetails - itemDetailMap entry for the enhanced item
  * @param {number} [deps.marketTax=MARKET_TAX] - Sell fee
  * @returns {Object|null}
@@ -212,7 +212,7 @@ export function computeEnhancingSummary(run, deps) {
     const protectionUnpriced = !(protUnit > 0) && (best.expProtects > 0 || actualProtects > 0);
 
     // Worth it: +N resale (after fee) minus base given up (after fee) minus spent. A base item
-    // with no bid is unknown, not worth 0: a successful run would then book the whole +N value as
+    // with no sale price is unknown, not worth 0: a successful run would then book the whole +N value as
     // profit. (A failed run ends where it began, so its base cancels and the loss is the spend.)
     const keep = 1 - marketTax;
     const baseQuote = itemValue(run.baseHrid, 0);

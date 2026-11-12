@@ -21,7 +21,7 @@ import {
     buildEnhancementTooltipHTML,
 } from './tooltip-enhancement.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
-import { getItemPrices } from '../../utils/market-data.js';
+import { getItemPriceInfo } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { capProfitRate, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
@@ -40,7 +40,7 @@ const BTN_CLASS = 'mwi-xph-calc-btn';
  * @param {number} protectFrom
  * @param {Object} params - from enhancementParamsFor()
  * @returns {{itemHrid, name, xph, goldPerXP, costPerHour, costPartial, itemsPerHour, profitPerHour,
- *   profitUnavailableReason, liquidityLimit}|null}
+ *   profitUnavailableReason, profitEstimated, liquidityLimit}|null}
  */
 export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, params) {
     const itemLevel = itemDetails.itemLevel || 0;
@@ -115,20 +115,18 @@ export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, p
         }
     }
 
-    // Profit/hr: what the finished item sells for at the row's own target level, net of
+    // Profit/hr: what the finished item sells for (on the player's Sell side) at the row's own target level, net of
     // marketplace tax, against material and protection costs plus the +0 item consumed once
     // per run. The base item's price uses the same market/production fallback as enhancement
     // paths. A missing input price is not a free input.
     let profitPerHour = null;
     let profitUnavailableReason = null;
-    const enhancedPrice = getItemPrices(itemHrid, maxLevel);
-    const sellPrice = enhancedPrice
-        ? enhancedPrice.bid > 0
-            ? enhancedPrice.bid
-            : enhancedPrice.ask > 0
-              ? enhancedPrice.ask
-              : null
-        : null;
+    // The player's own Sell side (profit pricing mode, patient tick, custom price, Iron Cow value) at the row's
+    // target level. A price filled in from the official value map is no listing anyone can sell into: the figure
+    // is kept but flagged, never presented as a quote.
+    const sellInfo = getItemPriceInfo(itemHrid, { enhancementLevel: maxLevel, context: 'profit', side: 'sell' });
+    const sellPrice = sellInfo.price > 0 ? sellInfo.price : null;
+    const profitEstimated = sellPrice !== null && sellInfo.estimated;
     const basePrice = getRealisticBaseItemPrice(itemHrid);
 
     if (sellPrice === null) {
@@ -152,6 +150,7 @@ export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, p
         itemsPerHour,
         profitPerHour,
         profitUnavailableReason,
+        profitEstimated,
         // Filled in by capXPHRowProfit() once the sweep knows what the market can absorb;
         // null here means "not checked yet", not "unbound".
         liquidityLimit: null,
@@ -219,10 +218,12 @@ export function profitCellHTML(r) {
     const color = r.profitPerHour < 0 ? '#ff6b6b' : '#00c896';
     const rounded = Math.round(r.profitPerHour);
     const cappedToNothing = Boolean(r.liquidityLimit) && rounded === 0;
-    const text = cappedToNothing ? '~0' : `${formatKMB(rounded)}${r.costPartial ? '*' : ''}`;
+    const text = cappedToNothing ? '~0' : `${formatKMB(rounded)}${r.costPartial || r.profitEstimated ? '*' : ''}`;
     const valueTitle = cappedToNothing
         ? ` title="Market volume caps this to next to nothing — uncapped it would be ${formatKMB(Math.round(r.uncappedProfitPerHour) || 0)}/hr."`
-        : '';
+        : r.profitEstimated
+          ? ' title="The enhanced item has no listing on your selling side; its sale price is an estimate from the official market value."'
+          : '';
     const marker = r.liquidityLimit ? liquidityMarkerHtml(r.liquidityLimit, { compact: true }) : '';
     const separator = marker ? ' · ' : '';
     return `<span style="color:${color};"${valueTitle}>${text}</span>${separator}${marker}`;

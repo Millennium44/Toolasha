@@ -19,7 +19,8 @@ import {
 } from './enhancement-session.js';
 import { attemptTailProbability, describeAttemptOutcome } from './attempt-percentile.js';
 import { costVsExpected, hasUnpricedInput, valueVsCost } from './enhancement-profit.js';
-import { getItemPrices } from '../../utils/market-data.js';
+import { getItemPriceInfo } from '../../utils/market-data.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
@@ -338,6 +339,13 @@ class EnhancementUI {
             key: 'enhancementTracker_showOnlyOnEnhancingScreen',
             handler: onScreenSettingChange,
         });
+
+        // The worth-it line prices the piece on the player's Sell side: redraw when that side moves
+        const onSellSideChange = () => this.scheduleUpdate();
+        for (const key of ['profitCalc_pricingMode', ...PATIENT_TICK_SETTING_KEYS]) {
+            config.onSettingChange(key, onSellSideChange);
+            this.settingChangeHandlers.push({ key, handler: onSellSideChange });
+        }
     }
 
     /**
@@ -1712,20 +1720,24 @@ class EnhancementUI {
      * @returns {string} HTML
      */
     generateWorthItHTML(session) {
-        const worth = valueVsCost(session, getItemPrices);
+        // What the piece fetches on the player's own Sell side, as the rest of their profit figures price a sale
+        const worth = valueVsCost(session, (itemHrid, level) => {
+            const info = getItemPriceInfo(itemHrid, { enhancementLevel: level, context: 'profit', side: 'sell' });
+            return info.price === null ? null : { price: info.price, estimated: info.estimated };
+        });
         if (!worth) return '';
 
         if (worth.valueN == null) {
             return `
             <div style="margin-top: 6px; font-size: 12px; opacity: 0.6; color: ${STYLE.colors.textSecondary};">
-                💎 No market bid for +${worth.level} — worth-it unknown.
+                💎 No market price to sell +${worth.level} at — worth-it unknown.
             </div>`;
         }
 
         if (worth.value0 == null) {
             return `
             <div style="margin-top: 6px; font-size: 12px; opacity: 0.6; color: ${STYLE.colors.textSecondary};">
-                💎 No market bid for the starting +${worth.baseLevel} item — worth-it unknown.
+                💎 No market price to sell the starting +${worth.baseLevel} item at — worth-it unknown.
             </div>`;
         }
 
@@ -1750,7 +1762,7 @@ class EnhancementUI {
                 <span style="color: ${color};">${sign}${this.formatNumber(Math.abs(worth.net))}</span>
             </div>`;
         html += `<div id="${detailsId}" style="display: none; margin-left: 10px; margin-top: 3px;">`;
-        html += row(`+${worth.level} value (bid)`, this.formatNumber(worth.valueN));
+        html += row(`+${worth.level} sale value`, this.formatNumber(worth.valueN));
         html += row(`After ${feePct}% sell fee`, this.formatNumber(worth.valueN * keep));
         html += row(`Starting +${worth.baseLevel} value (after fee)`, `− ${this.formatNumber(worth.value0 * keep)}`);
         html += row('Spent enhancing', `− ${this.formatNumber(worth.spent)}`);

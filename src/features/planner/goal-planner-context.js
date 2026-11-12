@@ -38,6 +38,7 @@
  */
 
 import { craftPlanEligibility } from '../../utils/craft-start-eligibility.js';
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
@@ -1008,12 +1009,14 @@ function measureEnhancingRates() {
 }
 
 /**
- * Buy it or make it, whichever the book says is cheaper right now.
+ * Buy it or make it, whichever the book says is cheaper right now (priced on the player's Buy side).
  * @param {string} itemHrid - The item
  * @returns {Object|null} `{strategy, totalCost, buyPrice, craftCost, actionHrid, timeHours, requires}`
  */
 function acquisitionFor(itemHrid) {
-    const plan = computeBestCraftingPlan(itemHrid, 1, 'ask');
+    // The player's own Buy side (their profit pricing mode), as the planner's other materials use: a non-raw
+    // mode makes the plan price each leg through the profit context, patient ticks included
+    const plan = computeBestCraftingPlan(itemHrid, 1, config.getSettingValue('profitCalc_pricingMode') || 'hybrid');
     if (!plan || !Number.isFinite(plan.totalCost)) return null;
 
     const eligibility = craftPlanEligibility(plan);

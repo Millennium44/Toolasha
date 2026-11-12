@@ -38,7 +38,11 @@ vi.mock('../../core/websocket.js', () => ({ default: { on: vi.fn(), off: vi.fn()
 vi.mock('../../core/data-manager.js', () => ({
     default: { getActionDetails: vi.fn(), getItemDetails: vi.fn(), on: vi.fn(), off: vi.fn() },
 }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrices: vi.fn() }));
+vi.mock('../../utils/market-data.js', () => ({ getItemPrices: vi.fn(), getItemPriceInfo: vi.fn() }));
+vi.mock('../../utils/patient-tick.js', () => ({
+    PATIENT_TICK_SETTING_KEYS: ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'],
+}));
+vi.mock('../../utils/enhancement-input-pricing.js', () => ({ priceMaterial: () => ({ price: 0 }) }));
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: { isInitialized: false, calculateExpectedValue: vi.fn() },
 }));
