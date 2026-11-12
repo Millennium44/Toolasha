@@ -2579,9 +2579,11 @@ export async function openMissingMaterials(
  * twice.
  *
  * @param {Array<{actionHrid: string, numActions: number}>} crafts - What to craft and how many actions of each
+ * @param {Array<{itemHrid: string, count: number}>} [direct] - Items wanted as such, as required totals (what
+ *   is held plus what is short), for a caller that wants one list rather than two
  * @returns {Promise<boolean>} Whether the marketplace opened with at least one line
  */
-export async function openCraftBill(crafts) {
+export async function openCraftBill(crafts, direct = []) {
     const totals = new Map();
     for (const craft of crafts || []) {
         const numActions = Math.max(0, Math.floor(Number(craft?.numActions) || 0));
@@ -2594,6 +2596,14 @@ export async function openCraftBill(crafts) {
             total.count += line.required;
             totals.set(key, total);
         }
+    }
+    for (const item of direct || []) {
+        const count = Math.max(0, Math.floor(Number(item?.count) || 0));
+        if (!item?.itemHrid || !count) continue;
+        const key = `${item.itemHrid}@0`;
+        const total = totals.get(key) || { itemHrid: item.itemHrid, enhancementLevel: 0, count: 0 };
+        total.count += count;
+        totals.set(key, total);
     }
     const lines = [...totals.values()].map((line) => ({
         itemHrid: line.itemHrid,

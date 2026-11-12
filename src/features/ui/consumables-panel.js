@@ -1552,9 +1552,11 @@ class ConsumablesPanel {
      * available the keys are bought instead, which is always possible.
      *
      * @param {Array<Object>} rows - Key forecasts on the craft route
+     * @param {Array<Object>} [shortfall] - The rest of a Buy all: items to buy, which join the same list
+     *   (as one trip: a second bill would replace the first)
      * @returns {Promise<void>}
      */
-    async _openKeyMaterials(rows) {
+    async _openKeyMaterials(rows, shortfall = []) {
         const crafts = [];
         for (const row of rows || []) {
             const need = refillFor(row, this.target.seconds);
@@ -1570,21 +1572,28 @@ class ConsumablesPanel {
         try {
             const openBill = missingMaterialsButton()?.openCraftBill;
             if (typeof openBill !== 'function') {
-                // The Missing Materials feature is off or not loaded
-                this._openShoppingList(
-                    (rows || [])
+                // The module is not loaded (the bridge has no opener). The setting that adds the button to
+                // action panels does not matter here: the bridge works with it off.
+                this._openShoppingList([
+                    ...shortfall,
+                    ...(rows || [])
                         .map((row) => ({
                             ...refillFor(row, this.target.seconds),
                             itemHrid: row.itemHrid,
                             name: row.name,
                             secondsLeft: row.secondsLeft,
                         }))
-                        .filter((item) => item.count > 0)
-                );
+                        .filter((item) => item.count > 0),
+                ]);
                 return;
             }
+            // The rest of a Buy all rides in the same bill, as lines whose required total is what is
+            // held plus what is short, so the bill nets the stock once and keeps them live
+            const direct = (shortfall || [])
+                .filter((item) => item?.itemHrid && item.count > 0)
+                .map((item) => ({ itemHrid: item.itemHrid, count: Math.floor(Number(item.held) || 0) + item.count }));
             this.hide();
-            await openBill(crafts);
+            await openBill(crafts, direct);
         } catch (error) {
             console.error('[ConsumablesPanel] Opening the key materials failed:', error);
         }
@@ -3562,6 +3571,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
                 itemHrid: entry.itemHrid,
                 name: entry.name,
                 secondsLeft: entry.secondsLeft,
+                held: entry.held,
             }))
             .filter((item) => item.count > 0);
 
@@ -3665,7 +3675,8 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         const held = this._cell(formatLargeNumber(entry.held));
         held.style.color = isLimiting ? ROW_COLORS.bad : textColor;
         if (entry.statedCount) {
-            held.title = 'The count from the last party key-count message, not read from their inventory.';
+            held.title =
+                'The count the last party key-count message stated, as of the start of this run - not read from their inventory.';
         }
 
         const icon = itemIcon(entry.itemHrid, 18);
@@ -3930,8 +3941,10 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
                 (need.unrated ? `\n${need.unrated} item(s) have unknown consumption rates.` : '');
             buy.addEventListener('click', (event) => {
                 event.stopPropagation();
-                if (shortfall.length) this._openShoppingList(shortfall);
-                if (craftCount) this._openKeyMaterials(crafted);
+                // One trip: the key materials and the rest go in a single list, because opening a second
+                // bill replaces the first
+                if (craftCount) this._openKeyMaterials(crafted, shortfall);
+                else if (shortfall.length) this._openShoppingList(shortfall);
             });
         } else if (need.unrated) {
             buy.textContent = `Rate unknown for ${need.unrated} item${need.unrated === 1 ? '' : 's'}`;

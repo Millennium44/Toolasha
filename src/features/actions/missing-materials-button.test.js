@@ -2349,6 +2349,27 @@ describe('a craft bill for several things at once (the dungeon key route)', () =
         expect(document.querySelector(`[data-item-hrid="${LOGS}"]`)?.getAttribute('data-missing-quantity')).toBe('7');
     });
 
+    test('direct items ride in the same bill, netted against stock once', async () => {
+        const CAKE = '/items/spaceberry_cake';
+        state.items[CAKE] = { name: 'Spaceberry Cake', isTradable: true };
+        state.actionMaterials = [{ itemHrid: LOGS, itemName: 'Cedar Lumber', required: 6, missing: 6 }];
+        state.inventory = [
+            { itemHrid: LOGS, enhancementLevel: 0, count: 5 },
+            { itemHrid: CAKE, enhancementLevel: 0, count: 10 },
+        ];
+
+        const opening = missingMaterials.openCraftBill(
+            [{ actionHrid: '/actions/crafting/entry_key', numActions: 3 }],
+            // What is held (10) plus what is short (77)
+            [{ itemHrid: CAKE, count: 87 }]
+        );
+        await vi.advanceTimersByTimeAsync(600);
+        expect(await opening).toBe(true);
+
+        expect(document.querySelector(`[data-item-hrid="${CAKE}"]`)?.getAttribute('data-missing-quantity')).toBe('77');
+        expect(document.querySelector(`[data-item-hrid="${LOGS}"]`)?.getAttribute('data-missing-quantity')).toBe('1');
+    });
+
     test('nothing to craft opens nothing', async () => {
         expect(await missingMaterials.openCraftBill([{ actionHrid: '/actions/x', numActions: 0 }])).toBe(false);
         expect(state.calcCalls).toHaveLength(0);
