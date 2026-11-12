@@ -6,13 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat talismans count in the Combat Sim on the test server
+
+Simulated players now carry their slotted combat talismans, scaled by their belt's Talisman Power: you use your live slots or the chosen loadout's, and party members use the talismans on their shared profile. The editor lists them under the belt. Echo, Smite, Shatter, Fortify and Overkill are not simulated yet.
+
 ### Skilling talismans count on the test server
 
 Action times, efficiency, rare and essence find, gathering, experience, Gourmet and Processing now include your slotted skilling talismans, scaled by your belt's Talisman Power; an action on a saved loadout uses that loadout's talismans. The talisman window shows each line's real value beside the game's base value.
 
 ### Belts and talismans on the test server
 
-Toolasha now keeps track of your talismans and shows a worn belt in the Combat Sim editor, the equipment savings row and the marketplace slot filter. The new Eternal Holy Cow and Ancient Arcane Tree get collection badges. Bonuses are not counted yet.
+Toolasha now keeps track of your talismans and shows a worn belt in the Combat Sim editor, the equipment savings row and the marketplace slot filter. The new Eternal Holy Cow and Ancient Arcane Tree get collection badges.
 
 ### Sim dropdowns show icons in Firefox
 
