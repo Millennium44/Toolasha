@@ -62,9 +62,10 @@ export const CAPPED_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 export const MAX_CAPPED = 20;
 
 /**
- * Where this device remembers which evictions it has shown, `{rosters: at, parties: at}`. Under `toolasha_local_`,
+ * Where this device remembers which evictions it has dismissed: `{ids: {rosters: [id], parties: [id]}}`, and the
+ * older `{rosters: at, parties: at}` high-water stamp, still read. Under `toolasha_local_`,
  * so the sync neither uploads nor applies it: dismissing a note on one device must not hide it on another, which
- * has not shown it yet, and the stamp is the newest `at` this device showed.
+ * has not shown it yet, and the ids are the ones this device dismissed.
  */
 export const CAPPED_SEEN_KEY = 'toolasha_local_cappedSeen';
 
@@ -269,16 +270,21 @@ export function evictedPartiesByCap(before, after) {
 }
 
 /**
- * The evictions of a record this device has not yet shown: newest first.
+ * The evictions of a record this device has not dismissed: newest first. Judged by id, not by a time stamp, so an
+ * eviction folded on a device whose clock runs behind the one that was dismissed is still shown.
  * @param {{capped?: Object<string, {name: string, at: number}>}} saved
- * @param {number} seenAt - The newest `at` this device has shown ({@link loadCappedSeen})
+ * @param {{at: number, ids: Array<string>|null}|number|null} seen - What this device dismissed
+ *   ({@link loadCappedSeen}); a bare number is the older high-water stamp, honored only while no ids were stored
  * @param {number} [now]
  * @returns {Array<{id: string, name: string, at: number}>}
  */
-export function unseenCapped(saved, seenAt, now = Date.now()) {
+export function unseenCapped(saved, seen, now = Date.now()) {
     const capped = normalizeCapped(saved?.capped, now);
+    const state = seen && typeof seen === 'object' ? seen : { at: Number(seen) || 0, ids: null };
+    const ids = Array.isArray(state.ids) ? new Set(state.ids) : null;
+    const stamp = ids ? 0 : Number(state.at) || 0;
     return Object.entries(capped)
-        .filter(([, entry]) => entry.at > (Number(seenAt) || 0))
+        .filter(([id, entry]) => !(ids && ids.has(id)) && entry.at > stamp)
         .map(([id, entry]) => ({ id, ...entry }))
         .sort((x, y) => y.at - x.at);
 }
@@ -298,36 +304,44 @@ export function cappedNoteText(entries, max) {
 }
 
 /**
- * The newest eviction this device has shown for one record.
+ * What this device has dismissed for one record: the ids (the last {@link MAX_CAPPED}), plus the older
+ * high-water stamp when the stored value is that shape.
  * @param {string} key - {@link SAVED_PARTIES_KEY} or {@link SAVED_ROSTERS_KEY}
- * @returns {Promise<number>} 0 when none, or when the read failed (the note then shows once more)
+ * @returns {Promise<{at: number, ids: Array<string>|null}>} Nothing dismissed, or a failed read, shows the note once more
  */
 export async function loadCappedSeen(key) {
     try {
         const seen = await storage.get(CAPPED_SEEN_KEY, STORE, null);
-        return Number(seen?.[key]) || 0;
+        const ids = seen?.ids?.[key];
+        return {
+            at: Number(seen?.[key]) || 0,
+            ids: Array.isArray(ids) ? ids.filter((id) => typeof id === 'string') : null,
+        };
     } catch (error) {
         console.error('[PartySaved] Failed to read which evictions were shown:', error);
-        return 0;
+        return { at: 0, ids: null };
     }
 }
 
 /**
- * Dismiss a record's evictions on this device: remember the newest one shown. A later eviction is newer, so it
- * shows again. Only this device's stamp moves; the record itself is never edited, since removing an entry from a
- * union-merged field would bring it back on the next fold.
+ * Dismiss evictions on this device: remember their ids. Only this device's record moves; the saved record itself
+ * is never edited, since removing an entry from a union-merged field would bring it back on the next fold.
  * @param {string} key - {@link SAVED_PARTIES_KEY} or {@link SAVED_ROSTERS_KEY}
- * @param {number} upTo - The `at` of the newest eviction shown
- * @returns {Promise<boolean>} Whether the stamp was written
+ * @param {Array<string>} ids - The ids of the evictions shown
+ * @returns {Promise<boolean>} Whether the ids were written
  */
-export async function dismissCapped(key, upTo) {
+export async function dismissCapped(key, ids) {
     try {
         const result = await storage.update(
             CAPPED_SEEN_KEY,
             (current) => {
                 const seen = current && typeof current === 'object' ? { ...current } : {};
-                if ((Number(seen[key]) || 0) >= upTo) return undefined;
-                seen[key] = upTo;
+                const all = seen.ids && typeof seen.ids === 'object' ? { ...seen.ids } : {};
+                const have = Array.isArray(all[key]) ? all[key] : [];
+                const next = [...have.filter((id) => !ids.includes(id)), ...ids].slice(-MAX_CAPPED);
+                if (next.length === have.length && next.every((id, i) => id === have[i])) return undefined;
+                all[key] = next;
+                seen.ids = all;
                 return seen;
             },
             STORE

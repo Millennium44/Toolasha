@@ -2784,7 +2784,7 @@ describe('saved parties', () => {
             el('saved-capped-dismiss').click();
             await flush();
             expect(note().style.display).toBe('none');
-            expect(state.seenDb).toEqual({ combatSimSavedParties: at });
+            expect(state.seenDb).toEqual({ ids: { combatSimSavedParties: ['x', 'y'] } });
             // The record is never edited by a dismissal, and a reopened tab stays quiet
             expect(Object.keys(state.savedDb.capped)).toEqual(['x', 'y']);
             tab.detach();

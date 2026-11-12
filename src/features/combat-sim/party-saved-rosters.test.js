@@ -445,34 +445,51 @@ describe('evictions past the cap, recorded in the fold', () => {
     });
 
     describe('shown, dismissed on this device, shown again for a newer eviction', () => {
-        test('unseen entries are those newer than the stamp; the note names them', async () => {
+        test('unseen entries are those not dismissed by id; the note names them', async () => {
             const now = Date.now();
             const record = { capped: { a: { name: 'Alpha', at: now - 2000 }, b: { name: 'Beta', at: now - 1000 } } };
-            expect(unseenCapped(record, 0).map((e) => e.name)).toEqual(['Beta', 'Alpha']);
-            expect(cappedNoteText(unseenCapped(record, 0), 40)).toBe(
+            expect(unseenCapped(record, null).map((e) => e.name)).toEqual(['Beta', 'Alpha']);
+            expect(cappedNoteText(unseenCapped(record, null), 40)).toBe(
                 'Sync joined two full lists and kept the 40 most recently changed: Beta, Alpha dropped.'
             );
             expect(cappedNoteText([], 40)).toBe('');
             const seven = Array.from({ length: 7 }, (_, i) => ({ name: `n${i}` }));
             expect(cappedNoteText(seven, 40)).toContain('n0, n1, n2, n3, n4 and 2 more');
-            expect(await loadCappedSeen(SAVED_ROSTERS_KEY)).toBe(0);
-            expect(await dismissCapped(SAVED_ROSTERS_KEY, now - 1000)).toBe(true);
+            expect(await loadCappedSeen(SAVED_ROSTERS_KEY)).toEqual({ at: 0, ids: null });
+            expect(await dismissCapped(SAVED_ROSTERS_KEY, ['a', 'b'])).toBe(true);
             const seen = await loadCappedSeen(SAVED_ROSTERS_KEY);
             expect(unseenCapped(record, seen)).toEqual([]);
-            // The parties record has its own stamp, kept under a key the sync leaves alone
-            expect(await loadCappedSeen(SAVED_PARTIES_KEY)).toBe(0);
+            // The parties record has its own ids, kept under a key the sync leaves alone
+            expect(await loadCappedSeen(SAVED_PARTIES_KEY)).toEqual({ at: 0, ids: null });
             expect(CAPPED_SEEN_KEY.startsWith('toolasha_local_')).toBe(true);
-            // A later eviction is newer than the stamp, so it shows again; a dismissal never goes backwards
-            const later = { capped: { ...record.capped, c: { name: 'Gamma', at: now } } };
+            // A later eviction is a new id, so it shows again, even stamped EARLIER than the dismissed ones (a fold
+            // on a device whose clock runs behind)
+            const later = { capped: { ...record.capped, c: { name: 'Gamma', at: now - 90000 } } };
             expect(unseenCapped(later, seen).map((e) => e.name)).toEqual(['Gamma']);
-            await dismissCapped(SAVED_ROSTERS_KEY, now - 5000);
-            expect(await loadCappedSeen(SAVED_ROSTERS_KEY)).toBe(now - 1000);
+            // Dismissing again keeps what was dismissed; the list is capped at 20, newest kept
+            await dismissCapped(SAVED_ROSTERS_KEY, ['c']);
+            expect((await loadCappedSeen(SAVED_ROSTERS_KEY)).ids).toEqual(['a', 'b', 'c']);
+            await dismissCapped(
+                SAVED_ROSTERS_KEY,
+                Array.from({ length: 25 }, (_, i) => `n${i}`)
+            );
+            const ids = (await loadCappedSeen(SAVED_ROSTERS_KEY)).ids;
+            expect(ids).toHaveLength(MAX_CAPPED);
+            expect(ids.at(-1)).toBe('n24');
+        });
+
+        test('the older high-water stamp is still read, until ids are stored', () => {
+            const now = Date.now();
+            const record = { capped: { a: { name: 'Alpha', at: now - 2000 }, b: { name: 'Beta', at: now - 1000 } } };
+            expect(unseenCapped(record, now - 1500).map((e) => e.name)).toEqual(['Beta']);
+            expect(unseenCapped(record, { at: now - 1500, ids: null }).map((e) => e.name)).toEqual(['Beta']);
+            expect(unseenCapped(record, { at: now - 1500, ids: ['b'] }).map((e) => e.name)).toEqual(['Alpha']);
         });
 
         test('a failed write does not throw and leaves the note showing', async () => {
             db.failNext = true;
-            expect(await dismissCapped(SAVED_ROSTERS_KEY, 5)).toBe(false);
-            expect(await loadCappedSeen(SAVED_ROSTERS_KEY)).toBe(0);
+            expect(await dismissCapped(SAVED_ROSTERS_KEY, ['a'])).toBe(false);
+            expect(await loadCappedSeen(SAVED_ROSTERS_KEY)).toEqual({ at: 0, ids: null });
         });
     });
 });

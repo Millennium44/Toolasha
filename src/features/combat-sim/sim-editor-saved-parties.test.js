@@ -290,8 +290,7 @@ describe('Load party', () => {
         await flush();
         expect(el.querySelector('[data-saved-lost]')).toBeNull();
         expect(db.values.get('toolasha_local_cappedSeen')).toEqual({
-            [SAVED_ROSTERS_KEY]: at,
-            [SAVED_PARTIES_KEY]: at - 50,
+            ids: { [SAVED_ROSTERS_KEY]: ['x'], [SAVED_PARTIES_KEY]: ['y'] },
         });
         // The records themselves are untouched, and a reopened form stays quiet
         expect(Object.keys(db.values.get(SAVED_ROSTERS_KEY).capped)).toEqual(['x']);

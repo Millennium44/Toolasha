@@ -363,7 +363,7 @@ export class PartyFinderTab {
         this._lockMode = 'my';
         /** The saved parties, and whether they have been read yet (a stored pick of one waits for the read) */
         this._saved = { savedAt: 0, parties: [], removed: {}, capped: {} };
-        this._cappedSeen = 0;
+        this._cappedSeen = null;
         this._savedLoaded = false;
         /** Bumped by every read and every write of the saved parties: an older read resolving later is dropped */
         this._savedSeq = 0;
@@ -493,7 +493,7 @@ export class PartyFinderTab {
         this._includeParty = true;
         this._lockMode = 'my';
         this._saved = { savedAt: 0, parties: [], removed: {}, capped: {} };
-        this._cappedSeen = 0;
+        this._cappedSeen = null;
         this._savedLoaded = false;
         this._partyChoices = new Map();
         /** Party row id → aura options to try them with, this session only (never the saved roster) */
@@ -1732,11 +1732,11 @@ export class PartyFinderTab {
     async _dismissCapped() {
         const unseen = unseenCapped(this._saved, this._cappedSeen);
         if (!unseen.length) return;
-        const upTo = unseen[0].at;
-        // Hidden at once; if the stamp could not be written the note simply shows again on the next read
-        this._cappedSeen = upTo;
+        const ids = unseen.map((entry) => entry.id);
+        // Hidden at once; if the ids could not be written the note simply shows again on the next read
+        this._cappedSeen = { at: this._cappedSeen?.at || 0, ids: [...(this._cappedSeen?.ids || []), ...ids] };
         this._renderCapped();
-        await dismissCapped(SAVED_PARTIES_KEY, upTo);
+        await dismissCapped(SAVED_PARTIES_KEY, ids);
     }
 
     /** The saved parties list. @private */

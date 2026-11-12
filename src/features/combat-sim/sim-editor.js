@@ -1519,7 +1519,14 @@ export class SimEditor {
             this._savedLists = { ...lists, lost: [] };
             this.renderEditor();
         }
-        await Promise.all(stamps.map(([key, list]) => dismissCapped(key, list.unseen[0].at)));
+        await Promise.all(
+            stamps.map(([key, list]) =>
+                dismissCapped(
+                    key,
+                    list.unseen.map((entry) => entry.id)
+                )
+            )
+        );
     }
 
     /**
