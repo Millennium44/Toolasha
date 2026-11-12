@@ -233,8 +233,12 @@ export function refinementLuck({ completions, count, rate, avgCount = 1, rollsPe
         const k = Math.max(0, Math.floor(count));
         // P(A + B <= k) with A the whole rolls and B the extra-roll hits
         const a = binomialPmf(k, completions * whole, rate);
+        const b = binomialPmf(k, completions, fraction * rate);
+        const bCdf = [];
+        let run = 0;
+        for (let i = 0; i <= k; i++) bCdf[i] = run += b[i];
         let total = 0;
-        for (let i = 0; i <= k; i++) total += a[i] * binomialAtMost(k - i, completions, fraction * rate);
+        for (let i = 0; i <= k; i++) total += a[i] * bCdf[k - i];
         percentile = Math.min(1, total);
     }
 
@@ -326,13 +330,9 @@ export function binomialAtMost(k, n, p) {
     if (k < 0) return 0;
     if (k >= n) return 1;
 
-    let term = (1 - p) ** n;
-    let total = term;
-
-    for (let i = 1; i <= k; i++) {
-        term *= ((n - i + 1) / i) * (p / (1 - p));
-        total += term;
-    }
+    // Log-space terms: (1 - p) ** n underflows to 0 past about 745 / -ln(1 - p) trials
+    let total = 0;
+    for (const term of binomialPmf(k, n, p)) total += term;
     return Math.min(1, total);
 }
 

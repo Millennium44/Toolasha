@@ -919,7 +919,7 @@ export function describeChestRun(player) {
             `Refinement chests: ${refinement.count} over ${refinement.completions} completions, ` +
                 `${refinement.expected.toFixed(1)} expected at the table's rate ` +
                 `(${(refinement.rate * 100).toFixed(0)}% a roll, ${refinement.rollsPerCompletion.toFixed(2)} rolls ` +
-                `a completion).${verdict}`
+                `a completion${refinement.rollsPerCompletion === 1 ? '' : ', rolls assumed'}).${verdict}`
         );
     }
     if (luck.percentile === null) {

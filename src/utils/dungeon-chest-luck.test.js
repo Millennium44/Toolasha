@@ -96,6 +96,17 @@ describe('the refinement chest rate', () => {
             expect(r.percentile).toBeLessThan(0.8);
         });
 
+        test('a very long run with a fraction near 1 does not read 0%', () => {
+            const r = refinementLuck({
+                completions: 2500,
+                count: 2500 * 1.99 * 0.33,
+                rate: 0.33,
+                rollsPerCompletion: 1.99,
+            });
+            expect(r.percentile).toBeGreaterThan(0.3);
+            expect(r.percentile).toBeLessThan(0.7);
+        });
+
         test('certain rate on a fractional roll count is still random, on a whole one is not', () => {
             expect(
                 refinementLuck({ completions: 3, count: 4, rate: 1, rollsPerCompletion: 1.5 }).percentile
