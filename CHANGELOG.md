@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.85.0 -->
+
 ### Combat Sim Upgrade list trims drink and ability-order noise
 
 Upgrade no longer tries coffees your build cannot use, shows the best three swaps per drink slot and only the ability orders that beat the noise (the rest sit behind "+N more"), labels a swap that only saves money as "saves X/hr, costs Y% DPS", and stops a death-rate blip of one or two deaths from raising a row's Score.
@@ -7276,6 +7278,129 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.85.0](https://github.com/Millennium44/Toolasha/compare/v3.84.0...v3.85.0) (2026-11-12)
+
+### Features
+
+- ability reorder buttons say why they are off and get a phone tap target ([220a782](https://github.com/Millennium44/Toolasha/commit/220a7824205680dbb38c387cf6c2560c64d1b268))
+- bestiary plan leaves out dungeons below a minimum clear rate and charges the rest for wipes ([c60801c](https://github.com/Millennium44/Toolasha/commit/c60801ca5af8653ece1fbb40648ba93da10c8f16))
+- bestiary plan wipe penalty skips rows whose time already includes wipes ([51192c0](https://github.com/Millennium44/Toolasha/commit/51192c0ad059d636d264dbab10faf924e70e2374))
+- combat sim charts HP and MP over the run, with an overlay toggle ([4aa7221](https://github.com/Millennium44/Toolasha/commit/4aa7221a55d96e451ba326ae60dac0a008ba8246))
+- combat sim Configure can reorder abilities ([fc6a1c6](https://github.com/Millennium44/Toolasha/commit/fc6a1c6b9027b413dc38e597ae341e66a4c1f0f3))
+- combat sim Configure roster can save and load a party ([f7cd30b](https://github.com/Millennium44/Toolasha/commit/f7cd30b817b6d4de8cbafa3bfb6abf3753d0b515))
+- combat sim Copy for chat on trigger tuning and upgrade results ([980d287](https://github.com/Millennium44/Toolasha/commit/980d287793153da3e3c78543348b410fa46a65ce))
+- combat sim Load party says when a roster's saved mode is not yours ([14a8e41](https://github.com/Millennium44/Toolasha/commit/14a8e4179e309743ea82be3299207109add413af))
+- combat sim Results can show every player's figures side by side ([f9dcd98](https://github.com/Millennium44/Toolasha/commit/f9dcd98081ea9f864c104e6adf665a6e22dadf93))
+- combat sim Results sections minimize, remembered, and the All view fits a phone ([08b6d3b](https://github.com/Millennium44/Toolasha/commit/08b6d3b3a77350fc248e6dc602802c6efdb7e900))
+- combat sim Upgrade can analyze all players in turn ([305e777](https://github.com/Millennium44/Toolasha/commit/305e777cd40e668fd9c43ac9e83f222ad8b59e41))
+- dungeon luck tooltip shows refinement chests against the reward table rate ([e725fcc](https://github.com/Millennium44/Toolasha/commit/e725fcc8fc567c7e559c879bf61d7a0dceef7e3e))
+- Fetch loadout also puts your row on your party loadout ([28dad2e](https://github.com/Millennium44/Toolasha/commit/28dad2e5e6bc2a0f0f88cb1bcd9242b175f84c19))
+- Philo Gamba "I own the inputs" costs an unlisted refined cape as its base plus its refinement stones, all valued as owned ([be34561](https://github.com/Millennium44/Toolasha/commit/be3456153889b49ee1ddba6eee118f23a2125751))
+- Philo Gamba owned refined capes are always base plus stones, even when listed ([0229e52](https://github.com/Millennium44/Toolasha/commit/0229e523099ef4fc1fed88854369adb02a2d8224))
+- Reset to Party picks your party loadout and the party's zone ([906b9e7](https://github.com/Millennium44/Toolasha/commit/906b9e745829903c14c573eeff8588baa75fff6a))
+- route-priced advisor Cost only ever falls, on the advisor's own book reading ([5040fae](https://github.com/Millennium44/Toolasha/commit/5040fae28aa50940600c602f0c0f5489b9487bef))
+- route-priced advisor rows honor custom prices and carry their own breakdown ([181926f](https://github.com/Millennium44/Toolasha/commit/181926ff56b836a5b59cb14a88421ea0e7e43d41))
+- route-priced advisor rows name their route in the basis tag and Lab breakdown ([840f0ad](https://github.com/Millennium44/Toolasha/commit/840f0ad265afec89d0d452d42bb2beb799d3189d))
+- trigger tuning can apply new conditions and fine-tune them ([e1d1d50](https://github.com/Millennium44/Toolasha/commit/e1d1d50041d945a4458412b1b88819ea96476c0a))
+- upgrade advisors price supported upgrades by the preferred route ([31c7acf](https://github.com/Millennium44/Toolasha/commit/31c7acf215fdef9b926a11bd4b3a37f1bad8b0d6))
+- upgrade tab folds coffee swaps and ability orders, drops unusable coffees, and ignores death noise in Score ([976980b](https://github.com/Millennium44/Toolasha/commit/976980be1a20ba1fe183532eae3916fe38565123))
+
+### Bug Fixes
+
+- a capture queued over a new trial's write still discards the last trial ([50562e6](https://github.com/Millennium44/Toolasha/commit/50562e69f6e5f1f3c0e68b6c71ef41c76d674c43))
+- a collapsed dungeon tracker stays behind the game panels after a drag ([cb2bd7b](https://github.com/Millennium44/Toolasha/commit/cb2bd7b1dadc53cf012f9e31ee0a3eb2f5d34b8c))
+- a drink swap that loses power beyond noise and gains nothing beyond noise scores 0 ([0f165dd](https://github.com/Millennium44/Toolasha/commit/0f165dd159aa7a596e4388fda1d369ce4988d0ed))
+- a dungeon the sim never clears stays in the Bestiary plan when your own clears time it ([1d11968](https://github.com/Millennium44/Toolasha/commit/1d11968d99444a4532c94339395892c73626d681))
+- a mirror that cannot use the worn piece still weighs plans using spares ([ca4f62c](https://github.com/Millennium44/Toolasha/commit/ca4f62cbbc3bdcd28eab83a3a9e96de8e27a992c))
+- a mirror that loses to an outright buy with the held piece falls back to a fresh mirror ([95b5751](https://github.com/Millennium44/Toolasha/commit/95b57519ca346b9f658895dbc680e084e474167c))
+- a new trial's tick does not keep a stored session of another named trial ([ff43b12](https://github.com/Millennium44/Toolasha/commit/ff43b1269c68373489fc7c8e9cd88fad950d9f34))
+- a pulled Results collapse state keeps the on-screen headers working ([f8512d8](https://github.com/Millennium44/Toolasha/commit/f8512d83b4b8bdedb001c09de08607708140f993))
+- a sync pull of the custom inventory tabs no longer asks for a reload ([7d5aff4](https://github.com/Millennium44/Toolasha/commit/7d5aff49f74de961288d661d7c0df848be524744))
+- a sync pull of the trial ability session no longer asks for a reload ([cecf940](https://github.com/Millennium44/Toolasha/commit/cecf940c7ea972ed0bb90d7666557f0d281f7bf5))
+- a tab item re-added on another device after a deletion here survives the fold ([2ca18ab](https://github.com/Millennium44/Toolasha/commit/2ca18abab6976239ef6d37ce5a7e87d78dd270db))
+- a tab save that lands after a pull adoption keeps the pulled tabs ([7d4dd74](https://github.com/Millennium44/Toolasha/commit/7d4dd74e9917144e049e6ba834350c4c0bf25dde))
+- ability move buttons follow the Intelligence level as it is typed ([8cd9430](https://github.com/Millennium44/Toolasha/commit/8cd943000bcf95da75430c9bffa6f13a375d2b83))
+- an upgrade run names the player before it starts measuring ([26dd553](https://github.com/Millennium44/Toolasha/commit/26dd5538dbf0d99c449959a4c0d7625e7b84654e))
+- bestiary plan clear rate counts only clears since the first recorded failure, and a pulled minimum redraws the table ([91342c3](https://github.com/Millennium44/Toolasha/commit/91342c3b639a3f4a7791337f4ef8a9733fe7e767))
+- bestiary plan wipe penalty is time / (1 - wipe share), skips the stretched sim time, and the column marks left-out dungeons ([d230ea8](https://github.com/Millennium44/Toolasha/commit/d230ea8b0477b6236d50fe923ea7ff6e1dc5d876))
+- combat sim All players keeps its choice through a restore, refreshes its count on build changes and says whom Tune runs for ([e46d428](https://github.com/Millennium44/Toolasha/commit/e46d428b4126d762689b057f1cd863ce47e0102c))
+- combat sim All players keeps same-named players plain names for chat matching and labels twins only when drawn ([8b44ece](https://github.com/Millennium44/Toolasha/commit/8b44ece9a8dfe0a4abcc195b7b12e838122f9273))
+- combat sim All players view draws the HP and MP run charts ([e13368b](https://github.com/Millennium44/Toolasha/commit/e13368b2f1a8aaa7c80f62e0bf44c188107ac450))
+- combat sim All view and comparison stop inventing baselines and flag unpriced drops ([61d7bd7](https://github.com/Millennium44/Toolasha/commit/61d7bd7437ed88f24bc887a8f1ffbd5bdb90788d))
+- combat sim All view gold rows and XP total deltas match each player view ([cf57774](https://github.com/Millennium44/Toolasha/commit/cf57774a058dcba709b30884141a00e4ef3a0925))
+- combat sim comparison names each row's own player for profit and XP ([d4d911f](https://github.com/Millennium44/Toolasha/commit/d4d911fd90c5d87190d46f2d1d3d1bba638d5fc3))
+- combat sim Copy for chat names the player captured at run time, marks partial runs and reads the toggle at click time ([8502149](https://github.com/Millennium44/Toolasha/commit/85021496db28e3e515d9f25164226411a0d8584b))
+- combat sim New conditions header no longer calls the section show-only ([b971895](https://github.com/Millennium44/Toolasha/commit/b9718957e460a98717a2fdb41e95d84446597a08))
+- combat sim Party tab picks up a late party member profile and says "Loading party" before character data loads ([9878638](https://github.com/Millennium44/Toolasha/commit/9878638ac50aff88a99195e96b4f427d0dc1844e))
+- combat sim remembers which of two same-named loadouts it wore ([da7f78f](https://github.com/Millennium44/Toolasha/commit/da7f78f1369b13ac708bfe096b9ff064a95986cb))
+- combat sim zone icons load even before the game has drawn them ([d403413](https://github.com/Millennium44/Toolasha/commit/d403413585c6b1bf4006d209a7b0b778bca6295a))
+- Copy for chat does not attach a replaced player's upgrades to the slot's new player ([bdf73fc](https://github.com/Millennium44/Toolasha/commit/bdf73fc32f14d5ea85787a7b210bbc5ebcae5723))
+- custom tabs keep an unlanded edit and a burst of deletions across a live pull ([e2b09d4](https://github.com/Millennium44/Toolasha/commit/e2b09d48a3c9fd644e4457179d0c62f5ed3c57a7))
+- drink relevance keeps Magic coffee for Bloom and Blaze gear and any coffee a worn aura scales with ([efe955f](https://github.com/Millennium44/Toolasha/commit/efe955f5991d9ef23db2826fdaec5789d649ce08))
+- held-back conditions when a threshold is refused, fine-tune counts follow Include and results are labeled ([7376fc2](https://github.com/Millennium44/Toolasha/commit/7376fc2d161d2379e8454970592b00376d252285))
+- labeled cheaper coffee swaps fold behind +N more like other non-improvements ([0821d31](https://github.com/Millennium44/Toolasha/commit/0821d31ec2237f52ab80bd5f1563f62d051e3e11))
+- mirror route uses the worn piece it takes off as an input instead of selling it ([28a2911](https://github.com/Millennium44/Toolasha/commit/28a29116b3ba0cabb31317ddf5f3c5d962889950))
+- mirror rows show the sale a used worn piece gives up and the resale of a sold one ([0bbc0f5](https://github.com/Millennium44/Toolasha/commit/0bbc0f5ebfe2635cf0781fdf8f5de645fbfddd17))
+- Party tab stops waiting for a profile after a minute ([25bfb78](https://github.com/Millennium44/Toolasha/commit/25bfb78861e93e78876e6cb78b37118390d541cf))
+- Party tab waits for each member's profile separately and ends waits when the tab closes ([b80c91e](https://github.com/Millennium44/Toolasha/commit/b80c91e9483bb863d4950581563ed339452119d9))
+- Philo Gamba refined cape breakdown shows the base cape value ([20f4dd0](https://github.com/Millennium44/Toolasha/commit/20f4dd0c2584f94c90f2703c5ee0c5d00005e327))
+- Reset to Party follows the party zone from the login party record after a reload ([c38242b](https://github.com/Millennium44/Toolasha/commit/c38242bb62457b22ef131d5ca50256e8f474f560))
+- Reset to Party ignores a solo fight for a forming party and a roster older than the login record ([86aaf70](https://github.com/Millennium44/Toolasha/commit/86aaf706ae6938be28ed215a5d6a2423413b7be8))
+- Reset to Party only trusts a current party record and says why a zone is left alone ([b4b28b4](https://github.com/Millennium44/Toolasha/commit/b4b28b485f7afc9577e53a241133ddbc3dc0b2a6))
+- Reset to Party trusts only party_updated records and saves loadout memory under one character ([5c0ac0e](https://github.com/Millennium44/Toolasha/commit/5c0ac0e1dfa9a7ffe94b8eeccb95fd0ca1c7cc61))
+- the Reset to Party button trusts the party record over your own solo fight ([45670bf](https://github.com/Millennium44/Toolasha/commit/45670bfa2ac20eeddabe5392f4129e44826dc775))
+- the sim editor's remembered loadout id is owned like its name ([32fa601](https://github.com/Millennium44/Toolasha/commit/32fa601f8b2545f3bfcfde2457b321888b570a7d))
+- token shop total follows the amount of a stack linked in chat ([c9c291e](https://github.com/Millennium44/Toolasha/commit/c9c291e7bb960f60fbd9399a3ef95a6bebfd783b))
+- upgrade folds never hide a row with no verdict, and a cheaper swap needs a profit gain that clears the noise ([4d382bc](https://github.com/Millennium44/Toolasha/commit/4d382bc96b6d5bf67bba3e0c64fa270a1b6503fa))
+- upgrade trims judge deaths on counts, never fold a profit-clearing swap, and stop free losing swaps out-scoring a cheaper one ([2a16291](https://github.com/Millennium44/Toolasha/commit/2a162910d8f9403fab335ff8d3b06e18c8f8d713))
+
+### Code Refactoring
+
+- name the Lab budget route line key apart from storage keys ([019fd75](https://github.com/Millennium44/Toolasha/commit/019fd75623ea29fedd69b7182a041b3e188cabf3))
+
+### Documentation
+
+- changelog for ability reorder ([a0249c7](https://github.com/Millennium44/Toolasha/commit/a0249c747e50d53a5ba2820e0b20aa6a5ac70e21))
+- changelog for applying new trigger conditions ([253118d](https://github.com/Millennium44/Toolasha/commit/253118da1af701999629d602f6420a35f5025575))
+- changelog for collapsible Results sections ([c511bb4](https://github.com/Millennium44/Toolasha/commit/c511bb410a7aaad5593225b751e4b7a9bc500085))
+- changelog for Combat Sim Copy for chat ([6cfd137](https://github.com/Millennium44/Toolasha/commit/6cfd1370642f94ead737e3d18a2b6c9bb6b23569))
+- changelog for Configure roster Save/Load party ([4db660f](https://github.com/Millennium44/Toolasha/commit/4db660f5bb131193c472e03bcad902f2135a94ff))
+- changelog for HP and MP run charts ([7e35b60](https://github.com/Millennium44/Toolasha/commit/7e35b60bd3aad7c682ff0589b7eecf094e4d53d9))
+- changelog for live sync of tabs and trial abilities ([e6fba2e](https://github.com/Millennium44/Toolasha/commit/e6fba2e39be6ab7a062591c89becfd825f482309))
+- changelog for mirror upgrades using the worn piece ([1d2eadb](https://github.com/Millennium44/Toolasha/commit/1d2eadbed4ed9c8510e69009374c0dbb07b65784))
+- changelog for refinement chest luck ([47dd6e8](https://github.com/Millennium44/Toolasha/commit/47dd6e82b6a9aeff7ce188287531476fcb57dc10))
+- changelog for Reset to Party loadout and zone ([4d2981c](https://github.com/Millennium44/Toolasha/commit/4d2981c08882860adfded5c293e7a9b2cacb2c25))
+- changelog for Reset to Party zone after a reload ([09e2a40](https://github.com/Millennium44/Toolasha/commit/09e2a4099049536c1dccf1c9425800dc6ff14b19))
+- changelog for Results All players table ([4bed641](https://github.com/Millennium44/Toolasha/commit/4bed641617fb46e0e80f45a0a14005f60d0c7848))
+- changelog for sim zone icons before combat ([433f695](https://github.com/Millennium44/Toolasha/commit/433f6953029c443ba959c4948ea89db882ce3e6e))
+- changelog for the Bestiary plan wipe rule ([93cf13b](https://github.com/Millennium44/Toolasha/commit/93cf13b4ae47f2ecb8d873e6036747764bb6c337))
+- changelog for the mirror cost details ([6480dc0](https://github.com/Millennium44/Toolasha/commit/6480dc0945746b2ee18a6d1b8cd697ed0b6165fe))
+- changelog for the Party tab load fixes ([2ef7683](https://github.com/Millennium44/Toolasha/commit/2ef7683407b244fbb8e330d3642744da934084e2))
+- changelog for the Upgrade list trims ([4f9bf45](https://github.com/Millennium44/Toolasha/commit/4f9bf45c7eb7c285472c27d3012750d35f049c14))
+- changelog for upgrade advisors priced by the preferred route ([57adf74](https://github.com/Millennium44/Toolasha/commit/57adf7403d1677eb66a40a6bd1fa48ebbcbea588))
+- changelog for Upgrade All players ([0c0fc01](https://github.com/Millennium44/Toolasha/commit/0c0fc013232e0dd4582941b05c69b4ea19543801))
+
+### Tests
+
+- drive trade-ledger debounce tests off real timers ([080b852](https://github.com/Millennium44/Toolasha/commit/080b852f279e884f8346a926a323b23e7d0c0e2a))
+- refinement chest luck fixtures use the real reward-table entry ([d06b9de](https://github.com/Millennium44/Toolasha/commit/d06b9def65b2af308b5b079afe45626fa5299ba7))
+- stored zero minimum clear rate test starts from a nonzero value ([af7a8b6](https://github.com/Millennium44/Toolasha/commit/af7a8b659b1d7e10d8fbbeb56b9499321e62fa9d))
+- the remembered loadout id latches on a pull like its name ([90a1f7c](https://github.com/Millennium44/Toolasha/commit/90a1f7c3bb2f75cd2a5718d14f3564cc76d6e4ad))
+
+### Build System
+
+- add scripts/split-build.mjs to run the split release build as the dev file ([423ff7d](https://github.com/Millennium44/Toolasha/commit/423ff7d335ec25a992f3d23d195c1b793ead470c))
+- keep the combat engine MIT notice in the release build ([faa3141](https://github.com/Millennium44/Toolasha/commit/faa3141fbff731a2c31330a68c1f92ed42d6fc10))
+- minify the inlined combat sim workers in the release build ([a4ac049](https://github.com/Millennium44/Toolasha/commit/a4ac04964b64e6d8973927af84028b348001ad18))
+
+### Miscellaneous Chores
+
+- gates build and size-check before the test suite, and warn past 98% ([d7b3d6f](https://github.com/Millennium44/Toolasha/commit/d7b3d6f94f7abd9e333f82026ee74c12652c3333))
+- land-stack --skip-ci for when GitHub Actions is down ([815fcb6](https://github.com/Millennium44/Toolasha/commit/815fcb669cfb0fe5da74b0e972bfbed15c9a16b2))
+- land-stack accepts a stacked PR with no CI checks ([736c8eb](https://github.com/Millennium44/Toolasha/commit/736c8ebae6572df2caf7bbab5d80a2ef7b32a923))
+- land-stack carries a review across a clean main merge, and takes --reviewed ([7939460](https://github.com/Millennium44/Toolasha/commit/7939460fc6afe8cd050ba49ca958601be9067299))
+- land-stack restacks a PR cut from an older head of its base ([89bc751](https://github.com/Millennium44/Toolasha/commit/89bc75117d6f9552fe0f00b1c6cc971f3d5a4036))
 
 ## [3.84.0](https://github.com/Millennium44/Toolasha/compare/v3.83.0...v3.84.0) (2026-11-11)
 
