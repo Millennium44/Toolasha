@@ -346,10 +346,10 @@ describe('takeover auto-reload defaults', () => {
 });
 
 describe('reload log and data-change auto-reload settings', () => {
-    test('the log is on by default; the automatic reload is off with the documented delays', () => {
+    test('the log and the automatic reload are both off by default; the reload has the documented delays', () => {
         const log = getSettingDefinition('reloadLog_enabled');
         expect(log.type).toBe('checkbox');
-        expect(log.default).toBe(true);
+        expect(log.default).toBe(false);
         expect(log.help).toMatch(/Copy reload log/);
         expect(log.help).toMatch(/Nothing is sent anywhere/);
         const auto = getSettingDefinition('dataChangeAutoReload');

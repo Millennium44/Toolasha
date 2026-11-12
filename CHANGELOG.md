@@ -20,7 +20,7 @@ When a sync joins two full lists of saved parties or rosters and the 40 cap drop
 
 ### Reload prompt log and optional auto-reload
 
-Toolasha now keeps a short device-only log of every time it asks you to reload, which you can copy from Settings > Diagnostics. A new off-by-default setting can reload for you after a sync pull or backup restore, with a countdown and a Cancel button, and never while you are using the page, running a simulator or syncing.
+Toolasha can keep a short device-only log of every time it asks you to reload (off by default), which you can copy from Settings > Diagnostics. Another off-by-default setting can reload for you after a sync pull or backup restore, with a countdown and a Cancel button, and never while you are using the page, running a simulator or syncing.
 
 ### Chest loot shows above an open Combat Sim
 

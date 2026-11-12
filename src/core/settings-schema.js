@@ -181,7 +181,7 @@ export const settingsGroups = {
                 id: 'reloadLog_enabled',
                 label: 'Keep a log of reload prompts',
                 type: 'checkbox',
-                default: true,
+                default: false,
                 help:
                     'Each time Toolasha asks you to reload the page (after a sync pull or a backup restore, ' +
                     'when another tab loads a newer version, or to repair a missed login), write one line in a ' +

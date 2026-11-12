@@ -175,7 +175,7 @@ const {
 } = Core;
 
 // The reload log's on/off switch. Until this runs, prompts are recorded (the setting's default is on)
-reloadLog?.setEnabledProvider?.(() => config.getSetting('reloadLog_enabled', true) !== false);
+reloadLog?.setEnabledProvider?.(() => config.getSetting('reloadLog_enabled', false) === true);
 
 const combatSimulatorSite = isCombatSimulatorPage();
 
