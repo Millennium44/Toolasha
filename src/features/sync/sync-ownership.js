@@ -260,6 +260,7 @@ export const OWNED_KEY_PREFIXES = [
     'consumablesIdleLoadout',
     'consumablesIdleZone',
     'consumablesDungeonRuns',
+    'consumablesCraftChestKeys',
     'consumablesLabRuns',
     'loadout_snapshots_',
     'scroll_simulation_',
