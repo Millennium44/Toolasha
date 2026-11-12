@@ -5,6 +5,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import { computeTalismanBonuses } from '../../utils/talisman-bonuses.js';
 import {
     parseEquipmentSpeedBonuses,
     parseEquipmentEfficiencyBonuses,
@@ -208,6 +209,8 @@ export function buildEquipmentBuffsForSkill(editorEquipment, actionTypeHrid, ite
     const talismanSpeed = (talisman[`${skillId}Speed`] || 0) + (talisman.skillingSpeed || 0);
     const talismanEfficiency = (talisman[`${skillId}Efficiency`] || 0) + (talisman.skillingEfficiency || 0);
     const talismanGathering = talisman.gatheringQuantity || 0;
+    // Wisdom: the editor kit's gear experience is not part of this forecast, so only the talismans' is added
+    const talismanExperience = (talisman[`${skillId}Experience`] || 0) + (talisman.skillingExperience || 0);
 
     const speedBonus = parseEquipmentSpeedBonuses(equipMap, actionTypeHrid, itemDetailMap) + talismanSpeed;
     if (speedBonus > 0) {
@@ -235,7 +238,35 @@ export function buildEquipmentBuffsForSkill(editorEquipment, actionTypeHrid, ite
         buffs.push({ typeHrid: '/buff_types/gathering', flatBoost: gatheringBonus, ratioBoost: 0 });
     }
 
+    if (talismanExperience > 0) {
+        buffs.push({ typeHrid: '/buff_types/wisdom', flatBoost: talismanExperience, ratioBoost: 0 });
+    }
+
     return buffs;
+}
+
+/**
+ * The noncombat stats of a sim player's talismans under the belt the editor has on right now. Scaled here, at
+ * use, so changing the belt or its enhancement level in the editor changes Talisman Power; no belt counts nothing.
+ * @param {Array|null|undefined} talismans - The player's unscaled list (`dto.talismans`)
+ * @param {Object} editorEquipment - The kit: { '/equipment_types/belt': { hrid, enhancementLevel } }
+ * @param {Object} gameData - Payload with itemDetailMap, enhancementLevelTotalBonusMultiplierTable and
+ *   talismanModifierDetailMap (the live init data fills in what the payload lacks)
+ * @returns {Object|null} `{statName: value}`, or null for none
+ */
+export function resolveEditorTalismans(talismans, editorEquipment, gameData) {
+    if (!Array.isArray(talismans) || talismans.length === 0) return null;
+    const worn = editorEquipment?.['/equipment_types/belt'];
+    if (!worn?.hrid) return null;
+    const live = dataManager.getInitClientData?.() || {};
+    return computeTalismanBonuses({
+        talismans,
+        belt: { itemHrid: worn.hrid, enhancementLevel: worn.enhancementLevel || 0 },
+        itemDetailMap: gameData?.itemDetailMap ?? live.itemDetailMap,
+        modifierDetailMap: gameData?.talismanModifierDetailMap ?? live.talismanModifierDetailMap,
+        enhancementTable:
+            gameData?.enhancementLevelTotalBonusMultiplierTable ?? live.enhancementLevelTotalBonusMultiplierTable,
+    }).noncombat;
 }
 
 /**
@@ -413,7 +444,7 @@ export function buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, 
             editorState.equipment,
             actionTypeHrid,
             gameData.itemDetailMap,
-            editorState.talismanNoncombat
+            resolveEditorTalismans(editorState.talismans, editorState.equipment, gameData)
         ),
         communityBuffs: buildCommunityBuffsForSkill(editorState.communityBuffLevels, actionTypeHrid),
         houseBuffs: buildHouseBuffsForSkill(editorState.houseRooms, actionTypeHrid, gameData.houseRoomDetailMap),

@@ -25,7 +25,7 @@ import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { getLoadout, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
-import { talismanBonusesOf } from '../../utils/talisman-bonuses.js';
+import { resolveLoadoutTalismans, toSimTalismans } from '../../utils/talisman-bonuses.js';
 
 /**
  * The combat scrolls the player currently has active.
@@ -70,6 +70,7 @@ export function buildGameDataPayload() {
         openableLootDropMap: clientData.openableLootDropMap,
         labyrinthCrateDetailMap: clientData.labyrinthCrateDetailMap,
         levelExperienceTable: clientData.levelExperienceTable,
+        talismanModifierDetailMap: clientData.talismanModifierDetailMap,
     };
 }
 
@@ -402,8 +403,9 @@ export function buildPlayerDTO() {
 
     // The slotted talismans' noncombat share (empty off the test server and without a belt): not in the
     // equipment entries above, so the skilling tiles read it from here
-    const liveTalismans = dataManager.getLiveTalismanBonuses?.()?.noncombat;
-    if (liveTalismans && Object.keys(liveTalismans).length > 0) dto.talismanNoncombat = { ...liveTalismans };
+    // Unscaled (slot and lines): the editor can change the belt, so the scaling is done where it is used
+    const slotted = dataManager.getSlottedTalismans?.() || [];
+    if (slotted.length > 0) dto.talismans = toSimTalismans(slotted);
 
     // Build trigger map (ability + consumable triggers combined)
     const triggerMap = {
@@ -1669,9 +1671,9 @@ export function applyLoadoutSnapshotToDTO(dto, snapshotName, gameData) {
     dto.equipment = newEquipment;
 
     // The loadout's own talismans, not the character's current ones
-    const loadoutTalismans = talismanBonusesOf(store.equipmentMapOf?.(snapshot)).noncombat;
-    if (Object.keys(loadoutTalismans).length > 0) dto.talismanNoncombat = { ...loadoutTalismans };
-    else delete dto.talismanNoncombat;
+    const loadoutTalismans = resolveLoadoutTalismans(snapshot.talismanIdMap, dataManager.getCharacterTalismans?.());
+    if (loadoutTalismans.length > 0) dto.talismans = toSimTalismans(loadoutTalismans);
+    else delete dto.talismans;
 
     // Ability levels come from current character (not the snapshot)
     // Use characterAbilities (all learned) not combatUnit.combatAbilities (equipped only)

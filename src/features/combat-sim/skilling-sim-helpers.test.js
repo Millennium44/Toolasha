@@ -23,6 +23,9 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
+// Talismans exist on the test server only
+vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => true }));
+
 const {
     buildCommunityBuffsForSkill,
     generateSkillingCommunityBuffCandidates,
@@ -387,13 +390,66 @@ describe('the kit talismans reach the room like the labyrinth loadout reader sum
         expect(byType(without)['/buff_types/action_speed'].flatBoost).toBeCloseTo(0.2, 10);
     });
 
-    test('buildOverridesForSkill passes the editor state talismans through', () => {
-        const overrides = buildOverridesForSkill(
-            { equipment: kit, talismanNoncombat: talismans },
-            '/action_types/woodcutting',
-            [],
-            { itemDetailMap: ITEMS, houseRoomDetailMap: {}, labyrinthCrateDetailMap: {} }
+    test('experience (Skilling Experience and the skill own line) reaches the forecast as a wisdom buff', () => {
+        const buffs = byType(
+            buildEquipmentBuffsForSkill(kit, '/action_types/woodcutting', ITEMS, {
+                skillingExperience: 0.0126,
+                woodcuttingExperience: 0.03,
+                milkingExperience: 0.5,
+            })
         );
-        expect(byType(overrides.equipmentBuffs)['/buff_types/action_speed'].flatBoost).toBeCloseTo(0.2 + 0.06919, 10);
+        expect(buffs['/buff_types/wisdom'].flatBoost).toBeCloseTo(0.0426, 10);
+        expect(byType(buildEquipmentBuffsForSkill(kit, '/action_types/woodcutting', ITEMS))['/buff_types/wisdom']).toBe(
+            undefined
+        );
+    });
+
+    describe('scaled at use from the belt the editor has on', () => {
+        const BELTS = {
+            ...ITEMS,
+            '/items/large_talisman_belt': {
+                equipmentDetail: {
+                    type: '/equipment_types/belt',
+                    combatStats: { talismanSlots: 3, talismanPower: 0.2 },
+                    combatEnhancementBonuses: { talismanPower: 0.004 },
+                },
+            },
+        };
+        const gameData = {
+            itemDetailMap: BELTS,
+            houseRoomDetailMap: {},
+            labyrinthCrateDetailMap: {},
+            enhancementLevelTotalBonusMultiplierTable: [0, 1, 2.1, 3.3, 4.6, 6, 7.5, 9.1, 10.8, 12.6, 14.5],
+            talismanModifierDetailMap: {
+                '/talisman_modifiers/woodcutting_speed': {
+                    targetHrid: '/talisman_modifier_targets/noncombat_stat',
+                    keys: ['WoodcuttingSpeed'],
+                    isPercent: true,
+                    gradeValues: [0.03, 0.045, 0.06, 0.075, 0.09, 0.12],
+                },
+            },
+        };
+        const list = [{ slotIndex: 1, modifiers: [{ hrid: '/talisman_modifiers/woodcutting_speed', grade: 2 }] }];
+        const speedWith = (belt) =>
+            byType(
+                buildOverridesForSkill(
+                    { equipment: { ...kit, ...belt }, talismans: list },
+                    '/action_types/woodcutting',
+                    [],
+                    gameData
+                ).equipmentBuffs
+            )['/buff_types/action_speed'].flatBoost;
+        const beltAt = (enhancementLevel) => ({
+            '/equipment_types/belt': { hrid: '/items/large_talisman_belt', enhancementLevel },
+        });
+
+        test('Large belt +10 gives power 0.258, +0 gives 0.2: the editor belt level moves the figure', () => {
+            expect(speedWith(beltAt(10))).toBeCloseTo(0.2 + 0.045 * 1.258, 10);
+            expect(speedWith(beltAt(0))).toBeCloseTo(0.2 + 0.045 * 1.2, 10);
+        });
+
+        test('a removed belt counts nothing', () => {
+            expect(speedWith({})).toBeCloseTo(0.2, 10);
+        });
     });
 });
