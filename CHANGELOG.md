@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim Upgrade list trims drink and ability-order noise
+
+Upgrade no longer tries coffees your build cannot use, shows the best three swaps per drink slot and only the ability orders that beat the noise (the rest sit behind "+N more"), labels a swap that only saves money as "saves X/hr, costs Y% DPS", and stops a death-rate blip of one or two deaths from raising a row's Score.
+
 ### Collapsed dungeon tracker stays behind game panels
 
 Dragging the collapsed dungeon tracker no longer lifts it above the game's own windows, so an item or crafting panel opened afterwards shows in front of it. The expanded tracker still comes to the front when you grab it.
