@@ -23,6 +23,10 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         listStores: async () => Object.keys(state.stores),
         getAll: async (name) => ({ ...(state.stores[name] || {}) }),
+        getAllChecked: async (...args) => ({
+            ok: true,
+            rows: await (async (name) => ({ ...(state.stores[name] || {}) }))(...args),
+        }),
         getJSON: async (key, name, fallback = null) => {
             const store = state.stores[name] || {};
             return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : fallback;

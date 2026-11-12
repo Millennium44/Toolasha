@@ -820,8 +820,10 @@ class SyncManager {
             gistId: written.id,
             exportedAt,
             // A merged upload that kept the gist's copy of a record whose fold failed did not carry this
-            // device's data, so it is not remembered as handled: the next automatic push merges again
-            hash: merged?.mergeFailed ? null : localHash,
+            // device's data, so it is not remembered as handled: the next automatic push merges again.
+            // Never null: a pull reads a missing fingerprint as "no local changes" and would skip its
+            // conflict check; this value is truthy and matches no real hash
+            hash: merged?.mergeFailed ? `unsettled:${localHash}` : localHash,
             chunkCount: chunks.length,
             // What the manifest actually carries: the write raises it above a
             // gist another device has since moved further along
@@ -1017,7 +1019,7 @@ class SyncManager {
             if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
             await rememberLocal({
                 // Not stamped while a fold failed: the next automatic push must build and merge again
-                [KEY_LAST_HASH]: mergeFailed ? null : seenHash,
+                [KEY_LAST_HASH]: mergeFailed ? `unsettled:${seenHash}` : seenHash,
                 [KEY_UNAPPLIED]: { since: remote.manifest?.exportedAt ?? null },
                 ...(remote.seen ? { [KEY_GIST_VERSION]: remote.seen } : {}),
             });

@@ -10,6 +10,10 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         listStores: () => Promise.resolve(Array.from(db.keys())),
         getAll: (storeName) => Promise.resolve(Object.fromEntries(db.get(storeName) || new Map())),
+        getAllChecked: async (...args) => ({
+            ok: true,
+            rows: await ((storeName) => Promise.resolve(Object.fromEntries(db.get(storeName) || new Map())))(...args),
+        }),
         beginRestore: vi.fn(() => Promise.resolve()),
         finishRestore: vi.fn(),
         endRestore: () => Promise.resolve(),

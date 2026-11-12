@@ -443,11 +443,24 @@ describe('an upload merge whose fold fails is not remembered as synced', () => {
         expect(first.ok).toBe(true);
         // The gist kept its copy: A's entry is not there yet
         expect(gistStores().xpHistory.flakyLog_c1).toEqual(['b']);
-        expect(a.db.settings.toolasha_sync_lastHash ?? null).toBeNull();
+        expect(a.db.settings.toolasha_sync_lastHash).toMatch(/^unsettled:/);
 
         world.foldFails = false;
         await as(a, auto.push);
         expect(new Set(gistStores().xpHistory.flakyLog_c1)).toEqual(new Set(['a', 'b']));
+    });
+
+    test("a pressed Pull after a failed fold still asks about this device's unsent changes", async () => {
+        const { a } = await split();
+        world.foldFails = true;
+        await as(a, auto.push);
+        a.db.xpHistory.testHistory_c1 = ['s1', 'local-edit'];
+        dialog.calls = 0;
+        dialog.answer = null;
+        await as(a, () => syncManager.pull({ silent: false }));
+        expect(dialog.calls).toBe(1);
+        expect(dialog.last.title).toBe('Sync conflict');
+        expect(a.db.xpHistory.testHistory_c1).toEqual(['s1', 'local-edit']);
     });
 
     test('a permanent failure writes nothing more and stays retryable', async () => {
@@ -457,7 +470,7 @@ describe('an upload merge whose fold fails is not remembered as synced', () => {
         const writes = gist.writes;
         for (let i = 0; i < 3; i += 1) await as(a, auto.push);
         expect(gist.writes).toBe(writes);
-        expect(a.db.settings.toolasha_sync_lastHash ?? null).toBeNull();
+        expect(a.db.settings.toolasha_sync_lastHash).toMatch(/^unsettled:/);
     });
 
     test('a failing record does not hold back a healthy one in the same upload', async () => {
@@ -467,7 +480,7 @@ describe('an upload merge whose fold fails is not remembered as synced', () => {
         await as(a, auto.push);
         expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1', 'a-sample']);
         expect(gistStores().xpHistory.flakyLog_c1).toEqual(['b']);
-        expect(a.db.settings.toolasha_sync_lastHash ?? null).toBeNull();
+        expect(a.db.settings.toolasha_sync_lastHash).toMatch(/^unsettled:/);
         world.foldFails = false;
         await as(a, auto.push);
         expect(new Set(gistStores().xpHistory.flakyLog_c1)).toEqual(new Set(['a', 'b']));
@@ -483,7 +496,7 @@ describe('an upload merge whose fold fails is not remembered as synced', () => {
         dialog.answer = 'merge';
         await as(fresh, () => syncManager.push({ unattended: false, silent: false }));
         expect(toasts.some((t) => /Flaky log/.test(t.message))).toBe(true);
-        expect(fresh.db.settings.toolasha_sync_lastHash ?? null).toBeNull();
+        expect(fresh.db.settings.toolasha_sync_lastHash).toMatch(/^unsettled:/);
     });
 
     test('with every fold healthy the merge is remembered and the next push is skipped', async () => {

@@ -83,6 +83,12 @@ const storageMock = vi.hoisted(() => {
         delete: vi.fn(async (key, store = 'settings') => storeFor(store).delete(key)),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
         getAll: vi.fn(async (store = 'settings') => structuredClone(Object.fromEntries(storeFor(store)))),
+        getAllChecked: async (...args) => ({
+            ok: true,
+            rows: await vi.fn(async (store = 'settings') => structuredClone(Object.fromEntries(storeFor(store))))(
+                ...args
+            ),
+        }),
     };
     return mock;
 });

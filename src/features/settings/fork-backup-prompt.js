@@ -24,6 +24,7 @@ import storage from '../../core/storage.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 import { exportEverythingJSON } from '../../utils/full-backup.js';
 import { downloadFile } from '../../utils/csv-export.js';
+import { showToast } from '../../utils/toast.js';
 
 /** Shown-once flag. Global (not per character): a backup covers every character. */
 const PROMPTED_KEY = 'toolasha_forkBackupPrompted';
@@ -78,7 +79,20 @@ async function maybeShow() {
         });
 
         if (choice === 'backup') {
-            const json = await exportEverythingJSON();
+            let json;
+            try {
+                json = await exportEverythingJSON();
+            } catch (error) {
+                // Not marked as prompted, so the offer comes back; say so rather than leave a silent skip
+                console.error('[ForkBackupPrompt] The backup failed:', error);
+                showToast(
+                    'The backup could not be completed, so no file was saved. Try Settings → Back Up Everything.',
+                    {
+                        kind: 'error',
+                    }
+                );
+                return;
+            }
             const stamp = new Date().toISOString().slice(0, 10);
             downloadFile(`toolasha-backup-${stamp}.json`, json, 'application/json;charset=utf-8;');
         }
