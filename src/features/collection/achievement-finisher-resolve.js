@@ -1110,8 +1110,8 @@ function costRank(ready) {
 
 /**
  * What crafting a candidate and selling the output back is worth: the after-tax sale of every output
- * with a bid (count included), the output's daily volume, and whether it sells too rarely to count on.
- * No bid on any output is a resale of 0, flagged; an unknown volume is not thin.
+ * with a sale price (count included), the output's daily volume, and whether it sells too rarely to count on.
+ * No sale price on any output is a resale of 0, flagged; an unknown volume is not thin.
  */
 function resaleOf(cand, ctx, levelMet) {
     let resale = 0;
@@ -1140,7 +1140,7 @@ function resaleOf(cand, ctx, levelMet) {
 }
 
 /**
- * Rank with resale in view: a bill that is owned or priced first — outputs with a bid, then ones that
+ * Rank with resale in view: a bill that is owned or priced first — outputs with a sale price, then ones that
  * trade (an unknown volume counts as trading), then the lowest cost net of the resale; the rest as
  * {@link costRank} has them.
  */

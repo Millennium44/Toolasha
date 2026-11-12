@@ -212,6 +212,8 @@ export function pricingStamp() {
         config.isFeatureEnabled?.('enhanceSim_baseItemCraftingCost') ? 'craft' : 'buy',
         // A buy at the bid is priced one tick up when this is on, so it moves every bid-side input
         config.getSetting?.('profitCalc_patientTickBuy') === true ? 'tick' : '',
+        // A sale at the ask is priced one tick down when this is on, so it moves every ask-side sale
+        config.getSetting?.('profitCalc_patientTickSell') === true ? 'tickSell' : '',
         // Tester-shop pricing swaps shop-vs-market results
         testerShopEnabled() ? 'tester' : '',
         // What an unrefined untradable cape is assumed to be worth moves every cape's base cost

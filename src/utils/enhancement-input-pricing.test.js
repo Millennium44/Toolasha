@@ -40,7 +40,12 @@ vi.mock('../core/config.js', () => ({
                 : key === 'untradableCapeBaseValue'
                   ? (game.capeMode ?? 'zero')
                   : '',
-        getSetting: (key) => (key === 'profitCalc_patientTickBuy' ? game.patientTickBuy === true : undefined),
+        getSetting: (key) =>
+            key === 'profitCalc_patientTickBuy'
+                ? game.patientTickBuy === true
+                : key === 'profitCalc_patientTickSell'
+                  ? game.patientTickSell === true
+                  : undefined,
     },
 }));
 vi.mock('../api/marketplace.js', () => ({ default: { on: () => {} } }));
@@ -575,6 +580,15 @@ describe('pricingStamp', () => {
         game.patientTickBuy = true;
         expect(pricingStamp()).not.toBe(without);
         game.patientTickBuy = false;
+    });
+
+    test('moves when the patient-sell tick is switched, which reprices ask-side sales', async () => {
+        const { pricingStamp } = await import('./enhancement-input-pricing.js');
+        game.patientTickSell = false;
+        const without = pricingStamp();
+        game.patientTickSell = true;
+        expect(pricingStamp()).not.toBe(without);
+        game.patientTickSell = false;
     });
 });
 

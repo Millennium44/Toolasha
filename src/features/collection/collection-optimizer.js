@@ -16,12 +16,14 @@
  * and redone whenever the counts arrive again. The arithmetic is in
  * collection-optimizer-plan.js.
  *
- * Prices: a bought source up the ask side of its order book where one has been
- * seen (else at the top ask), and no more of it than the market trades in a
- * week; everything a route yields besides the target is sold, at the bid after
- * the market tax (no live bid: worth nothing), and only as many units as the
- * market takes in a week — the shared liquidity bound, from volumes already
- * measured.
+ * Prices: the player's own Buy/Sell dropdowns (the profit pricing mode and
+ * patient ticks). A bought source is quoted on the Buy side, which must be a
+ * real order on the book; where that side is the ask, it is priced up the ask
+ * side of its order book if one has been seen, and no more of it than the
+ * market trades in a week. Everything a route yields besides the target is
+ * sold on the Sell side after the market tax (no live order on that side:
+ * worth nothing), and only as many units as the market takes in a week — the
+ * shared liquidity bound, from volumes already measured.
  */
 
 import config from '../../core/config.js';
@@ -31,7 +33,8 @@ import profitCalculator from '../market/profit-calculator.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { ownUseCompare } from '../market/tooltip-prices.js';
-import { getItemPriceInfo, isPriceEstimated, withProfitPricingMode } from '../../utils/market-data.js';
+import { getItemPriceInfo, isPriceEstimated } from '../../utils/market-data.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { capProfitRateCached, hasMeasuredVolume, prefetchLiquidity } from '../../utils/liquidity-cap.js';
 import { LIQUIDITY_HORIZON_DAYS } from '../planner/market-liquidity.js';
@@ -102,18 +105,19 @@ const COIN_HRID = '/items/coin';
 const SKIP_ITEMS = new Set([COIN_HRID]);
 
 /**
- * What selling one unit of an output realizes: the live bid after the market
+ * What selling one unit of an output realizes: the live order on the player's
+ * Sell side (their profit pricing mode, patient tick included) after the market
  * tax (an Iron Cow's own valuation, untaxed, since it never uses the market).
  *
- * A bid that is only a value-map estimate means nobody is bidding, so the unit
- * realizes nothing — except a container, which is then worth its contents
- * (null here sends the caller to the container's value).
+ * A price that is only a value-map estimate means nobody is quoting that side,
+ * so the unit realizes nothing — except a container, which is then worth its
+ * contents (null here sends the caller to the container's value).
  * @param {string} hrid
  * @param {(hrid: string) => boolean} isContainer
  * @returns {number|null} Null when the item has no price at all
  */
 export function realizedSalePrice(hrid, isContainer = () => false) {
-    const info = getItemPriceInfo(hrid, { mode: 'bid' });
+    const info = getItemPriceInfo(hrid, { context: 'profit', side: 'sell' });
     if (!info || info.price === null || info.price === undefined) return null;
     if (info.estimated) return isContainer(hrid) ? null : 0;
     return calculatePriceAfterTax(info.price);
@@ -162,10 +166,13 @@ function cachedAsks(hrid) {
 
 /**
  * What buying a quantity of a route's source costs ({@link buyCost}): up the
- * cached book from the route's ask, and no more than a week's traded volume
+ * cached book from the route's quote, and no more than a week's traded volume
  * ({@link weeklySellable} — the same measured bound as selling, either way a
- * quarter of what trades).
- * @param {{hrid: string, ask: number}} purchase - The source and the ask the route was priced at
+ * quarter of what trades). A quote below the best listed ask is a patient buy
+ * (a bid, a tick above it): it waits in the queue instead of taking listings, so
+ * the cached asks do not price it and the week's volume is its bound.
+ * @param {{hrid: string, ask: number}} purchase - The source and the quote the route was priced at (`ask` is
+ *   the player's Buy side, whichever book side that is)
  * @param {number} units
  * @param {number} [already=0] - Units earlier steps of a plan bought
  * @returns {{gold: number, feasible: boolean, limit: number, fromBook: boolean}}
@@ -188,7 +195,11 @@ export function createBuyQuote() {
                 weekly: weeklySellable(purchase.hrid),
             });
         }
-        return buyCost(units, { ask: purchase.ask, ...markets.get(purchase.hrid), already });
+        const market = markets.get(purchase.hrid);
+        const bestListed = Math.min(...(market.listings || []).map((level) => Number(level?.price) || Infinity));
+        // Quoted under the cheapest listing: the buy is a queued order, not a walk up the asks
+        const patient = market.listings && Number(purchase.ask) < bestListed;
+        return buyCost(units, { ask: purchase.ask, ...market, listings: patient ? null : market.listings, already });
     };
 }
 
@@ -279,15 +290,15 @@ export function transmuteRoute(sourceHrid, result, table, { buy, sell: sellParts
 
 /**
  * Whether a setup the calculator weighed can actually be bought: a catalyst or tea with only a
- * value-map estimate and no live ask cannot be insta-bought, whatever it is said to cost, so a setup
- * that needs one is not a candidate. A setup with no catalyst and no tea always passes.
+ * value-map estimate and no live order on the player's Buy side cannot be bought, whatever it is said to
+ * cost, so a setup that needs one is not a candidate. A setup with no catalyst and no tea always passes.
  * @param {Object|null} result - A `calculateCandidateResults` entry
  * @returns {boolean}
  */
 export function setupIsBuyable(result) {
     return ![result?.winningCatalystHrid, ...(result?.consumableCosts ?? []).map((cost) => cost?.itemHrid)]
         .filter(Boolean)
-        .some((hrid) => isPriceEstimated(hrid, { mode: 'ask', side: 'buy' }));
+        .some((hrid) => isPriceEstimated(hrid, { context: 'profit', side: 'buy' }));
 }
 
 /**
@@ -295,8 +306,8 @@ export function setupIsBuyable(result) {
  *
  * The calculator's own pick (`calculateTransmuteProfit`) is the setup with the
  * best taxed profit per hour under the profit pricing mode, with every output
- * sold however much of it there is. The optimizer pays the ask, sells at the
- * bid within a week's volume and ranks by gold (or time) per point, so that
+ * sold however much of it there is. The optimizer sells only within a week's
+ * volume and ranks by gold (or time) per point, so that
  * pick can be the wrong setup here. Each candidate the calculator weighs
  * (`calculateCandidateResults`) is offered instead, and the ranking chooses
  * among them per target item and per sort, with its own prices and caps — the
@@ -308,12 +319,12 @@ export function setupIsBuyable(result) {
  * @returns {Array<Object>} Source routes, each carrying its `setup`
  */
 export function transmuteSetups(sourceHrid, table, opts) {
-    // The optimizer buys at the ask: catalyst and tea overhead is priced there, whatever the profit mode says
-    const listed = atAsk(() => alchemyProfitCalculator.calculateCandidateResults?.('transmute', sourceHrid)) ?? [];
+    // Catalyst and tea overhead is priced by the calculator on the player's profit pricing mode
+    const listed = alchemyProfitCalculator.calculateCandidateResults?.('transmute', sourceHrid) ?? [];
     const candidates =
         listed.length > 0
             ? listed.filter(setupIsBuyable)
-            : [atAsk(() => alchemyProfitCalculator.calculateTransmuteProfit(sourceHrid))];
+            : [alchemyProfitCalculator.calculateTransmuteProfit(sourceHrid)];
     const routes = [];
     const seen = new Set();
     for (const result of candidates) {
@@ -581,7 +592,7 @@ function soldFromTerminals(terminals, sell, bonus) {
  * the ranking picks) with an input cost of 0
  * ({@link selfUseDecomposeChain}), its outputs valued at what selling them
  * realizes ({@link realizedSalePrice}), so one walk serves every way of getting
- * the item: bought at the ask, made at the bench, or bought at the shop.
+ * the item: bought on the market, made at the bench, or bought at the shop.
  *
  * @param {Object} [opts]
  * @param {() => boolean} [opts.cancelled] - Stops the build when it turns true
@@ -590,13 +601,13 @@ function soldFromTerminals(terminals, sell, bonus) {
 export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
     const getItemDetails = (hrid) => itemDetailMap[hrid] || dataManager.getItemDetails?.(hrid) || null;
-    // What a source can actually be bought for: the live ask (or the player's own price) — not a
-    // patient bid, whatever the pricing mode, for a buy of hundreds — never the value-map estimate an
-    // empty book falls back to, and nothing on an Iron Cow, which cannot use the market at all
+    // What a source can be bought for: the player's own Buy side (their profit pricing mode, patient tick
+    // included) or their own custom price — never the value-map estimate an empty book falls back to, which
+    // no order stands behind, and nothing on an Iron Cow, which cannot use the market at all
     const ironCow = isIronCowCharacter();
     const buyableQuote = (hrid) => {
         if (ironCow) return null;
-        const info = getItemPriceInfo(hrid, { mode: 'ask', side: 'buy', marketQuote: true });
+        const info = getItemPriceInfo(hrid, { context: 'profit', side: 'buy', marketQuote: true });
         if (!info || info.estimated || !['book', 'custom'].includes(info.source)) return null;
         return info.price > 0 ? info.price : null;
     };
@@ -717,7 +728,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (!decomposeResults.has(hrid)) {
             let result = null;
             try {
-                result = atAsk(() => alchemyProfitCalculator.calculateDecomposeProfit(hrid)) ?? null;
+                result = alchemyProfitCalculator.calculateDecomposeProfit(hrid) ?? null;
             } catch (error) {
                 console.error('[CollectionOptimizer] Decompose failed for', hrid, error);
             }
@@ -726,7 +737,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         return decomposeResults.get(hrid);
     };
     // Every catalyst/tea setup the calculator weighs for a decompose, not only its single pick: the
-    // optimizer pays the ask and ranks by gold (or time) per point, so the best taxed profit per hour
+    // optimizer ranks by gold (or time) per point, so the best taxed profit per hour
     // can be the wrong setup here. Each setup is its own route (the way {@link transmuteSetups} offers
     // transmutes); the steps below the top item run under the same setup where the calculator lists it
     const candidateLists = new Map();
@@ -734,9 +745,9 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (!candidateLists.has(hrid)) {
             let list = [];
             try {
-                list = (
-                    atAsk(() => alchemyProfitCalculator.calculateCandidateResults?.('decompose', hrid)) ?? []
-                ).filter(setupIsBuyable);
+                list = (alchemyProfitCalculator.calculateCandidateResults?.('decompose', hrid) ?? []).filter(
+                    setupIsBuyable
+                );
             } catch (error) {
                 console.error('[CollectionOptimizer] Decompose setups failed for', hrid, error);
             }
@@ -922,7 +933,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     }
     if (cancelled()) return null;
 
-    // Transmute: buy S at the ask and transmute it until nothing of it is left
+    // Transmute: buy S and transmute it until nothing of it is left
     for (const [hrid, details] of Object.entries(itemDetailMap)) {
         const table = details?.alchemyDetail?.transmuteDropTable;
         if (!Array.isArray(table) || !(Number(details.alchemyDetail.transmuteSuccessRate) > 0)) continue;
@@ -1037,17 +1048,6 @@ function sameBonusDrops(a, b) {
             .sort()
             .join('|');
     return keys(a) === keys(b) && Boolean(a.bonus?.partlyUnpriced) === Boolean(b.bonus?.partlyUnpriced);
-}
-
-/**
- * Run a synchronous calculator call with the profit pricing pinned to the ask. The optimizer buys
- * catalyst and tea at the ask; an optimistic or patient-buy profit mode would price them at the bid.
- * @template T
- * @param {() => T} fn
- * @returns {T}
- */
-function atAsk(fn) {
-    return withProfitPricingMode('conservative', fn);
 }
 
 /**
@@ -1254,6 +1254,21 @@ class CollectionOptimizer {
         };
         dataManager.on('collections_updated', this.collectionsHandler);
 
+        // The routes are priced once and kept: a move of the Buy/Sell dropdowns (or either patient tick)
+        // prices them again, as the Recompute button does
+        const repriceRoutes = () => {
+            this.generation++;
+            this.routes = null;
+            this.routesFor = null;
+            this.index = null;
+            this.building = null;
+            const panel = document.querySelector(`.${PANEL_CLASS}`);
+            if (panel) this.render(panel);
+        };
+        for (const key of ['profitCalc_pricingMode', ...PATIENT_TICK_SETTING_KEYS]) {
+            this.unregisterHandlers.push(config.onSettingChange(key, repriceRoutes));
+        }
+
         const open = this.findVisiblePanel();
         if (open) this.mount(open);
         this.prefsLoaded = this.loadPrefs();
@@ -1358,9 +1373,10 @@ class CollectionOptimizer {
                 'span',
                 '',
                 'Buying on the market does not collect an item. Net gold: + earns, \u2212 costs, counting the ' +
-                    'other outputs as sold at the bid after tax, as many as the market takes in a week. A bought ' +
-                    'source is priced up its order book where you have opened it, and a step needing more of it ' +
-                    'than the market trades in a week is left out. '
+                    'other outputs as sold on your Sell side (see the Buy/Sell dropdowns) after tax, as many as the market takes ' +
+                    'in a week. A bought source is priced on your Buy side, up its order book where you have opened it ' +
+                    'and are buying at the ask, and a step needing more of it than the market trades in a week is ' +
+                    'left out. '
             )
         );
         const recompute = el('button', 'font-size:11px;margin-left:4px;', 'Recompute');
