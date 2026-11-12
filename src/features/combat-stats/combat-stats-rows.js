@@ -109,7 +109,17 @@ dataManager.on('character_switching', () => {
 
 // A purchase (or a use) changes what is held now, and the forecast reads the live inventory for
 // you: dropping the cache lets the overlay's next tick draw it instead of waiting out CACHE_MS.
-dataManager.on('items_updated', () => {
+dataManager.on('items_updated', (data) => {
+    if (!consumableCache) return;
+    // Only an update that touches something the tile forecasts: in a dungeon this message arrives with
+    // every drop, and each drop would otherwise cost a stats pass for everyone on the next tick
+    const changed = data?.endCharacterItems;
+    if (Array.isArray(changed)) {
+        const mine = consumableCache.find((player) => player.isCurrent);
+        const forecast = new Set((mine?.forecasts || []).map((entry) => entry.itemHrid));
+        if (mine?.chestKey) forecast.add(mine.chestKey.itemHrid);
+        if (!changed.some((item) => forecast.has(item?.itemHrid))) return;
+    }
     consumableCache = null;
     consumableCachedAt = 0;
 });

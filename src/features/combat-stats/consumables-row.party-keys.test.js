@@ -183,6 +183,27 @@ describe('a purchase shows without a new battle', () => {
         expect(tile().version()).not.toBe(versionBefore);
     });
 
+    test('an update for something the tile does not forecast keeps the cache', () => {
+        draw();
+        game.inventory = [bag(KEY, 162), bag(CHEST_KEY, 5), bag(CAKE, 100_000)];
+        // A drop of an unrelated item: no stats pass for everyone on the next tick
+        dataManager.emit('items_updated', { endCharacterItems: [{ itemHrid: '/items/apple', count: 3 }] });
+
+        expect(draw()).toContain('You:15h 30m');
+    });
+
+    test('an update naming your entry key, chest key or a consumable recomputes', () => {
+        for (const itemHrid of [KEY, CHEST_KEY, CAKE]) {
+            dataManager.emit('character_switching');
+            game.inventory = [bag(KEY, 62), bag(CHEST_KEY, 5), bag(CAKE, 100_000)];
+            expect(draw()).toContain('You:15h 30m');
+
+            game.inventory = [bag(KEY, 162), bag(CHEST_KEY, 500), bag(CAKE, 100_000)];
+            dataManager.emit('items_updated', { endCharacterItems: [{ itemHrid, count: 1 }] });
+            expect(tile().version()).toContain('162');
+        }
+    });
+
     test('without the event the cached forecast is still served', () => {
         draw();
         game.inventory = [bag(KEY, 162), bag(CHEST_KEY, 5), bag(CAKE, 100_000)];

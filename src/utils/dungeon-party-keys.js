@@ -238,6 +238,7 @@ function keyRow(entry, routeInfo, extra) {
  * @param {Object|null} [input.keyCost] - `describeKeyCost` for the entry key
  * @param {Object|null} [input.chestKeyCost] - `describeKeyCost` for the chest key
  * @param {boolean} [input.craftBasis] - Whether the key pricing setting is craft cost
+ * @param {string} [input.priceSide] - The market side keys are priced at ('ask' or 'bid')
  * @returns {Map<Object, {entry: Object|null, chest: Object|null}>} Keyed by the snapshot's player objects
  */
 export function buildKeyRows({
@@ -252,6 +253,7 @@ export function buildKeyRows({
     keyCost = null,
     chestKeyCost = null,
     craftBasis = false,
+    priceSide = 'ask',
 }) {
     const rows = new Map();
     const players = data?.players || [];
@@ -272,6 +274,11 @@ export function buildKeyRows({
         fallbackPrice: pricesFor(keyHrid)?.ask,
     });
     const entryRoute = keyRoute(keyCost, craftBasis, pricesFor(keyHrid));
+    // A craft cost is personal - your Artisan, gear and efficiency are not a member's - so members
+    // are always on the market route, at the key pricing side, whatever the basis is for you
+    const memberRoute = keyRoute(null, false, pricesFor(keyHrid));
+    const marketUnit = Number(pricesFor(keyHrid)?.[priceSide] ?? pricesFor(keyHrid)?.ask);
+    const memberBase = craftBasis && marketUnit > 0 ? { ...base, pricePerItem: marketUnit } : base;
 
     for (const player of players) {
         if (!player) continue;
@@ -308,7 +315,7 @@ export function buildKeyRows({
         if (stated === null) continue;
 
         rows.set(player, {
-            entry: keyRow({ ...base, inventoryAmount: stated }, entryRoute, { statedCount: true }),
+            entry: keyRow({ ...memberBase, inventoryAmount: stated }, memberRoute, { statedCount: true }),
             chest: null,
         });
     }
@@ -352,6 +359,7 @@ export function keyRowsForData(data, statsOf) {
                 keyCost: craftBasis ? describeKeyCostCached(keyHrid) : null,
                 chestKeyCost: craftBasis && chestKeyHrid ? describeKeyCostCached(chestKeyHrid) : null,
                 craftBasis,
+                priceSide: resolveKeyPricing().priceSide,
             }),
         };
     } catch (error) {

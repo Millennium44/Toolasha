@@ -375,7 +375,7 @@ describe('the craft route', () => {
 
         click(craftCell);
         await settled();
-        expect(openBill).toHaveBeenCalledWith([{ actionHrid: '/actions/crafting/sinister_key', numActions: 34 }]);
+        expect(openBill).toHaveBeenCalledWith([{ actionHrid: '/actions/crafting/sinister_key', numActions: 34 }], []);
         expect(shopping.calls).toHaveLength(0);
     });
 
@@ -386,14 +386,19 @@ describe('the craft route', () => {
         consumablesPanel._craftChestKeys = true;
         await draw();
 
-        // Buy all: the cake is bought, both keys are crafted - and neither key is bought
+        // Buy all is ONE trip: the cake rides in the same bill as the key materials (a second bill would
+        // replace the first), as held + short so the bill nets the stock once - and neither key is bought
         click(buyAllLink(sectionOf('Me (you)')));
         await settled();
-        expect(shopping.calls[0].map((item) => item.itemHrid)).toEqual([CAKE]);
-        expect(openBill).toHaveBeenCalledWith([
-            { actionHrid: '/actions/crafting/sinister_key', numActions: 34 },
-            { actionHrid: '/actions/crafting/sinister_key', numActions: 187 },
-        ]);
+        expect(shopping.calls).toHaveLength(0);
+        expect(openBill).toHaveBeenCalledTimes(1);
+        expect(openBill).toHaveBeenCalledWith(
+            [
+                { actionHrid: '/actions/crafting/sinister_key', numActions: 34 },
+                { actionHrid: '/actions/crafting/sinister_key', numActions: 187 },
+            ],
+            [{ itemHrid: CAKE, count: 10 + 77 }]
+        );
     });
 
     test('without the chest option the chest key is not in the list and its cell is plain', async () => {
@@ -448,6 +453,9 @@ describe('the craft route', () => {
 
         const section = sectionOf('Kasvitatti');
         expect(section.textContent).not.toContain('⚒');
-        expect(section.textContent).toContain('Short ');
+        // Their key is priced at the market (96 x 1000), not at your craft cost (96 x 40,000)
+        expect(section.textContent).toContain('Ask: 96K');
+        expect(section.textContent).not.toContain('Ask: 4M');
+        expect(section.textContent).toContain('Short 24 · 20K');
     });
 });

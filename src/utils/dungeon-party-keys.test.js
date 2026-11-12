@@ -191,11 +191,35 @@ describe('key pricing', () => {
         expect(unpriced.note).toContain('has no price');
     });
 
-    test('a member uses the same route and price as you', () => {
-        const ana = rowOf(build({ rest: { craftBasis: true, keyCost: craftCost } }), 'Ana').entry;
+    test("a member's key is never priced at your craft cost: market for them, craft for you", () => {
+        const rows = build({ rest: { craftBasis: true, keyCost: craftCost } });
+        const ana = rowOf(rows, 'Ana').entry;
+        const me = rowOf(rows, 'Me').entry;
 
-        expect(ana.route).toBe('craft');
-        expect(ana.costPerDaySides.ask).toBeCloseTo(96 * 40_000, 3);
+        expect(ana.route).toBe('buy');
+        expect(ana.price).toBe(1000);
+        expect(ana.costPerDaySides.ask).toBeCloseTo(96 * 1000, 3);
+        expect(ana.costPerDaySides.bid).toBeCloseTo(96 * 900, 3);
+        expect(me.route).toBe('craft');
+        expect(me.costPerDaySides.ask).toBeCloseTo(96 * 40_000, 3);
+        expect(me.price).toBe(40_000);
+    });
+
+    test("even when the keys' row price was measured at your craft cost, the member refill uses the market", () => {
+        const priced = { keyBreakdown: [{ itemHrid: KEY, count: 4, pricePerItem: 40_000 }] };
+        const rows = buildKeyRows({
+            data: session(),
+            statsOf: () => priced,
+            inventory: inventory(62),
+            keyCounts: { Ana: 77 },
+            keyHrid: KEY,
+            pricesFor: () => ({ ask: 1000, bid: 900 }),
+            keyCost: craftCost,
+            craftBasis: true,
+        });
+
+        expect(rowOf(rows, 'Ana').entry.price).toBe(1000);
+        expect(rowOf(rows, 'Me').entry.price).toBe(40_000);
     });
 });
 
