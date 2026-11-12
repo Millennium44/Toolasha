@@ -139,6 +139,8 @@ vi.mock('./loadout-snapshot.js', () => ({
             gear.listeners = gear.listeners.filter((l) => l !== fn);
         },
         resolveEquipment: (snapshot) => snapshot?.equipment || [],
+        // The loadout's own equipment Map, which carries the loadout's talisman bonuses; a test hands one over
+        equipmentMapOf: (snapshot) => snapshot?.equipmentMap ?? new Map(),
     },
 }));
 // The persisted-combat-cache suite drives this store directly; every other
@@ -713,6 +715,24 @@ describe('equipment experience reaches a labyrinth room', () => {
             );
         }
         expect(metrics.experienceBonus).toBeCloseTo(0.15, 10);
+    });
+
+    test("the loadout's own talismans add to its speed, experience and gathering, and nothing else does", async () => {
+        const { attachTalismanBonuses } = await import('../../utils/talisman-bonuses.js');
+        gear.snapshots[3].equipmentMap = attachTalismanBonuses(new Map(), {
+            noncombat: { milkingSpeed: 0.05661, skillingExperience: 0.0126, gatheringQuantity: 0.03 },
+            buffs: {},
+            combat: {},
+        });
+        const buffs = labyrinthClearRate.getLoadoutEquipmentBuffs(3, 'milking');
+        expect(buffs.find((b) => b.typeHrid === '/buff_types/action_speed').flatBoost).toBeCloseTo(0.2 + 0.05661, 10);
+        expect(buffs.find((b) => b.typeHrid === '/buff_types/wisdom').flatBoost).toBeCloseTo(0.15 + 0.0126, 10);
+        expect(buffs.find((b) => b.typeHrid === '/buff_types/gathering').flatBoost).toBeCloseTo(0.03, 10);
+    });
+
+    test('a loadout whose Map carries no talismans reads gear alone', () => {
+        const buffs = labyrinthClearRate.getLoadoutEquipmentBuffs(3, 'milking');
+        expect(buffs.find((b) => b.typeHrid === '/buff_types/action_speed').flatBoost).toBeCloseTo(0.2, 10);
     });
 
     test('gear with no experience stat emits no wisdom buff at all', () => {

@@ -67,6 +67,7 @@ vi.mock('../enhancement/enhancement-params-source.js', () => ({ enhancementParam
 vi.mock('../../utils/tea-parser.js', () => ({ getDrinkConcentration: () => 0, parseTeaSkillLevelBonus: () => 0 }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => 0 }));
 vi.mock('../../utils/equipment-parser.js', () => ({
+    parseEquipmentTalismanBuff: () => 0,
     parseEquipmentSpeedBonuses: () => 0,
     debugEquipmentSpeedBonuses: () => [],
     parseEssenceFindBonus: () => 0,

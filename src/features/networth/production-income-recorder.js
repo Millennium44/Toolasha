@@ -48,6 +48,7 @@ import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.j
 import { getItemPrice } from '../../utils/market-data.js';
 import { parseItemHash } from '../../utils/item-hash.js';
 import { getDrinkConcentration, parseArtisanBonus, parseGourmetBonus } from '../../utils/tea-parser.js';
+import { parseEquipmentTalismanBuff } from '../../utils/equipment-parser.js';
 import { PRODUCTION_TYPES } from '../../utils/profit-constants.js';
 import { localDayId, dayStart } from './gold-sources.js';
 import { registerDayRowRetention, pruneDayRows } from './day-row-retention.js';
@@ -299,7 +300,8 @@ function recipeBuffs(actionType) {
         const artisan = parseArtisanBonus(drinks, itemDetailMap, concentration) || 0;
         const gourmet =
             (parseGourmetBonus(drinks, itemDetailMap, concentration) || 0) +
-            (dataManager.getPersonalBuffFlatBoost?.(actionType, '/buff_types/gourmet') || 0);
+            (dataManager.getPersonalBuffFlatBoost?.(actionType, '/buff_types/gourmet') || 0) +
+            parseEquipmentTalismanBuff(equipment, '/buff_types/gourmet');
         return { artisan: Math.min(Math.max(artisan, 0), 1), gourmet: Math.max(gourmet, 0) };
     } catch (error) {
         console.error('[ProductionIncome] Reading artisan and gourmet failed:', error);

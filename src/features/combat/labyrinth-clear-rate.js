@@ -23,6 +23,7 @@ import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
+import { talismanBonusesOf } from '../../utils/talisman-bonuses.js';
 import { LOADOUT_ONLY_ABILITIES } from './labyrinth-fingerprint.js';
 import { hasCoarsePointer, isMobileMode } from '../../utils/mobile.js';
 import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
@@ -1332,6 +1333,13 @@ class LabyrinthClearRate {
                     totals[key] = (totals[key] || 0) + value * enhMultiplier;
                 }
             }
+        }
+
+        // The loadout's own slotted talismans (its belt and its talisman map, not the character's current ones);
+        // empty on a live server and for a loadout without either
+        const loadoutTalismans = talismanBonusesOf(loadoutSnapshot.equipmentMapOf?.(snapshot)).noncombat;
+        for (const [key, value] of Object.entries(loadoutTalismans)) {
+            if (Number.isFinite(value)) totals[key] = (totals[key] || 0) + value;
         }
 
         // Convert totals to buff array matching the format expected by applyBuff

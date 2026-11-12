@@ -21,6 +21,7 @@ import storage from '../../core/storage.js';
 import { webSocketHook as sharedWebSocketHook } from '../../utils/bundle-bridge.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { parseWearable, highestOwnedEnhancements, resolveEnhancementLevel } from '../../utils/loadout-equipment.js';
+import { attachTalismanBonuses, computeLoadoutTalismanBonuses } from '../../utils/talisman-bonuses.js';
 
 // Re-exported for this module's own existing callers and tests. New code
 // wanting these pure helpers (e.g. a market-bundle tooltip) should import
@@ -475,7 +476,31 @@ class LoadoutSnapshot {
         // last saved — +12 gear the character had long since taken to +20
         // (reported 2026-08-29). Exact-pinned loadouts keep their frozen level
         // inside the resolver.
-        return new Map(this.resolveEquipment(snapshot).map((e) => [e.itemLocationHrid, e]));
+        return this.equipmentMapOf(snapshot);
+    }
+
+    /**
+     * A loadout's worn equipment as the Map the equipment parsers take, carrying the loadout's OWN talisman bonuses
+     * (its belt and the talismans its `talismanIdMap` names), not the character's current ones. Nothing is attached
+     * on a live server, for a loadout without a belt or a talisman map, or for ids no longer owned.
+     * @param {Object} snapshot - From `snapshots` / `getAllSnapshots`
+     * @returns {Map<string, Object>} Map<itemLocationHrid, item>
+     */
+    equipmentMapOf(snapshot) {
+        const equipment = this.resolveEquipment(snapshot);
+        const map = new Map(equipment.map((e) => [e.itemLocationHrid, e]));
+        const initData = dataManager.getInitClientData?.();
+        return attachTalismanBonuses(
+            map,
+            computeLoadoutTalismanBonuses({
+                talismanIdMap: snapshot?.talismanIdMap,
+                equipment,
+                ownedTalismans: dataManager.getCharacterTalismans?.() || [],
+                itemDetailMap: initData?.itemDetailMap,
+                modifierDetailMap: initData?.talismanModifierDetailMap,
+                enhancementTable: initData?.enhancementLevelTotalBonusMultiplierTable,
+            })
+        );
     }
 
     /**

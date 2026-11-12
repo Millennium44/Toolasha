@@ -14,6 +14,7 @@
  */
 
 import { enhancementBonusAt } from './enhancement-multipliers.js';
+import { talismanStat, talismanBuff, talismanBonusesOf } from './talisman-bonuses.js';
 
 /**
  * Map action type HRID to equipment field name
@@ -103,6 +104,7 @@ function calculateEnhancementScaling(baseValue, enhancementLevel, slotHrid) {
  * @param {Object} config - Parser configuration
  * @param {string|null} config.skillSpecificField - Skill-specific field (e.g., "brewingSpeed")
  * @param {string|null} config.genericField - Generic skilling field (e.g., "skillingSpeed")
+ * @param {string|null} [config.talismanOnlyField] - A stat only talismans carry, added to the talisman share alone
  * @param {boolean} config.returnAsPercentage - Whether to convert to percentage (multiply by 100)
  * @returns {number} Total stat bonus
  *
@@ -123,7 +125,7 @@ function parseEquipmentStat(characterEquipment, itemDetailMap, config) {
         return 0; // Missing item data
     }
 
-    const { skillSpecificField, genericField, returnAsPercentage } = config;
+    const { skillSpecificField, genericField, returnAsPercentage, talismanOnlyField = null } = config;
 
     let totalBonus = 0;
 
@@ -167,8 +169,23 @@ function parseEquipmentStat(characterEquipment, itemDetailMap, config) {
         }
     }
 
+    // Slotted talismans act like gear stats of the same name. They ride on the equipment Map (empty on a
+    // live server, without a belt, and for any Map a reader built itself), so no caller adds them separately.
+    totalBonus += talismanStat(characterEquipment, skillSpecificField, genericField, talismanOnlyField);
+
     // Convert to percentage if requested (0.15 -> 15%)
     return returnAsPercentage ? totalBonus * 100 : totalBonus;
+}
+
+/**
+ * The talisman share of a buff type (Gourmet, Processing) for an equipment Map: add it to the tea and personal
+ * buff terms a reader already sums. Zero without talismans.
+ * @param {Map} characterEquipment - Equipment map from dataManager.getEquipment() or a loadout's map
+ * @param {string} buffTypeHrid - e.g. '/buff_types/gourmet'
+ * @returns {number} Decimal (0.015 for +1.5%)
+ */
+export function parseEquipmentTalismanBuff(characterEquipment, buffTypeHrid) {
+    return talismanBuff(characterEquipment, buffTypeHrid);
 }
 
 /**
@@ -309,6 +326,7 @@ export function parseEquipmentGatheringBonuses(characterEquipment, itemDetailMap
  * Parse Essence Find bonus from equipment
  * @param {Map} characterEquipment - Equipment map from dataManager.getEquipment()
  * @param {Object} itemDetailMap - Item details from init_client_data
+ * @param {string|null} [actionTypeHrid] - Action type, for a talisman's skill-specific essence find
  * @returns {number} Total essence find bonus as percentage (e.g., 15 for 15%)
  *
  * @example
@@ -316,9 +334,11 @@ export function parseEquipmentGatheringBonuses(characterEquipment, itemDetailMap
  * // Ring of Essence Find (base 0.15, bonus 0.015) +0: 15%
  * // Ring of Essence Find (base 0.15, bonus 0.015) +10: 30%
  */
-export function parseEssenceFindBonus(characterEquipment, itemDetailMap) {
+export function parseEssenceFindBonus(characterEquipment, itemDetailMap, actionTypeHrid = null) {
     return parseEquipmentStat(characterEquipment, itemDetailMap, {
-        skillSpecificField: null, // No skill-specific essence find
+        skillSpecificField: null, // The gear reading is unchanged: only skillingEssenceFind
+        // Talismans have a skill-specific line too (e.g. alchemyEssenceFind)
+        talismanOnlyField: actionTypeHrid ? `${actionTypeHrid.replace('/action_types/', '')}EssenceFind` : null,
         genericField: 'skillingEssenceFind',
         returnAsPercentage: true,
     });
@@ -425,6 +445,16 @@ function parseEquipmentStatBreakdown(
         }
     }
 
+    // The talisman share is its own line, so the lines still add up to the parser's total
+    const talismanValue = talismanStat(characterEquipment, skillSpecificField, genericField);
+    if (talismanValue > 0) {
+        items.push({
+            name: 'Talismans',
+            enhancementLevel: 0,
+            value: returnAsPercentage ? talismanValue * 100 : talismanValue,
+        });
+    }
+
     return items;
 }
 
@@ -500,6 +530,21 @@ export function debugEquipmentSpeedBonuses(characterEquipment, itemDetailMap) {
                     scaledBonus: scaledValue,
                 });
             }
+        }
+    }
+
+    // Talismans: one line per speed stat they add, so the list still adds up to parseEquipmentSpeedBonuses
+    for (const [statName, value] of Object.entries(talismanBonusesOf(characterEquipment).noncombat)) {
+        if (statName.endsWith('Speed') && value > 0) {
+            bonuses.push({
+                itemName: 'Talismans',
+                itemHrid: null,
+                slot: 'talismans',
+                speedType: statName,
+                baseBonus: value,
+                enhancementLevel: 0,
+                scaledBonus: value,
+            });
         }
     }
 

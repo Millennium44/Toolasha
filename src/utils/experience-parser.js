@@ -12,6 +12,7 @@ import dataManager from '../core/data-manager.js';
 import { getEnhancementMultiplier } from './enhancement-multipliers.js';
 import { getDrinkConcentration } from './tea-parser.js';
 import { resolveActionContext } from './action-context.js';
+import { talismanStat } from './talisman-bonuses.js';
 
 /**
  * Parse equipment wisdom bonus (skillingExperience stat)
@@ -44,6 +45,13 @@ export function parseEquipmentWisdom(equipment, itemDetailMap) {
             value: itemWisdom,
             enhancementLevel: enhancementLevel,
         });
+    }
+
+    // Slotted talismans (their Skilling Experience line); empty on live and without a belt
+    const talismanWisdom = talismanStat(equipment, 'skillingExperience') * 100;
+    if (talismanWisdom > 0) {
+        totalWisdom += talismanWisdom;
+        breakdown.push({ name: 'Talismans', value: talismanWisdom, enhancementLevel: 0 });
     }
 
     return {
@@ -88,6 +96,13 @@ export function parseCharmExperience(equipment, skillHrid, itemDetailMap) {
             value: itemCharmXP,
             enhancementLevel: enhancementLevel,
         });
+    }
+
+    // Slotted talismans carry the same per-skill experience line a charm does
+    const talismanXP = talismanStat(equipment, statName) * 100;
+    if (talismanXP > 0) {
+        totalCharmXP += talismanXP;
+        breakdown.push({ name: 'Talismans', value: talismanXP, enhancementLevel: 0 });
     }
 
     return {

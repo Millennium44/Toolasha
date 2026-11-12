@@ -6,6 +6,7 @@
  */
 
 import { getEnhancementMultiplier } from './enhancement-multipliers.js';
+import { talismanStat } from './talisman-bonuses.js';
 
 /**
  * Detect best gear for a specific skill by equipment slot
@@ -187,6 +188,24 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
     addSlot(bestEarrings);
     addSlot(bestBack);
     addSlot(bestCharm);
+
+    // Slotted talismans act like gear stats of the same name (percent here, as the items above)
+    const talismanSpeed = talismanStat(equipment, speedStat, 'skillingSpeed') * 100;
+    const talismanRareFind = talismanStat(equipment, rareFindStat, 'skillingRareFind') * 100;
+    const talismanExperience = talismanStat(equipment, experienceStat, 'skillingExperience') * 100;
+    if (talismanSpeed > 0 || talismanRareFind > 0 || talismanExperience > 0) {
+        gear.speedBonus += talismanSpeed;
+        gear.rareFindBonus += talismanRareFind;
+        gear.experienceBonus += talismanExperience;
+        gear.slotBreakdown.push({
+            name: 'Talismans',
+            enhancementLevel: 0,
+            success: 0,
+            speed: talismanSpeed,
+            rareFind: talismanRareFind,
+            experience: talismanExperience,
+        });
+    }
 
     return gear;
 }

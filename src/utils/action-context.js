@@ -104,7 +104,8 @@ export function resolveLoadoutContext(actionTypeHrid, characterLoadoutID) {
     if (!snapshot) return resolveActionContext(actionTypeHrid);
 
     const worn = snapshot.equipment?.length
-        ? new Map(store.resolveEquipment(snapshot).map((e) => [e.itemLocationHrid, e]))
+        ? (store.equipmentMapOf?.(snapshot) ??
+          new Map(store.resolveEquipment(snapshot).map((e) => [e.itemLocationHrid, e])))
         : null;
     const filled = (snapshot.drinks || []).filter((d) => d.itemHrid);
     return {

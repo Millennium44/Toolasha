@@ -44,6 +44,7 @@ vi.mock('../../utils/tea-parser.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => mocks.itemPrices[hrid] ?? mocks.itemPrice }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => mocks.alchemyTeaBonus }));
 vi.mock('../../utils/equipment-parser.js', () => ({
+    parseEquipmentTalismanBuff: () => 0,
     parseEquipmentSpeedBonuses: () => mocks.equipmentSpeed,
     debugEquipmentSpeedBonuses: () => [],
     parseEssenceFindBonus: () => 0,

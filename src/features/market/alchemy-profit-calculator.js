@@ -136,7 +136,7 @@ function getAlchemySuccessBonusFromDrinks(drinkSlots, itemDetailMap, drinkConcen
  * @returns {Object} Bonus drop data with drops array and breakdowns
  */
 function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDetailMap) {
-    const essenceFindBonus = parseEssenceFindBonus(equipment, itemDetailMap);
+    const essenceFindBonus = parseEssenceFindBonus(equipment, itemDetailMap, '/action_types/alchemy');
 
     const equipmentRareFindBonus = parseRareFindBonus(equipment, '/action_types/alchemy', itemDetailMap);
     const houseRareFindBonus = calculateHouseRareFind();
