@@ -212,6 +212,8 @@ class TaskRerollTracker {
         this.knownTaskIds = new Set();
         /** Task ids this tab has taken off the map, which a stored copy may not bring back */
         this.droppedTaskIds = new Set();
+        /** Task ids whose history write is in flight, so a second cleanup does not queue the same rows */
+        this.retiringTaskIds = new Set();
         this.dataRecord = createCuratedRecord({
             base: DATA_KEY,
             store: STORE_NAME,
@@ -353,6 +355,7 @@ class TaskRerollTracker {
         this.taskRerollData.clear();
         this.knownTaskIds.clear();
         this.droppedTaskIds.clear();
+        this.retiringTaskIds.clear();
         this.dataRecord.reset();
         this.historyRecord.reset();
         document.getElementById('mwi-task-action-min-height')?.remove();
@@ -399,21 +402,25 @@ class TaskRerollTracker {
      * drop it. The history is capped so it cannot grow without bound.
      *
      * @param {Array<Object>} entries - Retired task records
+     * @returns {Promise<boolean>} True when the history write landed (or there was nothing to write);
+     *   false when it failed, so the caller keeps the live rows
      * @private
      */
     async appendToHistory(entries) {
-        if (!entries.length) return;
+        if (!entries.length) return true;
 
         try {
             // The save re-reads and folds the stored history under these, capped,
             // so nothing another tab retired is lost; it is skipped — the entries
             // kept in hand for the next one — when storage cannot be read first
-            await this.historyRecord.update((history) => {
+            const landed = await this.historyRecord.update((history) => {
                 history.push(...entries);
                 return mergeHistory([], history);
             });
+            return landed === true;
         } catch (error) {
             console.error('[Task Reroll Tracker] Failed to append reroll history:', error);
+            return false;
         }
     }
 
@@ -421,8 +428,12 @@ class TaskRerollTracker {
      * Clean up old task data that's no longer active
      * Keeps only tasks that are currently in characterQuests; everything it
      * drops is written to the history first so the spend stays analysable.
+     * A task leaves the live map only after its history row was saved: a failed
+     * write keeps it there, and the next cleanup retries (history is one row per
+     * task, so a repeat folds into the same row rather than doubling the spend).
+     * @returns {Promise<void>} Settles once retirement finished or was given up
      */
-    cleanupOldTasks() {
+    async cleanupOldTasks() {
         // `dataManager.characterQuests` is the live list — the claimed-quest
         // filter rebinds it to a NEW array, and `characterData.characterQuests`
         // keeps pointing at the array as it stood when the character loaded.
@@ -439,9 +450,10 @@ class TaskRerollTracker {
         const retired = [];
         const retiredAt = Date.now();
 
-        // Remove tasks that are no longer active
         for (const [taskId, taskData] of this.taskRerollData.entries()) {
             if (activeTaskIds.has(taskId)) continue;
+            // Already on its way to the history from an earlier cleanup
+            if (this.retiringTaskIds.has(taskId)) continue;
             // A task the server named moments ago is live whatever this list
             // says: cleanup can run from the same message that introduced it,
             // before the data manager has folded it in.
@@ -458,13 +470,47 @@ class TaskRerollTracker {
                 actionHrid: taskData.actionHrid || '',
                 goalCount: taskData.goalCount || 0,
             });
-            this.taskRerollData.delete(taskId);
         }
 
-        if (retired.length > 0) {
-            this.appendToHistory(retired);
-            this.saveToStorage();
+        if (retired.length === 0) return;
+
+        const ticket = captureOwner(this);
+        const snapshots = new Map(
+            retired.map((entry) => {
+                const held = this.taskRerollData.get(entry.taskId);
+                return [entry.taskId, { row: held, coin: held.coinRerollCount, cowbell: held.cowbellRerollCount }];
+            })
+        );
+        for (const entry of retired) this.retiringTaskIds.add(entry.taskId);
+
+        let landed = false;
+        try {
+            landed = await this.appendToHistory(retired);
+        } finally {
+            for (const entry of retired) this.retiringTaskIds.delete(entry.taskId);
         }
+
+        // Kept on the map, for the next cleanup to retry, when the history write failed or a disable or
+        // character switch overtook it: removing the row then would leave the spend in no saved record
+        if (!landed || !stillOurs(ticket)) return;
+
+        let removed = false;
+        for (const [taskId, snapshot] of snapshots) {
+            const held = this.taskRerollData.get(taskId);
+            // A task counted again, or named by the server again, while the write was out is live: leave it,
+            // the history row folds to the highest counts when it retires for good
+            if (
+                held !== snapshot.row ||
+                (held.coinRerollCount || 0) !== (snapshot.coin || 0) ||
+                (held.cowbellRerollCount || 0) !== (snapshot.cowbell || 0) ||
+                (held.seenAt && Date.now() - held.seenAt < RECENT_TASK_GRACE_MS)
+            ) {
+                continue;
+            }
+            this.taskRerollData.delete(taskId);
+            removed = true;
+        }
+        if (removed) await this.saveToStorage();
     }
 
     /**

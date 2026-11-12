@@ -11,7 +11,7 @@
  * guess or thrown away.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     characterId: 'market123',
@@ -130,7 +130,7 @@ beforeEach(() => {
  * task drawn afterwards.
  */
 describe('retiring tasks against the live quest list', () => {
-    test('a task the snapshot never saw is not retired', () => {
+    test('a task the snapshot never saw is not retired', async () => {
         const stale = [{ id: 1 }];
         // The character loaded with task 1; a claim rebound the live list and
         // task 7 was drawn since. The snapshot still holds only task 1.
@@ -138,31 +138,31 @@ describe('retiring tasks against the live quest list', () => {
         dataManager.characterQuests = [{ id: 7 }];
         tracker.taskRerollData.set(7, { coinRerollCount: 3, cowbellRerollCount: 0 });
 
-        tracker.cleanupOldTasks();
+        await tracker.cleanupOldTasks();
 
         expect(tracker.taskRerollData.has(7)).toBe(true);
     });
 
-    test('a task gone from the live list is still retired', () => {
+    test('a task gone from the live list is still retired', async () => {
         dataManager.characterQuests = [{ id: 7 }];
         tracker.taskRerollData.set(1, { coinRerollCount: 2, cowbellRerollCount: 0 });
         tracker.taskRerollData.set(7, { coinRerollCount: 1, cowbellRerollCount: 0 });
 
-        tracker.cleanupOldTasks();
+        await tracker.cleanupOldTasks();
 
         expect([...tracker.taskRerollData.keys()]).toEqual([7]);
     });
 
-    test('a task the server named moments ago survives a list that has not caught up', () => {
+    test('a task the server named moments ago survives a list that has not caught up', async () => {
         dataManager.characterQuests = [];
         tracker.taskRerollData.set(7, { coinRerollCount: 1, cowbellRerollCount: 0, seenAt: Date.now() });
 
-        tracker.cleanupOldTasks();
+        await tracker.cleanupOldTasks();
 
         expect(tracker.taskRerollData.has(7)).toBe(true);
     });
 
-    test('the grace runs out, and a long-unseen task retires', () => {
+    test('the grace runs out, and a long-unseen task retires', async () => {
         dataManager.characterQuests = [];
         tracker.taskRerollData.set(7, {
             coinRerollCount: 1,
@@ -170,16 +170,16 @@ describe('retiring tasks against the live quest list', () => {
             seenAt: Date.now() - 60 * 60 * 1000,
         });
 
-        tracker.cleanupOldTasks();
+        await tracker.cleanupOldTasks();
 
         expect(tracker.taskRerollData.has(7)).toBe(false);
     });
 
-    test('no quest list at all retires nothing', () => {
+    test('no quest list at all retires nothing', async () => {
         dataManager.characterQuests = null;
         tracker.taskRerollData.set(7, { coinRerollCount: 1, cowbellRerollCount: 0 });
 
-        tracker.cleanupOldTasks();
+        await tracker.cleanupOldTasks();
 
         expect(tracker.taskRerollData.has(7)).toBe(true);
     });
@@ -308,7 +308,7 @@ describe('the live map when another tab has written it', () => {
     test('a task this tab retired is not brought back by the other tab’s stale copy', async () => {
         await loaded({ 1: row(1), 2: row(2) });
         dataManager.characterQuests = [{ id: 2 }];
-        tracker.cleanupOldTasks();
+        await tracker.cleanupOldTasks();
         await vi.waitFor(() => expect(stored()[1]).toBeUndefined());
 
         // The stale tab, still holding the retired task, writes its whole copy
@@ -344,7 +344,7 @@ describe('the live map when another tab has written it', () => {
         expect(Object.keys(stored())).toEqual(['1', '2']);
 
         dataManager.characterQuests = [{ id: 2 }];
-        tracker.cleanupOldTasks();
+        await tracker.cleanupOldTasks();
         await vi.waitFor(() => expect(Object.keys(stored())).toEqual(['2']));
     });
 
@@ -658,7 +658,7 @@ describe('a cross-device sync pull combines the retired-task history', () => {
             expect(tracker.taskRerollData.get(1).coinRerollCount).toBe(2);
 
             dataManager.characterQuests = [{ id: 7 }];
-            tracker.cleanupOldTasks();
+            await tracker.cleanupOldTasks();
             await tracker.historyRecord.flushed();
 
             const [saved] = spend().get('taskRerollHistory_market123');
@@ -679,5 +679,126 @@ describe('a cross-device sync pull combines the retired-task history', () => {
         // Curated: a task is dropped from it on purpose when it retires, so a
         // union would resurrect rows the tracker has finished with
         expect(mergeForKey('rerollSpending', 'taskRerollData_market123')).toBeNull();
+    });
+});
+
+describe('retiring a task is a durable move', () => {
+    const LIVE = 'taskRerollData_market123';
+    const HISTORY = 'taskRerollHistory_market123';
+    const originalSet = storageMock.set.getMockImplementation();
+    afterEach(() => storageMock.set.mockImplementation(originalSet));
+    const live = () => spend().get(LIVE);
+    const history = () => spend().get(HISTORY);
+    const task = (coin, extra = {}) => ({ coinRerollCount: coin, cowbellRerollCount: 0, actionHrid: '/a', ...extra });
+
+    /** Writes to the history key return false and store nothing, until `heal()` */
+    const failHistoryWrites = () => {
+        const real = originalSet;
+        storageMock.set.mockImplementation(async (key, ...rest) => {
+            if (key === HISTORY) return false;
+            return real(key, ...rest);
+        });
+        return () => storageMock.set.mockImplementation(real);
+    };
+
+    beforeEach(async () => {
+        spend().set(LIVE, { 7: task(2), 8: task(1), 9: task(3) });
+        await tracker.loadFromStorage();
+        dataManager.characterQuests = [{ id: 9 }];
+    });
+
+    test('a failed history write keeps the task on the live map and in storage', async () => {
+        failHistoryWrites();
+        await tracker.cleanupOldTasks();
+
+        expect([...tracker.taskRerollData.keys()].sort()).toEqual([7, 8, 9]);
+        expect(Object.keys(live()).sort()).toEqual(['7', '8', '9']);
+        expect(history()).toBeUndefined();
+    });
+
+    test('the retry after recovery moves every task once, with the spend unchanged', async () => {
+        const heal = failHistoryWrites();
+        await tracker.cleanupOldTasks();
+        heal();
+        await tracker.cleanupOldTasks();
+        await tracker.cleanupOldTasks();
+
+        expect(Object.keys(live())).toEqual(['9']);
+        expect(
+            history()
+                .map((entry) => entry.taskId)
+                .sort()
+        ).toEqual([7, 8]);
+        expect(history().find((entry) => entry.taskId === 7)).toMatchObject({ coinRerollCount: 2, goldSpent: 30000 });
+    });
+
+    test('disable between the failed write and a retry loses nothing already saved', async () => {
+        failHistoryWrites();
+        await tracker.cleanupOldTasks();
+        tracker.disable();
+
+        expect(Object.keys(live()).sort()).toEqual(['7', '8', '9']);
+    });
+
+    test('a disable while the history write is out leaves the live rows alone', async () => {
+        const release = {};
+        const real = originalSet;
+        storageMock.set.mockImplementation(async (key, ...rest) => {
+            if (key === HISTORY) await new Promise((resolve) => (release.go = resolve));
+            return real(key, ...rest);
+        });
+        const pending = tracker.cleanupOldTasks();
+        await vi.waitFor(() => expect(release.go).toBeTypeOf('function'));
+        tracker.disable();
+        release.go();
+        await pending;
+
+        expect(Object.keys(live()).sort()).toEqual(['7', '8', '9']);
+        expect(
+            history()
+                .map((entry) => entry.taskId)
+                .sort()
+        ).toEqual([7, 8]);
+    });
+
+    test('a second cleanup while the first is out does not queue the same rows again', async () => {
+        const release = {};
+        const real = originalSet;
+        storageMock.set.mockImplementation(async (key, ...rest) => {
+            if (key === HISTORY) await new Promise((resolve) => (release.go = resolve));
+            return real(key, ...rest);
+        });
+        const first = tracker.cleanupOldTasks();
+        await vi.waitFor(() => expect(release.go).toBeTypeOf('function'));
+        await tracker.cleanupOldTasks();
+        release.go();
+        await first;
+
+        expect(storageMock.set.mock.calls.filter(([key]) => key === HISTORY)).toHaveLength(1);
+        expect(history()).toHaveLength(2);
+    });
+
+    test('a task counted again while the write was out stays on the map', async () => {
+        const release = {};
+        const real = originalSet;
+        storageMock.set.mockImplementation(async (key, ...rest) => {
+            if (key === HISTORY) await new Promise((resolve) => (release.go = resolve));
+            return real(key, ...rest);
+        });
+        const pending = tracker.cleanupOldTasks();
+        await vi.waitFor(() => expect(release.go).toBeTypeOf('function'));
+        tracker.taskRerollData.get(7).coinRerollCount = 3;
+        release.go();
+        await pending;
+
+        expect([...tracker.taskRerollData.keys()].sort()).toEqual([7, 9]);
+        expect(live()[7].coinRerollCount).toBe(3);
+    });
+
+    test('nothing to retire writes nothing', async () => {
+        dataManager.characterQuests = [{ id: 7 }, { id: 8 }, { id: 9 }];
+        await tracker.cleanupOldTasks();
+        expect(history()).toBeUndefined();
+        expect(Object.keys(live()).sort()).toEqual(['7', '8', '9']);
     });
 });
