@@ -18,12 +18,16 @@ vi.mock('./market-data.js', () => ({
         return { price, source: price === null ? null : (game.sources[hrid] ?? 'book'), estimated: false };
     },
     getItemPrices: (hrid) => game.prices[hrid] ?? null,
+    // The raw book on the side the mode sells on: a custom or estimated figure is no order
+    getModeBookSellPrice: (hrid) =>
+        game.sources[hrid] === 'custom' ? null : (game.prices[hrid]?.[game.profitSellSide] ?? null),
 }));
 
 const {
     labyrinthTokenValue,
     labyrinthTokenValueDetail,
     labyrinthRewardValue,
+    MODE_BOOK_SELL,
     shopPurchasePrice,
     shopPurchasePriceByMode,
     calculateDungeonTokenValue,
@@ -206,6 +210,21 @@ describe('calculateDungeonTokenValue', () => {
         // With no book bid on the cape, the essence's bid is the fallback
         game.prices['/items/cape'] = { ask: 1000, bid: null };
         expect(calculateDungeonTokenValue(TOKEN, 'profitCalc_pricingMode', false)).toBe(180);
+    });
+
+    test('the mode-book pin reads the order on the side the mode sells on, and a custom price is no order', () => {
+        game.settings.profitCalc_pricingMode = 'optimistic';
+        game.profitSellSide = 'ask';
+        expect(calculateDungeonTokenValue(TOKEN, 'profitCalc_pricingMode', MODE_BOOK_SELL)).toBe(100);
+        game.profitSellSide = 'bid';
+        expect(calculateDungeonTokenValue(TOKEN, 'profitCalc_pricingMode', MODE_BOOK_SELL)).toBe(90);
+        // With the cape's order gone from that side, the essence's order speaks instead; a custom cape never does
+        game.profitSellSide = 'ask';
+        game.sources['/items/cape'] = 'custom';
+        expect(calculateDungeonTokenValue(TOKEN, 'profitCalc_pricingMode', MODE_BOOK_SELL)).toBe(200);
+        // Nothing real to sell into on that side: no figure, not a guess
+        game.prices['/items/chimerical_essence'] = { ask: null, bid: 1 };
+        expect(calculateDungeonTokenValue(TOKEN, 'profitCalc_pricingMode', MODE_BOOK_SELL)).toBeNull();
     });
 
     describe('patient +1 tick', () => {

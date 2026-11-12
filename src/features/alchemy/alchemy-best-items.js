@@ -47,7 +47,7 @@ import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } fro
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import { findAlchemyTablist, getAlchemyTabElements, readAlchemyTabType } from './alchemy-tabs.js';
-import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose-chain-value.js';
+import { decomposeChain, clearDecomposeChainCaches, describeChainPricing } from '../../utils/decompose-chain-value.js';
 import { effectiveInventory, onReservationsChanged } from '../../utils/inventory-reservations.js';
 import tooltipPrices from '../market/tooltip-prices.js';
 import selfUseWanted from '../market/self-use-wanted.js';
@@ -58,6 +58,9 @@ const SORT_MODE_SETTING = 'alchemy_bestItems_sortMode';
 
 /** The setting for buying the input at the NPC shop's coin price when that beats the market (default on) */
 export const SHOP_PRICES_SETTING = 'alchemy_bestItems_shopPrices';
+
+/** The setting for hiding every Decompose row whose item is not gear (default off) */
+export const GEAR_ONLY_SETTING = 'alchemy_bestItems_gearOnly';
 
 /**
  * The table's sort modes, in button order. `decomposeOnly` modes rank the Decompose tab
@@ -72,11 +75,13 @@ export const SORT_MODES = [
         label: 'Decompose chain/hr',
         decomposeOnly: true,
         title:
-            'Insta-buy the item at its real ask, decompose it and everything it yields (each step on the ' +
-            'catalyst/tea setup best for the chain per hour), insta-sell what is left at bid after market tax. ' +
-            'Items with an unpriced step show no value and sort last. Always uses instant buy/sell prices ' +
-            '(ask in, taxed bid out), whatever the Buy/Sell price dropdowns say, so it can differ from the ' +
-            'item tooltip. A leading ≥ marks a figure with some output or bonus crate content unpriced, counted at zero.',
+            'Buy the item at its real order price, decompose it and everything it yields (each step on the ' +
+            'catalyst/tea setup best for the chain per hour), and sell what is left after market tax. Follows the ' +
+            'Buy/Sell price dropdowns: Instant buys at the ask and sells at the bid, Patient buys at the bid and ' +
+            'sells at the ask (one tick better with +1 / −1). A price that is only an estimate is never used. ' +
+            'Items with an unpriced step show no value and sort last. It still can differ from the item tooltip, ' +
+            'which values what you keep. A leading ≥ marks a figure with some output or bonus crate content ' +
+            "unpriced, counted at zero. In this sort the Profit/hr column shows the chain's own first step.",
     },
     {
         value: 'chainOwnStock',
@@ -271,6 +276,10 @@ class AlchemyBestItems {
             config.onSettingChange(SORT_MODE_SETTING, () => this.handleSortSettingChange()),
             // Shop prices change what every row costs, so it re-ranks like a pricing change
             config.onSettingChange(SHOP_PRICES_SETTING, () => this.handlePricingChange()),
+            // Gear only hides rows before any chain is worked out: a redraw is all it takes
+            config.onSettingChange(GEAR_ONLY_SETTING, () => {
+                if (this.modal && this.modal.style.display !== 'none') this.renderTable();
+            }),
         ];
     }
 
@@ -540,6 +549,14 @@ class AlchemyBestItems {
      */
     shopPricesOn() {
         return config.getSettingValue(SHOP_PRICES_SETTING, true) !== false;
+    }
+
+    /**
+     * Whether the Decompose tab hides every item that is not gear (the "Gear only" option).
+     * @returns {boolean}
+     */
+    gearOnlyOn() {
+        return config.getSettingValue(GEAR_ONLY_SETTING, false) === true;
     }
 
     /**
@@ -838,8 +855,32 @@ class AlchemyBestItems {
     }
 
     /**
-     * The whole-chain gold per hour of an item: bought at the ask, decomposed all the
-     * way down, sold at the bid after tax. Shares its arithmetic and per-snapshot
+     * The chosen first step of an item's chain in the active chain sort.
+     * @param {string} itemHrid - Item HRID
+     * @returns {Object|null} The calculator result the chain's own step runs on, or null when there is none
+     */
+    chainTopFor(itemHrid) {
+        return (this.isOwnStockMode() ? this.ownStock.get(itemHrid)?.top : this.chainTops.get(itemHrid)) ?? null;
+    }
+
+    /**
+     * The profit per hour the Profit/hr column shows for a row. Outside the chain sorts it is the row's single-step
+     * winner. In a chain sort the row's catalyst and breakdown are the chain's first step ({@link chainView}), so
+     * the cell shows that step's own figure, the one the breakdown adds up to; a chain with no first step (or one
+     * without a finite figure) falls back to the row's own.
+     * @param {Object} item - A ranking row
+     * @returns {number}
+     */
+    rowProfitPerHour(item) {
+        if (!this.isChainMode()) return item.profitPerHour;
+        this.chainPerHour(item.itemHrid);
+        const figure = Number(this.chainTopFor(item.itemHrid)?.profitPerHour);
+        return Number.isFinite(figure) ? figure : item.profitPerHour;
+    }
+
+    /**
+     * The whole-chain gold per hour of an item: bought and sold on the sides the Buy/Sell
+     * dropdowns trade on, decomposed all the way down, sold after tax. Shares its arithmetic and per-snapshot
      * caches with the marketplace sort. Memoised for the current rankings.
      * @param {string} itemHrid - Item HRID
      * @returns {number|null} Gold per hour, or null when any step is unpriced
@@ -884,6 +925,7 @@ class AlchemyBestItems {
             (hrid) => dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop()
         );
         const toolCost = chain.overheadCost > 0 ? `, plus ${money(chain.overheadCost)} of catalyst and tea` : '';
+        const sides = describeChainPricing();
         const lines = own
             ? [
                   `${name}, valued as stock you hold (${formatWithSeparator(this.heldCount(itemHrid))}).`,
@@ -894,9 +936,9 @@ class AlchemyBestItems {
                       : `Outputs: ${lower}${money(chain.terminalValue)} at your sell pricing.`,
               ]
             : [
-                  `${name}, bought at the ask now and decomposed all the way down.`,
-                  `Bought at ask ${money(chain.ownUseCost ?? 0)}${toolCost}.`,
-                  `Outputs: ${lower}${money(chain.terminalValue)}, sold at bid after market tax.`,
+                  `${name}, bought at the ${sides.buy} and decomposed all the way down.`,
+                  `Bought at the ${sides.buy}: ${money(chain.ownUseCost ?? 0)}${toolCost}.`,
+                  `Outputs: ${lower}${money(chain.terminalValue)}, sold at the ${sides.sell} after market tax.`,
               ];
         lines.push(
             `Net per item: ${lower}${money(chain.net)}, over ${timeReadable(chain.seconds)} per chain = ` +
@@ -904,12 +946,13 @@ class AlchemyBestItems {
         );
         lines.push(
             own
-                ? 'Matches the item tooltip. The other chain sort assumes you buy at the ask instead.'
-                : 'Assumes you buy at the ask now and sell outputs at bid, whatever the Buy/Sell dropdowns say. ' +
+                ? 'Matches the item tooltip. The other chain sort assumes you buy the item at the market price instead.'
+                : `Follows your Buy/Sell dropdowns: buys at the ${sides.buy}, sells outputs at the ${sides.sell}. ` +
                       'For stock you hold, use Chain/hr (own stock).'
         );
-        // The ask chain never takes the shop's price: say so on the rows whose other figure did
-        if (!own && shopPriced) lines.push("The row's shop price is not used here: the chain buys at the market ask.");
+        // The market chain never takes the shop's price: say so on the rows whose other figure did
+        if (!own && shopPriced)
+            lines.push("The row's shop price is not used here: the chain buys at the market price.");
         return lines.join('\n');
     }
 
@@ -1067,6 +1110,27 @@ class AlchemyBestItems {
         shopLabel.appendChild(shopBox);
         shopLabel.appendChild(document.createTextNode('Include shop prices'));
         controls.appendChild(shopLabel);
+
+        // Gear only: persisted like the shop box. Lumber, cheese, hides, teas, fibers and cores only yield
+        // essences and bury the gear chains, so the Decompose tab can leave them out
+        const gearLabel = document.createElement('label');
+        gearLabel.setAttribute('data-mwi-gear-only-label', 'true');
+        gearLabel.title =
+            'Hide every item that is not gear. Lumber, cheese, hides, teas, fibers and cores only yield ' +
+            'essences, so a gear chain is not rare to find among them.';
+        gearLabel.style.cssText =
+            'display: flex; align-items: center; gap: 3px; margin-left: 4px; font-size: 0.75rem; color: #ddd; cursor: pointer;';
+        const gearBox = document.createElement('input');
+        gearBox.type = 'checkbox';
+        gearBox.setAttribute('data-mwi-gear-only', 'true');
+        gearBox.checked = this.gearOnlyOn();
+        gearBox.addEventListener('change', () => {
+            // The setting listener redraws
+            config.setSettingValue(GEAR_ONLY_SETTING, gearBox.checked);
+        });
+        gearLabel.appendChild(gearBox);
+        gearLabel.appendChild(document.createTextNode('Gear only'));
+        controls.appendChild(gearLabel);
 
         content.appendChild(controls);
 
@@ -1259,6 +1323,10 @@ class AlchemyBestItems {
         if (this.filterLevelMax !== null) {
             filtered = filtered.filter((r) => r.itemLevel <= this.filterLevelMax);
         }
+        // Gear only (Decompose tab): a plain lookup, so hidden rows never cost a chain walk
+        if (this.currentType === 'decompose' && this.gearOnlyOn()) {
+            filtered = filtered.filter((r) => Boolean(dataManager.getItemDetails(r.itemHrid)?.equipmentDetail));
+        }
         // Chains are only worked out for rows still standing after the cheap filters
         if (this.profitableOnly) {
             filtered = filtered.filter((r) => passes(profitOf(r), (v) => v > 0));
@@ -1277,11 +1345,11 @@ class AlchemyBestItems {
                 const chainA = this.chainPerHour(a.itemHrid);
                 const chainB = this.chainPerHour(b.itemHrid);
                 if (chainA === null || chainB === null) {
-                    if (chainA === chainB) return b.profitPerHour - a.profitPerHour;
+                    if (chainA === chainB) return this.rowProfitPerHour(b) - this.rowProfitPerHour(a);
                     return chainA === null ? 1 : -1;
                 }
                 const primary = chainB - chainA;
-                return primary !== 0 ? primary : b.profitPerHour - a.profitPerHour;
+                return primary !== 0 ? primary : this.rowProfitPerHour(b) - this.rowProfitPerHour(a);
             }
             if (sortMode === 'xp') {
                 const primary = b.xpPerHour - a.xpPerHour;
@@ -1316,6 +1384,11 @@ class AlchemyBestItems {
 
         const shopBox = this.modal.querySelector('[data-mwi-shop-prices]');
         if (shopBox) shopBox.checked = this.shopPricesOn();
+        const gearBox = this.modal.querySelector('[data-mwi-gear-only]');
+        if (gearBox) gearBox.checked = this.gearOnlyOn();
+        // Only the Decompose tab has non-gear rows worth hiding
+        const gearLabel = this.modal.querySelector('[data-mwi-gear-only-label]');
+        if (gearLabel) gearLabel.style.display = this.currentType === 'decompose' ? 'flex' : 'none';
 
         // Update profitable toggle styling
         const profitToggle = this.modal.querySelector('[data-mwi-profit-toggle]');
@@ -1494,10 +1567,16 @@ class AlchemyBestItems {
             // says so, and one still awaiting its liquidity check says that too,
             // rather than silently showing a number that might still drop
             const profitTd = document.createElement('td');
-            const profitVal = Math.round(item.profitPerHour);
+            // A chain sort shows the chain's first step, which is a different setup from the row's own winner
+            // when the chain picked another: the liquidity cap and its pending note belong to the winner
+            const stepFigure = chainMode && setup !== item ? Number(setup.profitData?.profitPerHour) : NaN;
+            const chainStepShown = Number.isFinite(stepFigure);
+            const profitVal = Math.round(chainStepShown ? stepFigure : item.profitPerHour);
             profitTd.textContent = formatKMB(profitVal);
             profitTd.style.cssText = `padding: 4px 8px; text-align: right; color: ${profitVal >= 0 ? '#4ade80' : '#f87171'};`;
-            if (item.capPending) {
+            if (chainStepShown) {
+                // No marker: the volume check ran on the row's own winner, not on this step
+            } else if (item.capPending) {
                 profitTd.insertAdjacentHTML(
                     'beforeend',
                     '<span title="Checking how fast this sells before trusting this figure" ' +
@@ -1506,7 +1585,7 @@ class AlchemyBestItems {
             } else if (item.liquidityLimit) {
                 profitTd.insertAdjacentHTML('beforeend', liquidityMarkerHtml(item.liquidityLimit, { compact: true }));
             }
-            const unpricedNote = unpricedOutputNote(item.profitData);
+            const unpricedNote = unpricedOutputNote(setup.profitData);
             if (unpricedNote) {
                 const marker = document.createElement('span');
                 marker.setAttribute('data-mwi-unpriced', 'true');

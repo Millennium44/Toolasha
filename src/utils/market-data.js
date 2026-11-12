@@ -266,6 +266,35 @@ export function getPriceAgeString() {
 }
 
 /**
+ * The raw order-book price an item sells at under the active profit pricing mode: the bid for an instant sale,
+ * the ask for a patient one (one tick better when the patient-sell tick is on, like {@link getItemPriceInfo}).
+ *
+ * Stricter than `getItemPrice`: a custom override, an Iron Cow figure or a value-map estimate on that side is no
+ * order anyone can sell into, so each answers null, and none of them hides a real order that is there.
+ *
+ * @param {string} itemHrid - Item HRID
+ * @param {number} [enhancementLevel=0] - Enhancement level
+ * @returns {number|null} Price per item before market tax, or null when no real order stands on that side
+ */
+export function getModeBookSellPrice(itemHrid, enhancementLevel = 0) {
+    const prices = getItemPrices(itemHrid, enhancementLevel);
+    if (!prices || prices.source) return null;
+    const basis = getPricingMode('profit', 'sell');
+    const onAsk = basis === 'ask';
+    const price = onAsk ? prices.ask : prices.bid;
+    if (!(price > 0) || (onAsk ? prices.askEstimated : prices.bidEstimated)) return null;
+    if (!onAsk) return price;
+    return patientTickPrice(price, 'sell', 'ask', {
+        ask: prices.ask,
+        bid: prices.bid,
+        askEstimated: prices.askEstimated,
+        bidEstimated: prices.bidEstimated,
+        itemHrid,
+        enhancementLevel,
+    });
+}
+
+/**
  * Get all price variants for an item
  * @param {string} itemHrid - Item HRID
  * @param {number} [enhancementLevel=0] - Enhancement level

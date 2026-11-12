@@ -17,6 +17,7 @@ const engine = vi.hoisted(() => ({
     // itemHrid → { coinify, decompose, transmute } of profit data or null
     answers: {},
     pricingModes: [],
+    settingListeners: {},
     settings: { marketSort: true, marketSort_mode: 'profit' },
     writes: [],
     gatheringProfit: null,
@@ -56,6 +57,12 @@ vi.mock('../../core/config.js', () => ({
         setSettingValue: (key, value) => {
             engine.settings[key] = value;
             engine.writes.push([key, value]);
+        },
+        onSettingChange: (key, callback) => {
+            (engine.settingListeners[key] ||= []).push(callback);
+            return () => {
+                engine.settingListeners[key] = engine.settingListeners[key].filter((c) => c !== callback);
+            };
         },
     },
 }));
@@ -147,6 +154,8 @@ vi.mock('../../utils/market-data.js', () => ({
         estimated: engine.estimated.has(hrid),
     }),
     isPriceEstimated: (hrid) => engine.estimated.has(hrid),
+    getModeBookSellPrice: (hrid) => engine.bids[hrid] ?? null,
+    getPricingMode: (context, side) => (side === 'sell' ? 'bid' : 'ask'),
     withProfitPricingMode: (mode, fn) => {
         engine.pricingModes.push(mode);
         return fn();
@@ -213,6 +222,7 @@ beforeEach(() => {
     marketSort.disable();
     engine.answers = {};
     engine.pricingModes = [];
+    engine.settingListeners = {};
     engine.writes = [];
     engine.settings = { marketSort: true, marketSort_mode: 'profit' };
     engine.gatheringProfit = null;
@@ -581,7 +591,7 @@ describe('decompose chain mode', () => {
         engine.bids = { '/items/term_c': 1000 };
     }
 
-    test('ranks by the whole chain per hour, terminals taxed, and pins conservative pricing', async () => {
+    test('ranks by the whole chain per hour, terminals taxed, and leaves the pricing mode alone', async () => {
         twoLevel();
         // A second item decomposing straight to the same terminal, slower per hour
         engine.itemDetails['/items/item_d'] = gearDetails([['/items/term_c', 2]]);
@@ -596,9 +606,49 @@ describe('decompose chain mode', () => {
         expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit).toBeCloseTo(1_704_000);
         // item_d: (1920 - 500) over 10s
         expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_d').profit).toBeCloseTo(511_200);
-        expect(engine.pricingModes).toContain('conservative');
+        // The chain follows the player's dropdowns: nothing pins it to instant buy/sell
+        expect(engine.pricingModes).toEqual([]);
         expect(badges(container)[0]).toBe('+1.7M');
         expect(container.querySelector('.toolasha-profit-indicator').title).toContain('decompose chain');
+    });
+
+    test('a change to the Buy/Sell pricing settings drops the chain badges and figures, and the next sort re-prices', async () => {
+        twoLevel();
+        const container = buildGrid(['item_a']);
+        marketSort.initialize();
+        marketSort.sortMode = 'decomposeChainPerHour';
+        await marketSort.sortByProfitability();
+        expect(badges(container)).toEqual(['+1.7M']);
+
+        // The terminal doubles in value under the new mode
+        engine.bids = { '/items/term_c': 2000 };
+        for (const key of ['profitCalc_pricingMode', 'profitCalc_patientTickBuy', 'profitCalc_patientTickSell']) {
+            expect(engine.settingListeners[key]).toHaveLength(1);
+        }
+        engine.settingListeners.profitCalc_patientTickSell[0]();
+        expect(marketSort.profitCache.size).toBe(0);
+        expect(badges(container)).toEqual([null]);
+        expect(marketSort.hasSorted).toBe(false);
+
+        await marketSort.sortByProfitability();
+        expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit).toBeGreaterThan(1_704_000);
+
+        // Cleanup lets go of the listeners
+        marketSort.disable();
+        expect(engine.settingListeners.profitCalc_pricingMode).toHaveLength(0);
+    });
+
+    test('a pricing change leaves the other modes badges where they are', async () => {
+        twoLevel();
+        const container = buildGrid(['item_a']);
+        marketSort.initialize();
+        marketSort.sortMode = 'alchemyProfitPerHour';
+        engine.candidates = {};
+        await marketSort.sortByProfitability();
+        const before = badges(container);
+        engine.settingListeners.profitCalc_pricingMode[0]();
+        expect(badges(container)).toEqual(before);
+        expect(marketSort.hasSorted).toBe(true);
     });
 
     test('a chain that is a lower bound (partly unpriced bonus crate) shows its badge with ≥', async () => {

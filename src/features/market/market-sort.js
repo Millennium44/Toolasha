@@ -13,11 +13,12 @@
  * choice, the tea costs and the coin fee, and re-deriving any of it here would
  * be a second opinion about the same number.
  *
- * The one thing these modes insist on is the pricing: the requested flow is
+ * The one thing the two alchemy-profit modes insist on is the pricing: the requested flow is
  * insta-buy the input at ask and insta-sell the outputs at bid, which is the
  * `'conservative'` pricing mode whatever the user's global setting says. That
  * is pinned with `withProfitPricingMode` around the calculator calls rather
  * than by touching the setting, so nothing else in the script sees it move.
+ * The chain mode is the exception: it follows the Buy/Sell pricing settings.
  */
 
 import config from '../../core/config.js';
@@ -33,6 +34,7 @@ import { resolveActionContext } from '../../utils/action-context.js';
 import { withProfitPricingMode } from '../../utils/market-data.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose-chain-value.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 
 /**
  * The sort modes the button offers, in dropdown order.
@@ -79,10 +81,13 @@ const ALCHEMY_TOOLTIP =
     "engine's current catalyst setting uses one. Ignores the global pricing mode on purpose.";
 
 const CHAIN_TOOLTIP =
-    'Insta-buy at ask, decompose it, decompose the gear that yields, and so on down to items that cannot be ' +
-    'decomposed, then insta-sell what is left at bid after market tax. Ranked by gold per hour of alchemy time ' +
-    'across the whole chain; each step uses the catalyst and tea setup that is best for the chain per hour, skipping setups that need an item with no real ask. Outputs with no real bid (estimated prices) are not sold. Ignores the global pricing mode on ' +
-    'purpose. An output with no real bid counts at zero and marks the figure a lower bound (≥).';
+    'Buy the item, decompose it, decompose the gear that yields, and so on down to items that cannot be ' +
+    'decomposed, then sell what is left after market tax. Follows the Buy/Sell pricing settings: Instant buys at the ' +
+    'ask and sells at the bid, Patient buys at the bid and sells at the ask (one tick better with +1 / −1). ' +
+    'Ranked by gold per hour of alchemy time across the whole chain; each step uses the catalyst and tea setup ' +
+    'that is best for the chain per hour, skipping setups that need an item with no real order to buy from. ' +
+    'Outputs with no real order to sell into (estimated prices) are not sold: they count at zero and mark the ' +
+    'figure a lower bound (≥).';
 
 /**
  * The explanation for a mode's figure.
@@ -241,6 +246,11 @@ class MarketSort {
         // Cowbells inside a decompose chain's bonus crates are valued by this setting
         const unsubscribeCowbells = config.onSettingChange?.('expectedValue_includeCowbells', onMarketPriceUpdate);
         if (typeof unsubscribeCowbells === 'function') this.unregisterHandlers.push(unsubscribeCowbells);
+        // The chain follows the Buy/Sell pricing dropdowns, so a change to either side re-prices it
+        for (const key of ['profitCalc_pricingMode', ...PATIENT_TICK_SETTING_KEYS]) {
+            const unsubscribe = config.onSettingChange?.(key, () => this.handlePricingChange());
+            if (typeof unsubscribe === 'function') this.unregisterHandlers.push(unsubscribe);
+        }
 
         // Register DOM observers for marketplace panel
         this.registerDOMObservers();
@@ -438,6 +448,20 @@ class MarketSort {
             : 'Profit per hour from producing or gathering this item.';
         if (this.sortButton) this.sortButton.title = tooltip;
         if (this.modeSelect) this.modeSelect.title = tooltip;
+    }
+
+    /**
+     * The Buy/Sell pricing settings changed: every cached figure was priced under the old ones. The chain sort
+     * follows those settings, so the badges it drew are stale too; they come off and the next click re-ranks.
+     * @returns {void}
+     */
+    handlePricingChange() {
+        this.clearCaches();
+        if (!getSortMode(this.sortMode).chain || !this.hasSorted) return;
+        document.querySelectorAll('.toolasha-profit-indicator').forEach((el) => el.remove());
+        this.hasSorted = false;
+        this.sortDirection = 'desc';
+        this.resetSortButtonLabel();
     }
 
     /**

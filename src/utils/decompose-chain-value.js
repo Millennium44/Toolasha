@@ -1,18 +1,23 @@
 /**
- * The value of an item's whole decompose chain, bought at the ask and sold at the bid.
+ * The value of an item's whole decompose chain, bought and sold the way the player's
+ * Buy/Sell pricing dropdowns say.
  *
  * Shared by the marketplace sort's chain mode and the Alchemy panel's Best Items
  * tab, so the two rank the same way off the same arithmetic. The chain walk is
  * `selfUseDecomposeChain`'s (the item tooltip's chain line runs it too); this
- * supplies the seller's prices instead of the tooltip's keep-it prices: the top
- * item costs its real ask, every terminal output is worth its real bid after
- * market tax. Each step is the calculator's own decompose result, pinned to
- * conservative pricing, so a step with no market data leaves the chain partly
- * unpriced and the item without a figure. A bonus crate is the exception: its
- * contents are priced like the tooltip prices them (Coin, tokens, Cowbells, nested
- * crates), but every non-Coin figure rests on a real order-book bid (tokens and Cowbells through their
- * conversion's bids), and a crate with some contents still unpriced counts at its priced
- * part, flagged `partial` on the result, instead of sinking the chain.
+ * supplies the seller's prices instead of the tooltip's keep-it prices. Under the
+ * active `profitCalc_pricingMode` (and the patient +1 tick settings) the top item
+ * costs its real order on the mode's buy side (the ask for an instant buy, the bid
+ * for a patient one) and every terminal output is worth its real order on the mode's
+ * sell side (the bid for an instant sale, the ask for a patient one) after market
+ * tax. Each step is the calculator's own decompose result under that mode, so a step
+ * with no market data leaves the chain partly unpriced and the item without a figure.
+ * A price that is only a value-map estimate is never one of those orders. A bonus
+ * crate is the exception: its contents are priced like the tooltip prices them (Coin,
+ * tokens, Cowbells, nested crates), but every non-Coin figure rests on a real order on
+ * the mode's sell side (tokens and Cowbells through their conversion's orders), and a
+ * crate with some contents still unpriced counts at its priced part, flagged `partial`
+ * on the result, instead of sinking the chain.
  *
  * The mode ranks by gold per hour of the whole chain, (Σ net) / (Σ seconds), so a
  * step's best setup depends on the chain around it: a setup that is best per hour on
@@ -21,16 +26,20 @@
  *
  * Candidate setups, their per-step terms and intermediate steps are memoised per
  * price snapshot in module-level caches; whoever knows the prices or the character's
- * setup moved calls {@link clearDecomposeChainCaches}.
+ * setup moved calls {@link clearDecomposeChainCaches}. The caches also drop themselves
+ * when the pricing mode or either patient tick setting differs from the one they were
+ * filled under, so a figure never outlives the dropdowns that priced it.
  */
 
 import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import { alchemyProfitCalculator, expectedValueCalculator } from './bundle-bridge.js';
-import { withProfitPricingMode, getItemPriceInfo, getItemPrices, isPriceEstimated } from './market-data.js';
+import { getItemPriceInfo, getModeBookSellPrice, getPricingMode, isPriceEstimated } from './market-data.js';
+import { isPatientTickOn } from './patient-tick.js';
 import { calculatePriceAfterTax } from './profit-helpers.js';
 import {
     DUNGEON_TOKEN_HRIDS,
+    MODE_BOOK_SELL,
     calculateDungeonTokenValue,
     calculateLabyrinthTokenValueDetail,
 } from './token-valuation.js';
@@ -44,8 +53,38 @@ import {
     untaxedContainerValue,
 } from './self-use-alchemy.js';
 
-/** Ask in, bid out — the flow the chain quotes, regardless of the global setting */
-const CHAIN_PRICING_MODE = 'conservative';
+/** The setting that picks the chain's buy and sell sides (also read by `getPricingMode`) */
+const PRICING_MODE_SETTING = 'profitCalc_pricingMode';
+
+/**
+ * What the caches below were filled under: the pricing mode and both patient ticks.
+ * The chain follows the player's dropdowns, so a figure priced under one set is wrong under another.
+ * @returns {string}
+ */
+function pricingSignature() {
+    return `${config.getSettingValue(PRICING_MODE_SETTING, '')}|${isPatientTickOn('buy')}|${isPatientTickOn('sell')}`;
+}
+
+/** The pricing signature the caches hold figures for; null until the first chain is worked out */
+let cacheSignature = null;
+
+/**
+ * The sides of the book the chain trades on under the player's pricing settings, for text that explains a figure.
+ * @returns {{buy: string, sell: string, instantBuy: boolean, instantSell: boolean}} `buy` and `sell` read like
+ *   'ask', 'bid' or 'bid +1 tick'; the instant flags are true for the ask in / bid out sides
+ */
+export function describeChainPricing() {
+    const buyBasis = getPricingMode('profit', 'buy');
+    const sellBasis = getPricingMode('profit', 'sell');
+    const buyTick = buyBasis === 'bid' && isPatientTickOn('buy');
+    const sellTick = sellBasis === 'ask' && isPatientTickOn('sell');
+    return {
+        buy: `${buyBasis}${buyTick ? ' +1 tick' : ''}`,
+        sell: `${sellBasis}${sellTick ? ' \u22121 tick' : ''}`,
+        instantBuy: buyBasis === 'ask',
+        instantSell: sellBasis === 'bid',
+    };
+}
 
 /**
  * Decompose calculator results per piece of gear: a chain reaches the same
@@ -66,6 +105,7 @@ export const MAX_RATIO_ITERATIONS = 32;
  * @returns {void}
  */
 export function clearDecomposeChainCaches() {
+    cacheSignature = null;
     decomposeStepCache.clear();
     decomposeCandidateCache.clear();
     decomposeTermsCache.clear();
@@ -162,14 +202,13 @@ export function maximizeChainRatio(rootHrid, { termsOf, rootCost, maxIterations 
 }
 
 /**
- * The raw order-book bid for an item: no custom override, no value-map estimate, no Iron Cow figure.
+ * The raw order-book price an item sells at under the active pricing mode (the bid for an instant sale, the ask
+ * one tick better when patient): no custom override, no value-map estimate, no Iron Cow figure.
  * @param {string} hrid - Item HRID
  * @returns {number|null}
  */
-function bookBidOf(hrid) {
-    const prices = getItemPrices(hrid);
-    if (!prices || prices.source || prices.bidEstimated || !(prices.bid > 0)) return null;
-    return prices.bid;
+function bookSellOf(hrid) {
+    return getModeBookSellPrice(hrid);
 }
 
 /**
@@ -190,7 +229,8 @@ const COWBELL_BAG_HRID = '/items/bag_of_10_cowbells';
 const LABYRINTH_TOKEN_HRID = '/items/labyrinth_token';
 
 /**
- * The whole decompose chain of an item, ask in and taxed bid out.
+ * The whole decompose chain of an item, bought and sold on the sides the player's pricing mode trades on
+ * (after market tax on every sale).
  *
  * @param {string} itemHrid - Item HRID
  * @returns {Object|null} The chain result, plus `topStep`, the item's own chosen setup (`netPerHour` is null when any step is unpriced), or null when the item cannot be decomposed
@@ -198,11 +238,17 @@ const LABYRINTH_TOKEN_HRID = '/items/labyrinth_token';
 export function decomposeChain(itemHrid) {
     let chain = null;
     try {
-        withProfitPricingMode(CHAIN_PRICING_MODE, () => {
-            // Insta-sell value of an output: its real bid after market tax. An
-            // estimate from the official value map is no bid anyone can sell into,
+        // The memoised steps were priced under the dropdowns as they were then
+        const signature = pricingSignature();
+        if (signature !== cacheSignature) {
+            clearDecomposeChainCaches();
+            cacheSignature = signature;
+        }
+        (() => {
+            // Sell value of an output: its real order on the mode's sell side after market tax. An
+            // estimate from the official value map is no order anyone can sell into,
             // so it leaves the chain unpriced rather than ranking on a guess.
-            // An output with no real bid is worth zero here, not a reason to drop the whole item:
+            // An output with no real order on that side is worth zero here, not a reason to drop the whole item:
             // the chain still gets a figure, flagged a lower bound below. A crate is the exception,
             // since it has no bid of its own and is valued by its contents.
             const priceOf = (hrid) => {
@@ -223,39 +269,38 @@ export function decomposeChain(itemHrid) {
             // anything else at its real bid. Only the crate's contents get this latitude; the top
             // item's ask and the base outputs stay on the strict real-price rule.
             const contentPriceOf = (hrid) => {
-                // A token's shop conversion follows the user's pricing setting, which the conservative
-                // override above does not reach; this chain sells instantly, so pin it to the bid
+                // A token's shop conversion is priced off real orders on the mode's sell side
                 if (DUNGEON_TOKEN_HRIDS.has(hrid)) {
-                    // Its worth is the shop reward sold at the bid, so the sale pays market tax
-                    const tokenValue = calculateDungeonTokenValue(hrid, 'profitCalc_pricingMode', false);
+                    // Its worth is the shop reward sold on that side, so the sale pays market tax
+                    const tokenValue = calculateDungeonTokenValue(hrid, PRICING_MODE_SETTING, MODE_BOOK_SELL);
                     return tokenValue === null ? null : calculatePriceAfterTax(tokenValue);
                 }
                 if (hrid === LABYRINTH_TOKEN_HRID) {
-                    // Its worth is the best shop reward sold at the bid; a custom or estimated
-                    // reward price is no bid, so the token is then unpriced
-                    const value = calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', false)?.value;
+                    // Its worth is the best shop reward sold on the mode's sell side; a custom or estimated
+                    // reward price is no order, so the token is then unpriced
+                    const value = calculateLabyrinthTokenValueDetail(PRICING_MODE_SETTING, MODE_BOOK_SELL)?.value;
                     return value > 0 ? calculatePriceAfterTax(value) : null;
                 }
                 const resolved = expectedValueCalculator()?.resolveSellSideValue?.(hrid);
                 if (hrid === COWBELL_HRID) {
-                    // Not counting Cowbells values them at zero. Otherwise the Cowbell Bag's raw order-book bid
-                    // decides, whatever the resolver made of a custom price or estimate
+                    // Not counting Cowbells values them at zero. Otherwise the Cowbell Bag's raw order on the
+                    // mode's sell side decides, whatever the resolver made of a custom price or estimate
                     if (!config.getSetting('expectedValue_includeCowbells')) return 0;
-                    const bagBid = bookBidOf(COWBELL_BAG_HRID);
+                    const bagBid = bookSellOf(COWBELL_BAG_HRID);
                     return bagBid === null ? null : calculatePriceAfterTax(bagBid, COWBELL_BAG_TAX) / 10;
                 }
                 // Only the resolver's non-market sources pass as they are; an ordinary item's
-                // market, custom or value-map figure needs a real order-book bid below
+                // market, custom or value-map figure needs a real order below
                 if (resolved && NON_MARKET_SOURCES.has(resolved.source) && Number.isFinite(resolved.value)) {
                     return resolved.needsTax ? calculatePriceAfterTax(resolved.value) : resolved.value;
                 }
-                // The raw order-book bid: a custom sell price is no bid anyone can sell into, and
-                // must not hide one that is there either
-                const bid = bookBidOf(hrid);
-                return bid === null ? null : calculatePriceAfterTax(bid);
+                // The raw order on the mode's sell side: a custom sell price is no order anyone can sell
+                // into, and must not hide one that is there either
+                const sold = bookSellOf(hrid);
+                return sold === null ? null : calculatePriceAfterTax(sold);
             };
-            // A crate none of whose contents has a real bid is worth zero, partly unpriced, like any
-            // other output with no bid: the chain keeps its figure as a lower bound
+            // A crate none of whose contents has a real order is worth zero, partly unpriced, like any
+            // other output with none: the chain keeps its figure as a lower bound
             const containerValue = (hrid) => {
                 const opened = untaxedContainerValue(hrid, {
                     containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
@@ -263,7 +308,7 @@ export function decomposeChain(itemHrid) {
                 });
                 return opened && opened.value === null ? { value: 0, partlyUnpriced: true } : opened;
             };
-            // Terminals counted at zero for want of a real bid make the figure a lower bound
+            // Terminals counted at zero for want of a real order make the figure a lower bound
             const markZeroed = (result) => {
                 const zeroed = (result.terminals ?? []).filter((t) => t.expected > 0 && noRealBid(t.itemHrid));
                 if (zeroed.length === 0) return result;
@@ -279,7 +324,7 @@ export function decomposeChain(itemHrid) {
                 priceOf,
                 containerValue,
             };
-            // A setup that needs a catalyst or tea with no real ask cannot be insta-bought,
+            // A setup that needs a catalyst or tea with no real order on the mode's buy side cannot be bought,
             // whatever the value-map estimate says it costs, so it is not a candidate.
             const buyable = (result) =>
                 ![result?.winningCatalystHrid, ...(result?.consumableCosts ?? []).map((c) => c?.itemHrid)]
@@ -361,7 +406,7 @@ export function decomposeChain(itemHrid) {
                 return decomposeStepCache.get(hrid);
             };
 
-            // The ask is paid in coins at the book: an estimated ask is not a price to buy at
+            // The item is paid for in coins at the book: an estimated price is not one to buy at
             const askOf = (result) =>
                 isPriceEstimated(itemHrid, { context: 'profit', side: 'buy' })
                     ? null
@@ -395,7 +440,7 @@ export function decomposeChain(itemHrid) {
             });
             // The calculator result the item's own step was priced with (its catalyst and teas)
             if (chain) chain = markZeroed({ ...chain, topStep: top });
-        });
+        })();
     } catch (error) {
         console.error('[DecomposeChain] Chain failed for', itemHrid, error);
     }
