@@ -161,6 +161,12 @@ async function measureDailyVolume(itemHrid, enhancementLevel, key, source) {
     let answer = unknown;
     try {
         const rows = await marketHistoryAPI().fetchHistory(itemHrid, enhancementLevel, LIQUIDITY_WINDOW_DAYS);
+        // The history API restarts a paced lookup under whatever source is current when its turn
+        // comes, so these rows may belong to another pool (or to history switched off) than the one
+        // `key` was filed under. Reading them with this source's volume support and caching the
+        // result under `key` is how a pool with no volume leaves a measured zero behind.
+        // (Only the pool is compared: a lookup begun with history on is a true measurement of that pool.)
+        if (marketHistoryAPI().currentSource().key !== source.key) return unknown;
         if (Array.isArray(rows) && rows.length) {
             const series = buildHistorySeries(rows, LIQUIDITY_WINDOW_DAYS);
             const traded = series.reduce((sum, point) => sum + (Number(point.volume) || 0), 0);

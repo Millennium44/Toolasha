@@ -774,3 +774,38 @@ describe('volumeCooldownMs', () => {
         expect(volumeCooldownMs()).toBe(0);
     });
 });
+
+describe('a source change while a measurement is in flight', () => {
+    test('rows that arrive after a switch of pool are neither cached nor read as a zero', async () => {
+        history.hang = true;
+        history.rows['/items/log'] = tradedAt(0);
+        const started = dailyVolume('/items/log'); // under mooket2 (has volume)
+        await Promise.resolve();
+
+        history.hasVolume = false; // the player switches to mooket I; its rows carry no volume
+        history.pending.forEach((request) => request.resolve());
+        const answer = await started;
+        expect(answer.known).toBe(false);
+
+        // Back on mooket II: nothing false was kept, so it measures for itself
+        history.hasVolume = true;
+        history.hang = false;
+        history.rows['/items/log'] = tradedAt(240);
+        const again = await dailyVolume('/items/log');
+        expect(again.known).toBe(true);
+        expect(again.unitsPerDay).toBeCloseTo(240, 6);
+    });
+
+    test('an unchanged source still caches its measurement', async () => {
+        history.hang = true;
+        history.rows['/items/log'] = tradedAt(240);
+        const started = dailyVolume('/items/log');
+        await Promise.resolve();
+        history.pending.forEach((request) => request.resolve());
+        expect((await started).known).toBe(true);
+        history.hang = false;
+        history.calls = [];
+        expect((await dailyVolume('/items/log')).known).toBe(true);
+        expect(history.calls).toHaveLength(0);
+    });
+});
