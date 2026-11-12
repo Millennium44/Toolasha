@@ -142,11 +142,8 @@ export function countRefinementChests(lootMap) {
  * What a completion's refinement-chest roll is, from the zone's reward table.
  *
  * The rate is the table's own, scaled for tier the way the client's reward display
- * scales it. The party-size split, the drop-quantity bonus and the level gap are
- * deliberately not applied: nothing in the repo settles that they reach this roll
- * (they model the guaranteed chest only), and the simulator's dungeon revenue
- * treats every non-guaranteed reward as `completions * rate * avgCount`. This
- * matches that rather than guessing.
+ * scales it. The drop-quantity bonus does reach this roll, but as extra rolls of
+ * that rate rather than as a bigger rate: see `refinementLuck`.
  *
  * @param {Object} actionDetail - The zone's action detail
  * @param {number} [difficultyTier] - Tier fought
@@ -168,27 +165,86 @@ export function refinementRewardRate(actionDetail, difficultyTier = 0) {
 }
 
 /**
+ * `P(X = i)` for `X ~ Binomial(n, p)`, `i = 0..upTo`, in log space so a long run
+ * (thousands of rolls) does not underflow its first term to zero.
+ *
+ * @param {number} upTo - Highest count wanted
+ * @param {number} n - Trials
+ * @param {number} p - Chance of a success
+ * @returns {number[]}
+ */
+function binomialPmf(upTo, n, p) {
+    const out = new Array(upTo + 1).fill(0);
+    if (n <= 0 || p <= 0) {
+        out[0] = 1;
+        return out;
+    }
+    if (p >= 1) {
+        if (n <= upTo) out[n] = 1;
+        return out;
+    }
+    const lnFact = [0];
+    for (let i = 1; i <= n; i++) lnFact[i] = lnFact[i - 1] + Math.log(i);
+    const lp = Math.log(p);
+    const lq = Math.log(1 - p);
+    for (let i = 0; i <= Math.min(upTo, n); i++) {
+        out[i] = Math.exp(lnFact[n] - lnFact[i] - lnFact[n - i] + i * lp + (n - i) * lq);
+    }
+    return out;
+}
+
+/**
  * Refinement chests against what the table's rate owed over the completions.
  *
- * Its own roll per completion, so `Binomial(completions, rate)` when each hit pays
- * one chest. No percentile when the roll is certain or pays a variable count.
+ * Observed live (test server, solo Chimerical Den T1, 2026-11-11): four refinement
+ * chests from one completion at a 33% rate, with this character's drop quantity
+ * paying about 6.5 regular chests a completion. One roll a completion cannot pay
+ * four, so the quantity bonus reaches this drop as extra rolls of the table's rate.
+ * Nothing in the repo or in the bundle formulas on record says how the game
+ * schedules those rolls, so this follows what the observation allows and the
+ * regular chest already models: `rollsPerCompletion` (the same mean as the chest
+ * line, party split and level gap included) is a whole number of rolls plus a
+ * chance of one more, each roll hitting at `rate`.
+ *
+ * Over `n` completions that is `Binomial(n * whole, rate)` plus
+ * `Binomial(n, fraction * rate)`, two independent sums.
+ *
+ * No percentile when nothing is random (a certain rate on a whole number of
+ * rolls) or when a hit pays a variable count.
  *
  * @param {Object} input
  * @param {number} input.completions - Runs that paid out
  * @param {number} input.count - Refinement chests received
- * @param {number} input.rate - From `refinementRewardRate`
+ * @param {number} input.rate - From `refinementRewardRate`, a fraction per roll
  * @param {number} [input.avgCount] - Chests per hit
- * @returns {{completions: number, count: number, expected: number, rate: number, percentile: number|null}|null}
+ * @param {number} [input.rollsPerCompletion] - Mean rolls a completion gets, from `chestsPerCompletion`
+ * @returns {{completions: number, count: number, expected: number, rate: number,
+ *   rollsPerCompletion: number, percentile: number|null}|null}
  */
-export function refinementLuck({ completions, count, rate, avgCount = 1 } = {}) {
+export function refinementLuck({ completions, count, rate, avgCount = 1, rollsPerCompletion = 1 } = {}) {
     if (!(completions > 0) || !(rate > 0) || !Number.isFinite(count)) return null;
-    const chancy = rate < 1 && avgCount === 1;
+    const rolls = Number.isFinite(rollsPerCompletion) && rollsPerCompletion >= 0 ? rollsPerCompletion : 1;
+    const whole = Math.floor(rolls);
+    const fraction = rolls - whole;
+    const chancy = avgCount === 1 && (rate < 1 || fraction > 0);
+
+    let percentile = null;
+    if (chancy) {
+        const k = Math.max(0, Math.floor(count));
+        // P(A + B <= k) with A the whole rolls and B the extra-roll hits
+        const a = binomialPmf(k, completions * whole, rate);
+        let total = 0;
+        for (let i = 0; i <= k; i++) total += a[i] * binomialAtMost(k - i, completions, fraction * rate);
+        percentile = Math.min(1, total);
+    }
+
     return {
         completions,
         count,
         rate,
-        expected: completions * rate * avgCount,
-        percentile: chancy ? binomialAtMost(Math.max(0, count), completions, rate) : null,
+        rollsPerCompletion: rolls,
+        expected: completions * rolls * rate * avgCount,
+        percentile,
     };
 }
 

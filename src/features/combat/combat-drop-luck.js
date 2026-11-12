@@ -524,6 +524,9 @@ class CombatDropLuck {
                           count: fromTracker ? tally.refinement || 0 : tally.refinementWatched || 0,
                           rate: tracked.refinement.rate,
                           avgCount: tracked.refinement.avgCount,
+                          // Drop quantity gives extra rolls of the table's rate,
+                          // the same mean the chest line is held to
+                          rollsPerCompletion: mean,
                       })
                     : null,
             };
@@ -915,7 +918,8 @@ export function describeChestRun(player) {
         lines.push(
             `Refinement chests: ${refinement.count} over ${refinement.completions} completions, ` +
                 `${refinement.expected.toFixed(1)} expected at the table's rate ` +
-                `(${(refinement.rate * 100).toFixed(0)}% a completion).${verdict}`
+                `(${(refinement.rate * 100).toFixed(0)}% a roll, ${refinement.rollsPerCompletion.toFixed(2)} rolls ` +
+                `a completion).${verdict}`
         );
     }
     if (luck.percentile === null) {

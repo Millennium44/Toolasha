@@ -60,6 +60,57 @@ describe('the refinement chest rate', () => {
         expect(refinementLuck({ completions: 7, count: 7, rate: 1 })).toMatchObject({ expected: 7, percentile: null });
     });
 
+    // Live 2026-11-11, solo Chimerical Den T1: 4 refinement chests from 1 completion; drop quantity made
+    // 6.47 regular chests a completion. Table scale: dropRate -0.3 + 0.6/tier, a fraction, T1 = 0.33.
+    describe('drop quantity gives extra rolls of the rate', () => {
+        const rolls = 6.47;
+        const luck = (o) => refinementLuck({ rate: 0.33, rollsPerCompletion: rolls, ...o });
+
+        test('the live repro: 4 over 1 completion is ordinary, not impossible', () => {
+            const r = luck({ completions: 1, count: 4 });
+            expect(r.expected).toBeCloseTo(6.47 * 0.33, 6);
+            expect(r.percentile).toBeGreaterThan(0.5);
+            expect(r.percentile).toBeLessThan(1);
+        });
+
+        test('matches a Monte Carlo of whole rolls plus a chance of one more', () => {
+            // 6 rolls + 47% of a 7th, each a 33% hit; P(X <= 4) summed by hand
+            const c = (n, k) => (k === 0 ? 1 : (c(n, k - 1) * (n - k + 1)) / k);
+            const pm = (n, k, p) => c(n, k) * p ** k * (1 - p) ** (n - k);
+            let exact = 0;
+            for (let k = 0; k <= 4; k++) exact += 0.53 * pm(6, k, 0.33) + 0.47 * pm(7, k, 0.33);
+            expect(luck({ completions: 1, count: 4 }).percentile).toBeCloseTo(exact, 6);
+        });
+
+        test('zero received is the bottom of the range, a party-sized fraction still works', () => {
+            expect(luck({ completions: 1, count: 0 }).percentile).toBeLessThan(0.1);
+            const party = refinementLuck({ completions: 20, count: 5, rate: 0.33, rollsPerCompletion: 1.2 });
+            expect(party.expected).toBeCloseTo(20 * 1.2 * 0.33, 6);
+            expect(party.percentile).toBeGreaterThan(0);
+            expect(party.percentile).toBeLessThan(1);
+        });
+
+        test('a long run does not underflow', () => {
+            const r = refinementLuck({ completions: 3000, count: 6400, rate: 0.33, rollsPerCompletion: 6.47 });
+            expect(r.percentile).toBeGreaterThan(0.2);
+            expect(r.percentile).toBeLessThan(0.8);
+        });
+
+        test('certain rate on a fractional roll count is still random, on a whole one is not', () => {
+            expect(
+                refinementLuck({ completions: 3, count: 4, rate: 1, rollsPerCompletion: 1.5 }).percentile
+            ).not.toBeNull();
+            expect(refinementLuck({ completions: 3, count: 6, rate: 1, rollsPerCompletion: 2 })).toMatchObject({
+                expected: 6,
+                percentile: null,
+            });
+        });
+
+        test('zero completions is no reading', () => {
+            expect(luck({ completions: 0, count: 0 })).toBeNull();
+        });
+    });
+
     test('a dungeon with no refinement entry has none', () => {
         expect(refinementRewardRate({ combatZoneInfo: { dungeonInfo: { rewardDropTable: [] } } }, 1)).toBeNull();
         expect(refinementRewardRate(null, 1)).toBeNull();

@@ -680,8 +680,8 @@ describe('refinement chests, a separate roll at the reward table rate', () => {
 
     test('T1: every player of five gets a line, 0/1/2 over 10 completions at 33%', () => {
         const out = run(zone(), 1);
-        expect(out[0]).toContain('Refinement chests: 0 over 10 completions, 3.3 expected at the table');
-        expect(out[1]).toContain('Refinement chests: 1 over 10 completions, 3.3 expected');
+        expect(out[0]).toContain('Refinement chests: 0 over 10 completions, 4.3 expected at the table');
+        expect(out[1]).toContain('Refinement chests: 1 over 10 completions, 4.3 expected');
         expect(out[2]).toContain('Refinement chests: 2 over 10 completions');
         expect(out[3]).toContain('Refinement chests: 0 over 10');
         expect(out[0]).toContain('Luck ');
@@ -698,14 +698,14 @@ describe('refinement chests, a separate roll at the reward table rate', () => {
 
     test('T2 at certainty: counts, with no luck to place', () => {
         const out = run(zone(), 2);
-        expect(out[1]).toContain('10.0 expected');
-        expect(out[1]).toContain('no luck in it');
+        // 1.30 rolls a completion (party of five, 30% quantity), every roll a hit
+        expect(out[1]).toContain('13.0 expected');
+        expect(out[1]).toContain('1.30 rolls a completion');
     });
 
     test('T3+ stays certain', () => {
         const out = run(zone(), 3);
-        expect(out[2]).toContain('Refinement chests: 2 over 10 completions, 10.0 expected');
-        expect(out[2]).toContain('no luck in it');
+        expect(out[2]).toContain('Refinement chests: 2 over 10 completions, 13.0 expected');
     });
 
     test('a dungeon with no refinement entry has no line', () => {
