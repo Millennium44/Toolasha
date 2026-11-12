@@ -125,6 +125,12 @@ vi.mock('../../api/marketplace.js', () => ({
 }));
 // snapshots/resolveEquipment back the persisted-combat-cache gear fingerprint below;
 // the rest of this file never touches loadout-snapshot, so {} was enough before it
+// Talismans exist on the test server only; a test flips this to prove the live-server answer
+const server = vi.hoisted(() => ({ test: true }));
+vi.mock('../../utils/game-server.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    isTestServer: () => server.test,
+}));
 vi.mock('./loadout-snapshot.js', () => ({
     default: {
         snapshots: gear.snapshots,
@@ -728,6 +734,22 @@ describe('equipment experience reaches a labyrinth room', () => {
         expect(buffs.find((b) => b.typeHrid === '/buff_types/action_speed').flatBoost).toBeCloseTo(0.2 + 0.05661, 10);
         expect(buffs.find((b) => b.typeHrid === '/buff_types/wisdom').flatBoost).toBeCloseTo(0.15 + 0.0126, 10);
         expect(buffs.find((b) => b.typeHrid === '/buff_types/gathering').flatBoost).toBeCloseTo(0.03, 10);
+    });
+
+    test('off the test server a Map that somehow carries talismans still adds nothing', async () => {
+        const { attachTalismanBonuses } = await import('../../utils/talisman-bonuses.js');
+        gear.snapshots[3].equipmentMap = attachTalismanBonuses(new Map(), {
+            noncombat: { milkingSpeed: 0.05661 },
+            buffs: {},
+            combat: {},
+        });
+        server.test = false;
+        try {
+            const buffs = labyrinthClearRate.getLoadoutEquipmentBuffs(3, 'milking');
+            expect(buffs.find((b) => b.typeHrid === '/buff_types/action_speed').flatBoost).toBeCloseTo(0.2, 10);
+        } finally {
+            server.test = true;
+        }
     });
 
     test('a loadout whose Map carries no talismans reads gear alone', () => {

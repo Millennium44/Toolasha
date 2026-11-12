@@ -9993,6 +9993,8 @@ export function computeSkillingClearRatesFromEditor(
             houseRooms: editorDTO.houseRooms,
             tokenUpgrades: editorDTO.tokenUpgrades,
             communityBuffLevels: editorDTO.communityBuffLevels,
+            // A skill with its own loadout uses that loadout's talismans (an empty set included); the rest, the live ones
+            talismanNoncombat: editorDTO.skillTalismans?.[skillHrid] ?? editorDTO.talismanNoncombat,
         };
 
         const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
@@ -10073,6 +10075,8 @@ function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHr
             houseRooms: editorDTO.houseRooms,
             tokenUpgrades: editorDTO.tokenUpgrades,
             communityBuffLevels: editorDTO.communityBuffLevels,
+            // A skill with its own loadout uses that loadout's talismans (an empty set included); the rest, the live ones
+            talismanNoncombat: editorDTO.skillTalismans?.[skillHrid] ?? editorDTO.talismanNoncombat,
         };
 
         const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
@@ -10147,6 +10151,8 @@ function computeAverageSkillingXpPerRoomFromEditor(roomLevel, editorDTO, crateHr
             houseRooms: editorDTO.houseRooms,
             tokenUpgrades: editorDTO.tokenUpgrades,
             communityBuffLevels: editorDTO.communityBuffLevels,
+            // A skill with its own loadout uses that loadout's talismans (an empty set included); the rest, the live ones
+            talismanNoncombat: editorDTO.skillTalismans?.[skillHrid] ?? editorDTO.talismanNoncombat,
         };
 
         const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);

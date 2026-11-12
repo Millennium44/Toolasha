@@ -112,7 +112,10 @@ export function stateFingerprint(priceStamp = marketAPI.lastFetchTimestamp || 0)
         testerShopEnabled() ? 'tester' : 'market',
     ].join(',');
 
-    return `${priceStamp}|${levels}|${drinks}|${gear}|${settings}`;
+    // Talismans ride on getEquipment()'s Map, not on its entries; the buff state version moves when they do
+    const talismanVersion = dataManager.getBuffStateVersion?.() ?? 0;
+
+    return `${priceStamp}|${levels}|${drinks}|${gear}|${settings}|${talismanVersion}`;
 }
 
 /** Throw away the memoised ranking, for anything the fingerprint cannot see */

@@ -194,18 +194,28 @@ function toEquipmentMap(editorEquipment) {
  * @param {Object} editorEquipment - { '/equipment_types/body': { hrid, enhancementLevel } }
  * @param {string} actionTypeHrid - e.g. "/action_types/woodcutting"
  * @param {Object} itemDetailMap - From gameData
+ * @param {Object|null} [talismanNoncombat] - The kit's slotted talismans' noncombat stats (`{milkingSpeed: 0.05}`)
  * @returns {Array} Buff objects compatible with getSkillingMetricsFromOverrides()
  */
-export function buildEquipmentBuffsForSkill(editorEquipment, actionTypeHrid, itemDetailMap) {
+export function buildEquipmentBuffsForSkill(editorEquipment, actionTypeHrid, itemDetailMap, talismanNoncombat = null) {
     const equipMap = toEquipmentMap(editorEquipment);
     const buffs = [];
 
-    const speedBonus = parseEquipmentSpeedBonuses(equipMap, actionTypeHrid, itemDetailMap);
+    // The kit's slotted talismans (live ones, or the loadout's own) are not in the Map built from the editor's
+    // equipment, so they come in beside it, summed exactly as the labyrinth's loadout reader sums them
+    const skillId = actionTypeHrid.replace('/action_types/', '');
+    const talisman = talismanNoncombat || {};
+    const talismanSpeed = (talisman[`${skillId}Speed`] || 0) + (talisman.skillingSpeed || 0);
+    const talismanEfficiency = (talisman[`${skillId}Efficiency`] || 0) + (talisman.skillingEfficiency || 0);
+    const talismanGathering = talisman.gatheringQuantity || 0;
+
+    const speedBonus = parseEquipmentSpeedBonuses(equipMap, actionTypeHrid, itemDetailMap) + talismanSpeed;
     if (speedBonus > 0) {
         buffs.push({ typeHrid: '/buff_types/action_speed', flatBoost: speedBonus, ratioBoost: 0 });
     }
 
-    const efficiencyBonus = parseEquipmentEfficiencyBonuses(equipMap, actionTypeHrid, itemDetailMap);
+    const efficiencyBonus =
+        parseEquipmentEfficiencyBonuses(equipMap, actionTypeHrid, itemDetailMap) + talismanEfficiency * 100;
     if (efficiencyBonus > 0) {
         buffs.push({ typeHrid: '/buff_types/efficiency', flatBoost: efficiencyBonus / 100, ratioBoost: 0 });
     }
@@ -217,11 +227,10 @@ export function buildEquipmentBuffsForSkill(editorEquipment, actionTypeHrid, ite
     // them the same way the live `getLoadoutEquipmentBuffs` does so the two match.
     const successBonus = parseEquipmentSuccessBonuses(equipMap, actionTypeHrid, itemDetailMap);
     if (successBonus > 0) {
-        const skillId = actionTypeHrid.replace('/action_types/', '');
         buffs.push({ typeHrid: `/buff_types/${skillId}_success`, flatBoost: 0, ratioBoost: successBonus });
     }
 
-    const gatheringBonus = parseEquipmentGatheringBonuses(equipMap, itemDetailMap);
+    const gatheringBonus = parseEquipmentGatheringBonuses(equipMap, itemDetailMap) + talismanGathering;
     if (gatheringBonus > 0) {
         buffs.push({ typeHrid: '/buff_types/gathering', flatBoost: gatheringBonus, ratioBoost: 0 });
     }
@@ -400,7 +409,12 @@ export function buildCrateBuffs(crateHrids, labyrinthCrateDetailMap) {
  */
 export function buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, gameData) {
     return {
-        equipmentBuffs: buildEquipmentBuffsForSkill(editorState.equipment, actionTypeHrid, gameData.itemDetailMap),
+        equipmentBuffs: buildEquipmentBuffsForSkill(
+            editorState.equipment,
+            actionTypeHrid,
+            gameData.itemDetailMap,
+            editorState.talismanNoncombat
+        ),
         communityBuffs: buildCommunityBuffsForSkill(editorState.communityBuffLevels, actionTypeHrid),
         houseBuffs: buildHouseBuffsForSkill(editorState.houseRooms, actionTypeHrid, gameData.houseRoomDetailMap),
         // Only the tea crate reaches a skilling room (measured: a coffee crate's Wisdom does not), the same

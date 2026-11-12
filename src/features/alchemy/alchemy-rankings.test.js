@@ -20,6 +20,8 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+    /** dataManager.getBuffStateVersion(): moves when equipment, drinks or talismans do */
+    buffVersion: 0,
     initClientData: null,
     skills: [],
     drinkSlots: [],
@@ -54,6 +56,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => mocks.initClientData?.itemDetailMap?.[hrid] ?? null,
         getSkills: () => mocks.skills,
         getEquipment: () => new Map(),
+        getBuffStateVersion: () => mocks.buffVersion,
         getInventory: () => mocks.inventory,
         getActionDrinkSlots: () => mocks.drinkSlots,
         get characterData() {
@@ -565,6 +568,15 @@ describe('alchemyGoldRates', () => {
         // A new fetch, or an explicit clear, and it looks again
         expect(alchemyGoldRates({ priceStamp: 2 })[0].goldPerHour).toBeGreaterThan(first);
         clearAlchemyRateCache();
+        expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBeGreaterThan(first);
+    });
+
+    test('a talisman change (the buff state version) looks again, though the worn items did not move', () => {
+        const first = alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour;
+        mocks.itemPrices['/items/gem'] = 4000;
+        expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBe(first);
+
+        mocks.buffVersion += 1;
         expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBeGreaterThan(first);
     });
 

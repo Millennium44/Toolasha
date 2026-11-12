@@ -11,6 +11,7 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
+    buffVersion: 0,
     initClientData: null,
     skills: [],
     drinks: {},
@@ -54,6 +55,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getSkills: () => game.skills,
         getActionDrinkSlots: (type) => game.drinks[type] || [],
         getEquipment: () => game.equipment,
+        getBuffStateVersion: () => game.buffVersion,
     },
 }));
 
@@ -383,6 +385,12 @@ describe('rankProductionArbitrage', () => {
 });
 
 describe('stateFingerprint', () => {
+    test('moves with the buff state version, which is where a talisman change shows', () => {
+        const before = stateFingerprint(5);
+        game.buffVersion += 1;
+        expect(stateFingerprint(5)).not.toBe(before);
+    });
+
     test('moves with the volume-cap switch', () => {
         const on = stateFingerprint(5);
         liquidity.capEnabled = false;

@@ -19,6 +19,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 
 const game = vi.hoisted(() => ({
+    buffVersion: 0,
     initClientData: null,
     /** itemHrid → item details, for getItemDetails */
     items: {},
@@ -125,6 +126,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => game.items[hrid] || null,
         getSkills: () => game.skills,
         getEquipment: () => new Map(Object.entries(tooltip.worn)),
+        getBuffStateVersion: () => game.buffVersion,
         on: (event, cb) => event === 'items_updated' && tooltip.inventoryListeners.push(cb),
         off: (event, cb) => {
             tooltip.inventoryListeners = tooltip.inventoryListeners.filter((c) => c !== cb);
@@ -2212,5 +2214,13 @@ describe('untradable capes in the table', () => {
         expect(marks[0].title).toContain('5,000,000');
         expect(marks[0].title).not.toContain('floor');
         delete settings.values.untradableCapeBaseValue;
+    });
+});
+
+describe('equipmentSignature and talismans', () => {
+    test('moves with the buff state version even when the worn items are the same', () => {
+        const before = bestItems.equipmentSignature();
+        game.buffVersion += 1;
+        expect(bestItems.equipmentSignature()).not.toBe(before);
     });
 });
