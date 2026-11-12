@@ -279,8 +279,10 @@ async function migrateLegacy(base, scopedKey, legacy, storeName, defaultValue, o
     }
 
     // Adoption is a conditional copy: one transaction reads the scoped key and the bare key and writes the
-    // scoped key only if it is still absent and the bare key still holds a value. A scoped value saved while
-    // the consent lookup was pending (or by another tab) therefore wins and is never overwritten. The bare
+    // scoped key only if it is still absent and the bare key still holds a value. A scoped value COMMITTED while
+    // the consent lookup was pending (or by another tab) therefore wins and is never overwritten. One still
+    // queued as a debounced write makes storage refuse the transaction: the legacy copy is kept and returned
+    // for this session, and the next read adopts or finds the committed value. The bare
     // key is deleted only after that transaction committed, so a failed write loses nothing: the legacy copy
     // stays for the next read and this session still gets its value. The one race left is a bare key changed
     // by another tab between the commit and the delete; the delete is then of the value just adopted.

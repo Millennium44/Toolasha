@@ -132,6 +132,9 @@ const goalsRecord = createCuratedRecord({
     label: 'GoalPlanner',
 });
 
+/** Ids of goals held in memory whose save failed, so pressing Add again cannot pass them off as saved */
+const unsavedGoalIds = new Set();
+
 /** Whose goals the record holds, so a switch never shows one character the other's */
 let goalsOwner = null;
 
@@ -145,6 +148,7 @@ function claimGoals() {
     const who = dataManager.getCurrentCharacterId() || null;
     if (who === goalsOwner) return;
     goalsRecord.reset();
+    unsavedGoalIds.clear();
     goalsOwner = who;
 }
 
@@ -160,6 +164,7 @@ function claimGoals() {
 export function _resetGoalsRecord() {
     goalsRecord.reset();
     goalsOwner = null;
+    unsavedGoalIds.clear();
 }
 
 /**
@@ -291,11 +296,21 @@ export async function tryAddGoal(raw) {
     if (currentOwner() !== owner) return { goals, outcome: 'switched' };
 
     const key = (entry) => JSON.stringify({ ...entry, id: null, createdAt: null });
-    if (goals.some((existing) => key(existing) === key(goal))) return { goals, outcome: 'duplicate' };
+    const twin = goals.find((existing) => key(existing) === key(goal));
+    if (twin) {
+        // A twin that is only held in memory is not a goal the player has: write the list again, and say so
+        // if that fails too, rather than let a second press read as "already there"
+        if (!unsavedGoalIds.has(twin.id)) return { goals, outcome: 'duplicate' };
+        const retried = await writeGoalsChecked(goals);
+        if (retried.saved) unsavedGoalIds.clear();
+        return { goals: retried.goals, outcome: retried.saved ? 'added' : 'unsaved' };
+    }
     // The cap stops a new goal; it never takes out one already on the list
     if (goals.length >= MAX_GOALS) return { goals, outcome: 'full' };
 
     const written = await writeGoalsChecked([...goals, goal]);
+    if (written.saved) unsavedGoalIds.clear();
+    else unsavedGoalIds.add(goal.id);
     return { goals: written.goals, outcome: written.saved ? 'added' : 'unsaved' };
 }
 

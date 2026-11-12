@@ -551,6 +551,16 @@ describe('tryAddGoal says whether the goal was saved', () => {
         ).toEqual(['g1', 'g2']);
     });
 
+    test('pressing Add again on a goal that is only held says "unsaved" again, then "added" once storage works', async () => {
+        mockStorage.set.mockImplementation(async () => false);
+        await tryAddGoal(gold);
+        expect((await tryAddGoal({ ...gold, id: 'again' })).outcome).toBe('unsaved');
+        mockStorage.set.mockImplementation(real);
+        expect((await tryAddGoal({ ...gold, id: 'again' })).outcome).toBe('added');
+        expect(settings().get(`${GOALS_KEY}_${mockDataManager.currentCharacterId}`)).toHaveLength(1);
+        expect((await tryAddGoal({ ...gold, id: 'third' })).outcome).toBe('duplicate');
+    });
+
     test('a duplicate, an invalid form and a full list write nothing and are not "unsaved"', async () => {
         await tryAddGoal(gold);
         expect((await tryAddGoal({ ...gold, id: 'other' })).outcome).toBe('duplicate');
