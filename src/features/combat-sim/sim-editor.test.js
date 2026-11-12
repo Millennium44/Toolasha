@@ -3903,6 +3903,32 @@ describe('Reset to Party picks your party loadout and the party zone', () => {
         expect(el.textContent).not.toContain('Current Gear.');
     });
 
+    test('applied ids belong to each player and are cleared with their applied loadouts', async () => {
+        const snapshots = [111, 900401, 333].map((id) => ({ id, name: 'Same', actionTypeHrid: COMBAT }));
+        bridge.snapshots = snapshots;
+        const { editor } = setup(partyInfo());
+        await editor.resetToParty({ fromButton: true });
+        const self = editor.getSelfHrid();
+        expect(editor.getLoadoutIdFor(self)).toBe('900401');
+
+        const other = Object.keys(editor.getEditedDTOs()).find((hrid) => hrid !== self);
+        expect(other).toBeTruthy();
+        editor.showPlayer(other);
+        editor.applyLoadoutByName(snapshots[2]);
+        expect(editor.getLoadoutIdFor(other)).toBe('333');
+        expect(editor.getLoadoutIdFor(self)).toBe('900401');
+
+        editor._forgetAppliedLoadouts(other);
+        expect(editor.getLoadoutIdFor(other)).toBe('');
+        expect(editor.getLoadoutIdFor(self)).toBe('900401');
+        editor.showPlayer(self);
+        editor.applyLoadoutByName('Same');
+        expect(editor.getLoadoutIdFor(self)).toBe('');
+        editor.applyLoadoutByName(snapshots[1]);
+        editor.resetToSelf();
+        expect(editor.getLoadoutIdFor(self)).toBe('');
+    });
+
     test('the button itself does it', async () => {
         bridge.snapshots = [{ id: 900401, name: 'Boss', actionTypeHrid: COMBAT }];
         const { el, editor, onResetToParty } = setup(partyInfo());

@@ -115,7 +115,7 @@ class MarketplaceBadgeFilter {
         /** How many finished listings the badge is currently claiming */
         this.showing = null;
         this.unregister = null;
-        /** The last non-empty listing array seen on the wire */
+        /** Last available listing payload, including an explicitly empty full book */
         this.lastSeen = null;
         /** Undoes the shared observer registration, when there is one */
         this.unwatchAdded = null;
@@ -150,20 +150,14 @@ class MarketplaceBadgeFilter {
 
         this.isInitialized = true;
 
-        // The payload is kept as well as read from the character's book, because
-        // the two have disagreed: whichever of them has listings is the one to
-        // believe. Trusting only the book meant that if it ever came back empty
-        // the badge was hidden with no way to tell from the outside why.
-        //
-        // `myMarketListings` and not `endMarketListings`: the data manager emits
-        // both, and only the first is the merged book. `endMarketListings` is
-        // the delta — the one or two listings that just changed — so preferring
-        // it made `lastSeen` a partial snapshot, and `book()` falls back to
-        // `lastSeen` whenever the character's own copy is empty. A single fill
-        // would then shrink the badge to what that one message mentioned.
+        // The data manager emits its merged book alongside the wire delta. Keep even an empty
+        // full book: collecting the final listing must clear the fallback and notification baseline.
+        // A legacy delta alone is only a fallback; an empty delta says nothing was changed.
         const updateHandler = (data) => {
-            const listings = data?.myMarketListings || data?.endMarketListings;
-            if (Array.isArray(listings) && listings.length) this.lastSeen = listings;
+            if (Array.isArray(data?.myMarketListings)) this.lastSeen = data.myMarketListings;
+            else if (Array.isArray(data?.endMarketListings) && data.endMarketListings.length) {
+                this.lastSeen = data.endMarketListings;
+            }
             this.refresh();
         };
         dataManager.on('character_initialized', updateHandler);
@@ -230,13 +224,13 @@ class MarketplaceBadgeFilter {
     }
 
     /**
-     * The listings to judge, from whichever source has any.
+     * The current character's book, falling back only when it has not loaded.
      *
      * @returns {Array<Object>} Possibly empty
      */
     book() {
         const held = dataManager.characterData?.myMarketListings;
-        if (Array.isArray(held) && held.length) return held;
+        if (Array.isArray(held)) return held;
         return this.lastSeen || [];
     }
 
@@ -401,7 +395,7 @@ class MarketplaceBadgeFilter {
         this.lastFinishedCount = null;
         // The book is per-character. Left behind, the previous character's
         // listings are what `book()` falls back to while the new one's own copy
-        // is still empty — badging a sidebar for orders that are not theirs
+        // has not loaded — badging a sidebar for orders that are not theirs
         this.lastSeen = null;
         this.isInitialized = false;
     }

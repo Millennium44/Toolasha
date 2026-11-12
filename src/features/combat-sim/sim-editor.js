@@ -210,6 +210,7 @@ export class SimEditor {
         // hrid → the loadout name that baseline was built from; the selection
         // itself is panel-wide, so presence of a baseline cannot say which one
         this._loadoutAppliedNames = null;
+        this._loadoutAppliedIds = null;
         // The party the loaded player list was built from, so a party that has
         // moved since can be said out loud rather than sat on. Null means the
         // list makes no claim to be a party (an import, an external DTO).
@@ -727,6 +728,17 @@ export class SimEditor {
     }
 
     /**
+     * Stable id of the loadout this player's DTO wears, or '' for a name-only pick.
+     * Like the name, the applied record wins over another tab's dropdown selection.
+     * @param {string} playerHrid
+     * @returns {string}
+     */
+    getLoadoutIdFor(playerHrid) {
+        if (this._loadoutAppliedNames) return this._loadoutAppliedIds?.[playerHrid] || '';
+        return this.getLoadoutNameFor(playerHrid) ? this._selectedLoadoutId || '' : '';
+    }
+
+    /**
      * What the Loadout dropdown shows for the active tab: the loadout that tab's
      * DTO wears, so switching tabs never shows a build the tab is not wearing.
      * @returns {string}
@@ -747,10 +759,12 @@ export class SimEditor {
         if (playerHrid === undefined) {
             this._loadoutBaselineDTOs = null;
             this._loadoutAppliedNames = null;
+            this._loadoutAppliedIds = null;
             return;
         }
         if (this._loadoutBaselineDTOs) delete this._loadoutBaselineDTOs[playerHrid];
         if (this._loadoutAppliedNames) delete this._loadoutAppliedNames[playerHrid];
+        if (this._loadoutAppliedIds) delete this._loadoutAppliedIds[playerHrid];
     }
     getMissingMembers() {
         return this._missingMembers;
@@ -5145,6 +5159,9 @@ export class SimEditor {
             if (!this._loadoutAppliedNames) this._loadoutAppliedNames = {};
             this._loadoutAppliedNames[this._activeEditPlayer] =
                 typeof loadoutName === 'object' ? loadoutName.name || '' : loadoutName;
+            if (!this._loadoutAppliedIds) this._loadoutAppliedIds = {};
+            this._loadoutAppliedIds[this._activeEditPlayer] =
+                typeof loadoutName === 'object' && loadoutName.id != null ? String(loadoutName.id) : '';
         }
         return applied;
     }

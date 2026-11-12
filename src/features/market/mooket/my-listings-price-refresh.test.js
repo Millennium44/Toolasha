@@ -1,32 +1,67 @@
 /** @vitest-environment happy-dom */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const api = vi.hoisted(() => ({
     updatePrice: vi.fn(),
     dataAge: 60 * 60 * 1000,
     rows: [],
     cooldownMs: 0,
+    enabled: true,
+    characterId: 'char-a',
+    sourceKey: 'mooket2',
+    liveSourced: false,
+    fetchHistory: vi.fn(),
 }));
 
-vi.mock('../../../core/config.js', () => ({ default: { getSetting: () => true, onSettingChange: () => {} } }));
-vi.mock('../../../core/data-manager.js', () => ({ default: { getMarketListings: () => [] } }));
-vi.mock('../../../core/dom-observer.js', () => ({ default: { register: () => () => {}, onClass: () => () => {} } }));
+vi.mock('../../../core/config.js', () => ({ default: { getSetting: () => api.enabled, onSettingChange: () => {} } }));
+vi.mock('../../../core/data-manager.js', () => ({
+    default: {
+        getMarketListings: () => [],
+        get currentCharacterId() {
+            return api.characterId;
+        },
+    },
+}));
+vi.mock('../../../core/dom-observer.js', () => ({
+    default: { register: () => () => {}, onClass: () => () => {}, onReady: () => () => {} },
+}));
 vi.mock('../../../api/marketplace.js', () => ({
     default: {
         updatePrice: (...args) => api.updatePrice(...args),
         getPrice: () => ({ ask: 999, bid: 888 }),
         getDataAge: () => api.dataAge,
+        get liveSourced() {
+            return api.liveSourced;
+        },
     },
 }));
 vi.mock('./market-history-api.js', () => ({
     default: {
-        fetchHistory: async () => api.rows,
-        currentSource: () => ({ key: 'mooket2' }),
+        fetchHistory: (...args) => api.fetchHistory(...args),
+        currentSource: () => ({ key: api.sourceKey }),
         cooldownRemainingMs: () => api.cooldownMs,
     },
 }));
 
 import myListingsPriceRefresh, { shouldApplySighting, distinctListedItems } from './my-listings-price-refresh.js';
+
+beforeEach(() => {
+    api.enabled = true;
+    api.characterId = 'char-a';
+    api.sourceKey = 'mooket2';
+    api.liveSourced = false;
+    api.dataAge = 60 * 60 * 1000;
+    api.rows = [];
+    api.cooldownMs = 0;
+    api.updatePrice.mockClear();
+    api.fetchHistory.mockReset().mockImplementation(async () => api.rows);
+    myListingsPriceRefresh.initialize();
+});
+
+afterEach(() => {
+    myListingsPriceRefresh.cleanup();
+    document.body.innerHTML = '';
+});
 
 describe('shouldApplySighting', () => {
     it('applies a sighting that is strictly newer than the snapshot', () => {
@@ -126,5 +161,122 @@ describe('the status line says when the pool was backed off', () => {
         expect(myListingsPriceRefresh.status.textContent).toBe(
             'Updated 0 of 1 from Mooket. The shared price-history server is busy; retrying in ~4m.'
         );
+    });
+});
+
+describe('refresh ownership', () => {
+    const items = Array.from({ length: 6 }, (_, i) => ({ itemHrid: `/items/item_${i}`, enhancementLevel: i }));
+    const freshRows = () => [{ time: Math.floor(Date.now() / 1000) - 60, a: 120, b: 100 }];
+    const deferred = () => {
+        let resolve;
+        const promise = new Promise((done) => {
+            resolve = done;
+        });
+        return { promise, resolve };
+    };
+
+    it('stops queued requests and ignores in-flight prices after cleanup', async () => {
+        const pending = deferred();
+        api.fetchHistory.mockReturnValue(pending.promise);
+        myListingsPriceRefresh.gatherListedItems = () => items;
+        const refresh = myListingsPriceRefresh.runRefresh();
+        expect(api.fetchHistory).toHaveBeenCalledTimes(4);
+
+        myListingsPriceRefresh.cleanup();
+        pending.resolve(freshRows());
+        await refresh;
+
+        expect(api.fetchHistory).toHaveBeenCalledTimes(4);
+        expect(api.updatePrice).not.toHaveBeenCalled();
+        expect(myListingsPriceRefresh.busy).toBe(false);
+    });
+
+    it('does not let an old run release or relabel the replacement run after re-enable', async () => {
+        const old = deferred();
+        const next = deferred();
+        api.fetchHistory.mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise);
+        myListingsPriceRefresh.gatherListedItems = () => [items[0]];
+        const oldRun = myListingsPriceRefresh.runRefresh();
+        myListingsPriceRefresh.cleanup();
+        myListingsPriceRefresh.initialize();
+        myListingsPriceRefresh.status = { textContent: '' };
+        myListingsPriceRefresh.gatherListedItems = () => [items[1]];
+        const newRun = myListingsPriceRefresh.runRefresh();
+
+        old.resolve(freshRows());
+        await oldRun;
+        expect(api.updatePrice).not.toHaveBeenCalled();
+        expect(myListingsPriceRefresh.busy).toBe(true);
+        expect(myListingsPriceRefresh.status.textContent).toBe('');
+
+        next.resolve(freshRows());
+        await newRun;
+        expect(api.updatePrice).toHaveBeenCalledExactlyOnceWith('/items/item_1', 1, 120, 100, expect.any(Number));
+        expect(myListingsPriceRefresh.busy).toBe(false);
+        expect(myListingsPriceRefresh.status.textContent).toBe('Updated 1 of 1 from Mooket.');
+    });
+
+    it.each([
+        [
+            'setting',
+            () => {
+                api.enabled = false;
+            },
+        ],
+        [
+            'character',
+            () => {
+                api.characterId = 'char-b';
+            },
+        ],
+        [
+            'history source',
+            () => {
+                api.sourceKey = 'mooket1';
+            },
+        ],
+        [
+            'market economy',
+            () => {
+                api.liveSourced = true;
+            },
+        ],
+    ])('cancels before patching or dequeuing after a changed %s', async (_label, changeContext) => {
+        const pending = deferred();
+        api.fetchHistory.mockReturnValue(pending.promise);
+        myListingsPriceRefresh.status = { textContent: '' };
+        myListingsPriceRefresh.gatherListedItems = () => items;
+        const refresh = myListingsPriceRefresh.runRefresh();
+        changeContext();
+        pending.resolve(freshRows());
+        await refresh;
+
+        expect(api.fetchHistory).toHaveBeenCalledTimes(4);
+        expect(api.updatePrice).not.toHaveBeenCalled();
+        expect(myListingsPriceRefresh.busy).toBe(false);
+        expect(myListingsPriceRefresh.status.textContent).toBe('Refresh canceled. Try again.');
+    });
+
+    it('does not start requests from a detached button after cleanup', async () => {
+        myListingsPriceRefresh.gatherListedItems = () => items;
+        myListingsPriceRefresh.cleanup();
+        await myListingsPriceRefresh.runRefresh();
+        expect(api.fetchHistory).not.toHaveBeenCalled();
+    });
+
+    it('keeps the replacement header button disabled while the refresh runs', async () => {
+        document.body.innerHTML = '<div class="MarketplacePanel_listingCount"></div>';
+        myListingsPriceRefresh.ensureControls();
+        const pending = deferred();
+        api.fetchHistory.mockReturnValue(pending.promise);
+        myListingsPriceRefresh.gatherListedItems = () => [items[0]];
+        const refresh = myListingsPriceRefresh.runRefresh();
+        document.body.innerHTML = '<div class="MarketplacePanel_listingCount"></div>';
+        myListingsPriceRefresh.ensureControls();
+        expect(myListingsPriceRefresh.button.disabled).toBe(true);
+        expect(myListingsPriceRefresh.button.textContent).toBe('Refreshing…');
+        pending.resolve(freshRows());
+        await refresh;
+        expect(myListingsPriceRefresh.button.disabled).toBe(false);
     });
 });

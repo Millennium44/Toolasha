@@ -767,6 +767,90 @@ describe('pull', () => {
         expect(toasts.at(-1).message).toContain('Reload now');
     });
 
+    test.each(['cleanup', 'takeover'])(
+        '%s during the final baseline read does not start a stale import',
+        async (stop) => {
+            stored.map.toolasha_sync_gistId = 'abc';
+            stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+            stored.map.toolasha_sync_lastHash = 'h:{"local":1}';
+            gist.read = remote('2026-02-01T00:00:00.000Z');
+            const { default: storageFake } = await import('../../core/storage.js');
+            const originalGet = storageFake.get;
+            let finishBaseline;
+            let reachedBaseline = false;
+            const baselineWait = new Promise((resolve) => {
+                finishBaseline = resolve;
+            });
+            const read = vi.spyOn(storageFake, 'get').mockImplementation(async (key, ...args) => {
+                if (key === 'toolasha_sync_baseline' && !reachedBaseline) {
+                    reachedBaseline = true;
+                    await baselineWait;
+                }
+                return originalGet(key, ...args);
+            });
+            try {
+                const oldPull = syncManager.pull();
+                await vi.waitFor(() => expect(reachedBaseline).toBe(true));
+                if (stop === 'cleanup') {
+                    syncManager.cleanup();
+                    character.id = 'char-B';
+                } else {
+                    syncManager.busySince = Date.now() - 6 * 60 * 1000;
+                    payload.text = '{"newerLocal":2}';
+                    expect(await syncManager.push({ silent: true })).toMatchObject({ ok: true });
+                }
+                const stampAfterStop = stored.map.toolasha_sync_lastSyncedAt;
+                const hashAfterStop = stored.map.toolasha_sync_lastHash;
+                finishBaseline();
+
+                expect(await oldPull).toMatchObject({ skipped: true, reason: 'superseded' });
+                expect(payload.applyCalls).toBe(0);
+                expect(stored.map.toolasha_sync_lastSyncedAt).toBe(stampAfterStop);
+                expect(stored.map.toolasha_sync_lastHash).toBe(hashAfterStop);
+                expect(toasts.some((toast) => toast.message.includes('Reload now'))).toBe(false);
+            } finally {
+                finishBaseline();
+                read.mockRestore();
+                character.id = 'char-A';
+            }
+        }
+    );
+
+    test.each(['held', 'fold-failed', 'incomplete'])(
+        'cleanup during an import with %s records but no latch warns to retry without a reload',
+        async (failure) => {
+            stored.map.toolasha_sync_gistId = 'abc';
+            gist.read = remote('2026-02-01T00:00:00.000Z');
+            payload.latched = 0;
+            if (failure === 'held') {
+                payload.mergeHeld = [{ store: 'marketplace', key: 'history', label: 'market history' }];
+            } else if (failure === 'fold-failed') {
+                payload.mergeFailed = [{ store: 'marketplace', key: 'history', label: 'market history' }];
+                payload.mergeHeld = payload.mergeFailed;
+                payload.complete = false;
+                payload.failed = [{ store: 'marketplace', expected: 1, written: 0 }];
+            } else {
+                payload.complete = false;
+                payload.failed = [{ store: 'marketplace', expected: 1, written: 0 }];
+            }
+            let finishApply;
+            payload.applyWait = new Promise((resolve) => {
+                finishApply = resolve;
+            });
+
+            const oldPull = syncManager.pull();
+            await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+            syncManager.cleanup();
+            finishApply();
+
+            expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+            expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
+            expect(toasts.at(-1)).toMatchObject({ kind: 'warn', duration: 0 });
+            expect(toasts.at(-1).message).toContain('Pull again');
+            expect(toasts.some((toast) => /reload/i.test(toast.message))).toBe(false);
+        }
+    );
+
     test('cleanup while the pull weighs what it applied leaves the sync stamp unset for a retry', async () => {
         stored.map.toolasha_sync_gistId = 'abc';
         gist.read = remote('2026-02-01T00:00:00.000Z');

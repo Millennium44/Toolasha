@@ -46,6 +46,8 @@ class EliteAchievementReminder {
         this.isInitialized = false;
         this.profileSharedHandler = null;
         this.currentIcon = null;
+        this.currentIconCleanup = null;
+        this.profileRequestId = 0;
     }
 
     /**
@@ -84,6 +86,7 @@ class EliteAchievementReminder {
      * @param {Object} profileData - Profile data from WebSocket
      */
     async handleProfileShared(profileData) {
+        const requestId = ++this.profileRequestId;
         try {
             if (!config.getSetting('eliteAchievementReminder')) return;
 
@@ -101,8 +104,14 @@ class EliteAchievementReminder {
             const playerName = profileData?.profile?.sharableCharacter?.name;
             if (!playerName) return;
 
-            const profilePanel = await this.waitForProfilePanel();
-            if (!profilePanel) return;
+            const profilePanel = await this.waitForProfilePanel(requestId);
+            if (
+                !profilePanel ||
+                requestId !== this.profileRequestId ||
+                !config.getSetting('eliteAchievementReminder')
+            ) {
+                return;
+            }
 
             // Prefix-matched: the game ships these class names with a CSS-module
             // hash suffix that changes on every rebuild. The profile modal is
@@ -129,10 +138,12 @@ class EliteAchievementReminder {
 
     /**
      * Wait for the profile panel to appear in the DOM
+     * @param {number} requestId - Shared profile request that owns the wait
      * @returns {Promise<Element|null>} Profile panel element or null if timeout
      */
-    async waitForProfilePanel() {
+    async waitForProfilePanel(requestId = this.profileRequestId) {
         for (let i = 0; i < 20; i++) {
+            if (requestId !== this.profileRequestId || !config.getSetting('eliteAchievementReminder')) return null;
             const panel = document.querySelector(GAME.SHARABLE_PROFILE_OVERVIEW);
             if (panel) return panel;
             await new Promise((resolve) => setTimeout(resolve, 100));
@@ -144,6 +155,10 @@ class EliteAchievementReminder {
      * Remove the currently-injected icon, if any (idempotent).
      */
     clearIcon() {
+        if (this.currentIconCleanup) {
+            this.currentIconCleanup();
+            this.currentIconCleanup = null;
+        }
         if (this.currentIcon) {
             this.currentIcon.remove();
             this.currentIcon = null;
@@ -211,9 +226,12 @@ class EliteAchievementReminder {
             document.body,
             () => {
                 if (!document.body.contains(modal) || !document.querySelector(GAME.SHARABLE_PROFILE_OVERVIEW)) {
-                    icon.remove();
-                    if (this.currentIcon === icon) this.currentIcon = null;
-                    cleanupObserver();
+                    if (this.currentIcon === icon) {
+                        this.clearIcon();
+                    } else {
+                        icon.remove();
+                        cleanupObserver();
+                    }
                 }
             },
             {
@@ -221,12 +239,16 @@ class EliteAchievementReminder {
                 subtree: true,
             }
         );
+        this.currentIconCleanup = cleanupObserver;
     }
 
     /**
      * Disable the feature
      */
     disable() {
+        // An old wait must stay invalid even if the setting is re-enabled
+        // before the profile modal finally mounts.
+        this.profileRequestId++;
         if (this.profileSharedHandler) {
             webSocketHook.off('profile_shared', this.profileSharedHandler);
             this.profileSharedHandler = null;

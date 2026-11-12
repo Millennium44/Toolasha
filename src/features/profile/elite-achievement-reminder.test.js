@@ -121,6 +121,7 @@ describe('elite-achievement-reminder — icon injection', () => {
         eliteAchievementReminder.disable();
         document.body.innerHTML = '';
         capturedMutationCallback = null;
+        vi.useRealTimers();
     });
 
     test('injects the icon next to the name when Elite achievements are incomplete', async () => {
@@ -211,5 +212,78 @@ describe('elite-achievement-reminder — icon injection', () => {
         eliteAchievementReminder.initialize();
 
         expect(fakeWebSocketHook.listenerCount('profile_shared')).toBe(1);
+    });
+
+    test('a pending incomplete profile cannot add an icon to a newer complete profile', async () => {
+        vi.useFakeTimers();
+        const pending = eliteAchievementReminder.handleProfileShared(buildProfileData([]));
+
+        await eliteAchievementReminder.handleProfileShared(
+            buildProfileData([
+                { achievementHrid: '/achievements/elite_a', isCompleted: true },
+                { achievementHrid: '/achievements/elite_b', isCompleted: true },
+            ])
+        );
+        buildProfileModal();
+        await vi.advanceTimersByTimeAsync(100);
+        await pending;
+
+        expect(document.querySelector('#mwi-elite-achievement-reminder-icon')).toBeNull();
+    });
+
+    test('disable and re-enable invalidate a pending profile before its modal arrives', async () => {
+        vi.useFakeTimers();
+        eliteAchievementReminder.initialize();
+        const pending = eliteAchievementReminder.handleProfileShared(buildProfileData([]));
+
+        eliteAchievementReminder.disable();
+        eliteAchievementReminder.initialize();
+        buildProfileModal();
+        await vi.advanceTimersByTimeAsync(100);
+        await pending;
+
+        expect(document.querySelector('#mwi-elite-achievement-reminder-icon')).toBeNull();
+    });
+
+    test('a newer profile keeps its own whisper recipient when an older wait resolves later', async () => {
+        let resolveOld;
+        const oldPanel = new Promise((resolve) => {
+            resolveOld = resolve;
+        });
+        const wait = vi.spyOn(eliteAchievementReminder, 'waitForProfilePanel').mockReturnValueOnce(oldPanel);
+        try {
+            const older = buildProfileData([]);
+            older.profile.sharableCharacter.name = 'OlderPlayer';
+            const pending = eliteAchievementReminder.handleProfileShared(older);
+
+            buildProfileModal();
+            await eliteAchievementReminder.handleProfileShared(buildProfileData([]));
+            resolveOld(document.querySelector('[class*="SharableProfile_overviewTab"]'));
+            await pending;
+            document.querySelector('#mwi-elite-achievement-reminder-icon').click();
+
+            expect(document.querySelector('[class*="Chat_chatInputContainer"] input').value).toBe(
+                '/w siuuuuuuuuu Be Elite. Do your Elite achievements.'
+            );
+        } finally {
+            wait.mockRestore();
+        }
+    });
+
+    test('replacing and disabling the reminder disconnect its body watcher', async () => {
+        buildProfileModal();
+        await eliteAchievementReminder.handleProfileShared(buildProfileData([]));
+        const firstUnregister = createMutationWatcher.mock.results.at(-1).value;
+        const oldCallback = capturedMutationCallback;
+
+        await eliteAchievementReminder.handleProfileShared(buildProfileData([]));
+        const secondUnregister = createMutationWatcher.mock.results.at(-1).value;
+        expect(firstUnregister).toHaveBeenCalledTimes(1);
+        oldCallback();
+        expect(eliteAchievementReminder.currentIcon).not.toBeNull();
+
+        eliteAchievementReminder.disable();
+        expect(secondUnregister).toHaveBeenCalledTimes(1);
+        expect(eliteAchievementReminder.currentIcon).toBeNull();
     });
 });

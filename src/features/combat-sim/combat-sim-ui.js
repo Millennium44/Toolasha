@@ -5193,14 +5193,17 @@ class CombatSimUI {
 
         if (this._soloZonesLoadoutName === null || this._dungeonsLoadoutName === null) {
             // Seeded from the loadout the pickers' own player wears (the one a
-            // Solo + party run simulates, `_soloPartySimulatedHrid`) by name — the only
-            // handle the editor has — not the panel-wide dropdown selection,
-            // which another tab's pick can have emptied. Resolved to this list's own
-            // id for whichever snapshot answers to that name first. Fine as
-            // a one-time default: it matches what the single dropdown itself
-            // would apply, ambiguity and all.
-            const currentName = this._editor?.getLoadoutNameFor?.(this._soloPartySimulatedHrid()) || '';
-            const index = currentName ? options.findIndex((s) => s.name === currentName) : -1;
+            // Solo + party run simulates, `_soloPartySimulatedHrid`), not another
+            // tab's dropdown selection. An applied id wins over a duplicate name;
+            // if that id was deleted, keep current gear rather than picking its twin.
+            const playerHrid = this._soloPartySimulatedHrid();
+            const appliedId = this._editor?.getLoadoutIdFor?.(playerHrid) || '';
+            const currentName = this._editor?.getLoadoutNameFor?.(playerHrid) || '';
+            const index = appliedId
+                ? options.findIndex((s) => s.id != null && String(s.id) === String(appliedId))
+                : currentName
+                  ? options.findIndex((s) => s.name === currentName)
+                  : -1;
             const currentId = index >= 0 ? this._soloPartyLoadoutIdFor(options[index], index) : '';
             if (this._soloZonesLoadoutName === null) this._soloZonesLoadoutName = currentId;
             if (this._dungeonsLoadoutName === null) this._dungeonsLoadoutName = currentId;

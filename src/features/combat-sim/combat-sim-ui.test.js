@@ -147,6 +147,7 @@ const mocks = vi.hoisted(() => ({
     editorLoadoutName: '',
     /** What SimEditor#getLoadoutNameFor(hrid) hands back, keyed by hrid */
     editorLoadoutNameFor: {},
+    editorLoadoutIdFor: {},
     /** What SimEditor#getOriginalDTO(hrid) hands back — the pre-loadout, current-gear
      *  DTO for that player — keyed by hrid */
     editorOriginalDTOs: {},
@@ -683,6 +684,9 @@ vi.mock('./sim-editor.js', () => ({
         }
         getLoadoutNameFor(playerHrid) {
             return mocks.editorLoadoutNameFor?.[playerHrid] || '';
+        }
+        getLoadoutIdFor(playerHrid) {
+            return mocks.editorLoadoutIdFor?.[playerHrid] || '';
         }
         getOriginalDTO(playerHrid) {
             return mocks.editorOriginalDTOs?.[playerHrid] || null;
@@ -13684,6 +13688,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
         mocks.loadoutStore = null;
         mocks.editorLoadoutName = '';
         mocks.editorLoadoutNameFor = {};
+        mocks.editorLoadoutIdFor = {};
         mocks.editorOriginalDTOs = {};
         mocks.loadoutApplications = [];
         mocks.loadoutUpdateListeners = [];
@@ -13718,6 +13723,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
         mocks.loadoutStore = null;
         mocks.editorLoadoutName = '';
         mocks.editorLoadoutNameFor = {};
+        mocks.editorLoadoutIdFor = {};
         mocks.editorOriginalDTOs = {};
         mocks.loadoutApplications = [];
         mocks.loadoutUpdateListeners = [];
@@ -13980,6 +13986,41 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 select.value = matches[occurrence]?.value ?? '';
                 select.dispatchEvent(new Event('change'));
             };
+
+            test('both sweeps seed the exact applied loadout when three snapshots share a name', async () => {
+                const snapshots = [111, 900401, 333].map((id) => ({
+                    id,
+                    name: 'Same',
+                    actionTypeHrid: '/action_types/combat',
+                }));
+                mocks.editorLoadoutNameFor = { player1: 'Same', player2: 'Same' };
+                mocks.editorLoadoutIdFor = { player1: '111', player2: '900401' };
+                mocks.loadoutStore = { getAllSnapshots: () => snapshots };
+                ui._activePlayerTab = 'player1';
+                ui._soloZonesLoadoutName = null;
+                ui._dungeonsLoadoutName = null;
+                ui._updateSoloPartyLoadoutPickers();
+
+                expect(soloSelect().value).toBe('id:900401');
+                expect(dungeonSelect().value).toBe('id:900401');
+                await ui._onSimulateAllZones();
+                expect(mocks.loadoutApplications.length).toBeGreaterThan(0);
+                expect(mocks.loadoutApplications.every((entry) => entry.snapshotName === snapshots[1])).toBe(true);
+            });
+
+            test('a deleted applied id does not seed a different same-named snapshot', () => {
+                mocks.editorLoadoutNameFor = { player2: 'Same' };
+                mocks.editorLoadoutIdFor = { player2: '900401' };
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [{ id: 111, name: 'Same', actionTypeHrid: '/action_types/combat' }],
+                };
+                ui._soloZonesLoadoutName = null;
+                ui._dungeonsLoadoutName = null;
+                ui._updateSoloPartyLoadoutPickers();
+
+                expect(soloSelect().value).toBe('');
+                expect(dungeonSelect().value).toBe('');
+            });
 
             test('each picker defaults to the single Loadout dropdown selection', () => {
                 // Both fields are only seeded from the editor's selection the

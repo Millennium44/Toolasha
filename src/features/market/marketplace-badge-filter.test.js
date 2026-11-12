@@ -363,7 +363,7 @@ describe('which listing array the handler believes', () => {
         // `endMarketListings` is the one or two listings that just changed. Read
         // in preference to the merged book it arrives with, it made `lastSeen` a
         // partial snapshot — and `book()` falls back to `lastSeen` whenever the
-        // character's own copy is empty, so one fill silently shrank the badge.
+        // character's own copy is absent, so one fill silently shrank the badge.
         badgeFilter.initialize();
 
         const whole = [listing({ id: 1 }), listing({ id: 2 }), listing({ id: 3 })];
@@ -382,6 +382,55 @@ describe('which listing array the handler believes', () => {
 
         emit({ endMarketListings: [listing({ id: 9 })] });
 
+        expect(badgeFilter.book()).toHaveLength(1);
+    });
+
+    test('collecting the final listing clears the count and lets the next completion notify', () => {
+        const completed = [listing({ id: 1 })];
+        game.listings = completed;
+        badgeFilter.initialize();
+        emit({ myMarketListings: completed });
+        expect(badgeFilter.showing).toBe(1);
+
+        // The data manager removes fully collected ended listings from its merged book.
+        game.listings = [];
+        emit({
+            myMarketListings: [],
+            endMarketListings: [listing({ id: 1, status: '/market_listing_status/filled', unclaimedItemCount: 0 })],
+        });
+        expect(badgeFilter.book()).toEqual([]);
+        expect(badgeFilter.lastSeen).toEqual([]);
+        expect(badgeFilter.showing).toBe(0);
+        expect(hiding()).toBe(true);
+        expect(badgeFilter.lastFinishedCount).toBe(0);
+
+        game.listings = [listing({ id: 2 })];
+        emit({ myMarketListings: game.listings });
+        expect(badgeFilter.showing).toBe(1);
+        expect(game.notified).toEqual([{ id: 'market-listing-filled', message: '1 market listing has finished.' }]);
+    });
+
+    test('an empty full payload replaces the remembered fallback even before character data is available', () => {
+        badgeFilter.initialize();
+        emit({ myMarketListings: [listing({ id: 1 })] });
+        emit({ myMarketListings: [] });
+        expect(badgeFilter.book()).toEqual([]);
+        expect(hiding()).toBe(true);
+    });
+
+    test('an authoritative empty character book wins over an older fallback', () => {
+        badgeFilter.initialize();
+        emit({ myMarketListings: [listing({ id: 1 })] });
+        game.listings = [];
+        badgeFilter.refresh();
+        expect(badgeFilter.book()).toEqual([]);
+        expect(hiding()).toBe(true);
+    });
+
+    test('an empty legacy delta does not erase a remembered full book', () => {
+        badgeFilter.initialize();
+        emit({ myMarketListings: [listing({ id: 1 })] });
+        emit({ endMarketListings: [] });
         expect(badgeFilter.book()).toHaveLength(1);
     });
 

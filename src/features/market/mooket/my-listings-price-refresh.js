@@ -106,12 +106,13 @@ function readRowItem(row) {
  * @param {Array<any>} items - Work items
  * @param {number} limit - Maximum concurrent workers
  * @param {(item: any) => Promise<void>} worker - Per-item work
+ * @param {() => boolean} canContinue - Whether the run still owns the requests
  * @returns {Promise<void>}
  */
-async function runPool(items, limit, worker) {
+async function runPool(items, limit, worker, canContinue) {
     const queue = [...items];
     const runners = Array.from({ length: Math.min(limit, queue.length) }, async () => {
-        while (queue.length) {
+        while (queue.length && canContinue()) {
             await worker(queue.shift());
         }
     });
@@ -126,6 +127,7 @@ class MyListingsPriceRefresh {
         this.button = null;
         this.status = null;
         this.busy = false;
+        this.currentRun = null;
     }
 
     initialize() {
@@ -150,6 +152,8 @@ class MyListingsPriceRefresh {
     }
 
     cleanup() {
+        // In-flight requests may still settle after re-enable; they no longer own prices or controls.
+        this.currentRun = null;
         try {
             this.controls?.remove();
             this.controls = null;
@@ -167,6 +171,7 @@ class MyListingsPriceRefresh {
 
     /** Put the button back in the header bar, rebuilding if the bar was re-rendered. */
     ensureControls() {
+        if (!this.isInitialized || !config.getSetting('market_pooledHistory')) return;
         const bar = document.querySelector(LISTING_COUNT_SEL);
         if (!bar) return;
         if (this.controls && this.controls.isConnected && bar.contains(this.controls)) return;
@@ -193,6 +198,7 @@ class MyListingsPriceRefresh {
         this.controls = controls;
         this.button = button;
         this.status = status;
+        this.setBusy(this.busy);
     }
 
     /** @param {string} text - A short message shown next to the button */
@@ -217,13 +223,27 @@ class MyListingsPriceRefresh {
      * ones into the market price cache, which redraws the Top Order Price column.
      */
     async runRefresh() {
-        if (this.busy) return;
+        if (this.busy || !this.isInitialized || !config.getSetting('market_pooledHistory')) return;
 
         const items = this.gatherListedItems();
         if (!items.length) {
             this.setStatus('No listings found.');
             return;
         }
+
+        const run = {
+            characterId: dataManager.currentCharacterId,
+            sourceKey: marketHistoryAPI.currentSource().key,
+            liveSourced: marketAPI.liveSourced,
+        };
+        this.currentRun = run;
+        const canContinue = () =>
+            this.currentRun === run &&
+            this.isInitialized &&
+            config.getSetting('market_pooledHistory') &&
+            dataManager.currentCharacterId === run.characterId &&
+            marketHistoryAPI.currentSource().key === run.sourceKey &&
+            marketAPI.liveSourced === run.liveSourced;
 
         this.setBusy(true, `Refreshing ${items.length}…`);
         this.setStatus('');
@@ -233,28 +253,38 @@ class MyListingsPriceRefresh {
         let applied = 0;
 
         try {
-            await runPool(items, FETCH_CONCURRENCY, async (item) => {
-                try {
-                    const rows = await marketHistoryAPI.fetchHistory(item.itemHrid, item.enhancementLevel, 1);
-                    const sighting = freshestSighting(rows);
-                    if (!sighting || (sighting.ask === null && sighting.bid === null)) return;
-                    if (!shouldApplySighting(sighting.time, snapshotTime)) return;
+            await runPool(
+                items,
+                FETCH_CONCURRENCY,
+                async (item) => {
+                    try {
+                        const rows = await marketHistoryAPI.fetchHistory(item.itemHrid, item.enhancementLevel, 1);
+                        if (!canContinue()) return;
+                        const sighting = freshestSighting(rows);
+                        if (!sighting || (sighting.ask === null && sighting.bid === null)) return;
+                        if (!shouldApplySighting(sighting.time, snapshotTime)) return;
 
-                    // Keep the side Mooket did not see rather than blanking it — a
-                    // one-sided sighting should not erase a known price on the other
-                    const existing = marketAPI.getPrice(item.itemHrid, item.enhancementLevel);
-                    const ask = sighting.ask !== null ? sighting.ask : (existing?.ask ?? null);
-                    const bid = sighting.bid !== null ? sighting.bid : (existing?.bid ?? null);
-                    // The sighting's own time, not now: everything downstream that
-                    // compares freshness (undercut alerts, the Top Order Price
-                    // column) reads this timestamp, and a Mooket row can be the
-                    // better part of an hour old
-                    marketAPI.updatePrice(item.itemHrid, item.enhancementLevel, ask, bid, sighting.time);
-                    applied += 1;
-                } catch (error) {
-                    console.error('[MooketListingsRefresh] Refreshing an item failed:', item.itemHrid, error);
-                }
-            });
+                        // Keep the side Mooket did not see rather than blanking it — a
+                        // one-sided sighting should not erase a known price on the other
+                        const existing = marketAPI.getPrice(item.itemHrid, item.enhancementLevel);
+                        const ask = sighting.ask !== null ? sighting.ask : (existing?.ask ?? null);
+                        const bid = sighting.bid !== null ? sighting.bid : (existing?.bid ?? null);
+                        // The sighting's own time, not now: everything downstream that
+                        // compares freshness (undercut alerts, the Top Order Price
+                        // column) reads this timestamp, and a Mooket row can be the
+                        // better part of an hour old
+                        marketAPI.updatePrice(item.itemHrid, item.enhancementLevel, ask, bid, sighting.time);
+                        applied += 1;
+                    } catch (error) {
+                        console.error('[MooketListingsRefresh] Refreshing an item failed:', item.itemHrid, error);
+                    }
+                },
+                canContinue
+            );
+            if (!canContinue()) {
+                if (this.currentRun === run) this.setStatus('Refresh canceled. Try again.');
+                return;
+            }
             // The pool can go into its shared cool-down partway through this
             // run; every item asked after that came back null not because it
             // has no history, but because nothing was asked. Worth saying —
@@ -268,9 +298,12 @@ class MyListingsPriceRefresh {
             this.setStatus(`Updated ${applied} of ${items.length} from Mooket.${backoffNote}`);
         } catch (error) {
             console.error('[MooketListingsRefresh] Refresh failed:', error);
-            this.setStatus('Refresh failed.');
+            if (canContinue()) this.setStatus('Refresh failed.');
         } finally {
-            this.setBusy(false);
+            if (this.currentRun === run) {
+                this.currentRun = null;
+                this.setBusy(false);
+            }
         }
     }
 

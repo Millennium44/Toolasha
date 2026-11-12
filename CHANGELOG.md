@@ -20,6 +20,26 @@ Dragging the collapsed dungeon tracker no longer lifts it above the game's own w
 
 The Combat Sim's Reset to Party now sets Zone and Tier to the zone chosen on your My Party tab as soon as the page loads, instead of waiting for the next party update. If the party has no zone set, it uses the party fight you are running.
 
+### Sync avoids unnecessary reload advice after an interrupted pull
+
+A pull that loses ownership before importing now stands down without changing saved data. Interrupted pulls that leave no writes blocked ask you to retry the remaining records instead of reloading; genuine reload guards stay in place.
+
+### Same-named loadouts stay distinct in Solo and party sweeps
+
+The Solo + party zone and dungeon pickers now follow the exact saved loadout you applied, even when several share a name. If that loadout was deleted, the pickers keep your current gear instead of choosing its namesake.
+
+### Elite reminders follow the current profile
+
+Opening another profile or turning the reminder off now cancels an older pending reminder. Replacing or removing its icon also releases its page watcher, so old profiles cannot add the wrong whisper recipient later.
+
+### My Listings refresh stops when its context changes
+
+Disabling pooled history, changing characters or changing the price source now stops queued refresh work. Late results cannot overwrite prices or release the controls of a newer refresh, and a rebuilt button stays disabled while work is running.
+
+### Marketplace completion badges clear after the last collection
+
+Collecting the final completed listing now clears its cached completion count. The next completed order can notify you again instead of being mistaken for the already-collected one.
+
 ### Philo Gamba prices refined capes from their parts when you own the inputs
 
 With "I own the inputs" on, a refined cape now costs its base cape plus its refinement stones, all at their sell-after-tax value, since a refined cape is account bound and its market listing is not a sale you could make. The cost cell lists the parts.
