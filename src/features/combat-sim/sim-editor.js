@@ -45,6 +45,7 @@ import {
 } from '../../utils/shared-profile-status.js';
 import { fetchLoadout, getLoadout, isViewLoadoutAvailable, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
 import { addStyles } from '../../utils/dom.js';
+import { describeSimTalismans } from '../../utils/talisman-bonuses.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { MAX_TRIGGERS, triggersForStorage } from './trigger-tuning.js';
 import { applyTriggerRows, rowSignature } from './lab-condition-search.js';
@@ -3070,6 +3071,25 @@ export class SimEditor {
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
             html += `<button data-equipment-slot="${slotType}" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">change</button>`;
             html += '</div>';
+
+            if (slotType === '/equipment_types/belt') {
+                // Read-only: the talismans the belt wears, scaled by this belt (changing the belt rescales them)
+                const worn = describeSimTalismans(
+                    dto.talismans,
+                    { itemHrid: equip.hrid, enhancementLevel: equip.enhancementLevel },
+                    itemDetailMap,
+                    gameData.talismanModifierDetailMap,
+                    gameData.enhancementLevelTotalBonusMultiplierTable
+                );
+                for (const talisman of worn) {
+                    html += editorRowOpen(equipRow++);
+                    html += `<span style="color:#888; width:70px; flex-shrink:0; padding-left:8px;">Talisman ${talisman.slotIndex}</span>`;
+                    html += `<span data-talisman-slot="${talisman.slotIndex}" style="color:#e0e0e0; flex:1; min-width:0;">${escapeHtml(
+                        talisman.lines.join(', ') || 'No lines'
+                    )}</span>`;
+                    html += '</div>';
+                }
+            }
         }
 
         html += '</div></div>';

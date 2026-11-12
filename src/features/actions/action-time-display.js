@@ -72,6 +72,7 @@ import {
     zoneSimRateKey,
 } from '../../utils/all-zones-snapshot.js';
 import { characterKey } from '../../utils/character-key.js';
+import { resolveLoadoutTalismans } from '../../utils/talisman-bonuses.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { loadoutSnapshot, combatSimUI } from '../../utils/bundle-bridge.js';
 
@@ -1019,7 +1020,8 @@ class ActionTimeDisplay {
                           stored,
                           typeof store?.resolveEquipment === 'function'
                               ? store.resolveEquipment(stored)
-                              : stored?.equipment
+                              : stored?.equipment,
+                          resolveLoadoutTalismans(stored?.talismanIdMap, dataManager.getCharacterTalismans?.())
                       ),
                   }
                 : { known: false, name: null, signature: null };

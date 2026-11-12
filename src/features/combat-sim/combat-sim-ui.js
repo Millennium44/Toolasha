@@ -8311,6 +8311,9 @@ class CombatSimUI {
                 // party-level debuff, applying a party-only penalty to a
                 // solo run that had deliberately zeroed it.
                 copy.equipment = structuredClone(original.equipment);
+                // The talismans go with the belt they were scaled by
+                if (original.talismans) copy.talismans = structuredClone(original.talismans);
+                else delete copy.talismans;
                 copy.abilities = structuredClone(original.abilities);
                 copy.food = structuredClone(original.food);
                 copy.drinks = structuredClone(original.drinks);

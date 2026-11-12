@@ -288,9 +288,11 @@ export function zoneSimRateKey(zoneHrid, difficultyTier = 0, loadoutId = 0) {
  *
  * @param {Object|null} snapshot - A loadout snapshot (`equipment`, `abilities`, `food`, `drinks`)
  * @param {Array<Object>|null} [resolvedEquipment] - Equipment with the enhancement levels actually equipped
+ * @param {Array<Object>|null} [talismans] - The loadout's resolved talismans (slot and lines). Part of the
+ *   signature only when there are some, so a character without any keeps the signatures it already stored
  * @returns {string|null} The signature, or null with no snapshot
  */
-export function loadoutSignature(snapshot, resolvedEquipment = snapshot?.equipment) {
+export function loadoutSignature(snapshot, resolvedEquipment = snapshot?.equipment, talismans = null) {
     if (!snapshot || typeof snapshot !== 'object') return null;
     // Match applyLoadoutSnapshotToDTO: only equipped entries use a trigger,
     // missing triggers mean the item's defaults, and [] means no conditions.
@@ -324,7 +326,12 @@ export function loadoutSignature(snapshot, resolvedEquipment = snapshot?.equipme
         .filter((entry) => entry?.abilityHrid)
         .map((entry) => entrySignature(entry.abilityHrid));
     const consumables = (list) => Array.from({ length: 3 }, (_, index) => entrySignature(list?.[index]?.itemHrid));
-    return `v2:${JSON.stringify([equipment, abilities, consumables(snapshot.food), consumables(snapshot.drinks)])}`;
+    const parts = [equipment, abilities, consumables(snapshot.food), consumables(snapshot.drinks)];
+    const worn = (Array.isArray(talismans) ? talismans : [])
+        .map((t) => [t?.slotIndex, (t?.modifiers || []).map((m) => `${m.hrid}@${m.grade}`)])
+        .sort((x, y) => (x[0] || 0) - (y[0] || 0));
+    if (worn.length > 0) parts.push(worn);
+    return `v2:${JSON.stringify(parts)}`;
 }
 
 /**

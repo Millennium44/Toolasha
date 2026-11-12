@@ -25,7 +25,8 @@ import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { getLoadout, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
-import { resolveLoadoutTalismans, toSimTalismans } from '../../utils/talisman-bonuses.js';
+import { resolveLoadoutTalismans, sharedSlottedTalismans, toSimTalismans } from '../../utils/talisman-bonuses.js';
+import { isTestServer } from '../../utils/game-server.js';
 
 /**
  * The combat scrolls the player currently has active.
@@ -71,6 +72,9 @@ export function buildGameDataPayload() {
         labyrinthCrateDetailMap: clientData.labyrinthCrateDetailMap,
         levelExperienceTable: clientData.levelExperienceTable,
         talismanModifierDetailMap: clientData.talismanModifierDetailMap,
+        // Talismans exist on the test server only. The engine runs in a worker, where the host is not visible, so
+        // it takes the answer from here: a build saved on the test server fights without talismans on the live one.
+        talismansEnabled: isTestServer(),
     };
 }
 
@@ -1149,6 +1153,13 @@ export function applySharedLoadoutToDTO(dto, loadout, clientData) {
         dto.equipment[type] = { hrid: item.itemHrid, enhancementLevel: item.enhancementLevel || 0 };
     }
 
+    // The loadout's own talismans when it lists them. A loadout that says nothing about them does not get the
+    // profile's current ones: those belong to whatever the player wore when the profile was shared, and pairing
+    // them with another loadout's belt would invent a build. No talismans is the pessimistic side.
+    const loadoutTalismans = sharedSlottedTalismans(loadout.slottedTalismans);
+    if (loadoutTalismans && loadoutTalismans.length > 0) dto.talismans = loadoutTalismans;
+    else delete dto.talismans;
+
     if (Array.isArray(loadout.combatConsumables)) {
         fillConsumables(
             dto,
@@ -1260,6 +1271,11 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
             };
         }
     }
+
+    // The talismans this player's shared profile lists as slotted (only theirs, never the local player's). A
+    // profile without the field carries none.
+    const profileTalismans = sharedSlottedTalismans(profile.profile?.slottedTalismans);
+    if (profileTalismans && profileTalismans.length > 0) dto.talismans = profileTalismans;
 
     // Try to get consumables from battle data first
     let battlePlayer = null;
