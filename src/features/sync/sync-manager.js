@@ -1943,13 +1943,28 @@ class SyncManager {
         if (complete === false) {
             const stores = (failed || []).map((entry) => entry.store).join(', ');
             console.error('[Sync] The pull did not apply cleanly; leaving the sync stamp alone.', failed);
+            // Stores that did write are latched against further saves, so stored data changed under this
+            // tab (auto-reload may act); with nothing latched this is a write failure, recovery only
+            const changedUnderneath = Number(latched) > 0 || (latchedKeys?.length ?? 0) > 0;
+            const reloadPrompt = this._recordReloadPrompt(
+                'sync-pull',
+                'Sync pull did not apply cleanly; reload advised',
+                latchedKeys,
+                {
+                    kind: changedUnderneath ? 'data-changed' : 'recovery',
+                    extraRecords: [
+                        ...(failed || []).map((entry) => `${entry.store} (not written)`),
+                        ...(mergeHeld || []).map((entry) => entry.label).filter(Boolean),
+                    ],
+                }
+            );
             showToast(
                 mergeHeld?.length
                     ? `Sync pull could not safely combine ${mergeHeld.map((entry) => entry.label).join(', ')}. ` +
                           "This device's copies were kept. Nothing was recorded as synced; reload and pull again."
                     : `Sync pull could not write ${stores || 'some stores'}. Nothing was recorded as synced — ` +
                           'free some space or reload and try again.',
-                { kind: 'error', duration: 0 }
+                { kind: 'error', duration: 0, onClose: () => reloadPrompt?.settle('dismissed') }
             );
             return { ok: false, reason: 'incomplete-apply' };
         }
@@ -2992,10 +3007,11 @@ class SyncManager {
      * @param {string} source - Which path asked
      * @param {string} message - What the player was told
      * @param {Array<{store: string, key: string}>} [latchedKeys] - The keys the import latched
+     * @param {{kind?: string, extraRecords?: Array<string>}} [options] - Prompt kind, and labels to add
      * @returns {{settle: Function}} The log handle
      * @private
      */
-    _recordReloadPrompt(source, message, latchedKeys) {
+    _recordReloadPrompt(source, message, latchedKeys, { kind = 'data-changed', extraRecords = [] } = {}) {
         let records = [];
         try {
             records = latchedRecordLabels(latchedKeys);
@@ -3005,7 +3021,8 @@ class SyncManager {
         return recordReloadPrompt({
             source,
             message,
-            records,
+            records: [...records, ...extraRecords],
+            kind,
             characterId: dataManager.getCurrentCharacterId?.() ?? null,
         });
     }

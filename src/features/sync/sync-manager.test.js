@@ -944,6 +944,32 @@ describe('pull', () => {
         expect(reloadPrompts[0].outcome).toBe('dismissed');
     });
 
+    test.each([
+        [
+            'stores that did write are latched',
+            { latched: 1, latchedKeys: [{ store: 'settings', key: 'someRecord_30404' }] },
+            'data-changed',
+            ['someRecord'],
+        ],
+        ['nothing was written', { latched: 0, latchedKeys: [] }, 'recovery', []],
+    ])('an incomplete pull where %s is logged as %s', async (_name, latch, kind, labels) => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.complete = false;
+        payload.failed = [{ store: 'xpHistory', written: 0, expected: 5 }];
+        payload.latched = latch.latched;
+        payload.latchedKeys = latch.latchedKeys;
+
+        const result = await syncManager.pull();
+
+        expect(result).toMatchObject({ ok: false, reason: 'incomplete-apply' });
+        expect(reloadPrompts).toHaveLength(1);
+        expect(reloadPrompts[0]).toMatchObject({ source: 'sync-pull', kind });
+        expect(reloadPrompts[0].records).toEqual([...labels, 'xpHistory (not written)']);
+        toasts.at(-1).onClose('dismiss');
+        expect(reloadPrompts[0].outcome).toBe('dismissed');
+    });
+
     test('a pull that latched nothing leaves nothing in the reload log', async () => {
         stored.map.toolasha_sync_gistId = 'abc';
         gist.read = remote('2026-02-01T00:00:00.000Z');
