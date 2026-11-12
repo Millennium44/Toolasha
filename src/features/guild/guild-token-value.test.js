@@ -22,8 +22,9 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (itemHrid, { mode } = {}) => game.prices[itemHrid]?.[mode] ?? 0,
-    getItemPriceInfo: (itemHrid, { mode } = {}) => {
-        const price = game.prices[itemHrid]?.[mode] ?? 0;
+    getItemPriceInfo: (itemHrid, { mode, context } = {}) => {
+        // A context stands for the player's own Buy side, which these tests fix at the bid
+        const price = game.prices[itemHrid]?.[context ? 'bid' : mode] ?? 0;
         return { price, source: price > 0 ? 'book' : null, estimated: false };
     },
 }));
@@ -379,6 +380,23 @@ describe('goldPerGuildToken', () => {
         expect(valuation.creditItemHrid).toBe('/items/gold_guild_credit');
         // The loser is still on the list, so the choice can be checked
         expect(tokenExchangeOptions('ask').options.map((o) => o.gold)).toEqual([20_000, 1000]);
+    });
+
+    test('a context prices the credit half on the player’s own side instead of the forced one', () => {
+        game.prices = { '/items/bronze_bar': { ask: 100, bid: 60 }, '/items/gold_bar': { ask: 5000, bid: 3000 } };
+        game.clientData = {
+            itemDetailMap: {
+                ...twoCreditColors(),
+                '/items/guild_token': {
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/gold_guild_credit', itemCount: 1, creditCount: 4 },
+                    ],
+                },
+            },
+        };
+
+        expect(explainGuildTokenValue('ask').gold).toBe(20_000);
+        expect(explainGuildTokenValue('ask', { context: 'profit' }).gold).toBe(12_000);
     });
 
     test('gold per credit is taken per color, not from one color for all of them', () => {

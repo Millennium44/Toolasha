@@ -13,8 +13,10 @@ const game = vi.hoisted(() => ({
     itemDetails: {},
     /** The item flow recorder's cached gathering for whatever run id a test asks about */
     runGathering: null,
-    /** Ask prices `updateRunSoFar` prices the recorder's drops at, by item hrid */
+    /** What `updateRunSoFar` sells the recorder's drops at, by item hrid: a number, or `{ask, bid}` read by `sellBasis` */
     prices: {},
+    /** The book side the player's profit Sell side resolves to (conservative = bid, optimistic = ask) */
+    sellBasis: 'bid',
     /** Settings a test wants to flip from the blanket `false` every other test relies on */
     settings: {},
 }));
@@ -61,7 +63,7 @@ vi.mock('../enhancement/enhancement-xp.js', () => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => game.settings[key] ?? false,
-        getSettingValue: (_k, fallback) => fallback,
+        getSettingValue: (key, fallback) => game.settings[key] ?? fallback,
     },
 }));
 
@@ -85,6 +87,12 @@ vi.mock('../networth/item-flow-recorder.js', () => ({
 }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (itemHrid) => (game.prices[itemHrid] ? { ask: game.prices[itemHrid] } : null),
+    getItemPriceInfo: (itemHrid, { context, side } = {}) => {
+        const entry = game.prices[itemHrid];
+        const price = typeof entry === 'object' && entry !== null ? entry[game.sellBasis] : entry;
+        const priced = context === 'profit' && side === 'sell' && Number.isFinite(price);
+        return priced ? { price, source: 'book', estimated: false } : { price: null, source: null, estimated: false };
+    },
 }));
 
 const actionTimeDisplayModule = await import('./action-time-display.js');
@@ -114,6 +122,7 @@ beforeEach(() => {
     enhancement.predictions = null;
     game.runGathering = null;
     game.prices = {};
+    game.sellBasis = 'bid';
     game.settings = {};
     game.itemDetails = {
         [CHEESE]: {
@@ -445,13 +454,36 @@ describe('updateRunSoFar — "so far this run"', () => {
         actionTimeDisplay.runElement = null;
     });
 
-    test('shows actions completed and their value, priced at today’s ask', () => {
+    test('shows actions completed and their value, sold at today’s price net of the market tax', () => {
         game.runGathering = { gained: { '/items/milk': 100 }, from: 0, to: 1000 };
         game.prices['/items/milk'] = 10;
 
         actionTimeDisplay.updateRunSoFar({ id: 1, currentCount: 100 }, gatheringDetails);
 
         expect(actionTimeDisplay.runElement.innerHTML).toContain('100 actions');
+        expect(actionTimeDisplay.runElement.innerHTML).toContain('960');
+    });
+
+    test('follows the Sell side of the profit pricing mode: bid when conservative, ask when optimistic', () => {
+        game.runGathering = { gained: { '/items/milk': 100 }, from: 0, to: 1000 };
+        game.prices['/items/milk'] = { ask: 20, bid: 10 };
+
+        game.sellBasis = 'bid';
+        actionTimeDisplay.updateRunSoFar({ id: 1, currentCount: 100 }, gatheringDetails);
+        expect(actionTimeDisplay.runElement.innerHTML).toContain('960');
+
+        game.sellBasis = 'ask';
+        actionTimeDisplay.updateRunSoFar({ id: 1, currentCount: 100 }, gatheringDetails);
+        expect(actionTimeDisplay.runElement.innerHTML).toContain('1.92K');
+    });
+
+    test('the personal-use sell-tax exclusion leaves the sale untaxed, as the panel’s profit/hr does', () => {
+        game.runGathering = { gained: { '/items/milk': 100 }, from: 0, to: 1000 };
+        game.prices['/items/milk'] = 10;
+        game.settings.profitCalc_excludeSellTax = true;
+
+        actionTimeDisplay.updateRunSoFar({ id: 1, currentCount: 100 }, gatheringDetails);
+
         expect(actionTimeDisplay.runElement.innerHTML).toContain('1.00K');
     });
 
@@ -524,7 +556,7 @@ describe('updateRunSoFar — whole-run count vs. a partially recorded run', () =
 
         expect(actionTimeDisplay.runElement.innerHTML).toContain('This run:');
         expect(actionTimeDisplay.runElement.innerHTML).toContain('258,632 actions');
-        expect(actionTimeDisplay.runElement.innerHTML).toContain('1.00K');
+        expect(actionTimeDisplay.runElement.innerHTML).toContain('960');
     });
 
     test('a run that went on unwatched in the middle is not paired with the whole-run count', () => {
@@ -547,7 +579,7 @@ describe('updateRunSoFar — whole-run count vs. a partially recorded run', () =
         expect(html).not.toContain('3,000');
         expect(html).not.toContain('This run:');
         expect(html).toContain('Watched since');
-        expect(html).toContain('1.00K');
+        expect(html).toContain('960');
     });
 
     test('a short gap (reload, feature just turned on) still counts as full coverage', () => {
@@ -579,7 +611,7 @@ describe('updateRunSoFar — whole-run count vs. a partially recorded run', () =
         // No whole-run action count anywhere near the value — that pairing is the bug.
         expect(html).not.toContain('258,632');
         expect(html).not.toContain('actions');
-        expect(html).toContain('1.00K');
+        expect(html).toContain('960');
         // Recorded days before the real clock's today, so the day is named.
         const expectedTime = formatDateTime(new Date(recordedFrom), { includeDate: true, includeSeconds: false });
         expect(html).toContain(`Since ${expectedTime}:`);
@@ -685,7 +717,7 @@ describe('the "so far this run" row redraws when the recorder catches up', () =>
         actionTimeDisplay.redrawRunSoFar();
 
         expect(actionTimeDisplay.runElement.innerHTML).not.toContain('started before recording');
-        expect(actionTimeDisplay.runElement.innerHTML).toContain('1.00K');
+        expect(actionTimeDisplay.runElement.innerHTML).toContain('960');
     });
 
     test('redrawRunSoFar is a no-op once nothing is running (clearRunSoFar dropped the cached pair)', () => {
@@ -708,7 +740,7 @@ describe('the "so far this run" row redraws when the recorder catches up', () =>
             // First notification: leading-edge redraw, immediate.
             game.runGathering = { gained: { '/items/milk': 100 }, from: 0, to: 1000 };
             actionTimeDisplay.scheduleRunSoFarRedraw();
-            expect(actionTimeDisplay.runElement.innerHTML).toContain('1.00K');
+            expect(actionTimeDisplay.runElement.innerHTML).toContain('960');
 
             // A burst of further notifications inside the throttle window must not each redraw —
             // only collapse into one trailing redraw once the window closes.
@@ -716,11 +748,11 @@ describe('the "so far this run" row redraws when the recorder catches up', () =>
             actionTimeDisplay.scheduleRunSoFarRedraw();
             actionTimeDisplay.scheduleRunSoFarRedraw();
             // Still the first value — the trailing redraw has not fired yet.
-            expect(actionTimeDisplay.runElement.innerHTML).toContain('1.00K');
-            expect(actionTimeDisplay.runElement.innerHTML).not.toContain('5.00K');
+            expect(actionTimeDisplay.runElement.innerHTML).toContain('960');
+            expect(actionTimeDisplay.runElement.innerHTML).not.toContain('4.80K');
 
             vi.runAllTimers();
-            expect(actionTimeDisplay.runElement.innerHTML).toContain('5.00K');
+            expect(actionTimeDisplay.runElement.innerHTML).toContain('4.80K');
         } finally {
             vi.useRealTimers();
         }

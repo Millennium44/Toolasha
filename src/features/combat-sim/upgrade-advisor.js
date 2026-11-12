@@ -2712,10 +2712,14 @@ function applyGuildShrineToDTO(dto, candidate) {
  * @returns {Object} Same shape as `explainUpgradeCost`, plus `guild`
  */
 function explainGuildShrineCost(candidate) {
-    const { lines, total, unpriced } = priceGuildCreditCosts(candidate.creditCosts, { side: 'buy' });
+    // Both halves are bought: the Buy side of the player's Buy/Sell dropdowns, like every other cost here
+    const { lines, total, unpriced } = priceGuildCreditCosts(candidate.creditCosts, {
+        side: 'buy',
+        context: 'profit',
+    });
 
     const tokens = candidate.guildTokenCost || 0;
-    const tokenValue = explainGuildTokenValue('ask');
+    const tokenValue = explainGuildTokenValue('ask', { context: 'profit' });
     const tokenGold = describeGuildTokenGold(tokens, 'ask', { valuation: tokenValue });
     // An unpriced credit already made the total unknown; adding a token value to
     // null would turn "we do not know" into a confident understatement

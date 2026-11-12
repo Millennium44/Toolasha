@@ -14,6 +14,7 @@ const game = vi.hoisted(() => ({
 }));
 
 const market = vi.hoisted(() => ({
+    mode: 'conservative',
     prices: {},
     expectedValues: {},
     evInitialized: true,
@@ -58,7 +59,15 @@ vi.mock('../market/expected-value-calculator.js', () => ({
 }));
 
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrice: (hrid) => market.prices[hrid] ?? 0,
+    // A number is the one price both sides answer; `{ ask, bid }` is read by the profit Sell side of `market.mode`
+    getItemPrice: (hrid, { context, side } = {}) => {
+        const entry = market.prices[hrid];
+        if (entry !== null && typeof entry === 'object') {
+            const basis = ['conservative', 'patientBuy'].includes(market.mode) ? 'bid' : 'ask';
+            return context === 'profit' && side === 'sell' ? (entry[basis] ?? 0) : 0;
+        }
+        return entry ?? 0;
+    },
     getItemPrices: () => null,
 }));
 
@@ -114,6 +123,7 @@ beforeEach(() => {
     game.initClientData = shopWithTwoLines().initClientData;
     game.taskSpeedBonus = 0;
     market.evInitialized = true;
+    market.mode = 'conservative';
     market.prices = { '/items/task_crystal': 5000, '/items/bag_of_10_cowbells': 2000000 };
     market.expectedValues = { '/items/large_treasure_chest': 60000, '/items/purples_gift': 500000 };
     actions.gathering = null;
@@ -243,8 +253,26 @@ describe('pricing coins, tokens and task points together', () => {
 });
 
 describe('cowbell valuation', () => {
-    test('prices a cowbell as a tenth of a bag', () => {
-        expect(getCowbellValue()).toBe(200000);
+    test('prices a cowbell as a tenth of a bag, net of the bag tax', () => {
+        // A bag of 2.0M, 18% bag tax, a tenth per cowbell
+        expect(getCowbellValue()).toBeCloseTo(164000, 6);
+    });
+
+    test('follows the Sell side of the profit pricing mode', () => {
+        market.prices['/items/bag_of_10_cowbells'] = { ask: 2_500_000, bid: 2_000_000 };
+
+        market.mode = 'conservative';
+        const instant = getCowbellValue();
+        market.mode = 'optimistic';
+        const patient = getCowbellValue();
+
+        expect(instant).toBeCloseTo((2_000_000 * 0.82) / 10, 6);
+        expect(patient).toBeCloseTo((2_500_000 * 0.82) / 10, 6);
+    });
+
+    test('a bag with a price on neither side falls back to the vendor value, not zero', () => {
+        market.prices['/items/bag_of_10_cowbells'] = { ask: 0, bid: 0 };
+        expect(getCowbellValue()).toBe(100000);
     });
 
     test('falls back to vendor value with no bag price', () => {

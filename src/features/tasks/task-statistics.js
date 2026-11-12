@@ -551,7 +551,7 @@ class TaskStatistics {
         }
 
         // Cowbells have no listing of their own — price them through the Bag of
-        // 10 Cowbells, the same basis the net worth calculator uses
+        // 10 Cowbells, sold on the player's profit Sell side net of the bag tax
         const cowbellValue = getCowbellValue();
 
         return {
