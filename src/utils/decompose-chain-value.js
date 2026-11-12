@@ -266,8 +266,8 @@ export function decomposeChain(itemHrid) {
             // A crate's contents are sold the way the item tooltip sells them: Coin at face
             // value, Cowbells, dungeon tokens and nested crates through the sell-side resolver
             // (taxed where it says so), a shop-only content as its conversion after tax, and
-            // anything else at its real bid. Only the crate's contents get this latitude; the top
-            // item's ask and the base outputs stay on the strict real-price rule.
+            // anything else at its real order on the mode's sell side. Only the crate's contents get this latitude; the top
+            // item's buy price and the base outputs stay on the strict real-price rule.
             const contentPriceOf = (hrid) => {
                 // A token's shop conversion is priced off real orders on the mode's sell side
                 if (DUNGEON_TOKEN_HRIDS.has(hrid)) {
@@ -375,7 +375,7 @@ export function decomposeChain(itemHrid) {
             // that maximizes the per-hour figure of its own sub-chain (input cost left at
             // 0, children memoised per price snapshot); the item's own top step then
             // re-picks over its candidates against those fixed children, with its real
-            // ask in. A step that cannot be scored per hour (some branch unpriced) falls
+            // buy price in. A step that cannot be scored per hour (some branch unpriced) falls
             // back to scoring its own outputs.
             const pickStep = (hrid, ownUseCost, getChild) => {
                 const details = dataManager.getItemDetails(hrid);
