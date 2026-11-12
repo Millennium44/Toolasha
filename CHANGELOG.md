@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reload prompt log and optional auto-reload
+
+Toolasha now keeps a short device-only log of every time it asks you to reload, which you can copy from Settings > Diagnostics. A new off-by-default setting can reload for you after a sync pull or backup restore, with a countdown and a Cancel button, and never while you are using the page, running a simulator or syncing.
+
 ### Chest loot shows above an open Combat Sim
 
 Opening a chest with the Combat Sim (or any other Toolasha panel) open now shows the game's loot dialog and the Treasure popup on top instead of underneath, and clicking another Toolasha panel no longer dismisses the Treasure popup.
