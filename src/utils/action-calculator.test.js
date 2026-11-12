@@ -342,6 +342,20 @@ describe('efficiency', () => {
     });
 });
 
+describe('special actions (party ready)', () => {
+    test('have no skill, get no level efficiency, and log nothing', () => {
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const stats = calculateActionStats(action({ type: '/action_types/special', levelRequirement: { level: 1 } }), {
+            skills: skillsAt(99),
+            equipment: [],
+        });
+
+        expect(stats.totalEfficiency).toBe(0);
+        expect(logged).not.toHaveBeenCalled();
+        logged.mockRestore();
+    });
+});
+
 describe('community buff efficiency', () => {
     beforeEach(() => {
         character.communityBuffDetails = {

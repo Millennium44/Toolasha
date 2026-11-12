@@ -201,8 +201,13 @@ export function calculateActionStats(actionDetails, options = {}) {
  * @returns {number} Skill level
  */
 function getSkillLevel(skills, skillType) {
-    // Combat/labyrinth actions don't map to a single skill — efficiency scaling doesn't apply
-    if (skillType === '/action_types/combat' || skillType === '/action_types/labyrinth') {
+    // Combat/labyrinth actions don't map to a single skill — efficiency scaling doesn't apply. Neither do the
+    // game's special actions (party ready): no skill exists for them, and that is not an error
+    if (
+        skillType === '/action_types/combat' ||
+        skillType === '/action_types/labyrinth' ||
+        skillType === '/action_types/special'
+    ) {
         return 1;
     }
     // Map action type to skill HRID

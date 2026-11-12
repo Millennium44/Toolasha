@@ -1412,6 +1412,8 @@ class QuickInputButtons {
      * @returns {number} Skill level
      */
     getSkillLevel(skills, skillType) {
+        // The game's special actions (party ready) have no skill: nothing to look up, nothing to report
+        if (skillType === '/action_types/special') return 1;
         // Map action type to skill HRID
         const skillHrid = skillType.replace('/action_types/', '/skills/');
         const skill = skills.find((s) => s.skillHrid === skillHrid);
