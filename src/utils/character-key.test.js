@@ -37,6 +37,19 @@ const mockStorage = vi.hoisted(() => {
             storeFor(storeName).set(key, value);
             return true;
         }),
+        // The atomic read-modify-write: reads every key, lets `mutate` choose what to write
+        updateMany: vi.fn(async (storeName, keys, mutate) => {
+            const store = storeFor(storeName);
+            const values = {};
+            for (const key of keys) values[key] = store.get(key);
+            const entries = mutate({ ...values });
+            const written = Object.keys(entries || {});
+            for (const key of written) {
+                store.set(key, entries[key]);
+                values[key] = entries[key];
+            }
+            return { values, written };
+        }),
         delete: vi.fn(async (key, storeName = 'settings') => {
             storeFor(storeName).delete(key);
             return true;
@@ -369,5 +382,129 @@ describe('writeScoped', () => {
     it('writes under the scoped key', async () => {
         await writeScoped('watchlist', ['a']);
         expect(mockStorage.storeFor('settings').get('watchlist_market123')).toEqual(['a']);
+    });
+});
+
+describe('legacy adoption keeps data truthful', () => {
+    const settings = () => mockStorage.storeFor('settings');
+    const bare = 'bestiaryPointsTarget';
+    const scoped = 'bestiaryPointsTarget_market123';
+
+    // The three entrypoints share migrateLegacy; each takes the same state in its own way
+    const entrypoints = {
+        readScoped: () => readScoped(bare, 'settings', null),
+        readScopedChecked: async () => (await readScopedChecked(bare, 'settings')).value,
+        readScopedFrom: () =>
+            readScopedFrom(
+                bare,
+                new Map([
+                    [scoped, null],
+                    [bare, settings().get(bare) ?? null],
+                ]),
+                'settings',
+                null
+            ),
+    };
+
+    beforeEach(() => {
+        mockStorage.reset();
+        mockDataManager.currentCharacterId = 'market123';
+        mockDataManager.currentGameMode = 'standard';
+        mockDataManager.currentName = 'Millennium';
+        mockConsent.target = 'market123';
+        mockConsent.requestAdoptionConsent.mockClear();
+        mockStorage.updateMany.mockClear();
+        mockStorage.delete.mockClear();
+        _resetAdoptionCache();
+    });
+
+    describe.each(Object.entries(entrypoints))('%s', (_name, read) => {
+        it('keeps the legacy key and returns its value when the destination write fails', async () => {
+            settings().set(bare, 100);
+            mockStorage.updateMany.mockImplementationOnce(async () => null);
+
+            expect(await read()).toBe(100);
+            expect(settings().get(bare)).toBe(100);
+            expect(settings().has(scoped)).toBe(false);
+            expect(mockStorage.delete).not.toHaveBeenCalled();
+        });
+
+        it('adopts on the next read once storage recovers', async () => {
+            settings().set(bare, 100);
+            mockStorage.updateMany.mockImplementationOnce(async () => null);
+            await read();
+
+            expect(await read()).toBe(100);
+            expect(settings().get(scoped)).toBe(100);
+            expect(settings().has(bare)).toBe(false);
+        });
+
+        it('lets a scoped value saved during the consent await win and deletes nothing', async () => {
+            settings().set(bare, 100);
+            let release;
+            mockConsent.getAdoptionTargetId.mockImplementationOnce(
+                () => new Promise((resolve) => (release = () => resolve('market123')))
+            );
+
+            const pending = read();
+            await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+            expect(await writeScoped(bare, 300, 'settings', true)).toBe(true);
+            release();
+
+            expect(await pending).toBe(300);
+            expect(settings().get(scoped)).toBe(300);
+            expect(settings().get(bare)).toBe(100);
+            expect(mockStorage.delete).not.toHaveBeenCalled();
+        });
+
+        it('returns the adopted value and warns when only the legacy delete fails', async () => {
+            settings().set(bare, 100);
+            mockStorage.delete.mockImplementationOnce(async () => false);
+
+            expect(await read()).toBe(100);
+            expect(settings().get(scoped)).toBe(100);
+        });
+
+        it('adopts a zero legacy value', async () => {
+            settings().set(bare, 0);
+            expect(await read()).toBe(0);
+            expect(settings().get(scoped)).toBe(0);
+            expect(settings().has(bare)).toBe(false);
+        });
+    });
+
+    it('does not adopt when another tab removed the legacy key before the transaction', async () => {
+        settings().set(bare, 100);
+        mockConsent.getAdoptionTargetId.mockImplementationOnce(async () => {
+            settings().delete(bare);
+            return 'market123';
+        });
+        expect(await readScoped(bare, 'settings', 7)).toBe(7);
+        expect(settings().has(scoped)).toBe(false);
+    });
+
+    it('adopts what the legacy key holds at commit when another tab changed it', async () => {
+        settings().set(bare, 100);
+        mockConsent.getAdoptionTargetId.mockImplementationOnce(async () => {
+            settings().set(bare, 250);
+            return 'market123';
+        });
+        expect(await readScoped(bare, 'settings', null)).toBe(250);
+        expect(settings().get(scoped)).toBe(250);
+    });
+
+    it('still discards on request, without an adoption transaction', async () => {
+        settings().set(bare, 100);
+        expect(await readScoped(bare, 'settings', null, { migrate: 'discard' })).toBeNull();
+        expect(settings().has(bare)).toBe(false);
+        expect(mockStorage.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('does not touch storage while the owner is undecided', async () => {
+        mockConsent.target = null;
+        settings().set(bare, 100);
+        expect(await readScoped(bare, 'settings', null)).toBeNull();
+        expect(mockStorage.updateMany).not.toHaveBeenCalled();
+        expect(settings().get(bare)).toBe(100);
     });
 });

@@ -278,9 +278,32 @@ async function migrateLegacy(base, scopedKey, legacy, storeName, defaultValue, o
         return defaultValue;
     }
 
-    await storage.set(scopedKey, legacy, storeName, true);
-    await storage.delete(base, storeName);
-    return legacy;
+    // Adoption is a conditional copy: one transaction reads the scoped key and the bare key and writes the
+    // scoped key only if it is still absent and the bare key still holds a value. A scoped value saved while
+    // the consent lookup was pending (or by another tab) therefore wins and is never overwritten. The bare
+    // key is deleted only after that transaction committed, so a failed write loses nothing: the legacy copy
+    // stays for the next read and this session still gets its value. The one race left is a bare key changed
+    // by another tab between the commit and the delete; the delete is then of the value just adopted.
+    const outcome = await storage.updateMany(storeName, [scopedKey, base], (values) => {
+        if (values[scopedKey] !== undefined && values[scopedKey] !== null) return undefined;
+        const current = values[base];
+        if (current === undefined || current === null) return undefined;
+        return { [scopedKey]: current };
+    });
+    if (!outcome) {
+        console.warn(`[CharacterKey] Could not adopt legacy "${base}"; keeping it for the next read`);
+        return legacy;
+    }
+    const winner = outcome.values[scopedKey];
+    if (outcome.written.length === 0) {
+        // Someone else's value was there, or the bare key was gone: hand back what is stored, delete nothing.
+        return winner !== undefined && winner !== null ? winner : defaultValue;
+    }
+    const removed = await storage.delete(base, storeName);
+    if (removed === false) {
+        console.warn(`[CharacterKey] Adopted "${base}" but could not remove the legacy copy`);
+    }
+    return winner;
 }
 
 /**

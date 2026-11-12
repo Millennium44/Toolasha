@@ -44,6 +44,17 @@ vi.mock('../../core/storage.js', () => ({
         },
         getJSON: async (key, _store, fallback) => stored.values[key] ?? fallback,
         setJSON: async () => {},
+        updateMany: async (_store, keys, mutate) => {
+            const values = {};
+            for (const key of keys) values[key] = stored.values[key];
+            const entries = mutate({ ...values });
+            const written = Object.keys(entries || {});
+            for (const key of written) {
+                stored.values[key] = entries[key];
+                values[key] = entries[key];
+            }
+            return { values, written };
+        },
         delete: async (key) => {
             delete stored.values[key];
             return true;

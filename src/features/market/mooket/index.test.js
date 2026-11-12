@@ -49,6 +49,18 @@ const storageMock = vi.hoisted(() => {
             storeFor(store).set(key, structuredClone(value));
             return true;
         },
+        updateMany: async (store, keys, mutate) => {
+            const map = storeFor(store);
+            const values = {};
+            for (const key of keys) values[key] = map.get(key);
+            const entries = mutate({ ...values });
+            const written = Object.keys(entries || {});
+            for (const key of written) {
+                map.set(key, entries[key]);
+                values[key] = entries[key];
+            }
+            return { values, written };
+        },
         delete: async (key, store = 'settings') => {
             storeFor(store).delete(key);
             return true;

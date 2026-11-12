@@ -66,6 +66,18 @@ const storageMock = vi.hoisted(() => {
         getJSON: vi.fn(read),
         set: vi.fn(write),
         setJSON: vi.fn(write),
+        updateMany: async (store, keys, mutate) => {
+            const map = storeFor(store);
+            const values = {};
+            for (const key of keys) values[key] = map.get(key);
+            const entries = mutate({ ...values });
+            const written = Object.keys(entries || {});
+            for (const key of written) {
+                map.set(key, entries[key]);
+                values[key] = entries[key];
+            }
+            return { values, written };
+        },
         delete: vi.fn(async (key, store = 'settings') => storeFor(store).delete(key)),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
         update: vi.fn(update),

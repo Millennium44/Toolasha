@@ -278,6 +278,17 @@ vi.mock('../../core/storage.js', () => {
                 if (next !== undefined) mocks.store.set(keyOf(key, store), next);
                 return { written: next !== undefined, value: next };
             },
+            updateMany: async (store, keys, mutate) => {
+                const values = {};
+                for (const key of keys) values[key] = mocks.store.get(keyOf(key, store));
+                const entries = mutate({ ...values });
+                const written = Object.keys(entries || {});
+                for (const key of written) {
+                    mocks.store.set(keyOf(key, store), entries[key]);
+                    values[key] = entries[key];
+                }
+                return { values, written };
+            },
             delete: async (key, store) => {
                 mocks.store.delete(keyOf(key, store));
                 return true;
