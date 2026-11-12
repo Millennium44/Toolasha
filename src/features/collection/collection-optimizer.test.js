@@ -29,7 +29,7 @@ const game = vi.hoisted(() => ({
 }));
 /** Per-character storage as the character-key helpers see it: `${characterId}:${base}` → value */
 const scoped = vi.hoisted(() => ({ values: new Map(), gate: null }));
-const bus = vi.hoisted(() => ({ handlers: {} }));
+const bus = vi.hoisted(() => ({ handlers: {}, settings: {} }));
 const observer = vi.hoisted(() => ({ handlers: [] }));
 
 const ITEMS = vi.hoisted(() => ({
@@ -166,6 +166,13 @@ vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => (key === 'collectionOptimizer' ? game.setting : undefined),
         getSettingValue: (key, fallback) => fallback,
+        // Handlers by setting key, so a test can move the pricing mode and see the panel notice
+        onSettingChange: (key, handler) => {
+            (bus.settings[key] ||= []).push(handler);
+            return () => {
+                bus.settings[key] = (bus.settings[key] || []).filter((h) => h !== handler);
+            };
+        },
     },
 }));
 
@@ -350,30 +357,31 @@ const candidateResults = (type, hrid) =>
           ? game.decomposeSetups.map((setup) => decomposeResult(hrid, setup)).filter(Boolean)
           : [];
 
+/** The book side the player's profit mode answers for a transaction side (the real getPricingMode's table) */
+const bookSideOf = (mode, side) => {
+    if (mode === 'conservative') return side === 'buy' ? 'ask' : 'bid';
+    if (mode === 'optimistic') return side === 'buy' ? 'bid' : 'ask';
+    if (mode === 'patientBuy') return 'bid';
+    return 'ask';
+};
+const sideOfLookup = (options) => options.mode ?? bookSideOf(game.pricingMode, options.side ?? 'sell');
+
 vi.mock('../../utils/market-data.js', () => ({
-    // The bid side can be empty while the ask is live: a mode other than 'ask' sees `noBid` as estimated
+    // The bid side can be empty while the ask is live: `noBid` is estimated on the bid side only
     isPriceEstimated: (hrid, options = {}) =>
-        game.estimated.has(hrid) || (options.mode !== 'ask' && game.noBid.has(hrid)),
+        game.estimated.has(hrid) || (sideOfLookup(options) === 'bid' && game.noBid.has(hrid)),
     getItemPrice: (hrid) => BUY[hrid] ?? null,
     getItemPriceInfo: (hrid, options = {}) => {
-        // The profit pricing mode picks the side when no mode is named: 'optimistic' buys at the bid
-        const side = options.mode ?? (game.pricingMode === 'optimistic' && options.side === 'buy' ? 'bid' : 'ask');
+        const side = sideOfLookup(options);
         const price = side === 'bid' ? (BID[hrid] ?? BUY[hrid] ?? null) : (BUY[hrid] ?? null);
-        return game.estimated.has(hrid)
+        return game.estimated.has(hrid) || (side === 'bid' && game.noBid.has(hrid))
             ? { price, source: 'value', estimated: true }
             : { price, source: 'book', estimated: false };
     },
     getPricingMode: () => 'ask',
-    // Pins the profit mode for a synchronous call, the way the real one does
-    withProfitPricingMode: (mode, fn) => {
-        const previous = game.pricingMode;
-        game.pricingMode = mode;
-        try {
-            return fn();
-        } finally {
-            game.pricingMode = previous;
-        }
-    },
+}));
+vi.mock('../../utils/patient-tick.js', () => ({
+    PATIENT_TICK_SETTING_KEYS: ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'],
 }));
 // The shared liquidity bound: a quarter of the measured daily volume, per hour
 vi.mock('../../utils/liquidity-cap.js', () => ({
@@ -477,8 +485,10 @@ beforeEach(() => {
     VOLUME.gate = null;
     VOLUME.asked = [];
     BOOKS.byItem = {};
-    game.pricingMode = 'hybrid';
+    // Ask to buy, bid to sell: the numbers these tests are written in
+    game.pricingMode = 'conservative';
     game.modesSeen = [];
+    bus.settings = {};
     game.noTransmute = false;
     game.milkingLevel = 10;
     game.drinks = [];
@@ -545,10 +555,29 @@ describe("the maintainer's Amber row: Decompose 1472× Earrings Of Essence Find,
         expect(route.yields.get('/items/amber')).toBeCloseTo(4.8, 9);
     });
 
-    test('a patient-buy pricing mode does not price a buy of hundreds at the bid', async () => {
+    test('the bought earring follows the Buy side: an optimistic mode quotes the bid, not a pinned ask', async () => {
         game.pricingMode = 'optimistic';
         const route = earringsRoute(await buildCollectionRoutes());
-        expect(route.cost).toBeCloseTo(6_300_000 + 200 + 7920 * 0.8, 6);
+        expect(route.cost).toBeCloseTo(5_940_000 + 200 + 7920 * 0.8, 6);
+        expect(route.purchase).toMatchObject({ hrid: '/items/earrings_of_essence_find', ask: 5_940_000 });
+    });
+
+    test('outputs follow the Sell side: an optimistic mode sells a Star Fragment at the ask after tax', async () => {
+        game.pricingMode = 'optimistic';
+        const route = earringsRoute(await buildCollectionRoutes());
+        expect(route.kept.get('/items/star_fragment').unit).toBeCloseTo(13_750 * 0.96, 6);
+        game.pricingMode = 'conservative';
+        const instant = earringsRoute(await buildCollectionRoutes());
+        expect(instant.kept.get('/items/star_fragment').unit).toBeCloseTo(13_700 * 0.96, 6);
+    });
+
+    test('a buy still needs a real order on the Buy side: an estimate there leaves the route out', async () => {
+        game.pricingMode = 'optimistic';
+        game.noBid = new Set(['/items/earrings_of_essence_find']);
+        expect(earringsRoute(await buildCollectionRoutes())).toBeUndefined();
+        // The same empty bid is no obstacle to a player who buys at the ask
+        game.pricingMode = 'conservative';
+        expect(earringsRoute(await buildCollectionRoutes())).toBeDefined();
     });
 
     test('Star Fragments are sold at the bid after tax: the earring no longer earns 293k', async () => {
@@ -600,6 +629,46 @@ describe("the maintainer's Amber row: Decompose 1472× Earrings Of Essence Find,
         delete VOLUME.perDay['/items/earrings_of_essence_find'];
         BOOKS.byItem['/items/earrings_of_essence_find'].lastUpdated = Date.now() - 7 * 3600 * 1000;
         expect(buyQuote(route.purchase, 4).gold).toBe(4 * 6_300_000);
+    });
+
+    test('a patient buy waits in the queue: the cached asks do not price it, the week bound does', async () => {
+        game.pricingMode = 'optimistic';
+        const route = earringsRoute(await buildCollectionRoutes());
+        expect(route.purchase.ask).toBe(5_940_000);
+        BOOKS.byItem['/items/earrings_of_essence_find'] = {
+            lastUpdated: Date.now() - 3600 * 1000,
+            asks: [{ listingId: 9001, price: 6_300_000, quantity: 2 }],
+        };
+        // The book holds two earrings, and a bid at 5.94M buys neither of them: three are still to be had
+        const quote = buyQuote(route.purchase, 3);
+        expect(quote.fromBook).toBe(false);
+        expect(quote.gold).toBe(3 * 5_940_000);
+
+        // An instant buyer walks the same book
+        game.pricingMode = 'conservative';
+        const instant = earringsRoute(await buildCollectionRoutes());
+        expect(buyQuote(instant.purchase, 3).feasible).toBe(false);
+    });
+
+    test('moving the Buy/Sell dropdowns prices the routes again', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        const before = optimizer.routes;
+        expect(bus.settings.profitCalc_pricingMode).toHaveLength(1);
+        expect(bus.settings.profitCalc_patientTickBuy).toHaveLength(1);
+        expect(bus.settings.profitCalc_patientTickSell).toHaveLength(1);
+
+        game.pricingMode = 'optimistic';
+        for (const handler of bus.settings.profitCalc_pricingMode) handler('optimistic');
+
+        // Dropped at once, then built again under the new mode
+        expect(optimizer.routes).toBeNull();
+        await vi.waitFor(() => expect(optimizer.routes).not.toBeNull());
+        expect(optimizer.routes).not.toBe(before);
+
+        optimizer.disable();
+        expect(bus.settings.profitCalc_pricingMode).toHaveLength(0);
     });
 
     test('an Iron Cow sells to the vendor: no market bound', () => {
@@ -827,19 +896,23 @@ describe('transmute routes', () => {
         expect(decomposes.map((r) => r.setup.catalystHrid)).toEqual([null]);
     });
 
-    test('a catalyst with a live ask but no live bid is still a setup: the check pins the ask', async () => {
+    test('a catalyst with a live ask but no live bid is a setup for an ask buyer, not for a bid buyer', async () => {
         game.transmuteSetups = [
             {},
             { successRate: 0.75, catalystCostPerHour: 9000, winningCatalystHrid: '/items/prime_catalyst' },
         ];
         game.noBid = new Set(['/items/prime_catalyst']);
-        const routes = (await buildCollectionRoutes()).sources.filter(
-            (s) => s.route === 'transmute' && s.sourceHrid === '/items/amber'
-        );
-        expect(routes.map((r) => r.setup.catalystHrid)).toEqual([
+        const transmutes = async () =>
+            (await buildCollectionRoutes()).sources.filter(
+                (s) => s.route === 'transmute' && s.sourceHrid === '/items/amber'
+            );
+        expect((await transmutes()).map((r) => r.setup.catalystHrid)).toEqual([
             '/items/catalyst_of_transmutation',
             '/items/prime_catalyst',
         ]);
+
+        game.pricingMode = 'optimistic';
+        expect((await transmutes()).map((r) => r.setup.catalystHrid)).toEqual(['/items/catalyst_of_transmutation']);
     });
 
     test('the row says which catalyst and teas the transmute uses', async () => {
@@ -1032,15 +1105,13 @@ describe('Gourmet and a craft batch', () => {
         expect(unsold.gold - sold.gold).toBeCloseTo(sold.units * 0.25 * 2000 * 0.96, 6);
     });
 
-    test('alchemy overhead is priced at the ask whatever the profit mode is', async () => {
+    test('alchemy overhead is priced under the player profit mode, not a pinned ask', async () => {
         game.pricingMode = 'optimistic';
         game.decomposeSetups = [{}];
         game.transmuteSetups = [{}];
         await buildCollectionRoutes();
         expect(game.modesSeen.length).toBeGreaterThan(0);
-        expect(new Set(game.modesSeen)).toEqual(new Set(['conservative']));
-        // And the mode is put back afterwards
-        expect(game.pricingMode).toBe('optimistic');
+        expect(new Set(game.modesSeen)).toEqual(new Set(['optimistic']));
     });
 
     test('the batch is the expected output per action, base count times one plus the Gourmet chance', async () => {

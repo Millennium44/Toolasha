@@ -524,7 +524,7 @@ describe('hints on the game achievement cards', () => {
             expect(game.prefetched.sort()).toEqual(['/items/celestial_hammer', '/items/celestial_pot']);
         });
 
-        test('the sale price is the top bid (an instant sell) less the 4% tax, once; a value-map estimate is no bid', () => {
+        test('the sale price is the player Sell side less the 4% tax, once; a value-map estimate is no sale price', () => {
             celestial({ '/items/celestial_pot': 1000, '/items/cheese': 500 });
             game.estimated = new Set(['/items/cheese']);
             const context = finisher.readinessContext();
@@ -534,16 +534,15 @@ describe('hints on the game achievement cards', () => {
             expect(nav.getItemPriceInfo).toHaveBeenCalledWith('/items/celestial_pot', {
                 context: 'profit',
                 side: 'sell',
-                mode: 'bid',
                 marketQuote: true,
             });
         });
 
-        test('no bid on the pick says so', () => {
+        test('no sale price on the pick says so', () => {
             const text = celestial({});
             expect(text).toContain('[gatherers_top');
             expect(text).toContain('buy ~60');
-            expect(text).toContain('no bid');
+            expect(text).toContain('no sale price');
             expect(text).not.toContain('resell');
         });
 
@@ -627,7 +626,7 @@ describe('hints on the game achievement cards', () => {
         test('an Iron Cow gets no resale and no lookup', async () => {
             const text = celestial({ '/items/celestial_pot': 2000 }, { ironCow: true });
             expect(text).not.toContain('resell');
-            expect(text).not.toContain('no bid');
+            expect(text).not.toContain('no sale price');
             await vi.advanceTimersByTimeAsync(0);
             expect(game.prefetched).toEqual([]);
         });
@@ -1110,6 +1109,7 @@ describe('hints on the game achievement cards', () => {
             'market_pooledHistory',
             'profitCalc_liquidityCap',
             'profitCalc_patientTickBuy',
+            'profitCalc_patientTickSell',
             'profitCalc_pricingMode',
         ]);
         game.prices = { ...PRICES, '/items/peach': 300 };

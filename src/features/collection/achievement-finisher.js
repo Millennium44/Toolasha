@@ -124,7 +124,7 @@ const READINESS_EVENTS = [
 ];
 
 /** Toolasha settings that change a buy cost (the rest of the pricing rule is in the cache's `pricingStamp`) */
-const READINESS_SETTINGS = ['profitCalc_pricingMode', 'profitCalc_patientTickBuy'];
+const READINESS_SETTINGS = ['profitCalc_pricingMode', 'profitCalc_patientTickBuy', 'profitCalc_patientTickSell'];
 
 /** Settings that decide whether, and from where, an output's sell volume can be measured */
 const VOLUME_SETTINGS = ['profitCalc_liquidityCap', 'market_pooledHistory', 'market_historySource'];
@@ -231,7 +231,7 @@ export function readinessText(res, ready, clientData, ownCombatLevel, progress =
 /** The resale tail of an any-of production hint: what the output sells for, the net, how well it trades */
 function resaleParts(ready) {
     if (!Number.isFinite(ready.resale)) return [];
-    if (ready.noBid) return ['no bid'];
+    if (ready.noBid) return ['no sale price'];
     const parts = [`resell ~${formatKMB(ready.resale)}${COIN_MARK}`];
     if (Number.isFinite(ready.net) && ready.owned !== true) {
         parts.push(
@@ -720,12 +720,12 @@ class AchievementFinisher {
                 return info.price;
             },
             isEstimated: (itemHrid) => estimated.has(itemHrid),
-            // Any-of production: what one unit sells for after the tax (a value-map estimate is no bid)
+            // Any-of production: what one unit sells for on the player's Sell side after the tax (a value-map
+            // estimate is no sale price)
             sellPrice: (itemHrid) => {
                 const info = getItemPriceInfo(itemHrid, {
                     context: 'profit',
                     side: 'sell',
-                    mode: 'bid',
                     marketQuote: true,
                 });
                 if (!Number.isFinite(info.price) || info.estimated) return null;
