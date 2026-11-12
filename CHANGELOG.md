@@ -42,6 +42,10 @@ A shortcut now gives up if you pick another item yourself, ignores the wrong buy
 
 Changing the history source refetches the chart instead of showing the previous pool's data under the new label, and a lookup caught mid-switch can no longer leave a false zero volume.
 
+### Refinement chest luck counts drop quantity
+
+The dungeon luck tooltip now expects more refinement chests when your drop quantity gives extra rolls, instead of one roll per completion, so several refinement chests from one run no longer read as impossible. The extra rolls are inferred and marked "rolls assumed".
+
 <!-- shipped in 3.85.0 -->
 
 ### Combat Sim Upgrade list trims drink and ability-order noise
