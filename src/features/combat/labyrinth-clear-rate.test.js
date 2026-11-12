@@ -21,7 +21,7 @@ const labMonsters = vi.hoisted(() => ({ list: [] }));
 
 /** Community buff levels the mocked data manager reports, by buff hrid */
 const community = vi.hoisted(() => ({ levels: {} }));
-const ownedTalismans = vi.hoisted(() => ({ list: [] }));
+const ownedTalismans = vi.hoisted(() => ({ list: [], slotted: [] }));
 
 /** Backing store for the mocked storage module: `${storeName}:${key}` -> value */
 const db = vi.hoisted(() => ({ map: new Map(), unavailable: false, hold: null }));
@@ -82,6 +82,7 @@ vi.mock('../../core/data-manager.js', () => ({
         // metrics and the combat experience award both read live
         getCommunityBuffLevel: (hrid) => community.levels[hrid] || 0,
         getCharacterTalismans: () => ownedTalismans.list,
+        getSlottedTalismans: () => ownedTalismans.slotted,
         getCharacterGuildBuffLevel: (hrid) => shrines.owned[hrid] || 0,
         getInventory: () => bag.items,
         getEquipment: () => new Map(worn.map),
@@ -8769,5 +8770,34 @@ describe('the snapshot fingerprint and talismans', () => {
         const plain = labyrinthClearRate._snapshotContentFingerprint();
         ownedTalismans.list = owned(3);
         expect(labyrinthClearRate._snapshotContentFingerprint()).toBe(plain);
+    });
+});
+
+describe('worn talismans of a room with no usable loadout', () => {
+    const slotted = (grade) => [{ id: 9, slotIndex: 1, modifiers: [{ hrid: '/talisman_modifiers/armor', grade }] }];
+
+    afterEach(() => {
+        ownedTalismans.slotted = [];
+        for (const key of Object.keys(gear.snapshots)) delete gear.snapshots[key];
+    });
+
+    test('the cache key of a worn-kit room sees a reroll of a slotted talisman', () => {
+        ownedTalismans.slotted = slotted(1);
+        const before = labyrinthClearRate._fallbackWornPart(0);
+        ownedTalismans.slotted = slotted(2);
+        expect(labyrinthClearRate._fallbackWornPart(0)).not.toBe(before);
+    });
+
+    test('with none slotted the key part is what it was', () => {
+        ownedTalismans.slotted = [];
+        expect(labyrinthClearRate._fallbackWornPart(0)).not.toContain(':tl=');
+    });
+
+    test('the build fingerprint sees it too when a room fights with the worn kit', () => {
+        // No monsters readable: nothing rules the worn kit out
+        ownedTalismans.slotted = slotted(1);
+        const before = labyrinthClearRate._snapshotContentFingerprint();
+        ownedTalismans.slotted = slotted(2);
+        expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
     });
 });

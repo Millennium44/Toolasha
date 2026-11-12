@@ -331,7 +331,7 @@ export const recommendationMethods = {
             // changing anything above, and a sim cached against the old level
             // would otherwise outlive the upgrade that made it wrong
             const owned = dataManager.getCharacterTalismans?.() || [];
-            const worn = Object.values(loadoutSnapshot.snapshots || {})
+            let worn = Object.values(loadoutSnapshot.snapshots || {})
                 .map((snapshot) => {
                     const gear = loadoutSnapshot
                         .resolveEquipment(snapshot)
@@ -349,6 +349,11 @@ export const recommendationMethods = {
                     return lines ? `${gear}~${lines}` : gear;
                 })
                 .join('|');
+            // A room with no usable loadout fights with the talismans slotted now; with a loadout on every room
+            // the live ones are never read (and the lab's own swaps change them), so they stay out then
+            const liveTalismans =
+                wornKit || !this._everyCombatRoomHasLoadout?.() ? this._liveTalismanLines?.() || '' : '';
+            if (liveTalismans) worn += `|live~${liveTalismans}`;
             const levels = this._combatLevelsFingerprintPart();
             const build = this._simBuildInputs?.({ wornKit }) ?? null;
             return tagFingerprint(
