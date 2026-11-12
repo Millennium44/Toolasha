@@ -8,7 +8,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { runInBackground } from '../../utils/background-work.js';
-import { talismanBonusesOf } from '../../utils/talisman-bonuses.js';
+import { resolveLoadoutTalismans, toSimTalismans } from '../../utils/talisman-bonuses.js';
 import { upgradeRequirementHtml } from '../../utils/item-requirements.js';
 import { characterKey, readScoped, readScopedChecked, writeScoped } from '../../utils/character-key.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
@@ -11398,7 +11398,9 @@ class LabSimUI {
             const snapshot = allSnapshots.find((s) => s.name === loadoutName);
             if (!snapshot?.equipment?.length) continue;
             // Same loadouts as _buildSkillEquipmentMap; an empty set is an answer (this loadout has none)
-            talismanMap[skillHrid] = { ...talismanBonusesOf(store.equipmentMapOf?.(snapshot)).noncombat };
+            talismanMap[skillHrid] = toSimTalismans(
+                resolveLoadoutTalismans(snapshot.talismanIdMap, dataManager.getCharacterTalismans?.())
+            );
         }
         return talismanMap;
     }

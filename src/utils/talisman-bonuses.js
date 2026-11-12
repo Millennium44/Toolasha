@@ -170,6 +170,19 @@ export function resolveLoadoutTalismans(talismanIdMap, ownedTalismans) {
 }
 
 /**
+ * The unscaled form of a talisman list that a sim player carries: slot and modifier lines only. The scaled
+ * values depend on the belt, which the editor can change, so they are worked out where they are used.
+ * @param {Array<Object>} talismans - Talisman records
+ * @returns {Array<{slotIndex: number, modifiers: Array<{hrid: string, grade: number}>}>}
+ */
+export function toSimTalismans(talismans) {
+    return (talismans || []).map((t) => ({
+        slotIndex: t.slotIndex,
+        modifiers: (t.modifiers || []).map((m) => ({ hrid: m.hrid, grade: m.grade })),
+    }));
+}
+
+/**
  * A loadout's talisman bonuses: its own belt (from its saved equipment) and its own talismans.
  * @param {Object} params
  * @param {Object|null} params.talismanIdMap - The loadout's map
