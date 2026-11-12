@@ -55,6 +55,19 @@ export const MAX_SAVED_ROSTERS = 40;
 /** Most players a saved roster holds: the whole party, you included */
 export const MAX_ROSTER_PLAYERS = 5;
 
+/** How long a sync eviction stays on a record to be reported (the tombstone age) */
+export const CAPPED_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Most evictions a record remembers; past it the oldest are forgotten */
+export const MAX_CAPPED = 20;
+
+/**
+ * Where this device remembers which evictions it has shown, `{rosters: at, parties: at}`. Under `toolasha_local_`,
+ * so the sync neither uploads nor applies it: dismissing a note on one device must not hide it on another, which
+ * has not shown it yet, and the stamp is the newest `at` this device showed.
+ */
+export const CAPPED_SEEN_KEY = 'toolasha_local_cappedSeen';
+
 const CHOICES = ['try', 'always', 'never'];
 
 /**
@@ -62,7 +75,26 @@ const CHOICES = ['try', 'always', 'never'];
  * @returns {{savedAt: number, parties: Array, removed: Object}}
  */
 function emptySaved() {
-    return { savedAt: 0, parties: [], removed: {} };
+    return { savedAt: 0, parties: [], removed: {}, capped: {} };
+}
+
+/**
+ * The eviction record read back: `{id: {name, at}}`, entries older than {@link CAPPED_MAX_AGE_MS} or malformed
+ * dropped, the {@link MAX_CAPPED} most recent kept.
+ * @param {*} value
+ * @param {number} now
+ * @returns {Object<string, {name: string, at: number}>}
+ */
+function normalizeCapped(value, now) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const entries = [];
+    for (const [id, entry] of Object.entries(value)) {
+        const at = Number(entry?.at);
+        if (!id || !Number.isFinite(at) || at <= 0 || now - at > CAPPED_MAX_AGE_MS) continue;
+        entries.push([id, { name: cleanTeammateName(entry.name) || 'Party', at }]);
+    }
+    entries.sort((x, y) => y[1].at - x[1].at || (x[0] < y[0] ? -1 : 1));
+    return Object.fromEntries(entries.slice(0, MAX_CAPPED));
 }
 
 /**
@@ -71,7 +103,7 @@ function emptySaved() {
  * @param {number} [now]
  * @returns {{savedAt: number, parties: Array<{id: string, name: string, members: Array<{name: string, dto: Object,
  *   choice: string, auras: Array, includeAsBuilt: boolean, gameMode: string|null}>, addedAt: number,
- *   updatedAt: number}>, removed: Object<string, number>}}
+ *   updatedAt: number}>, removed: Object<string, number>, capped: Object<string, {name: string, at: number}>}}
  */
 export function normalizeSavedParties(value, now = Date.now()) {
     return normalizeRecord(value, now, PARTIES);
@@ -116,7 +148,7 @@ function normalizeRecord(value, now, { maxMembers, maxEntries, fallbackName }) {
         });
         if (parties.length >= maxEntries) break;
     }
-    return { savedAt: Number(value.savedAt) || 0, parties, removed };
+    return { savedAt: Number(value.savedAt) || 0, parties, removed, capped: normalizeCapped(value.capped, now) };
 }
 
 /**
@@ -204,11 +236,23 @@ function mergeRecord(local, incoming, kind) {
         const mine = byId.get(party.id);
         if (!mine || party.updatedAt >= mine.updatedAt) byId.set(party.id, party);
     }
-    const parties = keepMostRecent(
-        [...byId.values()].filter((party) => !(removed[party.id] >= party.updatedAt)),
-        kind.maxEntries
-    );
-    return { savedAt: Math.max(a.savedAt, b.savedAt), parties, removed };
+    const live = [...byId.values()].filter((party) => !(removed[party.id] >= party.updatedAt));
+    const parties = keepMostRecent(live, kind.maxEntries);
+    // What the cap just dropped is recorded here, in the fold, so a device that had no panel open when it ran can
+    // still say so. An id already recorded keeps its earlier stamp (a stale device pushing it back is not news);
+    // one kept, or deleted on purpose, is no longer a loss
+    const kept = new Set(parties.map((party) => party.id));
+    const capped = { ...a.capped };
+    for (const [id, entry] of Object.entries(b.capped)) if (!capped[id] || entry.at < capped[id].at) capped[id] = entry;
+    for (const party of live)
+        if (!kept.has(party.id) && !capped[party.id]) capped[party.id] = { name: party.name, at: now };
+    for (const id of Object.keys(capped)) if (kept.has(id) || id in removed) delete capped[id];
+    return {
+        savedAt: Math.max(a.savedAt, b.savedAt),
+        parties,
+        removed,
+        capped: normalizeCapped(capped, now),
+    };
 }
 
 /**
@@ -222,6 +266,77 @@ export function evictedPartiesByCap(before, after) {
     if (left.length < MAX_SAVED_PARTIES) return [];
     const ids = new Set(left.map((p) => p.id));
     return (before?.parties || []).filter((p) => !ids.has(p.id) && !after?.removed?.[p.id]).map((p) => p.name);
+}
+
+/**
+ * The evictions of a record this device has not yet shown: newest first.
+ * @param {{capped?: Object<string, {name: string, at: number}>}} saved
+ * @param {number} seenAt - The newest `at` this device has shown ({@link loadCappedSeen})
+ * @param {number} [now]
+ * @returns {Array<{id: string, name: string, at: number}>}
+ */
+export function unseenCapped(saved, seenAt, now = Date.now()) {
+    const capped = normalizeCapped(saved?.capped, now);
+    return Object.entries(capped)
+        .filter(([, entry]) => entry.at > (Number(seenAt) || 0))
+        .map(([id, entry]) => ({ id, ...entry }))
+        .sort((x, y) => y.at - x.at);
+}
+
+/**
+ * The note a list's unseen evictions get.
+ * @param {Array<{name: string}>} entries
+ * @param {number} max - The list's cap
+ * @returns {string} Empty when nothing was evicted
+ */
+export function cappedNoteText(entries, max) {
+    if (!entries?.length) return '';
+    const names = entries.map((entry) => entry.name);
+    const shown = names.slice(0, 5).join(', ');
+    const list = names.length > 5 ? `${shown} and ${names.length - 5} more` : shown;
+    return `Sync joined two full lists and kept the ${max} most recently changed: ${list} dropped.`;
+}
+
+/**
+ * The newest eviction this device has shown for one record.
+ * @param {string} key - {@link SAVED_PARTIES_KEY} or {@link SAVED_ROSTERS_KEY}
+ * @returns {Promise<number>} 0 when none, or when the read failed (the note then shows once more)
+ */
+export async function loadCappedSeen(key) {
+    try {
+        const seen = await storage.get(CAPPED_SEEN_KEY, STORE, null);
+        return Number(seen?.[key]) || 0;
+    } catch (error) {
+        console.error('[PartySaved] Failed to read which evictions were shown:', error);
+        return 0;
+    }
+}
+
+/**
+ * Dismiss a record's evictions on this device: remember the newest one shown. A later eviction is newer, so it
+ * shows again. Only this device's stamp moves; the record itself is never edited, since removing an entry from a
+ * union-merged field would bring it back on the next fold.
+ * @param {string} key - {@link SAVED_PARTIES_KEY} or {@link SAVED_ROSTERS_KEY}
+ * @param {number} upTo - The `at` of the newest eviction shown
+ * @returns {Promise<boolean>} Whether the stamp was written
+ */
+export async function dismissCapped(key, upTo) {
+    try {
+        const result = await storage.update(
+            CAPPED_SEEN_KEY,
+            (current) => {
+                const seen = current && typeof current === 'object' ? { ...current } : {};
+                if ((Number(seen[key]) || 0) >= upTo) return undefined;
+                seen[key] = upTo;
+                return seen;
+            },
+            STORE
+        );
+        return Boolean(result);
+    } catch (error) {
+        console.error('[PartySaved] Failed to remember the dismissed evictions:', error);
+        return false;
+    }
 }
 
 /**

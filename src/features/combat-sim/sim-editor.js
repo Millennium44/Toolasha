@@ -51,7 +51,21 @@ import { applyTriggerRows, rowSignature } from './lab-condition-search.js';
 import { neverFiresReason } from './trigger-checks.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 import { maxEnhancementLevel, maxHouseRoomLevel, maxLevel } from '../../utils/game-maximums.js';
-import { loadSavedParties, loadSavedRosters, removeRoster, saveRoster, usableMembers } from './party-saved.js';
+import {
+    MAX_SAVED_PARTIES,
+    MAX_SAVED_ROSTERS,
+    SAVED_PARTIES_KEY,
+    SAVED_ROSTERS_KEY,
+    cappedNoteText,
+    dismissCapped,
+    loadCappedSeen,
+    loadSavedParties,
+    loadSavedRosters,
+    removeRoster,
+    saveRoster,
+    unseenCapped,
+    usableMembers,
+} from './party-saved.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -1470,10 +1484,42 @@ export class SimEditor {
     async _readSavedLists() {
         const token = this._savedToken;
         const owner = dataManager.getCurrentCharacterId?.() ?? null;
-        const [rosters, parties] = await Promise.all([loadSavedRosters(), loadSavedParties()]);
+        const [rosters, parties, rosterSeen, partySeen] = await Promise.all([
+            loadSavedRosters(),
+            loadSavedParties(),
+            loadCappedSeen(SAVED_ROSTERS_KEY),
+            loadCappedSeen(SAVED_PARTIES_KEY),
+        ]);
         if (token !== this._savedToken || (dataManager.getCurrentCharacterId?.() ?? null) !== owner) return;
-        this._savedLists = { rosters: rosters.parties, parties: parties.parties };
+        // What a sync fold dropped past the cap is on the records themselves, so it is reported here even if
+        // nothing was open when the fold ran
+        const lost = [
+            { unseen: unseenCapped(rosters, rosterSeen), max: MAX_SAVED_ROSTERS, what: 'saved here' },
+            { unseen: unseenCapped(parties, partySeen), max: MAX_SAVED_PARTIES, what: 'from the Party tab' },
+        ].filter((list) => list.unseen.length);
+        this._savedLists = { rosters: rosters.parties, parties: parties.parties, lost };
         this.renderEditor();
+    }
+
+    /**
+     * Dismiss the sync-eviction notes in the open Load party form, on this device only.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _dismissSavedLost() {
+        const lists = this._savedLists;
+        if (!lists?.lost?.length) return;
+        const token = this._savedToken;
+        const stamps = [
+            [SAVED_ROSTERS_KEY, lists.lost.find((l) => l.what === 'saved here')],
+            [SAVED_PARTIES_KEY, lists.lost.find((l) => l.what === 'from the Party tab')],
+        ].filter(([, list]) => list);
+        // Hidden at once; a stamp that could not be written just shows the note again on the next read
+        if (token === this._savedToken && this._savedLists === lists) {
+            this._savedLists = { ...lists, lost: [] };
+            this.renderEditor();
+        }
+        await Promise.all(stamps.map(([key, list]) => dismissCapped(key, list.unseen[0].at)));
     }
 
     /**
@@ -1664,6 +1710,18 @@ export class SimEditor {
             html += `<div data-saved-form="load" style="margin-bottom:8px; padding:6px 8px; border:1px solid #333;
                 border-radius:5px; background:rgba(255,255,255,0.02); font-size:11px;">`;
             const lists = this._savedLists;
+            if (lists?.lost?.length) {
+                const text = lists.lost
+                    .map(
+                        (list) =>
+                            `${list.what[0].toUpperCase()}${list.what.slice(1)}: ${cappedNoteText(list.unseen, list.max)}`
+                    )
+                    .join(' ');
+                html += `<div data-saved-lost style="display:flex; gap:6px; align-items:center; color:#ff9800; margin-bottom:6px;">
+                    <span style="flex:1; min-width:0;">${escapeHtml(text)}</span>
+                    <button id="mwi-csim-saved-lost-dismiss" style="${plain}">Dismiss</button>
+                </div>`;
+            }
             if (!lists) {
                 html += `<div style="color:#888;">Reading the saved parties…</div>`;
             } else if (!lists.rosters.length && !lists.parties.length) {
@@ -1732,6 +1790,9 @@ export class SimEditor {
             }
             this.openSavedList();
         });
+        editorArea
+            .querySelector('#mwi-csim-saved-lost-dismiss')
+            ?.addEventListener('click', () => this._dismissSavedLost());
         editorArea.querySelector('#mwi-csim-saved-cancel')?.addEventListener('click', () => {
             this._closeSavedForm();
             this._setSavedNote('');

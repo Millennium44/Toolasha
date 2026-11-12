@@ -42,6 +42,14 @@ const {
     mergeSavedParties,
     mergeSavedRosters,
     usableMembers,
+    CAPPED_SEEN_KEY,
+    CAPPED_MAX_AGE_MS,
+    MAX_CAPPED,
+    MAX_SAVED_PARTIES,
+    cappedNoteText,
+    dismissCapped,
+    loadCappedSeen,
+    unseenCapped,
 } = await import('./party-saved.js');
 const {
     cleanTeammateName,
@@ -259,7 +267,8 @@ describe('the parties record the Party tab keeps', () => {
         const stored = db.values.get(SAVED_PARTIES_KEY);
         const now = Date.now();
         // Every existing party, whole, on the older build
-        expect(oldNormalizeSavedParties(stored, now)).toEqual(normalizeSavedParties(stored, now));
+        const { capped: _capped, ...current } = normalizeSavedParties(stored, now);
+        expect(oldNormalizeSavedParties(stored, now)).toEqual(current);
         expect(oldNormalizeSavedParties(stored, now).parties.map((p) => [p.name, p.members.length])).toEqual([
             ['Two', 2],
             ['Four', 4],
@@ -269,7 +278,7 @@ describe('the parties record the Party tab keeps', () => {
         expect(oldMergeSavedParties(theirs, stored).parties).toEqual(mergeSavedParties(theirs, stored).parties);
         expect(oldMergeSavedParties(stored, theirs).parties).toHaveLength(2);
         // The rosters sit in a key the older build has no reader for
-        expect(Object.keys(stored)).toEqual(['savedAt', 'parties', 'removed']);
+        expect(Object.keys(stored)).toEqual(['savedAt', 'parties', 'removed', 'capped']);
     });
 
     test('why rosters have their own key: the older read cuts a five-player record to four', () => {
@@ -324,5 +333,146 @@ describe('sync', () => {
         expect(mergeSavedRosters(renamed, old).parties[0].name).toBe('New');
         const ancient = { parties: [], removed: { 'sr-z': Date.now() - TOMBSTONE_MAX_AGE_MS - 1000 } };
         expect(mergeSavedRosters(ancient, { parties: [] }).removed).toEqual({});
+    });
+});
+
+describe('evictions past the cap, recorded in the fold', () => {
+    const full = (prefix, base, count = MAX_SAVED_ROSTERS, members = five) => ({
+        savedAt: base,
+        parties: Array.from({ length: count }, (_, i) => ({
+            id: `${prefix}${i}`,
+            name: `${prefix}${i}`,
+            members: members(),
+            addedAt: base + i,
+            updatedAt: base + i,
+        })),
+        removed: {},
+    });
+
+    test('two full lists with disjoint ids fold to the cap and name what was dropped, at most 20', () => {
+        const a = full('a', 1000);
+        const b = full('b', 100000);
+        for (const folded of [mergeSavedRosters(a, b), mergeSavedRosters(b, a)]) {
+            expect(folded.parties).toHaveLength(MAX_SAVED_ROSTERS);
+            const names = Object.values(folded.capped).map((entry) => entry.name);
+            expect(names).toHaveLength(MAX_CAPPED);
+            expect(names.every((n) => n.startsWith('a'))).toBe(true);
+            expect(Object.keys(folded.capped).some((id) => folded.parties.some((p) => p.id === id))).toBe(false);
+        }
+    });
+
+    test('nothing evicted records nothing; a list with room left too', () => {
+        expect(mergeSavedRosters(full('a', 1000, 10), full('b', 5000, 10)).capped).toEqual({});
+        expect(mergeSavedRosters(full('a', 1000), full('a', 1000)).capped).toEqual({});
+    });
+
+    test('a tombstoned entry is not reported', () => {
+        const a = full('a', 1000);
+        const b = { ...full('b', 100000), removed: { a0: Date.now(), a1: Date.now() } };
+        const folded = mergeSavedRosters(a, b);
+        expect(folded.capped.a0).toBeUndefined();
+        expect(folded.capped.a1).toBeUndefined();
+        expect(folded.parties.some((p) => p.id === 'a0')).toBe(false);
+    });
+
+    test('an entry recorded and then kept after all (edited, newest) drops its record', () => {
+        const recorded = mergeSavedRosters(full('a', 1000), full('b', 100000));
+        const [id] = Object.keys(recorded.capped);
+        const edited = { parties: [{ ...full('a', 1000).parties[0], id, updatedAt: 900000 }], removed: {} };
+        const again = mergeSavedRosters(recorded, edited);
+        expect(again.parties.some((p) => p.id === id)).toBe(true);
+        expect(again.capped[id]).toBeUndefined();
+    });
+
+    test('an id already recorded keeps its earlier stamp when the same loss is folded again', () => {
+        const a = full('a', 1000);
+        const b = full('b', 100000, 2);
+        const first = mergeSavedRosters(a, b);
+        expect(Object.keys(first.capped).sort()).toEqual(['a0', 'a1']);
+        const earlier = Date.now() - 5000;
+        const [id] = Object.keys(first.capped);
+        const second = mergeSavedRosters({ ...first, capped: { [id]: { name: id, at: earlier } } }, a);
+        expect(second.capped[id].at).toBe(earlier);
+    });
+
+    test('three devices agree on what was recorded, whichever pair folds first', () => {
+        const a = full('a', 1000);
+        const b = full('b', 100000, 3);
+        const c = full('c', 200000, 3);
+        const ids = (record) => Object.keys(record.capped).sort();
+        const left = ids(mergeSavedRosters(mergeSavedRosters(a, b), c));
+        expect(left).toEqual(['a0', 'a1', 'a2', 'a3', 'a4', 'a5']);
+        expect(ids(mergeSavedRosters(a, mergeSavedRosters(b, c)))).toEqual(left);
+        expect(ids(mergeSavedRosters(mergeSavedRosters(c, b), a))).toEqual(left);
+    });
+
+    test('the parties kind uses its own cap constant', () => {
+        const four = () => five().slice(0, 4);
+        const folded = mergeSavedParties(
+            full('a', 1000, MAX_SAVED_PARTIES, four),
+            full('b', 100000, MAX_SAVED_PARTIES, four)
+        );
+        expect(folded.parties).toHaveLength(MAX_SAVED_PARTIES);
+        expect(Object.keys(folded.capped)).toHaveLength(MAX_CAPPED);
+    });
+
+    test('the record survives a stored write with no panel open, and ages out after 30 days', async () => {
+        const folded = mergeSavedRosters(full('a', 1000), full('b', 100000));
+        db.values.set(SAVED_ROSTERS_KEY, folded);
+        await renameRoster('b0', 'Renamed');
+        expect(Object.keys(db.values.get(SAVED_ROSTERS_KEY).capped)).toHaveLength(MAX_CAPPED);
+        expect(Object.keys((await loadSavedRosters()).capped)).toHaveLength(MAX_CAPPED);
+        const old = Date.now() - CAPPED_MAX_AGE_MS - 1000;
+        const aged = normalizeSavedRosters({
+            ...folded,
+            capped: { x: { name: 'X', at: old }, y: { name: 'Y', at: Date.now() } },
+        });
+        expect(Object.keys(aged.capped)).toEqual(['y']);
+        expect(normalizeSavedRosters({ ...folded, capped: 'junk' }).capped).toEqual({});
+    });
+
+    test('an older record with no capped field reads as nothing evicted; an older build reads the new one whole', () => {
+        const legacy = { savedAt: 1, parties: [], removed: {} };
+        expect(normalizeSavedRosters(legacy).capped).toEqual({});
+        expect(mergeSavedRosters(legacy, legacy).capped).toEqual({});
+        const folded = mergeSavedParties(
+            full('a', 1000, MAX_SAVED_PARTIES, () => five().slice(0, 4)),
+            full('b', 100000, MAX_SAVED_PARTIES, () => five().slice(0, 4))
+        );
+        // The 3.84.0 reader drops `capped` and keeps every party (mild: only the note is lost)
+        expect(oldNormalizeSavedParties(folded).parties).toHaveLength(MAX_SAVED_PARTIES);
+        expect(oldNormalizeSavedParties(folded).capped).toBeUndefined();
+    });
+
+    describe('shown, dismissed on this device, shown again for a newer eviction', () => {
+        test('unseen entries are those newer than the stamp; the note names them', async () => {
+            const now = Date.now();
+            const record = { capped: { a: { name: 'Alpha', at: now - 2000 }, b: { name: 'Beta', at: now - 1000 } } };
+            expect(unseenCapped(record, 0).map((e) => e.name)).toEqual(['Beta', 'Alpha']);
+            expect(cappedNoteText(unseenCapped(record, 0), 40)).toBe(
+                'Sync joined two full lists and kept the 40 most recently changed: Beta, Alpha dropped.'
+            );
+            expect(cappedNoteText([], 40)).toBe('');
+            const seven = Array.from({ length: 7 }, (_, i) => ({ name: `n${i}` }));
+            expect(cappedNoteText(seven, 40)).toContain('n0, n1, n2, n3, n4 and 2 more');
+            expect(await loadCappedSeen(SAVED_ROSTERS_KEY)).toBe(0);
+            expect(await dismissCapped(SAVED_ROSTERS_KEY, now - 1000)).toBe(true);
+            const seen = await loadCappedSeen(SAVED_ROSTERS_KEY);
+            expect(unseenCapped(record, seen)).toEqual([]);
+            // The parties record has its own stamp, kept under a key the sync leaves alone
+            expect(await loadCappedSeen(SAVED_PARTIES_KEY)).toBe(0);
+            expect(CAPPED_SEEN_KEY.startsWith('toolasha_local_')).toBe(true);
+            // A later eviction is newer than the stamp, so it shows again; a dismissal never goes backwards
+            const later = { capped: { ...record.capped, c: { name: 'Gamma', at: now } } };
+            expect(unseenCapped(later, seen).map((e) => e.name)).toEqual(['Gamma']);
+            await dismissCapped(SAVED_ROSTERS_KEY, now - 5000);
+            expect(await loadCappedSeen(SAVED_ROSTERS_KEY)).toBe(now - 1000);
+        });
+
+        test('a failed write does not throw and leaves the note showing', async () => {
+            db.failNext = true;
+            expect(await dismissCapped(SAVED_ROSTERS_KEY, 5)).toBe(false);
+            expect(await loadCappedSeen(SAVED_ROSTERS_KEY)).toBe(0);
+        });
     });
 });

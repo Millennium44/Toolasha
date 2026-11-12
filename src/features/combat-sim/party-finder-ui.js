@@ -62,8 +62,11 @@ import {
     SAVED_PARTIES_KEY,
     MAX_SAVED_PARTIES,
     MAX_PARTY_MEMBERS,
-    evictedPartiesByCap,
+    cappedNoteText,
+    dismissCapped,
+    loadCappedSeen,
     loadSavedParties,
+    unseenCapped,
     saveParty,
     renameParty,
     removeParty,
@@ -359,7 +362,8 @@ export class PartyFinderTab {
          */
         this._lockMode = 'my';
         /** The saved parties, and whether they have been read yet (a stored pick of one waits for the read) */
-        this._saved = { savedAt: 0, parties: [], removed: {} };
+        this._saved = { savedAt: 0, parties: [], removed: {}, capped: {} };
+        this._cappedSeen = 0;
         this._savedLoaded = false;
         /** Bumped by every read and every write of the saved parties: an older read resolving later is dropped */
         this._savedSeq = 0;
@@ -441,7 +445,7 @@ export class PartyFinderTab {
         this._wire();
         this._unsubscribePull = onSyncPullApplied((written) => {
             if ((written?.settings || []).includes(PARTY_ROSTER_KEY)) this._reloadRoster({ pulled: true });
-            if ((written?.settings || []).includes(SAVED_PARTIES_KEY)) this._reloadSaved({ pulled: true });
+            if ((written?.settings || []).includes(SAVED_PARTIES_KEY)) this._reloadSaved();
         });
         this._watchParty();
         this._reloadRoster();
@@ -488,7 +492,8 @@ export class PartyFinderTab {
         this._choices = {};
         this._includeParty = true;
         this._lockMode = 'my';
-        this._saved = { savedAt: 0, parties: [], removed: {} };
+        this._saved = { savedAt: 0, parties: [], removed: {}, capped: {} };
+        this._cappedSeen = 0;
         this._savedLoaded = false;
         this._partyChoices = new Map();
         /** Party row id → aura options to try them with, this session only (never the saved roster) */
@@ -627,7 +632,11 @@ export class PartyFinderTab {
                     <button data-pf="save-party" style="${BTN_STYLE}">Save</button>
                     <button data-pf="save-party-cancel" style="${SMALL_BTN_STYLE}">Cancel</button>
                 </div>
-                <div data-pf="saved-party-note" style="color:#888; font-size:11px; margin-top:4px;"></div>`
+                <div data-pf="saved-party-note" style="color:#888; font-size:11px; margin-top:4px;"></div>
+                <div data-pf="saved-capped" style="display:none; align-items:center; gap:6px; color:#ff9800; font-size:11px; margin-top:4px;">
+                    <span data-pf="saved-capped-text" style="flex:1; min-width:0;"></span>
+                    <button data-pf="saved-capped-dismiss" style="${SMALL_BTN_STYLE}">Dismiss</button>
+                </div>`
             ),
             section(
                 'Zones',
@@ -687,6 +696,7 @@ export class PartyFinderTab {
 
     /** @private */
     _wire() {
+        this._el('saved-capped-dismiss').addEventListener('click', () => this._dismissCapped());
         this._el('add-editor').addEventListener('click', () => this._onAddFromEditor());
         this._el('add-self').addEventListener('click', () => this._onCopySelf());
         this._el('save-build-open').addEventListener('click', () => this._openSaveBuild());
@@ -1674,29 +1684,22 @@ export class PartyFinderTab {
 
     /**
      * Read the saved parties back.
-     * @param {{pulled?: boolean, refresh?: boolean}} [options] - `pulled`: a sync pull wrote them, so a fold may have
-     *   dropped some for want of room; `refresh: false`: the caller is the party refresh itself
+     * Evictions past the cap are read off the record itself (the sync fold writes them), so they show whether or
+     * not this tab was open when the fold ran.
+     * @param {{refresh?: boolean}} [options] - `refresh: false`: the caller is the party refresh itself
      * @private
      */
-    async _reloadSaved({ pulled = false, refresh = true } = {}) {
-        const before = this._saved;
+    async _reloadSaved({ refresh = true } = {}) {
         const seq = ++this._savedSeq;
-        const saved = await loadSavedParties();
+        const [saved, seen] = await Promise.all([loadSavedParties(), loadCappedSeen(SAVED_PARTIES_KEY)]);
         // A newer read, or a write that handed back the list, is fresher than this one
         if (!this.root || seq !== this._savedSeq) return;
         this._saved = saved;
+        this._cappedSeen = seen;
         this._savedLoaded = true;
         this._renderSavedParties();
         this._renderLockSelect();
         if (refresh && this._lockMode.startsWith('saved:')) this._refreshParty();
-        if (!pulled) return;
-        const lost = evictedPartiesByCap(before, saved);
-        if (lost.length) {
-            this._savedPartyNote(
-                `Sync joined two full lists and kept the ${MAX_SAVED_PARTIES} most recently changed: ${lostNames(lost)} dropped.`,
-                true
-            );
-        }
     }
 
     /**
@@ -1715,10 +1718,32 @@ export class PartyFinderTab {
         if (this._lockMode.startsWith('saved:')) this._refreshParty();
     }
 
+    /** The note for parties a sync fold dropped past the cap, until this device dismisses it. @private */
+    _renderCapped() {
+        const box = this._el('saved-capped');
+        if (!box) return;
+        const unseen = unseenCapped(this._saved, this._cappedSeen);
+        const text = cappedNoteText(unseen, MAX_SAVED_PARTIES);
+        this._el('saved-capped-text').textContent = text;
+        box.style.display = text ? 'flex' : 'none';
+    }
+
+    /** Dismiss the eviction note on this device only. @private */
+    async _dismissCapped() {
+        const unseen = unseenCapped(this._saved, this._cappedSeen);
+        if (!unseen.length) return;
+        const upTo = unseen[0].at;
+        // Hidden at once; if the stamp could not be written the note simply shows again on the next read
+        this._cappedSeen = upTo;
+        this._renderCapped();
+        await dismissCapped(SAVED_PARTIES_KEY, upTo);
+    }
+
     /** The saved parties list. @private */
     _renderSavedParties() {
         const list = this._el('saved-parties');
         if (!list) return;
+        this._renderCapped();
         const parties = this._saved.parties;
         this._el('party-saved-count').textContent = `(${parties.length}/${MAX_SAVED_PARTIES})`;
         list.textContent = '';

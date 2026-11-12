@@ -265,6 +265,65 @@ describe('Load party', () => {
         expect(el.querySelectorAll('[data-saved-delete]')).toHaveLength(1);
     });
 
+    test('lists dropped by a sync fold are named in the form, dismissed on this device, shown again when newer', async () => {
+        const at = Date.now() - 1000;
+        db.values.set(SAVED_ROSTERS_KEY, {
+            savedAt: 1,
+            parties: [],
+            removed: {},
+            capped: { x: { name: 'Lost five', at } },
+        });
+        db.values.set(SAVED_PARTIES_KEY, {
+            savedAt: 1,
+            parties: [],
+            removed: {},
+            capped: { y: { name: 'Lost tab party', at: at - 50 } },
+        });
+        const { el } = loadedEditor();
+        await openList(el);
+        expect(text(el)).toContain(
+            'Saved here: Sync joined two full lists and kept the 40 most recently changed: Lost five dropped.'
+        );
+        expect(text(el)).toContain('From the Party tab: Sync joined two full lists');
+        expect(text(el)).toContain('Lost tab party dropped');
+        el.querySelector('#mwi-csim-saved-lost-dismiss').click();
+        await flush();
+        expect(el.querySelector('[data-saved-lost]')).toBeNull();
+        expect(db.values.get('toolasha_local_cappedSeen')).toEqual({
+            [SAVED_ROSTERS_KEY]: at,
+            [SAVED_PARTIES_KEY]: at - 50,
+        });
+        // The records themselves are untouched, and a reopened form stays quiet
+        expect(Object.keys(db.values.get(SAVED_ROSTERS_KEY).capped)).toEqual(['x']);
+        el.querySelector('#mwi-csim-saved-cancel').click();
+        await openList(el);
+        expect(el.querySelector('[data-saved-lost]')).toBeNull();
+        // A newer eviction shows again
+        db.values.set(SAVED_ROSTERS_KEY, {
+            savedAt: 2,
+            parties: [],
+            removed: {},
+            capped: { x: { name: 'Lost five', at }, z: { name: 'Newer', at: at + 10 } },
+        });
+        el.querySelector('#mwi-csim-saved-cancel').click();
+        await openList(el);
+        expect(text(el)).toContain('Newer dropped');
+        expect(text(el)).not.toContain('Lost five');
+    });
+
+    test('nothing dropped, or only old news: no note', async () => {
+        db.values.set(SAVED_ROSTERS_KEY, {
+            savedAt: 1,
+            parties: [],
+            removed: {},
+            capped: { x: { name: 'Ancient', at: Date.now() - 31 * 24 * 60 * 60 * 1000 } },
+        });
+        const { el } = loadedEditor();
+        await openList(el);
+        expect(el.querySelector('[data-saved-lost]')).toBeNull();
+        expect(text(el)).not.toContain('Sync joined');
+    });
+
     test('nothing saved says how to save one', async () => {
         const { el } = loadedEditor();
         await openList(el);

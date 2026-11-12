@@ -79,6 +79,8 @@ vi.mock('../../core/storage.js', () => ({
                 await state.savedGate;
                 return held;
             }
+            if (k === 'toolasha_local_cappedSeen')
+                return state.seenDb === undefined ? fallback : structuredClone(state.seenDb);
             if (k === 'combatSimSavedParties') {
                 return state.savedDb === undefined ? fallback : structuredClone(state.savedDb);
             }
@@ -95,7 +97,7 @@ vi.mock('../../core/storage.js', () => ({
         },
         update: async (k, mutate) => {
             if (state.failWrite) return null;
-            const key = k === 'combatSimSavedParties' ? 'savedDb' : 'db';
+            const key = k === 'combatSimSavedParties' ? 'savedDb' : k === 'toolasha_local_cappedSeen' ? 'seenDb' : 'db';
             const next = mutate(state[key] === undefined ? undefined : structuredClone(state[key]));
             if (next === undefined) return { written: false, value: state[key] };
             state[key] = structuredClone(next);
@@ -317,6 +319,7 @@ beforeEach(() => {
     state.gameMode = undefined;
     state.db = undefined;
     state.savedDb = undefined;
+    state.seenDb = undefined;
     state.savedGate = null;
     state.setGate = null;
     state.prefs = {};
@@ -2764,6 +2767,42 @@ describe('saved parties', () => {
         expect(state.prefs.combatSimPartyIncludeParty_me).toBe(false);
         await choose('my');
         expect(state.prefs.combatSimPartyIncludeParty_me).toBe(true);
+    });
+
+    describe('parties a sync fold dropped past the cap', () => {
+        const capped = (entries) => ({ ...savedRecord([]), capped: entries });
+        const note = () => el('saved-capped');
+
+        test('shown on open though nothing was mounted when the fold ran, and dismissed on this device only', async () => {
+            const at = Date.now() - 1000;
+            state.savedDb = capped({ x: { name: 'Old crew', at }, y: { name: 'Older crew', at: at - 10 } });
+            await mountTab();
+            expect(note().style.display).toBe('flex');
+            expect(el('saved-capped-text').textContent).toBe(
+                'Sync joined two full lists and kept the 40 most recently changed: Old crew, Older crew dropped.'
+            );
+            el('saved-capped-dismiss').click();
+            await flush();
+            expect(note().style.display).toBe('none');
+            expect(state.seenDb).toEqual({ combatSimSavedParties: at });
+            // The record is never edited by a dismissal, and a reopened tab stays quiet
+            expect(Object.keys(state.savedDb.capped)).toEqual(['x', 'y']);
+            tab.detach();
+            await mountTab();
+            expect(note().style.display).toBe('none');
+            // A newer eviction shows again
+            state.savedDb = capped({ x: { name: 'Old crew', at }, z: { name: 'New crew', at: at + 5 } });
+            announceSyncPullApplied({ settings: ['combatSimSavedParties'] });
+            await flush();
+            expect(el('saved-capped-text').textContent).toContain('New crew');
+            expect(el('saved-capped-text').textContent).not.toContain('Old crew');
+        });
+
+        test('nothing dropped, or only entries older than 30 days: no note', async () => {
+            state.savedDb = capped({ x: { name: 'Ancient', at: Date.now() - 31 * 24 * 60 * 60 * 1000 } });
+            await mountTab();
+            expect(note().style.display).toBe('none');
+        });
     });
 
     test('a sync pull of the saved parties shows a party another device added', async () => {
