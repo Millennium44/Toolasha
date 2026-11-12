@@ -61,7 +61,7 @@ export function calculateBonusRevenue(
     { grossContainers = false } = {}
 ) {
     // Get Essence Find bonus from equipment
-    const essenceFindBonus = parseEssenceFindBonus(characterEquipment, itemDetailMap);
+    const essenceFindBonus = parseEssenceFindBonus(characterEquipment, itemDetailMap, actionDetails.type);
 
     const rareParts = getRareFindParts(actionDetails.type, characterEquipment, itemDetailMap);
     const {

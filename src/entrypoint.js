@@ -1970,6 +1970,14 @@ function registerFeatures() {
             async: false,
         },
         {
+            // Test server only: the module returns at once anywhere else
+            key: 'talismanWindowValues',
+            name: 'Talisman Window Values',
+            category: 'UI',
+            module: UI.talismanWindowValues,
+            async: false,
+        },
+        {
             key: 'hideLabyrinthBadge',
             name: 'Hide Labyrinth Badge',
             category: 'UI',

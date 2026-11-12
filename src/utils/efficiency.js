@@ -10,6 +10,7 @@ import {
     parseEquipmentEfficiencyBonuses,
     parseEquipmentEfficiencyBreakdown,
     parseGatheringQuantityBonus,
+    parseEquipmentTalismanBuff,
 } from './equipment-parser.js';
 import {
     parseTeaEfficiency,
@@ -225,11 +226,13 @@ export function getActionEfficiencyContext(actionDetails, options = {}) {
     const teaEfficiency = parseTeaEfficiency(actionDetails.type, drinkSlots, itemDetailMap, drinkConcentration);
     const processingBonus = GATHERING_TYPES.includes(actionDetails.type)
         ? parseProcessingBonus(drinkSlots, itemDetailMap, drinkConcentration) +
-          dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/processing')
+          dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/processing') +
+          parseEquipmentTalismanBuff(equipment, '/buff_types/processing')
         : 0;
     const gourmetBonus = PRODUCTION_TYPES.includes(actionDetails.type)
         ? parseGourmetBonus(drinkSlots, itemDetailMap, drinkConcentration) +
-          dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/gourmet')
+          dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/gourmet') +
+          parseEquipmentTalismanBuff(equipment, '/buff_types/gourmet')
         : 0;
 
     // Equipment efficiency

@@ -76,6 +76,7 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => 0 }));
 vi.mock('../../utils/equipment-parser.js', () => ({
+    parseEquipmentTalismanBuff: () => 0,
     parseEquipmentSpeedBonuses: () => 0,
     debugEquipmentSpeedBonuses: () => [],
     parseEssenceFindBonus: () => 0,

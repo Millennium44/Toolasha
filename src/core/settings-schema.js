@@ -4023,6 +4023,14 @@ export const settingsGroups = {
                     'Each piece is checked against the game’s own item data before it is named, and the whole ' +
                     'thing goes quiet inside a labyrinth run, where the run picks the loadout rather than you',
             },
+            talismanWindowValues: {
+                id: 'talismanWindowValues',
+                label: 'Talisman window: Show values scaled by your belt',
+                type: 'checkbox',
+                default: true,
+                hidden: !isTestServer(),
+                help: 'Test server only. Beside each modifier line in the talisman window, the value your worn Talisman Belt turns it into (Talisman Power included), for example +4.5% → +5.66%',
+            },
             overlayPanel: {
                 id: 'overlayPanel',
                 label: 'Overlay Panel: One floating panel other features add a row to',

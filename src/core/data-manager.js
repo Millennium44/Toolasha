@@ -27,8 +27,10 @@ import {
     mapSize,
 } from './guild-shrine-store.js';
 import { mergeMarketListings } from '../utils/market-listings.js';
+import { isTestServer } from '../utils/game-server.js';
 import { taskSpeedParts } from '../utils/enhancement-steps.js';
 import { SCROLL_BUFF_VALUES } from '../utils/scroll-buff-values.js';
+import { BELT_LOCATION, computeTalismanBonuses, attachTalismanBonuses } from '../utils/talisman-bonuses.js';
 import { compareActionQueueOrder, runningCombatAction } from '../utils/combat-actions.js';
 
 /**
@@ -1340,6 +1342,8 @@ class DataManager {
 
         // Build drink slots map (tea buffs)
         this.updateDrinkSlotsMap(data.actionTypeDrinkSlotsMap);
+        // The character's talismans arrive with the init snapshot; a memo built before them is stale
+        this.buffStateVersion++;
 
         // Load personal buffs (seal buffs from Labyrinth, may be present on login)
         if (data.personalActionTypeBuffsMap) {
@@ -2465,6 +2469,8 @@ class DataManager {
         for (const id of deletedIds) byId.delete(String(id));
 
         this.characterData.characterTalismans = [...byId.values()];
+        // Every memo keyed on the buff state is also keyed on the talismans a reader folds in
+        this.buffStateVersion++;
         return true;
     }
 
@@ -2977,7 +2983,43 @@ class DataManager {
      * @returns {Map} Equipment map (slot HRID -> item)
      */
     getEquipment() {
-        return new Map(this.characterEquipment);
+        // The copy carries the live talisman bonuses (empty off the test server and without a belt), so the
+        // equipment parsers that rebuild skilling bonuses from this Map count them like gear
+        return attachTalismanBonuses(new Map(this.characterEquipment), this.getLiveTalismanBonuses());
+    }
+
+    /**
+     * What the slotted talismans give with the belt worn right now: the share a reader that rebuilds skilling
+     * bonuses from equipment must add. A reader of the server's totals (`characterData.noncombatStats`) must NOT
+     * add it, the server already counted it. Empty off the test server, with no belt, or with no talismans.
+     * Memoized on the buff state version, which talismans_updated and every equipment change bump.
+     * @returns {{noncombat: Object, buffs: Object, combat: Object}} Do not mutate
+     */
+    getLiveTalismanBonuses() {
+        const initData = this.initClientData;
+        const list = this.characterData?.characterTalismans;
+        const belt = this.characterEquipment.get(BELT_LOCATION) || null;
+        const host = isTestServer();
+        const memo = this._liveTalismanMemo;
+        if (
+            memo &&
+            memo.version === this.buffStateVersion &&
+            memo.initData === initData &&
+            memo.list === list &&
+            memo.belt === belt &&
+            memo.host === host
+        ) {
+            return memo.value;
+        }
+        const value = computeTalismanBonuses({
+            talismans: this.getSlottedTalismans(),
+            belt,
+            itemDetailMap: initData?.itemDetailMap,
+            modifierDetailMap: initData?.talismanModifierDetailMap,
+            enhancementTable: initData?.enhancementLevelTotalBonusMultiplierTable,
+        });
+        this._liveTalismanMemo = { version: this.buffStateVersion, initData, list, belt, host, value };
+        return value;
     }
 
     /**

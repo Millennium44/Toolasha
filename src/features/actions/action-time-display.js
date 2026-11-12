@@ -27,7 +27,7 @@ import { alchemyLevelRequirement as sharedAlchemyLevelRequirement } from '../../
 import { getAlchemyCoinCost, getAlchemyTypeFromActionHrid } from '../../utils/alchemy-fees.js';
 import { timeReadable, formatWithSeparator, formatDateTime, formatLargeNumber } from '../../utils/formatters.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
-import { parseGatheringQuantityBonus } from '../../utils/equipment-parser.js';
+import { parseGatheringQuantityBonus, parseEquipmentTalismanBuff } from '../../utils/equipment-parser.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { getCommunityGatheringQuantity } from '../../utils/community-buffs.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
@@ -3115,7 +3115,9 @@ class ActionTimeDisplay {
             // Apply Gourmet bonus for brewing/cooking (extra items chance)
             if (PRODUCTION_TYPES.includes(actionDetails.type)) {
                 const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-                const gourmetBonus = parseGourmetBonus(runningDrinks, itemDetailMap, drinkConcentration);
+                const gourmetBonus =
+                    parseGourmetBonus(runningDrinks, itemDetailMap, drinkConcentration) +
+                    parseEquipmentTalismanBuff(equipment, '/buff_types/gourmet');
 
                 // Gourmet gives a chance for extra items (e.g., 0.1344 = 13.44% more items)
                 const gourmetBonusItems = itemsPerHour * gourmetBonus;

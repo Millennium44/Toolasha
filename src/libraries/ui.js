@@ -195,6 +195,9 @@ import ironCowFarmPanel from '../features/ironcow/ironcow-panel.js';
 // bundle because the labyrinth-run predicate it suppresses on is already here.
 import equipmentMismatchWarning from '../features/equipment/equipment-mismatch-warning.js';
 
+// Test server: the belt-scaled value beside each line of the game's talisman window
+import talismanWindowValues from '../features/equipment/talisman-window-values.js';
+
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
 // Shared console-only debug namespace; nothing schedules these
@@ -321,6 +324,7 @@ toolashaRoot.UI = {
     combatLevelPanel,
     ironCowFarmPanel,
     equipmentMismatchWarning,
+    talismanWindowValues,
     combatText,
     dpsPanel,
     deathsPanel,

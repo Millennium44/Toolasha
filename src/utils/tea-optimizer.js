@@ -12,6 +12,7 @@ import {
     parseEquipmentSpeedBonuses,
     parseEquipmentEfficiencyBonuses,
     parseGatheringQuantityBonus,
+    parseEquipmentTalismanBuff,
 } from './equipment-parser.js';
 import {
     calculateActionsPerHour,
@@ -208,9 +209,10 @@ function getDrinkSlotCount(equipment, itemDetailMap) {
  * @param {Array<string>} teaHrids - Array of tea item HRIDs
  * @param {Object} itemDetailMap - Item details from game data
  * @param {number} drinkConcentration - Drink concentration as decimal
+ * @param {Map|null} [equipment] - Gear the setup wears; its slotted talismans add Gourmet and Processing
  * @returns {Object} Aggregated buff values
  */
-function parseTeaBuffs(teaHrids, itemDetailMap, drinkConcentration) {
+function parseTeaBuffs(teaHrids, itemDetailMap, drinkConcentration, equipment = null) {
     const buffs = {
         efficiency: 0,
         wisdom: 0,
@@ -272,6 +274,12 @@ function parseTeaBuffs(teaHrids, itemDetailMap, drinkConcentration) {
                     }
             }
         }
+    }
+
+    // Slotted talismans give Gourmet and Processing like a tea does (not scaled by Drink Concentration)
+    if (equipment) {
+        buffs.processing += parseEquipmentTalismanBuff(equipment, '/buff_types/processing');
+        buffs.gourmet += parseEquipmentTalismanBuff(equipment, '/buff_types/gourmet');
     }
 
     return buffs;
@@ -1368,7 +1376,7 @@ export function findOptimalTeas(
             : null;
 
     for (const combo of combinations) {
-        const buffs = parseTeaBuffs(combo, gameData.itemDetailMap, drinkConcentration);
+        const buffs = parseTeaBuffs(combo, gameData.itemDetailMap, drinkConcentration, equipment);
 
         // Calculate tea cost per hour for this combo
         const teaCostPerHour = calculateTeaCostPerHour(combo, drinkConcentration);
@@ -1822,7 +1830,7 @@ export function scoreEquipmentSetup(
     let { available: actions } = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids);
 
     const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
-    const buffs = parseTeaBuffs(teaHrids, gameData.itemDetailMap, drinkConcentration);
+    const buffs = parseTeaBuffs(teaHrids, gameData.itemDetailMap, drinkConcentration, equipment);
 
     // A selection made only of actions a skill tea unlocks has nothing available at the bare level.
     // Callers rank equipment independently of teas (teaHrids is empty), so fall back to the tea reach
@@ -2056,7 +2064,7 @@ export function calculateSkillPerformance(
 
     const filteredTeas = (teaHrids || []).filter(Boolean);
     const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
-    const buffs = parseTeaBuffs(filteredTeas, gameData.itemDetailMap, drinkConcentration);
+    const buffs = parseTeaBuffs(filteredTeas, gameData.itemDetailMap, drinkConcentration, equipment);
     const { available: actions } = getActionsForSkill(
         normalizedSkill,
         playerLevel,

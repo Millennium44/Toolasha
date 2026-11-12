@@ -33,6 +33,7 @@ vi.mock('../features/market/expected-value-calculator.js', () => ({
 }));
 
 vi.mock('./equipment-parser.js', () => ({
+    parseEquipmentTalismanBuff: () => 0,
     parseEssenceFindBonus: vi.fn(),
     parseRareFindBonus: vi.fn(),
     parseRareFindBreakdown: vi.fn(),

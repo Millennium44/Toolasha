@@ -66,7 +66,10 @@ vi.mock('../../utils/action-context.js', () => {
 vi.mock('../../utils/action-calculator.js', () => ({
     calculateActionStats: vi.fn(() => ({ actionTime: 8.5176 })),
 }));
-vi.mock('../../utils/equipment-parser.js', () => ({ parseEquipmentSpeedBonuses: vi.fn(() => 0.1) }));
+vi.mock('../../utils/equipment-parser.js', () => ({
+    parseEquipmentTalismanBuff: () => 0,
+    parseEquipmentSpeedBonuses: vi.fn(() => 0.1),
+}));
 vi.mock('../../utils/house-efficiency.js', () => ({ calculateHouseActionSpeed: vi.fn(() => 0) }));
 vi.mock('../../utils/community-buffs.js', () => ({ getCommunityBuffBonus: vi.fn(() => 0.14) }));
 

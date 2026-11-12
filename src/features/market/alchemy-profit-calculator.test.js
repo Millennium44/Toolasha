@@ -87,6 +87,7 @@ vi.mock('../enhancement/untradable-cape-value.js', () => ({
 }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => mocks.alchemyTeaBonus }));
 vi.mock('../../utils/equipment-parser.js', () => ({
+    parseEquipmentTalismanBuff: () => 0,
     parseEquipmentSpeedBonuses: () => mocks.equipmentSpeed,
     debugEquipmentSpeedBonuses: () => [],
     parseEssenceFindBonus: () => 0,

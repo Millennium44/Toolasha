@@ -74,6 +74,7 @@ vi.mock('../core/data-manager.js', () => ({
 }));
 
 vi.mock('./equipment-parser.js', () => ({
+    parseEquipmentTalismanBuff: () => 0,
     parseEquipmentSpeedBonuses: () => parsers.equipmentSpeed,
     parseEquipmentEfficiencyBonuses: () => parsers.equipmentEfficiency,
 }));
