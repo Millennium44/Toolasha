@@ -9,7 +9,14 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ clientData: null, prices: {}, estimated: new Set(), sides: [] }));
+const mocks = vi.hoisted(() => ({
+    clientData: null,
+    prices: {},
+    estimated: new Set(),
+    sides: [],
+    lookups: [],
+    buyBasis: 'ask',
+}));
 
 vi.mock('../core/data-manager.js', () => ({
     default: { getInitClientData: () => mocks.clientData },
@@ -18,7 +25,10 @@ vi.mock('./market-data.js', () => ({
     getItemPrice: (hrid) => mocks.prices[hrid] ?? null,
     getItemPriceInfo: (hrid, opts) => {
         mocks.sides.push(opts?.side);
-        const price = mocks.prices[hrid] ?? null;
+        mocks.lookups.push(opts);
+        // Under a context the player's own mode picks the book side: here the Buy side of an optimistic player
+        const entry = mocks.prices[hrid] ?? null;
+        const price = opts?.context && entry !== null && typeof entry === 'object' ? entry[mocks.buyBasis] : entry;
         // A price the module treats as an estimate is one the value map filled in for an
         // item with no order book — the tests name those in `mocks.estimated`
         const estimated = price !== null && mocks.estimated.has(hrid);
@@ -50,6 +60,46 @@ beforeEach(() => {
     mocks.prices = { '/items/cheese': 1000, '/items/milk': 300 };
     mocks.estimated = new Set();
     mocks.sides = [];
+    mocks.lookups = [];
+    mocks.buyBasis = 'ask';
+});
+
+describe('following the player’s pricing context', () => {
+    test('a context replaces the forced book side and asks for the buy side', () => {
+        mocks.prices = { '/items/cheese': { ask: 1000, bid: 600 }, '/items/milk': { ask: 300, bid: 100 } };
+
+        mocks.buyBasis = 'ask';
+        const instant = buildGoldPerCredit('ask', { side: 'buy', context: 'profit' })[CREDIT];
+        mocks.buyBasis = 'bid';
+        const patient = buildGoldPerCredit('ask', { side: 'buy', context: 'profit' })[CREDIT];
+
+        expect(instant).toBe(750);
+        expect(patient).toBe(250);
+        for (const lookup of mocks.lookups) {
+            expect(lookup).toEqual({ context: 'profit', side: 'buy' });
+            expect(lookup.mode).toBeUndefined();
+        }
+    });
+
+    test('a priced line follows the context, and an estimate still falls back to the conversion rate', () => {
+        mocks.prices = {
+            '/items/cheese': { ask: 1000, bid: 600 },
+            '/items/milk': { ask: 300, bid: 100 },
+            [CREDIT]: { ask: 900, bid: 500 },
+        };
+        mocks.buyBasis = 'bid';
+        const patient = priceGuildCreditCosts([{ itemHrid: CREDIT, count: 2 }], { side: 'buy', context: 'profit' });
+        expect(patient.lines[0].goldEach).toBe(500);
+
+        mocks.estimated.add(CREDIT);
+        const estimated = priceGuildCreditCosts([{ itemHrid: CREDIT, count: 2 }], { side: 'buy', context: 'profit' });
+        expect(estimated.lines[0].goldEach).toBe(250);
+    });
+
+    test('with no context nothing changes: the forced side is passed through', () => {
+        buildGoldPerCredit('bid', { side: 'buy' });
+        expect(mocks.lookups.every((lookup) => lookup.mode === 'bid' && lookup.side === 'buy')).toBe(true);
+    });
 });
 
 describe('gold per credit', () => {

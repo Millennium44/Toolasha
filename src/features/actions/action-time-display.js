@@ -40,7 +40,7 @@ import {
     parseGatheringBonus,
     parseGourmetBonus,
 } from '../../utils/tea-parser.js';
-import { getItemPrices, getRawMarketAskPrice } from '../../utils/market-data.js';
+import { getItemPriceInfo, getRawMarketAskPrice } from '../../utils/market-data.js';
 import { resolveActionContext, resolveLoadoutContext } from '../../utils/action-context.js';
 import { upgradeOutputLevels } from '../../utils/upgrade-enhancement.js';
 import { affordableActions } from '../../utils/material-calculator.js';
@@ -51,6 +51,7 @@ import {
     calculateGatheringActionTotalsFromBase,
     calculateActionsPerHour,
     calculateEffectiveActionsPerHour,
+    calculatePriceAfterTax,
 } from '../../utils/profit-helpers.js';
 import { calculateEnhancementPredictions } from '../enhancement/enhancement-xp.js';
 import { calcXpPerAction } from '../alchemy/alchemy-rankings.js';
@@ -6204,10 +6205,14 @@ class ActionTimeDisplay {
             return;
         }
 
-        const value = lootEntryValue(
-            { drops: totals.gained },
-            (itemHrid, level) => getItemPrices(itemHrid, level)?.ask ?? null
-        );
+        // The same sale the panel's profit/hr assumes for a drop: the player's Sell side, net of market tax
+        // (none for an Iron Cow, nor under the personal-use sell-tax exclusion)
+        const untaxed = config.getSettingValue('profitCalc_excludeSellTax', false) === true;
+        const value = lootEntryValue({ drops: totals.gained }, (itemHrid, level) => {
+            const { price } = getItemPriceInfo(itemHrid, { enhancementLevel: level, context: 'profit', side: 'sell' });
+            if (price === null) return null;
+            return untaxed ? price : calculatePriceAfterTax(price);
+        });
         const color =
             value >= 0
                 ? config.getSettingValue('color_profit', '#4ade80')

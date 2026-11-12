@@ -7051,6 +7051,21 @@ describe('guild shrine candidates', () => {
         });
     });
 
+    test('both halves are priced on the profit Buy side, not a pinned ask', async () => {
+        token.goldPerToken = 50;
+        const { priceGuildCreditCosts } = await import('../../utils/guild-credit-pricing.js');
+        const { explainGuildTokenValue } = await import('../guild/guild-token-value.js');
+        priceGuildCreditCosts.mockClear();
+        explainGuildTokenValue.mockClear();
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+
+        explainUpgradeCost(candidate, buildGameData());
+
+        expect(priceGuildCreditCosts.mock.calls[0][1]).toEqual({ side: 'buy', context: 'profit' });
+        expect(explainGuildTokenValue.mock.calls[0][1]).toEqual({ context: 'profit' });
+    });
+
     test('a priced token is folded into the cost, with both halves still reported', () => {
         token.goldPerToken = 50;
         const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };

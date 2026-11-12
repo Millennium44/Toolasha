@@ -316,13 +316,15 @@ export function readTokenCreditExchange({ clientData, capturedExchanges, getSett
  * @param {string} [pricingMode='ask'] - Pricing side for the credit half
  * @param {Object} [options] - Overrides, as {@link readTokenCreditExchange} takes them
  * @param {Object} [options.goldPerCredit] - Prebuilt credit→gold map, to avoid rebuilding it per call
+ * @param {'profit'|'networth'} [options.context] - Price the credit half on the player's own pricing for this
+ *   context (the Buy side of the Buy/Sell dropdowns for 'profit') instead of the forced `pricingMode` side
  * @returns {{options: Array<Object>, best: Object|null, source: string, pricingMode: string}} The comparison
  */
-export function tokenExchangeOptions(pricingMode = 'ask', { goldPerCredit, ...sources } = {}) {
+export function tokenExchangeOptions(pricingMode = 'ask', { goldPerCredit, context, ...sources } = {}) {
     const mode = normalisePricingMode(pricingMode);
     const { exchanges, source } = readTokenCreditExchange(sources);
 
-    const rates = goldPerCredit || buildGoldPerCredit(mode);
+    const rates = goldPerCredit || buildGoldPerCredit(mode, context ? { context, side: 'buy' } : {});
     const values = Object.values(rates)
         .map(Number)
         .filter((value) => value > 0);

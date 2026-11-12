@@ -17,6 +17,7 @@ import {
 } from '../../utils/profit-helpers.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { findBestTaskShopValue } from '../../utils/task-shop-value.js';
+import { COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 
 export { findBestTaskShopValue };
 
@@ -203,15 +204,17 @@ export function calculateTaskRewardValue(coinReward, taskTokenReward) {
 }
 
 /**
- * What one cowbell is worth in coins.
- * Cowbells are not listed on their own, so they are priced through the Bag of
- * 10 Cowbells — the same basis the net worth calculator uses.
+ * What one cowbell is worth in coins, if sold.
+ * Cowbells are not listed on their own, so they are a tenth of a Bag of 10 Cowbells sold on the
+ * player's Sell side (their profit pricing mode), net of the bag's own tax - the same basis the
+ * loot log prices cowbells on, and the way {@link valueOfRewardItem} prices any sold reward.
  * @returns {number} Coins per cowbell
  */
 export function getCowbellValue() {
-    const bagPrice = getItemPrice('/items/bag_of_10_cowbells', { context: 'networth', side: 'sell' }) || 0;
+    const bagPrice = getItemPrice(COWBELL_BAG_HRID, { context: 'profit', side: 'sell' }) || 0;
     if (bagPrice > 0) {
-        return bagPrice / 10;
+        // The bag's own tax, not the market's; none for an Iron Cow, which sells nothing on the market
+        return calculatePriceAfterTax(bagPrice, COWBELL_BAG_TAX) / 10;
     }
     // Fallback: vendor value, matching networth-calculator.js
     return 100000;
