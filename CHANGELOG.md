@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reset to Party moves the sim zone right after a reload
+
+The Combat Sim's Reset to Party now sets Zone and Tier to the zone chosen on your My Party tab as soon as the page loads, instead of waiting for the next party update. If the party has no zone set, it uses the party fight you are running.
+
 ### Philo Gamba prices refined capes from their parts when you own the inputs
 
 With "I own the inputs" on, a refined cape now costs its base cape plus its refinement stones, all at their sell-after-tax value, since a refined cape is account bound and its market listing is not a sale you could make. The cost cell lists the parts.
