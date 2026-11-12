@@ -22,6 +22,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import featureRegistry from '../../core/feature-registry.js';
 import * as defaultErrorLog from '../../core/error-log.js';
+import * as defaultReloadLog from '../../core/reload-log.js';
 import { isTestServer } from '../../utils/game-server.js';
 import { toolashaRoot } from '../../utils/bundle-bridge.js';
 import { buildDiagnosticReport, refreshStorageFacts } from '../dev/health-status.js';
@@ -399,6 +400,7 @@ function button(label, onClick) {
  * @param {Object} [options.checks] - health/canary/schema/selectorAudit
  * @param {Function} [options.status] - Returns the status facts
  * @param {Function} [options.enabledFeatures] - Returns the enabled features' names
+ * @param {Object} [options.reloadLog] - readEntries/formatReloadLog/clearLog for the reload prompt log
  * @param {Function} [options.writeClipboard] - Puts text on the clipboard
  * @param {Function} [options.now] - The clock
  * @returns {{element: HTMLElement, open: Function, runChecks: Function, copyReport: Function, destroy: Function}}
@@ -409,6 +411,7 @@ export function createDiagnosticsSection(options = {}) {
     const status = options.status || readStatus;
     const enabledFeatures = options.enabledFeatures || readEnabledFeatureNames;
     const writeClipboard = options.writeClipboard || defaultWriteClipboard;
+    const reloadLog = options.reloadLog || defaultReloadLog;
     const now = options.now || (() => Date.now());
 
     const group = document.createElement('div');
@@ -645,9 +648,37 @@ export function createDiagnosticsSection(options = {}) {
             renderStatus();
         });
         clearBtn.className += ' toolasha-diagnostics-clear';
+        const copyReloadBtn = button('Copy reload log', async () => {
+            let ok = false;
+            try {
+                ok = await writeClipboard(reloadLog.formatReloadLog(await reloadLog.readEntries()));
+            } catch (error) {
+                console.error('[Diagnostics] Could not copy the reload log:', error);
+            }
+            copyReloadBtn.textContent = ok ? 'Copied ✓' : 'Copy failed';
+            setTimeout(() => {
+                copyReloadBtn.textContent = 'Copy reload log';
+            }, 2000);
+        });
+        copyReloadBtn.className += ' toolasha-diagnostics-copy-reload-log';
+        const clearReloadBtn = button('Clear reload log', async () => {
+            let ok = false;
+            try {
+                ok = await reloadLog.clearLog();
+            } catch (error) {
+                console.error('[Diagnostics] Could not clear the reload log:', error);
+            }
+            clearReloadBtn.textContent = ok ? 'Cleared ✓' : 'Clear failed';
+            setTimeout(() => {
+                clearReloadBtn.textContent = 'Clear reload log';
+            }, 2000);
+        });
+        clearReloadBtn.className += ' toolasha-diagnostics-clear-reload-log';
         buttons.appendChild(runBtn);
         buttons.appendChild(copyBtn);
         buttons.appendChild(clearBtn);
+        buttons.appendChild(copyReloadBtn);
+        buttons.appendChild(clearReloadBtn);
         content.appendChild(buttons);
 
         resultsEl = el('div', 'margin-bottom: 8px;');

@@ -36,7 +36,13 @@ import connectionState from '../../core/connection-state.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { GAME } from '../../utils/selectors.js';
-import { showToast } from '../../utils/toast.js';
+import {
+    addInteractionListeners,
+    formatClock,
+    removeInteractionListeners,
+    setNoticeText,
+    showReloadNotice,
+} from '../../utils/reload-countdown.js';
 
 export const SETTING_KEY = 'takeoverAutoReload';
 
@@ -51,8 +57,6 @@ export const STABLE_RESET_MS = 10 * 60 * 1000;
 
 /** The game's close code for "opened from another device or window" (no status) */
 const TAKEOVER_CLOSE_CODE = 1005;
-
-const INTERACTION_EVENTS = ['pointerdown', 'keydown', 'touchstart', 'wheel'];
 
 /**
  * The chosen delay in minutes, or 0 when off.
@@ -85,19 +89,6 @@ export function isTakeoverDisconnect(data) {
     if (!data || data.reason !== 'socket_close') return false;
     const event = data.event;
     return event?.code === TAKEOVER_CLOSE_CODE && event?.wasClean === true;
-}
-
-/**
- * Format a timestamp as a local clock time for the notice.
- * @param {number} ms - Epoch milliseconds
- * @returns {string} e.g. "14:32"
- */
-function formatClock(ms) {
-    try {
-        return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch {
-        return new Date(ms).toISOString().slice(11, 16);
-    }
 }
 
 class TakeoverAutoReload {
@@ -435,9 +426,8 @@ class TakeoverAutoReload {
         if (!handle) return;
         // The notice stays up for the whole wait, so its "in about" has to keep counting down
         this.countdownTicker = setInterval(() => {
-            const text = handle.element?.firstElementChild?.firstElementChild;
-            if (this.toast !== handle || !text) return;
-            text.textContent = wording();
+            if (this.toast !== handle) return;
+            setNoticeText(handle, wording());
         }, 30_000);
     }
 
@@ -463,50 +453,21 @@ class TakeoverAutoReload {
      */
     _showToast(message, { withCancel }) {
         this._dismissToast();
-        let handle = null;
-        try {
-            handle = showToast(message, {
-                kind: 'warn',
-                duration: 0,
-                action: { label: 'Reload now', onClick: () => this._reloadNow() },
-            });
-        } catch (error) {
-            console.error('[TakeoverAutoReload] Could not show the notice:', error);
-        }
-        if (!handle) return;
-        this.toast = handle;
-
-        const element = handle.element;
-        // The ✕ ends the episode too: a hidden countdown would be a surprise reload
-        element?.querySelector?.('.toolasha-toast-dismiss')?.addEventListener('click', () => {
-            if (this.toast === handle) {
-                this.toast = null;
-                this._cancelEpisode();
-            }
+        const handle = showReloadNotice(message, {
+            withCancel,
+            onReloadNow: () => this._reloadNow(),
+            // The ✕ ends the episode too: a hidden countdown would be a surprise reload
+            onDismissClick: (shown) => {
+                if (this.toast === shown) {
+                    this.toast = null;
+                    this._cancelEpisode();
+                }
+            },
+            onCancel: () => this._cancelEpisode(),
+            cancelClass: 'toolasha-takeover-cancel',
+            logPrefix: '[TakeoverAutoReload]',
         });
-
-        if (withCancel && element) {
-            const cancel = document.createElement('button');
-            cancel.type = 'button';
-            cancel.className = 'toolasha-takeover-cancel';
-            cancel.textContent = 'Cancel';
-            Object.assign(cancel.style, {
-                marginTop: '6px',
-                background: 'none',
-                border: '1px solid currentColor',
-                borderRadius: '4px',
-                color: 'inherit',
-                cursor: 'pointer',
-                fontSize: '12px',
-                padding: '2px 8px',
-            });
-            cancel.addEventListener('click', (event) => {
-                // The whole toast is the Reload now target
-                event.stopPropagation();
-                this._cancelEpisode();
-            });
-            (element.firstElementChild || element).appendChild(cancel);
-        }
+        if (handle) this.toast = handle;
     }
 
     /** @private */
@@ -557,17 +518,13 @@ class TakeoverAutoReload {
         this.interactionHandler = () => {
             if (this.episode) this.episode.lastInteractionAt = Date.now();
         };
-        for (const type of INTERACTION_EVENTS) {
-            window.addEventListener(type, this.interactionHandler, { capture: true, passive: true });
-        }
+        addInteractionListeners(this.interactionHandler);
     }
 
     /** @private */
     _removeInteractionWatch() {
         if (!this.interactionHandler) return;
-        for (const type of INTERACTION_EVENTS) {
-            window.removeEventListener(type, this.interactionHandler, { capture: true });
-        }
+        removeInteractionListeners(this.interactionHandler);
         this.interactionHandler = null;
     }
 

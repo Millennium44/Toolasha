@@ -345,6 +345,21 @@ describe('takeover auto-reload defaults', () => {
     });
 });
 
+describe('reload log and data-change auto-reload settings', () => {
+    test('the log is on by default; the automatic reload is off with the documented delays', () => {
+        const log = getSettingDefinition('reloadLog_enabled');
+        expect(log.type).toBe('checkbox');
+        expect(log.default).toBe(true);
+        expect(log.help).toMatch(/Copy reload log/);
+        expect(log.help).toMatch(/Nothing is sent anywhere/);
+        const auto = getSettingDefinition('dataChangeAutoReload');
+        expect(auto.default).toBe('off');
+        expect(auto.options.map((o) => o.value)).toEqual(['off', '30', '60', '120']);
+        expect(auto.help).toMatch(/3 automatic reloads within 10 minutes/);
+        expect(auto.help).toMatch(/Cancel/);
+    });
+});
+
 describe('modules that gate themselves on a setting their registry key does not name', () => {
     /**
      * Registry key -> the setting its module's initialize() returns early on. The key is not a setting, so

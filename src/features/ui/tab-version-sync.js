@@ -39,7 +39,9 @@
 
 import config from '../../core/config.js';
 import connectionState from '../../core/connection-state.js';
+import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { recordReloadPrompt } from '../../core/reload-log.js';
 import { compareVersions } from '../../utils/compare-versions.js';
 import { toolashaRoot } from '../../utils/bundle-bridge.js';
 import { scriptVersion } from '../../utils/script-version.js';
@@ -360,10 +362,25 @@ class TabVersionSync {
         if (!this.initialized || getMode() === 'off' || this.noticed.has(id)) return;
         if (document.visibilityState === 'hidden') return; // shown when the tab is next seen
         this.noticed.add(id); // dismissed or not, this version does not nag again
-        this.toast = showToast('A newer Toolasha version loaded in another tab', {
+        const message = 'A newer Toolasha version loaded in another tab';
+        const logEntry = recordReloadPrompt({
+            source: 'tab-version',
+            kind: 'newer-build',
+            message,
+            records: [`Toolasha version ${id}`],
+            characterId: dataManager.getCurrentCharacterId?.() ?? null,
+        });
+        this.toast = showToast(message, {
             kind: 'info',
             duration: 0,
-            action: { label: 'Reload', onClick: () => this._userReload() },
+            action: {
+                label: 'Reload',
+                onClick: () => {
+                    logEntry.settle('reloaded');
+                    this._userReload();
+                },
+            },
+            onClose: () => logEntry.settle('dismissed'),
         });
     }
 

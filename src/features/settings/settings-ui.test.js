@@ -514,6 +514,13 @@ vi.mock('../../utils/full-backup.js', () => ({
     exportEverythingJSON: async () => '{}',
     importEverything: async () => mocks.importResult,
 }));
+const reloadPrompts = vi.hoisted(() => []);
+vi.mock('../../core/reload-log.js', () => ({
+    recordReloadPrompt: (prompt) => {
+        reloadPrompts.push(prompt);
+        return { settle: () => {} };
+    },
+}));
 vi.mock('../../utils/csv-export.js', () => ({ downloadFile: () => {} }));
 vi.mock('../../utils/choice-dialog.js', () => ({
     askChoice: async (options) => {
@@ -1781,6 +1788,35 @@ describe('restoring a backup says whether it worked', () => {
         const said = globalThis.alert.mock.calls.at(-1)[0];
         expect(said).toContain('Restored 12 entries');
         expect(said).toContain('changes made before reloading will not be kept');
+    });
+
+    test('a restore that latched stores is logged as a restore prompt naming them', async () => {
+        reloadPrompts.length = 0;
+        mocks.importResult = {
+            restored: { settings: 12, xpHistory: 3 },
+            expected: { settings: 12, xpHistory: 3 },
+            failed: [],
+            complete: true,
+        };
+
+        await restore({ formatVersion: 1, stores: { settings: {}, xpHistory: {} } });
+
+        expect(reloadPrompts).toHaveLength(1);
+        expect(reloadPrompts[0]).toMatchObject({ source: 'restore', records: ['settings', 'xpHistory'] });
+    });
+
+    test('a restore that did not finish asks for no reload and logs nothing', async () => {
+        reloadPrompts.length = 0;
+        mocks.importResult = {
+            restored: { settings: 0 },
+            expected: { settings: 5 },
+            failed: [{ store: 'settings', written: 0, expected: 5 }],
+            complete: false,
+        };
+
+        await restore({ formatVersion: 1, stores: { settings: {} } });
+
+        expect(reloadPrompts).toHaveLength(0);
     });
 });
 

@@ -154,6 +154,8 @@ import noticeLogPanel from '../features/notifications/notice-log-panel.js';
 
 // Takeover auto-reload
 import takeoverAutoReload from '../features/connection/takeover-auto-reload.js';
+// Data-change auto-reload
+import dataChangeAutoReload from '../features/connection/data-change-auto-reload.js';
 import disconnectPanelGuard from '../features/connection/disconnect-panel-guard.js';
 
 // Queue Monitor
@@ -306,6 +308,7 @@ toolashaRoot.UI = {
     noticeLogPanel,
     queueMonitor,
     takeoverAutoReload,
+    dataChangeAutoReload,
     disconnectPanelGuard,
     sessionBriefing,
     accountView,

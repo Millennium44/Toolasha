@@ -79,11 +79,22 @@ function getContainer() {
  * Drop a toast from the stack.
  * @param {Object} entry - Internal toast record
  * @param {boolean} animate - Fade it out rather than removing it at once
+ * @param {'action'|'dismiss'|'expired'|'evicted'|'programmatic'} [reason] - Why, for `onClose`
  */
-function remove(entry, animate) {
+function remove(entry, animate, reason = 'programmatic') {
     const index = active.indexOf(entry);
     if (index === -1) return;
     active.splice(index, 1);
+
+    const onClose = entry.onClose;
+    entry.onClose = null;
+    if (typeof onClose === 'function') {
+        try {
+            onClose(reason);
+        } catch (error) {
+            console.error('[Toast] onClose failed:', error);
+        }
+    }
 
     if (entry.timer) {
         clearTimeout(entry.timer);
@@ -120,9 +131,11 @@ function pruneContainer() {
  * @param {{label: string, onClick: Function}} [options.action] - Optional follow-up.
  *   The whole toast becomes clickable when this is given, because a small button
  *   is a poor target and the message itself is the obvious thing to press
+ * @param {(reason: 'action'|'dismiss'|'expired'|'evicted'|'programmatic') => void} [options.onClose] -
+ *   Called once, as the toast leaves the stack, with why. `action` runs after the action's own callback
  * @returns {{element: HTMLElement, dismiss: Function}|null} Handle, or null with no DOM
  */
-export function showToast(message, { kind = 'info', duration, action } = {}) {
+export function showToast(message, { kind = 'info', duration, action, onClose } = {}) {
     if (typeof document === 'undefined' || !document.body) return null;
 
     const palette = KINDS[kind] || KINDS.info;
@@ -154,7 +167,7 @@ export function showToast(message, { kind = 'info', duration, action } = {}) {
     text.textContent = message;
     body.appendChild(text);
 
-    const entry = { element, timer: null };
+    const entry = { element, timer: null, onClose: typeof onClose === 'function' ? onClose : null };
 
     if (action && typeof action.onClick === 'function') {
         const hint = document.createElement('div');
@@ -177,7 +190,7 @@ export function showToast(message, { kind = 'info', duration, action } = {}) {
             } catch (error) {
                 console.error('[Toast] Action failed:', error);
             }
-            remove(entry, false);
+            remove(entry, false, 'action');
         });
     }
 
@@ -199,7 +212,7 @@ export function showToast(message, { kind = 'info', duration, action } = {}) {
     });
     dismissBtn.addEventListener('click', (event) => {
         event.stopPropagation();
-        remove(entry, false);
+        remove(entry, false, 'dismiss');
     });
 
     element.appendChild(body);
@@ -210,11 +223,11 @@ export function showToast(message, { kind = 'info', duration, action } = {}) {
 
     // Oldest first, so a burst of failures still leaves the newest readable
     while (active.length > MAX_TOASTS) {
-        remove(active[0], false);
+        remove(active[0], false, 'evicted');
     }
 
     if (lifetime > 0) {
-        entry.timer = setTimeout(() => remove(entry, true), lifetime);
+        entry.timer = setTimeout(() => remove(entry, true, 'expired'), lifetime);
     }
 
     return { element, dismiss: () => remove(entry, false) };

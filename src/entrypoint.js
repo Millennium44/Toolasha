@@ -171,7 +171,11 @@ const {
     errorLog,
     dualInstallGuard,
     settingsMirror,
+    reloadLog,
 } = Core;
+
+// The reload log's on/off switch. Until this runs, prompts are recorded (the setting's default is on)
+reloadLog?.setEnabledProvider?.(() => config.getSetting('reloadLog_enabled', true) !== false);
 
 const combatSimulatorSite = isCombatSimulatorPage();
 
@@ -2868,6 +2872,19 @@ function registerFeatures() {
             customCheck: () => {
                 const minutes = Number(config.getSettingValue('takeoverAutoReload', 'off'));
                 return Number.isFinite(minutes) && minutes > 0;
+            },
+            liveStop: true,
+        },
+        {
+            key: 'dataChangeAutoReload',
+            name: 'Data-Change Auto-Reload',
+            category: 'General',
+            module: UI.dataChangeAutoReload,
+            async: false,
+            // A select, not a checkbox: 'off' is a truthy string
+            customCheck: () => {
+                const seconds = Number(config.getSettingValue('dataChangeAutoReload', 'off'));
+                return Number.isFinite(seconds) && seconds > 0;
             },
             liveStop: true,
         },

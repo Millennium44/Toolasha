@@ -39,6 +39,7 @@ const coreExternalGlobals = new Map([
     // One ring buffer: the core bundle installs the hooks, the ui bundle's
     // Diagnostics section reads what they caught
     [normalize(join(__dirname, 'src/core/error-log.js')), 'Toolasha.Core.errorLog'],
+    [normalize(join(__dirname, 'src/core/reload-log.js')), 'Toolasha.Core.reloadLog'],
     [normalize(join(__dirname, 'src/core/settings-storage.js')), 'Toolasha.Core.settingsStorage'],
     // One mirror, one cadence throttle, one pair of timers: the core bundle
     // starts the periodic write, and the ui bundle's restore offer

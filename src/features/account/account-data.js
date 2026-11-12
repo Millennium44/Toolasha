@@ -26,6 +26,7 @@ import { SNAPSHOT_PREFIX as BRIEFING_PREFIX, readSnapshotsFromKeys } from '../br
 import { queueTimeLeft } from '../queue-monitor/queue-projection.js';
 import { normalizeLegacySnapshot } from '../queue-monitor/queue-snapshot-legacy.js';
 import { showToast } from '../../utils/toast.js';
+import { recordReloadPrompt } from '../../core/reload-log.js';
 import { idsFromRecordKeys, recordKeysFor } from '../../utils/chunked-history.js';
 
 /** Where each recorder puts its per-character keys */
@@ -351,11 +352,17 @@ function noteFailure(what, error) {
     console.error(`[AccountData] ${what}:`, error);
     if (warned) return;
     warned = true;
-    showToast(
+    const message =
         'Toolasha could not read your characters from storage — the Account panel will be empty or out of date. ' +
-            'Reload the page; if it keeps happening, run Toolasha.debug.storage() in the console.',
-        { kind: 'error' }
-    );
+        'Reload the page; if it keeps happening, run Toolasha.debug.storage() in the console.';
+    const logEntry = recordReloadPrompt({
+        source: 'account-read-failure',
+        kind: 'recovery',
+        message,
+        records: ['Account characters'],
+        characterId: dataManager.getCurrentCharacterId?.() ?? null,
+    });
+    showToast(message, { kind: 'error', onClose: () => logEntry.settle('dismissed') });
 }
 
 /**

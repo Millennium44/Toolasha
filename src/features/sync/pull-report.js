@@ -121,6 +121,22 @@ export function describeSyncKey(store, key) {
 }
 
 /**
+ * The records a pull latched, named for the reload log: the sync merge registry's label where the key has one,
+ * otherwise the key with its character suffix removed and any guild name replaced.
+ * @param {Array<{store: string, key: string}>} [latchedKeys] - From the import result
+ * @returns {Array<string>} Unique labels, in first-seen order
+ */
+export function latchedRecordLabels(latchedKeys = []) {
+    const labels = new Set();
+    for (const entry of latchedKeys || []) {
+        if (!entry?.key) continue;
+        const described = describeSyncKey(entry.store, entry.key);
+        labels.add(described.label || redactSyncKey(described.base));
+    }
+    return [...labels];
+}
+
+/**
  * One row count, or `n/a` for a value with no rows to count (a string, a number).
  * @param {number|null|undefined} count - From the summary
  * @returns {string} Text
@@ -345,4 +361,11 @@ export function buildPullReport(summary, { version = null, host = null, lostTime
     return lines.join('\n');
 }
 
-export default { REPORT_PRIVACY_LINE, stripCharacterSuffix, describeSyncKey, redactSyncKey, buildPullReport };
+export default {
+    REPORT_PRIVACY_LINE,
+    stripCharacterSuffix,
+    describeSyncKey,
+    redactSyncKey,
+    latchedRecordLabels,
+    buildPullReport,
+};

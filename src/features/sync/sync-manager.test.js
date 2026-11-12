@@ -55,6 +55,15 @@ vi.mock('../../utils/toast.js', () => ({
     },
 }));
 
+const reloadPrompts = vi.hoisted(() => []);
+vi.mock('../../core/reload-log.js', () => ({
+    recordReloadPrompt: (prompt) => {
+        const entry = { ...prompt, outcome: 'unknown' };
+        reloadPrompts.push(entry);
+        return { settle: (outcome) => (entry.outcome = outcome) };
+    },
+}));
+
 const dialog = vi.hoisted(() => ({ answer: null, calls: 0, last: null }));
 vi.mock('../../utils/choice-dialog.js', () => ({
     askChoice: async (question) => {
@@ -109,6 +118,7 @@ vi.mock('./sync-payload.js', () => {
                 unchanged: payload.unchanged,
                 // Undefined unless a test sets it: a result without the count is taken as having latched
                 latched: payload.latched,
+                latchedKeys: payload.latchedKeys,
                 exportedAt: null,
                 applied: payload.appliedText ?? json,
             };
@@ -250,6 +260,7 @@ beforeEach(() => {
     stored.putAlls = [];
     storageCalls.length = 0;
     toasts.length = 0;
+    reloadPrompts.length = 0;
     dialog.answer = null;
     dialog.last = null;
     dialog.calls = 0;
@@ -279,6 +290,7 @@ beforeEach(() => {
     payload.expected = undefined;
     payload.unchanged = undefined;
     payload.latched = undefined;
+    payload.latchedKeys = undefined;
     payload.complete = true;
     payload.failed = [];
     gist.found = null;
@@ -912,6 +924,54 @@ describe('pull', () => {
         expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
         expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
         expect(toasts.at(-1).message).toContain('Reload now');
+    });
+
+    test('the reload log hears of a pull that latched records, by label, and learns it was dismissed', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.latched = 2;
+        payload.latchedKeys = [
+            { store: 'settings', key: 'someRecord_30404' },
+            { store: 'settings', key: 'someRecord_30405' },
+            { store: 'settings', key: 'otherRecord' },
+        ];
+
+        await syncManager.pull();
+
+        expect(reloadPrompts).toHaveLength(1);
+        expect(reloadPrompts[0]).toMatchObject({ source: 'sync-pull', records: ['someRecord', 'otherRecord'] });
+        toasts.at(-1).onClose('dismiss');
+        expect(reloadPrompts[0].outcome).toBe('dismissed');
+    });
+
+    test('a pull that latched nothing leaves nothing in the reload log', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.latched = 0;
+
+        await syncManager.pull();
+
+        expect(reloadPrompts).toHaveLength(0);
+    });
+
+    test('cleanup during an import that latched something is logged with its records', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.latched = 1;
+        payload.latchedKeys = [{ store: 'settings', key: 'someRecord_30404' }];
+        let finishApply;
+        payload.applyWait = new Promise((resolve) => {
+            finishApply = resolve;
+        });
+
+        const oldPull = syncManager.pull();
+        await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+        syncManager.cleanup();
+        finishApply();
+        await oldPull;
+
+        expect(reloadPrompts).toHaveLength(1);
+        expect(reloadPrompts[0]).toMatchObject({ source: 'sync-pull', records: ['someRecord'] });
     });
 
     test('cleanup during an import still guards histories held back from that download', async () => {

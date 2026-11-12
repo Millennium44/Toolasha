@@ -177,6 +177,40 @@ export const settingsGroups = {
                     'you turn this on waits for the next time. If two tabs keep taking the ' +
                     'character from each other, each wait doubles and it stops after 3 reloads in a row.',
             },
+            reloadLog_enabled: {
+                id: 'reloadLog_enabled',
+                label: 'Keep a log of reload prompts',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Each time Toolasha asks you to reload the page (after a sync pull or a backup restore, ' +
+                    'when another tab loads a newer version, or to repair a missed login), write one line in a ' +
+                    'log on this device: when, what asked, which records forced it, and how it ended. Nothing ' +
+                    'is sent anywhere and the log is not synced. Settings > Diagnostics has Copy reload log, ' +
+                    'to paste it when reporting that a record should stop asking, and Clear reload log. The ' +
+                    'last 200 prompts are kept. Turning this off stops recording and changes nothing else.',
+            },
+            dataChangeAutoReload: {
+                id: 'dataChangeAutoReload',
+                label: 'Reload automatically when data changes underneath you',
+                type: 'select',
+                default: 'off',
+                options: [
+                    { value: 'off', label: 'Off' },
+                    { value: '30', label: 'After 30 seconds' },
+                    { value: '60', label: 'After 60 seconds' },
+                    { value: '120', label: 'After 2 minutes' },
+                ],
+                help:
+                    'After a sync pull or a backup restore replaced stored data, those records refuse new ' +
+                    'saves until the page reloads. With this on, a notice counts down with Reload now and ' +
+                    'Cancel, then reloads the tab for you. It never reloads while you click, type or scroll ' +
+                    'during the wait (it asks instead), nor while a Combat Sim or Lab Sim run is going or a ' +
+                    'text box in a Toolasha window has focus (it waits and checks again), and it waits for ' +
+                    'pending saves to be written. After 3 automatic reloads within 10 minutes it stops and ' +
+                    'says so. It does not touch repair prompts for a missed login, the newer-version-in-' +
+                    'another-tab notice (that has its own setting) or the takeover reload.',
+            },
             // Toggled by the PFormance panel's header button, never listed as a row. It
             // has to exist here: the config store only writes keys the schema declares,
             // so without this the button's choice was silently dropped.

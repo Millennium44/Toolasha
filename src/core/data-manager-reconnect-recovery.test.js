@@ -74,6 +74,15 @@ const CLOSE_GUARD_KEY = 'toolasha.missedCharacterData.socketClosed';
 
 let errors = [];
 let logs = [];
+const reloadPrompts = vi.hoisted(() => []);
+vi.mock('./reload-log.js', () => ({
+    recordReloadPrompt: (prompt) => {
+        const entry = { ...prompt, outcome: 'unknown' };
+        reloadPrompts.push(entry);
+        return { settle: (outcome) => (entry.outcome = outcome) };
+    },
+}));
+
 let toastCalls = [];
 let reloads = 0;
 
@@ -131,6 +140,7 @@ beforeEach(() => {
     errors = [];
     logs = [];
     toastCalls = [];
+    reloadPrompts.length = 0;
     reloads = 0;
     hookMock.messagesSeen = 0;
     hookMock.attachedAfterSocketOpen = false;
@@ -375,6 +385,27 @@ describe('the close is gated exactly as the reload is', () => {
         expect(reloads).toBe(0);
         expect(toastCalls).toHaveLength(1);
         expect(errorText()).toContain('already reloaded once');
+    });
+
+    test('the offered reload is logged as a recovery prompt and its button settles it as reloaded', () => {
+        enterProvenMissedState();
+        window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1');
+        dataManager.initialize();
+        vi.advanceTimersByTime(EARLY_WINDOW_MS + RECONNECT_WINDOW_MS + 1000);
+
+        expect(reloadPrompts).toHaveLength(1);
+        expect(reloadPrompts[0]).toMatchObject({ source: 'recovery', kind: 'recovery' });
+        toastCalls[0].options.action.onClick();
+        expect(reloadPrompts[0].outcome).toBe('reloaded');
+    });
+
+    test('a refused offer is settled as dismissed', () => {
+        enterProvenMissedState();
+        window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1');
+        dataManager.initialize();
+        vi.advanceTimersByTime(EARLY_WINDOW_MS + RECONNECT_WINDOW_MS + 1000);
+        toastCalls[0].options.onClose('dismiss');
+        expect(reloadPrompts[0].outcome).toBe('dismissed');
     });
 
     test('an unproven miss neither closes nor reloads', () => {

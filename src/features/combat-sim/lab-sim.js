@@ -83,6 +83,14 @@ class LabSim {
         }
     }
 
+    /**
+     * Whether a Lab Sim run, upgrade analysis or verification is in progress.
+     * @returns {boolean} True while one is going
+     */
+    isBusy() {
+        return Boolean(labSimUI._isLabBusy?.());
+    }
+
     disable() {
         try {
             unregisterCommand('Lab Simulator');

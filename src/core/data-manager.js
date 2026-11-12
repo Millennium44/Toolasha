@@ -10,6 +10,7 @@ import webSocketHook from './websocket.js';
 import performanceMonitor from '../utils/performance-monitor.js';
 import connectionState from './connection-state.js';
 import storage from './storage.js';
+import { recordReloadPrompt } from './reload-log.js';
 import {
     mergeOwnedAbilities,
     reconcileEquippedAbilities,
@@ -304,6 +305,7 @@ class DataManager {
         // offer can be taken back if a late init_character_data does arrive.
         // Null means no offer is standing; it is only ever set once per page.
         this.missedCharacterDataPrompt = null;
+        this.missedCharacterDataLogEntry = null;
 
         // True once the missed-payload diagnostic has been said. The early
         // recovery path and the 30-second backstop can both reach it, and the
@@ -985,14 +987,26 @@ class DataManager {
                 ? "Toolasha missed this login's character data, so its panels are empty, and reconnecting did not bring it back. Reload the page when convenient to restore Toolasha and the game connection."
                 : "Toolasha missed this login's character data, so its panels are empty. The game itself is unaffected — reload the page when convenient to bring Toolasha back.";
 
+            const logEntry = recordReloadPrompt({
+                source: 'recovery',
+                kind: 'recovery',
+                message,
+                records: ['Character data (init_character_data)'],
+                characterId: this.getCurrentCharacterId?.() ?? null,
+            });
+            this.missedCharacterDataLogEntry = logEntry;
             this.missedCharacterDataPrompt =
                 showToast(message, {
                     kind: 'warn',
                     duration: 0,
                     action: {
                         label: 'Reload the page',
-                        onClick: () => this._performReload(),
+                        onClick: () => {
+                            logEntry.settle('reloaded');
+                            this._performReload();
+                        },
                     },
+                    onClose: () => logEntry.settle('dismissed'),
                 }) || null;
         } catch (error) {
             // A page with no DOM, or a Utils bundle that never loaded, must not

@@ -139,6 +139,25 @@ describe('toast', () => {
         expect(handle.element.textContent).toContain('<img src=x onerror=alert(1)>');
     });
 
+    test('onClose is called once with why the toast left', () => {
+        const calls = [];
+        const onClose = (reason) => calls.push(reason);
+
+        const action = showToast('a', { duration: 0, onClose, action: { label: 'Go', onClick: () => {} } });
+        action.element.click();
+        const dismissed = showToast('b', { duration: 0, onClose });
+        dismissed.element.querySelector('.toolasha-toast-dismiss').click();
+        const timed = showToast('c', { duration: 100, onClose });
+        vi.advanceTimersByTime(500);
+        const coded = showToast('d', { duration: 0, onClose });
+        coded.dismiss();
+        coded.dismiss();
+        for (let i = 0; i < 5; i++) showToast(`fill ${i}`, { duration: 0, onClose: i === 0 ? onClose : undefined });
+
+        expect(calls).toEqual(['action', 'dismiss', 'expired', 'programmatic', 'evicted']);
+        expect(timed.element.isConnected).toBe(false);
+    });
+
     test('dismissAllToasts clears the stack and the container', () => {
         showToast('a', { duration: 0 });
         showToast('b', { duration: 0 });

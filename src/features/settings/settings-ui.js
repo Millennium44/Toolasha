@@ -72,6 +72,7 @@ import { createDiagnosticsSection } from './diagnostics-section.js';
 import { exportEverythingJSON, importEverything } from '../../utils/full-backup.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import { askChoice } from '../../utils/choice-dialog.js';
+import { recordReloadPrompt } from '../../core/reload-log.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { GAME_COLORS } from '../../utils/game-look.js';
 
@@ -1995,10 +1996,18 @@ class SettingsUI {
                     return;
                 }
 
-                alert(
+                const restoredMessage =
                     `Restored ${total} entries across ${Object.keys(restored).length} stores. ` +
-                        'Reload now — changes made before reloading will not be kept.'
-                );
+                    'Reload now — changes made before reloading will not be kept.';
+                // No outcome here: closing the alert is not an answer, so the entry ends as
+                // reloaded, auto-reloaded or page-closed
+                recordReloadPrompt({
+                    source: 'restore',
+                    message: restoredMessage,
+                    records: landed,
+                    characterId: dataManager.getCurrentCharacterId?.() ?? null,
+                });
+                alert(restoredMessage);
             } catch (error) {
                 console.error('[SettingsUI] Restoring backup failed:', error);
                 alert('Restoring the backup failed: ' + error.message);

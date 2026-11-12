@@ -10,6 +10,7 @@ import {
     stripCharacterSuffix,
     describeSyncKey,
     redactSyncKey,
+    latchedRecordLabels,
     REPORT_PRIVACY_LINE,
     ROW_COUNTS_NOTE,
 } from './pull-report.js';
@@ -575,5 +576,24 @@ describe('what the report says about the ledger repair', () => {
             buildPullReport(summary(), { ledgerRepair: { charId: 'Quiet Cows 7!', runs: 1, cut: 0 } })
         );
         expect(line).toBe('Ledger repair this session: 0 listings cut (1 run)');
+    });
+});
+
+describe('latchedRecordLabels', () => {
+    beforeEach(() => clearSyncMerges());
+    afterEach(() => clearSyncMerges());
+
+    test('uses the registry label, then the key without its suffix, once each, guild names redacted', () => {
+        registerSyncMerge({ store: 'settings', base: 'tradePrices', label: 'Personal trade prices', merge: (a) => a });
+        const labels = latchedRecordLabels([
+            { store: 'settings', key: 'tradePrices_30404' },
+            { store: 'settings', key: 'tradePrices_30405' },
+            { store: 'settings', key: 'plainRecord_30404' },
+            { store: 'guildHistory', key: 'guildXP_Secret Guild' },
+            { key: '' },
+            null,
+        ]);
+        expect(labels).toEqual(['Personal trade prices', 'plainRecord', 'guildXP_<guild>']);
+        expect(latchedRecordLabels()).toEqual([]);
     });
 });

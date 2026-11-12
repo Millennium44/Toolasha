@@ -16,6 +16,8 @@ import featureRegistry from '../core/feature-registry.js';
 // The error ring buffer the Diagnostics section reads. Namespace-imported so
 // its functions arrive as one object other bundles reach through Core.
 import * as errorLog from '../core/error-log.js';
+// The reload-prompt log: every bundle records into the one list and the one set of listeners
+import * as reloadLog from '../core/reload-log.js';
 import settingsStorage from '../core/settings-storage.js';
 import settingsMirror from '../core/settings-mirror.js';
 import storagePersistence from '../core/storage-persistence.js';
@@ -58,6 +60,7 @@ toolashaRoot.Core = {
     connectionState,
     featureRegistry,
     errorLog,
+    reloadLog,
     settingsStorage,
     settingsMirror,
     storagePersistence,

@@ -389,6 +389,56 @@ describe('letting go once the settings tab is gone', () => {
         expect(element.querySelectorAll('.toolasha-diagnostics-error')).toHaveLength(1);
     });
 
+    test('Copy reload log puts the summary and entries on the clipboard; Clear empties it', async () => {
+        const entries = [
+            {
+                at: 0,
+                source: 'sync-pull',
+                kind: 'data-changed',
+                outcome: 'reloaded',
+                shownMs: 2000,
+                records: ['A'],
+                message: 'm',
+                characterId: 1,
+            },
+        ];
+        let cleared = 0;
+        const reloadLog = {
+            readEntries: async () => entries,
+            formatReloadLog: (list) => `LOG ${list.length}`,
+            clearLog: async () => {
+                cleared += 1;
+                return true;
+            },
+        };
+        const section = draw({ reloadLog });
+        section.open();
+
+        section.element.querySelector('.toolasha-diagnostics-copy-reload-log').click();
+        await settle();
+        expect(copied).toBe('LOG 1');
+
+        const clearBtn = section.element.querySelector('.toolasha-diagnostics-clear-reload-log');
+        clearBtn.click();
+        await settle();
+        expect(cleared).toBe(1);
+        expect(clearBtn.textContent).toBe('Cleared ✓');
+        section.destroy();
+    });
+
+    test('a clipboard that refuses shows Copy failed', async () => {
+        const section = draw({
+            reloadLog: { readEntries: async () => [], formatReloadLog: () => 'x', clearLog: async () => false },
+            writeClipboard: async () => false,
+        });
+        section.open();
+        const button = section.element.querySelector('.toolasha-diagnostics-copy-reload-log');
+        button.click();
+        await settle();
+        expect(button.textContent).toBe('Copy failed');
+        section.destroy();
+    });
+
     test('building a section the caller has not appended yet still draws', () => {
         // The guard must not fire during `build`: the section is legitimately
         // detached until whoever asked for it puts it on the page

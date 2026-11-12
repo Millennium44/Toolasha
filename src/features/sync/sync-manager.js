@@ -93,6 +93,8 @@ import {
     lastPullSummary,
 } from './pull-summary.js';
 import { openPullSummaryPanel } from './pull-summary-panel.js';
+import { latchedRecordLabels } from './pull-report.js';
+import { recordReloadPrompt } from '../../core/reload-log.js';
 
 const STORE = 'settings';
 
@@ -1924,7 +1926,7 @@ class SyncManager {
             if (pendingHeld && sameHeldMarker(await storage.get(KEY_MERGE_HELD, STORE, null), held)) {
                 await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
             }
-            return this._stoppedAfterApply({ latched, complete, mergeFailed, mergeHeld });
+            return this._stoppedAfterApply({ latched, latchedKeys, complete, mergeFailed, mergeHeld });
         }
 
         // If rebuilding the post-import fingerprint fails, the pull has still
@@ -1998,7 +2000,7 @@ class SyncManager {
                 : await phase('hash-applied', () => contentHashSliced(applied));
         const pulledHashes = await phase('hash-keys', () => wholeKeyHashesSliced(payload));
         if (!this._stillOwns(opToken)) {
-            return this._stoppedAfterApply({ latched, complete, mergeFailed, mergeHeld });
+            return this._stoppedAfterApply({ latched, latchedKeys, complete, mergeFailed, mergeHeld });
         }
 
         await phase('remember', () =>
@@ -2123,10 +2125,15 @@ class SyncManager {
         // Nothing latched when only a fold failed or a record was held back: no write is refused, so the
         // reload sentence would be a false instruction. The warning is the whole message
         const reloadAdvice = latched === 0 ? '' : ' Reload now — changes made before reloading will not be kept.';
+        const reloadPrompt =
+            latched === 0
+                ? null
+                : this._recordReloadPrompt('sync-pull', 'Sync pull latched records; reload advised', latchedKeys);
         showToast(`Synced from GitHub. ${formatPullSummaryLine(summary)}${notCombined}${heldBack}${reloadAdvice}`, {
             duration: 0,
             kind: notCombined || heldBack ? 'warn' : 'info',
             action: { label: 'What changed?', onClick: () => openPullSummaryPanel() },
+            onClose: () => reloadPrompt?.settle('dismissed'),
         });
 
         // The union only exists on this device until it is sent up. Pushing it
@@ -2525,8 +2532,16 @@ class SyncManager {
                 showToast('Switching characters. Press it again in a moment.', { kind: 'warn' });
                 return { ok: false, reason: 'settings-reloading' };
             }
+            const reloadPrompt = recordReloadPrompt({
+                source: 'sync-settings-unread',
+                kind: 'recovery',
+                message: `Sync ${label} did not run: the sync settings could not be read just now. Reload the page.`,
+                records: ['Sync settings'],
+                characterId: dataManager.getCurrentCharacterId?.() ?? null,
+            });
             showToast(`Sync ${label} did not run: the sync settings could not be read just now. Reload the page.`, {
                 kind: 'warn',
+                onClose: () => reloadPrompt.settle('dismissed'),
             });
             return { ok: false, reason: 'settings-unread' };
         }
@@ -2964,6 +2979,29 @@ class SyncManager {
     }
 
     /**
+     * Put a reload prompt in the reload log, naming the records that forced it.
+     * @param {string} source - Which path asked
+     * @param {string} message - What the player was told
+     * @param {Array<{store: string, key: string}>} [latchedKeys] - The keys the import latched
+     * @returns {{settle: Function}} The log handle
+     * @private
+     */
+    _recordReloadPrompt(source, message, latchedKeys) {
+        let records = [];
+        try {
+            records = latchedRecordLabels(latchedKeys);
+        } catch (error) {
+            console.warn('[Sync] Could not name the latched records for the reload log:', error);
+        }
+        return recordReloadPrompt({
+            source,
+            message,
+            records,
+            characterId: dataManager.getCurrentCharacterId?.() ?? null,
+        });
+    }
+
+    /**
      * The end of a pull whose import landed after another operation took over: the stamp is left for a
      * retry, and the new screen is told to reload when the import latched anything. Keeping any hold is the
      * caller's, which knows whether its marker has landed yet.
@@ -2972,14 +3010,20 @@ class SyncManager {
      * @returns {{ok: false, reason: 'stopped-after-apply'}} The pull's result
      * @private
      */
-    _stoppedAfterApply({ latched, complete, mergeFailed, mergeHeld }) {
+    _stoppedAfterApply({ latched, latchedKeys, complete, mergeFailed, mergeHeld }) {
         console.warn('[Sync] Pull import finished after cleanup; leaving the sync stamp for a retry.');
         // A pull that landed only live-safe records latched nothing (see below), so a takeover has
         // nothing to reload for either. A result without the count is taken as having latched.
         if (latched !== 0) {
+            const reloadPrompt = this._recordReloadPrompt(
+                'sync-pull',
+                'Sync imported data during a character switch; reload advised',
+                latchedKeys
+            );
             showToast('Sync imported data during a character switch. Reload now before making more changes.', {
                 kind: 'warn',
                 duration: 0,
+                onClose: () => reloadPrompt?.settle('dismissed'),
             });
         } else if (complete === false) {
             // A store write that timed out is counted as failed but not latched (its outcome is

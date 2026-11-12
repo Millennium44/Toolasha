@@ -8,6 +8,15 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
+const reloadPrompts = vi.hoisted(() => []);
+vi.mock('../../core/reload-log.js', () => ({
+    recordReloadPrompt: (prompt) => {
+        const entry = { ...prompt, outcome: 'unknown' };
+        reloadPrompts.push(entry);
+        return { settle: (outcome) => (entry.outcome = outcome) };
+    },
+}));
+
 const state = vi.hoisted(() => ({
     settings: {},
     version: '3.16.0',
@@ -98,6 +107,7 @@ function setVisibility(value) {
 }
 
 beforeEach(async () => {
+    reloadPrompts.length = 0;
     vi.useFakeTimers();
     vi.stubGlobal('BroadcastChannel', FakeChannel);
     // The endings below are about background reloading, which is opt-in; the default is pinned separately
@@ -166,6 +176,18 @@ describe('endings', () => {
         await settle();
         expect(reload).not.toHaveBeenCalled();
         expect(state.toasts).toHaveLength(1);
+    });
+
+    test('the notice is logged as a newer-build prompt; Reload settles it, closing it dismisses it', async () => {
+        visibility = 'visible';
+        hear('3.17.0');
+        await settle();
+        expect(reloadPrompts).toHaveLength(1);
+        expect(reloadPrompts[0]).toMatchObject({ source: 'tab-version', kind: 'newer-build' });
+        state.toasts[0].options.onClose('dismiss');
+        expect(reloadPrompts[0].outcome).toBe('dismissed');
+        state.toasts[0].options.action.onClick();
+        expect(reloadPrompts[0].outcome).toBe('reloaded');
     });
 
     test('heard while visible: notice now, no reload; counts from when it later becomes hidden', async () => {
