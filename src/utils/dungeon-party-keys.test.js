@@ -14,7 +14,11 @@ vi.mock('./key-cost.js', () => ({
     describeKeyCost: () => null,
     resolveKeyPricing: () => ({ setting: 'ask', priceSide: 'ask', basis: 'market' }),
 }));
-vi.mock('./bundle-bridge.js', () => ({ dungeonTracker: () => null }));
+vi.mock('./bundle-bridge.js', () => ({
+    dungeonTracker: () => null,
+    guildMemberSkills: () => null,
+    marketUndercutAlerts: () => null,
+}));
 
 const { buildKeyRows, keyRoute, statedKeys, withLiveCounts, chestKeyForEntryKey } =
     await import('./dungeon-party-keys.js');
