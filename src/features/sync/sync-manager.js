@@ -2950,13 +2950,25 @@ class SyncManager {
                 kind: 'warn',
                 duration: 0,
             });
-        } else if (complete === false || mergeFailed?.length || mergeHeld?.length) {
+        } else if (complete === false) {
+            // A store write that timed out is counted as failed but not latched (its outcome is
+            // uncertain), so it can still land later, unguarded: only a reload settles it
+            showToast(
+                'Sync stopped before all downloaded data could be applied. Reload and pull again to retry the ' +
+                    'remaining records.',
+                { kind: 'warn', duration: 0 }
+            );
+        } else if (mergeHeld?.length) {
             showToast(
                 'Sync stopped before all downloaded data could be applied. Pull again to retry the remaining records.',
-                {
-                    kind: 'warn',
-                    duration: 0,
-                }
+                { kind: 'warn', duration: 0 }
+            );
+        } else if (mergeFailed?.length) {
+            // Everything was applied; these records could not be combined and took the downloaded copy whole
+            showToast(
+                `Sync applied the download, but ${mergeFailed.length} record(s) could not be combined with this ` +
+                    "device's copy and took the downloaded one whole. Pull again to retry.",
+                { kind: 'warn', duration: 0 }
             );
         }
         return { ok: false, reason: 'stopped-after-apply' };

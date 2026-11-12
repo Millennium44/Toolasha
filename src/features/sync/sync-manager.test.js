@@ -817,7 +817,7 @@ describe('pull', () => {
     );
 
     test.each(['held', 'fold-failed', 'incomplete'])(
-        'cleanup during an import with %s records but no latch warns to retry without a reload',
+        'cleanup during an import with %s records but no latch warns to retry',
         async (failure) => {
             stored.map.toolasha_sync_gistId = 'abc';
             gist.read = remote('2026-02-01T00:00:00.000Z');
@@ -846,8 +846,14 @@ describe('pull', () => {
             expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
             expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
             expect(toasts.at(-1)).toMatchObject({ kind: 'warn', duration: 0 });
-            expect(toasts.at(-1).message).toContain('Pull again');
-            expect(toasts.some((toast) => /reload/i.test(toast.message))).toBe(false);
+            if (failure === 'held') {
+                // Held records took nothing unguarded: another pull is enough
+                expect(toasts.at(-1).message).toContain('Pull again');
+                expect(toasts.some((toast) => /reload/i.test(toast.message))).toBe(false);
+            } else {
+                // A store write that failed or timed out may still land later, unguarded
+                expect(toasts.at(-1).message).toContain('Reload and pull again');
+            }
         }
     );
 
@@ -3642,5 +3648,48 @@ describe('a pull hashes its download once, in slices, and decides as before', ()
             expect(result.ok).toBe(true);
             expect(payload.applied).toBe(text);
         }
+    });
+});
+
+describe('the stopped-after-apply toast says what the player must do', () => {
+    const held = [{ store: 'marketplace', key: 'market', label: 'market history' }];
+    const failedMerge = [{ store: 'xpHistory', key: 'log_c1', label: 'log' }];
+    const stop = (imported) => {
+        toasts.length = 0;
+        const result = syncManager._stoppedAfterApply(imported);
+        expect(result).toEqual({ ok: false, reason: 'stopped-after-apply' });
+        return toasts.at(-1);
+    };
+
+    test('an incomplete import asks for a reload, since a timed-out write may still land', () => {
+        const toast = stop({ latched: 0, complete: false, mergeFailed: undefined, mergeHeld: undefined });
+        expect(toast.message).toContain('Reload and pull again');
+    });
+
+    test('an incomplete import with held records still asks for a reload', () => {
+        expect(stop({ latched: 0, complete: false, mergeHeld: held }).message).toContain('Reload and pull again');
+    });
+
+    test('held records alone ask only for another pull', () => {
+        const message = stop({ latched: 0, complete: true, mergeHeld: held }).message;
+        expect(message).toContain('Pull again');
+        expect(message).not.toContain('Reload');
+    });
+
+    test('records that took the downloaded copy whole do not claim the import stopped early', () => {
+        const message = stop({ latched: 0, complete: true, mergeFailed: failedMerge }).message;
+        expect(message).not.toContain('stopped before');
+        expect(message).toContain('downloaded one whole');
+        expect(message).not.toContain('Reload');
+    });
+
+    test('a latched import still says reload now, whatever else is set', () => {
+        expect(stop({ latched: 2, complete: false, mergeFailed: failedMerge }).message).toContain('Reload now');
+    });
+
+    test('a clean import with nothing latched says nothing', () => {
+        toasts.length = 0;
+        syncManager._stoppedAfterApply({ latched: 0, complete: true });
+        expect(toasts).toHaveLength(0);
     });
 });
