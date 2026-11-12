@@ -4,6 +4,8 @@ import {
     clearsNoiseAsImprovement,
     foldGroupOf,
     isCheaperSwap,
+    isLosingSwap,
+    isUnrankedSwap,
     orderEntriesToShow,
     planFold,
 } from './upgrade-fold.js';
@@ -125,6 +127,20 @@ describe('rows without a verdict, and profit slivers', () => {
         });
         expect(clearsNoiseAsImprovement(rows[0])).toBe(true);
         expect(planFold(rows).folded.size).toBe(0);
+    });
+});
+
+describe('isLosingSwap', () => {
+    test('loses DPS beyond noise with only a within-noise profit sliver: unranked, unlabeled', () => {
+        const row = swap('Sliver Coffee', { deltas: { dps: -17, profit: 0.2 }, sig: { dps: true }, gain: 900 });
+        expect(isCheaperSwap(row)).toBe(false);
+        expect(isLosingSwap(row)).toBe(true);
+        expect(isUnrankedSwap(row)).toBe(true);
+    });
+
+    test('a swap that improves something beyond noise, or loses only inside the noise, is ranked', () => {
+        expect(isLosingSwap(swap('W', { deltas: { dps: -17, xp: 5 }, sig: { dps: true, xp: true } }))).toBe(false);
+        expect(isLosingSwap(swap('N', { deltas: { dps: -0.2 }, sig: {} }))).toBe(false);
     });
 });
 

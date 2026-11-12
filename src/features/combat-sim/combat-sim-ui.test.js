@@ -2280,8 +2280,11 @@ describe('the panel', () => {
             const rows = [...'ABCDEFGH'].map((n) => lose(`Coffee ${n}`));
             rows[3] = swap('Real gain', { deltas: { dps: 2 }, sig: { dps: true } });
             draw(rows);
+            // By name the real gain sits ninth in its slot, after all the losers
+            ui._upgradeSort = { key: 'upgrade', asc: true };
+            ui._renderUpgradeResults(ui._upgradeResultsData);
             expect(drawn().some((t) => t.includes('Real gain'))).toBe(true);
-            expect(drawn().length).toBeGreaterThanOrEqual(4);
+            expect(drawn()).toHaveLength(4);
         });
 
         test('three or fewer in a slot draw no +N more', () => {

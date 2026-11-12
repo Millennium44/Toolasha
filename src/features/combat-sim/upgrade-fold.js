@@ -57,6 +57,30 @@ export function isCheaperSwap(row) {
 }
 
 /**
+ * A drink swap that loses DPS or EXP beyond the noise and gains nothing beyond the noise (no improvement on any
+ * metric, profit included). Worse than the build it replaces, so the Score ranks it at 0; unlabeled, since there
+ * is no saving to quote. A cheaper swap is the labeled kind of the same thing.
+ * @param {Object} row - Result row
+ * @returns {boolean}
+ */
+export function isLosingSwap(row) {
+    if (!isDrinkSwap(row) || !row.significantBy || !row.deltas) return false;
+    const sig = row.significantBy;
+    const d = row.deltas;
+    const loses = (sig.dps === true && d.dps < 0) || (sig.xp === true && d.xp < 0);
+    return loses && !clearsNoiseAsImprovement(row);
+}
+
+/**
+ * Whether the Score leaves a row out of the ranking and gives it 0: a cheaper swap or a losing swap.
+ * @param {Object} row - Result row
+ * @returns {boolean}
+ */
+export function isUnrankedSwap(row) {
+    return isCheaperSwap(row) || isLosingSwap(row);
+}
+
+/**
  * What a cheaper swap trades, for the label on its row.
  * @param {Object} row - A row for which `isCheaperSwap` is true
  * @returns {{saves: number, dpsPct: number|null, xpPct: number|null}}

@@ -11953,6 +11953,17 @@ describe('upgrade trims: Score and drink relevance', () => {
             expect(cheaper.score).toBeGreaterThanOrEqual(worse.score);
         });
 
+        test('a swap that loses DPS beyond noise and gains only a within-noise profit sliver scores 0', () => {
+            const sliver = free('Sliver Coffee', 900, -17, false);
+            const real = free('Real', 5_000, 2, true);
+            const rows = [sliver, real];
+            assignRankScores(rows);
+            expect(sliver.score).toBe(0);
+            expect(real.score).toBeGreaterThan(0);
+            assignScores(rows);
+            expect(sliver.score).toBe(0);
+        });
+
         test('a free row that does gain keeps its repay placing', () => {
             const real = free('Real', 5_000, 2, true);
             real.significantBy.dps = true;

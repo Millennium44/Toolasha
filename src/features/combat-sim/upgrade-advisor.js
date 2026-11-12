@@ -34,7 +34,7 @@ import {
 import { runSimulation, runLabyrinthSimulation, getMaxWorkers } from './combat-sim-runner.js';
 import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
-import { isCheaperSwap } from './upgrade-fold.js';
+import { isUnrankedSwap } from './upgrade-fold.js';
 import { generateLabArmorCandidates, getWeaponStyleFamily, labelItemWithLevel } from './lab-armor-candidates.js';
 import { buildGuidePlan } from './build-guide.js';
 import {
@@ -7051,7 +7051,7 @@ export function assignRankScores(results, options = {}) {
         row.score = 0;
     }
     // A cheaper-coffee swap is a trade, not an upgrade: it scores 0 and takes no placing from a real one
-    const ranked = results.filter((row) => !isCheaperSwap(row));
+    const ranked = results.filter((row) => !isUnrankedSwap(row));
 
     for (const metric of metrics) {
         const ladder = [...new Set(ranked.map(metric.value).filter((v) => Number.isFinite(v)))]
@@ -7169,7 +7169,7 @@ export function assignScores(results, options = {}) {
         row.score = 0;
     }
     // A cheaper-coffee swap is a trade, not an upgrade: it scores 0 and is not what the others are measured against
-    const ranked = results.filter((row) => !isCheaperSwap(row));
+    const ranked = results.filter((row) => !isUnrankedSwap(row));
 
     let counted = 0;
     for (const metric of metrics) {
