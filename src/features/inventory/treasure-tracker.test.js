@@ -193,6 +193,7 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     registerFloatingPanel: () => {},
     unregisterFloatingPanel: () => {},
     bringPanelToFront: () => {},
+    PANEL_Z_CAP: 1199,
 }));
 
 const {

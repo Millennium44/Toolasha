@@ -40,7 +40,13 @@ import {
     SORT_MODES,
 } from '../../utils/chest-tally.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
-import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import {
+    registerFloatingPanel,
+    unregisterFloatingPanel,
+    bringPanelToFront,
+    PANEL_Z_CAP,
+} from '../../utils/panel-z-index.js';
+import { SURFACE_ATTRIBUTE } from '../../utils/surface-marker.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floating-panel.js';
@@ -140,6 +146,14 @@ const DATA_WAIT_LIMIT_MS = 5 * 60 * 1000;
 const CLOSE_GUTTER = { pointer: 28, touch: TOUCH_TARGET + 6 };
 /** The game's own dialog, which the popup wants to sit beside */
 const LOOT_DIALOG_SELECTOR = '[class*="Modal_modal"]:not([class*="Modal_modalContainer"])';
+/**
+ * The chest's loot dialog and this popup are what the player opened the chest to see, so both sit above
+ * every floating panel (a Combat Sim left open, say) rather than underneath it. The game's dialog gets the
+ * layer just above the floating-panel band; the popup the one above that, so it stays clickable over the
+ * dialog's backdrop.
+ */
+const LOOT_DIALOG_Z = PANEL_Z_CAP + 1;
+const POPUP_Z = PANEL_Z_CAP + 2;
 /** Gap between the two, and how far off a screen edge the popup may not go */
 const DIALOG_GAP = 12;
 const EDGE_MARGIN = 8;
@@ -907,8 +921,10 @@ class TreasureTracker {
         this._removePopup();
         this.popup = this._buildPopup(chestHrid, opening, lifetime);
         document.body.appendChild(this.popup);
-        registerFloatingPanel(this.popup);
+        // Its own layer above the panel band (see POPUP_Z), so it is never renumbered underneath a panel
+        registerFloatingPanel(this.popup, { managedZ: false });
         capHeightToWindow(this.popup);
+        this._raiseLootDialog(0);
 
         // Size is always remembered; where it goes is not, unless you have
         // pinned it by moving it. Asking for the position back regardless was
@@ -982,6 +998,32 @@ class TreasureTracker {
      *   came back: never retries and never reveals the popup itself, since
      *   the original round of retries is still the one deciding when it shows
      */
+    /**
+     * Lift the game's loot dialog above every floating panel, so a Combat Sim left open does not hide it.
+     * The dialog's stacking comes from its outermost fixed ancestor (the modal root with the backdrop), so
+     * that is what is raised; it is the game's own element and goes away with the dialog. Retried while
+     * React is still rendering it, and dropped once this popup is no longer the one showing.
+     * @param {number} tries - Attempts made so far
+     * @private
+     */
+    _raiseLootDialog(tries) {
+        const popup = this.popup;
+        if (!popup) return;
+        const dialog = document.querySelector(LOOT_DIALOG_SELECTOR);
+        if (!dialog) {
+            if (tries >= DIALOG_TRIES) return;
+            setTimeout(() => {
+                if (this.popup === popup) this._raiseLootDialog(tries + 1);
+            }, DIALOG_RETRY_MS);
+            return;
+        }
+        let root = null;
+        for (let el = dialog; el && el !== document.body; el = el.parentElement) {
+            if (getComputedStyle(el).position === 'fixed') root = el;
+        }
+        if (root) root.style.zIndex = String(LOOT_DIALOG_Z);
+    }
+
     _placeBesideDialog(tries, { quiet = false } = {}) {
         if (!this.popup) return;
 
@@ -1441,7 +1483,7 @@ class TreasureTracker {
             position: 'fixed',
             top: '80px',
             right: '40px',
-            zIndex: String(config.Z_FLOATING_PANEL),
+            zIndex: String(POPUP_Z),
             width: '340px',
             maxWidth: 'calc(100vw - 16px)',
             ...GAME_FRAME,
@@ -1608,6 +1650,10 @@ class TreasureTracker {
             // The full-stats panel is this popup's own offspring; clicking in it
             // is not clicking away
             if (this.panel?.contains(event.target)) return;
+            // Nor is a click on another Toolasha panel — minimizing a Combat Sim
+            // left open, say. The game's loot dialog survives that click too: it
+            // closes only on its own backdrop, which the panel sits above.
+            if (event.target?.closest?.(`[${SURFACE_ATTRIBUTE}]`)) return;
             this._removePopup();
         };
         const arm = setTimeout(() => document.addEventListener('mousedown', this._onOutsideClick, true), 0);
