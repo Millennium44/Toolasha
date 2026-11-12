@@ -248,6 +248,7 @@ class MarketFilter {
             { value: 'hands', label: 'Hands' },
             { value: 'legs', label: 'Legs' },
             { value: 'feet', label: 'Feet' },
+            { value: 'belt', label: 'Belt' },
             { value: 'neck', label: 'Neck' },
             { value: 'earrings', label: 'Earrings' },
             { value: 'ring', label: 'Ring' },

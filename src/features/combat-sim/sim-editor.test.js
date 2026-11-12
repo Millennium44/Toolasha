@@ -3616,6 +3616,23 @@ describe('item icons in the shared Lab and Combat editor (#862)', () => {
             host.querySelector('[data-equipment-slot="/equipment_types/off_hand"]').parentElement.querySelector('svg')
         ).toBeNull();
     });
+    test('a worn belt is listed in the equipment section instead of dropped', () => {
+        const belt = '/items/large_talisman_belt';
+        const editor = new SimEditor({ editorEl: document.createElement('div'), labMode: false });
+        const dto = {
+            ...emptyDTO('p1'),
+            equipment: { '/equipment_types/belt': { hrid: belt, enhancementLevel: 3 } },
+        };
+        const host = document.createElement('div');
+        host.innerHTML = editor._renderEquipmentSection(dto, {
+            itemDetailMap: {
+                [belt]: { name: 'Large Talisman Belt', equipmentDetail: { type: '/equipment_types/belt' } },
+            },
+        });
+        expect(host.querySelector('[data-equipment-slot="/equipment_types/belt"]')).toBeTruthy();
+        expect(host.textContent).toContain('Belt');
+        expect(host.textContent).toContain('Large Talisman Belt');
+    });
     test.each(['equipment', 'consumable'])(
         'late popup artwork reaches the %s picker without changing selection',
         async (kind) => {

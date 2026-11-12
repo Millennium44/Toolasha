@@ -1617,6 +1617,20 @@ class DataManager {
             }
         });
 
+        // talismans_updated: a delta, like abilities_updated. The game merges `endCharacterTalismans`
+        // into its map by id and then removes `deletedTalismanIds` (updateCharacterTalismans).
+        // Live servers have no talismans and never send this.
+        this.webSocketHook.on('talismans_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+            // A delta cannot be held over a character switch the way a whole map can, and the
+            // arriving character's init carries its own full list, so a delta that lands
+            // mid-switch is dropped rather than applied to the departing character.
+            if (!this.isFromInitializedCharacter(context) || !this.characterData) return;
+            if (this.applyTalismanUpdates(data)) {
+                this.emit('talismans_updated', data);
+            }
+        });
+
         // party_updated: the game replaces its partyInfo wholesale on every change (join, leave,
         // leader, status), so the stored copy is replaced the same way.
         this.webSocketHook.on('party_updated', (data, context) => {
@@ -2415,6 +2429,73 @@ class DataManager {
             noncombatStats: this.characterData.noncombatStats || null,
         });
         return true;
+    }
+
+    /**
+     * Apply a `talismans_updated` delta to `characterData.characterTalismans`.
+     *
+     * Merge by id, then delete, in the order the game's own handler uses. Rows that name a
+     * different character than the current one are refused, so a stray message cannot put
+     * another character's talismans in this character's list.
+     *
+     * @param {{endCharacterTalismans?: Array<Object>, deletedTalismanIds?: Array<number>}} data - Message payload
+     * @returns {boolean} True when the list was changed
+     */
+    applyTalismanUpdates(data) {
+        if (!this.characterData || !data || typeof data !== 'object') return false;
+        const updates = Array.isArray(data.endCharacterTalismans) ? data.endCharacterTalismans : [];
+        const deletedIds = Array.isArray(data.deletedTalismanIds) ? data.deletedTalismanIds : [];
+        if (updates.length === 0 && deletedIds.length === 0) return false;
+
+        const expectedId = this.currentCharacterId;
+        const validUpdates = updates.filter(
+            (row) =>
+                row &&
+                typeof row === 'object' &&
+                row.id !== undefined &&
+                row.id !== null &&
+                !(expectedId && row.characterID && String(row.characterID) !== String(expectedId))
+        );
+
+        const current = Array.isArray(this.characterData.characterTalismans)
+            ? this.characterData.characterTalismans
+            : [];
+        const byId = new Map(current.map((row) => [String(row.id), row]));
+        for (const row of validUpdates) byId.set(String(row.id), row);
+        for (const id of deletedIds) byId.delete(String(id));
+
+        this.characterData.characterTalismans = [...byId.values()];
+        return true;
+    }
+
+    /**
+     * Whether the character's talisman list has been delivered at all. A server without
+     * talismans never sends one, which is not the same as a character who owns none.
+     * @returns {boolean}
+     */
+    hasTalismansLoaded() {
+        return Array.isArray(this.characterData?.characterTalismans);
+    }
+
+    /**
+     * Every talisman the character owns, slotted or not.
+     * @returns {Array<Object>} Never null; empty when none are owned or none were delivered
+     */
+    getCharacterTalismans() {
+        const list = this.characterData?.characterTalismans;
+        return Array.isArray(list) ? [...list] : [];
+    }
+
+    /**
+     * The talismans sitting in a belt slot, ordered by slot. slotIndex is 1-based on the wire
+     * (slots 1..3); an unslotted talisman carries 0. Anything that is not an integer >= 1
+     * (0, -1, missing) reads as unslotted.
+     * @returns {Array<Object>} Never null
+     */
+    getSlottedTalismans() {
+        return this.getCharacterTalismans()
+            .filter((row) => Number.isInteger(row.slotIndex) && row.slotIndex >= 1)
+            .sort((x, y) => x.slotIndex - y.slotIndex);
     }
 
     /**

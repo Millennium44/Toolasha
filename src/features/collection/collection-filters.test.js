@@ -1110,6 +1110,17 @@ describe('the badge on a skilling tile', () => {
         expect(badgeIn(grid, 'arcane_tree').textContent).toBe('7');
     });
 
+    test('the eternal cow and ancient tree are badged with the item they make', () => {
+        // The new tier's main drops are holy_milk and arcane_log (eternal_milk / ancient_log are secondary)
+        collectionFilters.collections = { holy_milk: 4, arcane_log: 9 };
+        const grid = buildGrid(['eternal_holy_cow', 'ancient_arcane_tree']);
+
+        collectionFilters._addSkillingBadges(grid);
+
+        expect(badgeIn(grid, 'eternal_holy_cow').textContent).toBe('4');
+        expect(badgeIn(grid, 'ancient_arcane_tree').textContent).toBe('9');
+    });
+
     test('an action producing nothing you have collected gets no badge', () => {
         collectionFilters.collections = { milk: 10 };
         const grid = buildGrid(['cow', 'tree']);

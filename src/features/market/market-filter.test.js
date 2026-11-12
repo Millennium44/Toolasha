@@ -123,6 +123,15 @@ describe('market filter', () => {
         }
     });
 
+    test('the slot dropdown offers Belt and filters to belts', () => {
+        game.items['/items/large_talisman_belt'] = gear(1, 'belt', 'total_level');
+        const grid = openMarketplace(['wooden_sword', 'large_talisman_belt']);
+        const options = Array.from(document.getElementById('toolasha-slot-filter').options).map((o) => o.value);
+        expect(options).toContain('belt');
+        choose('toolasha-slot-filter', 'belt');
+        expect(shown(grid)).toEqual(['large_talisman_belt']);
+    });
+
     test('an item whose icon carries only xlink:href is filtered like the rest', () => {
         const grid = openMarketplace(['wooden_sword', 'holy_sword', 'holy_bow'], { xlink: ['wooden_sword'] });
         choose('toolasha-level-min', 50);
