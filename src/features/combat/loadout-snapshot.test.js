@@ -255,6 +255,23 @@ describe('lazy websocket subscription', () => {
         expect(byName).toEqual({ Fighting: '42', Skilling: '7' });
     });
 
+    test('the talismanIdMap of a loadout is kept when the server sends one and absent when it does not', () => {
+        const store = new loadoutSnapshot.constructor();
+        const before = ws.onCalls.length;
+        store.getAllSnapshots();
+
+        ws.onCalls[before].handler({
+            characterLoadoutMap: {
+                1: { name: 'With', talismanIdMap: { 1: 2624, 2: 2625 } },
+                2: { name: 'Without' },
+            },
+        });
+
+        const byName = Object.fromEntries(store.getAllSnapshots().map((s) => [s.name, s]));
+        expect(byName.With.talismanIdMap).toEqual({ 1: 2624, 2: 2625 });
+        expect('talismanIdMap' in byName.Without).toBe(false);
+    });
+
     test('a read after disable() subscribes again', () => {
         const store = new loadoutSnapshot.constructor();
         store.getAllSnapshots();

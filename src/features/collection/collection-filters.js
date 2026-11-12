@@ -154,6 +154,7 @@ const ACTION_TO_ITEM = {
     crimson_cow: 'crimson_milk',
     unicow: 'rainbow_milk',
     holy_cow: 'holy_milk',
+    eternal_holy_cow: 'holy_milk',
     tree: 'log',
     birch_tree: 'birch_log',
     cedar_tree: 'cedar_log',
@@ -161,6 +162,7 @@ const ACTION_TO_ITEM = {
     ginkgo_tree: 'ginkgo_log',
     redwood_tree: 'redwood_log',
     arcane_tree: 'arcane_log',
+    ancient_arcane_tree: 'arcane_log',
 };
 
 /** Everything this feature stores per character, in the `collections` store */

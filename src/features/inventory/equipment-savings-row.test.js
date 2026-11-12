@@ -667,6 +667,18 @@ describe('the slot layout', () => {
         expect(text()).toContain('Cheese Sword');
     });
 
+    test('a belt gets its own section and shows what is worn in it', () => {
+        game.details['/items/large_talisman_belt'] = {
+            name: 'Large Talisman Belt',
+            equipmentDetail: { type: '/equipment_types/belt' },
+        };
+        game.equipment.set('/item_locations/belt', { itemHrid: '/items/large_talisman_belt', enhancementLevel: 2 });
+        unlock();
+
+        expect(text()).toContain('Belt:');
+        expect(text()).toContain('Large Talisman Belt +2');
+    });
+
     test('an empty slot reads as empty rather than as missing', () => {
         unlock();
         expect(text()).toContain('Empty');

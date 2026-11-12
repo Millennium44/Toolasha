@@ -96,6 +96,12 @@ function buildSnapshot(loadout, id) {
         if (hrid) abilities.push({ abilityHrid: hrid, slot: parseInt(slot, 10) });
     }
 
+    // Only a server with talismans sends the map; omit it elsewhere rather than store an empty one
+    const talismanFields =
+        loadout.talismanIdMap && typeof loadout.talismanIdMap === 'object'
+            ? { talismanIdMap: loadout.talismanIdMap }
+            : {};
+
     return {
         id,
         name: loadout.name,
@@ -109,6 +115,7 @@ function buildSnapshot(loadout, id) {
         drinks,
         abilityCombatTriggersMap: loadout.abilityCombatTriggersMap || {},
         consumableCombatTriggersMap: loadout.consumableCombatTriggersMap || {},
+        ...talismanFields,
         savedAt: Date.now(),
     };
 }

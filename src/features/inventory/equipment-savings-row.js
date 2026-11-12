@@ -176,6 +176,7 @@ const SLOTS = [
     'ring',
     'trinket',
     'back',
+    'belt',
 ];
 
 /** A slot's name as a heading */
