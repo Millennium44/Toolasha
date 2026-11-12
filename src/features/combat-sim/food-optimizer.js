@@ -84,7 +84,7 @@ export function buildConsumablePools(gameData) {
         const signature = restoreSignature(detail);
         if (!signature) continue;
 
-        const { price, custom } = resolveItemPrice(hrid, { side: 'buy' });
+        const { price, custom } = resolveItemPrice(hrid, { side: 'buy', context: 'profit' });
         if (!isKnownPrice(price, custom)) continue;
 
         const hpRestore = Number(detail.hitpointRestore) || 0;
@@ -151,7 +151,7 @@ export function buildBuffDrinkPools(gameData) {
         const family = buffs[0].uniqueHrid;
         if (!family) continue;
 
-        const { price, custom } = resolveItemPrice(hrid, { side: 'buy' });
+        const { price, custom } = resolveItemPrice(hrid, { side: 'buy', context: 'profit' });
 
         if (!pools.has(family)) pools.set(family, []);
         pools.get(family).push({
@@ -371,7 +371,7 @@ function consumableCostPerHour(simResult, playerHrid, priceCache) {
     for (const [hrid, count] of Object.entries(used)) {
         if (!(count > 0)) continue;
         if (priceCache[hrid] === undefined) {
-            const price = resolveItemPrice(hrid, { side: 'buy' }).price;
+            const price = resolveItemPrice(hrid, { side: 'buy', context: 'profit' }).price;
             priceCache[hrid] = Number.isFinite(price) ? price : null;
         }
         if (priceCache[hrid] === null) return null;
@@ -442,7 +442,7 @@ export async function runFoodOptimization(params, onProgress, options = {}) {
         ...[...pools.values()].flatMap((pool) => pool.map((entry) => entry.hrid)),
     ]) {
         if (!hrid || priceCache[hrid] !== undefined) continue;
-        const price = resolveItemPrice(hrid, { side: 'buy' }).price;
+        const price = resolveItemPrice(hrid, { side: 'buy', context: 'profit' }).price;
         priceCache[hrid] = Number.isFinite(price) ? price : null;
     }
     let simCount = 0;
