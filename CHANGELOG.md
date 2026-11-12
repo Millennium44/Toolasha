@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Belts and talismans on the test server
+
+Toolasha now keeps track of your talismans and shows a worn belt in the Combat Sim editor, the equipment savings row and the marketplace slot filter. The new Eternal Holy Cow and Ancient Arcane Tree get collection badges. Bonuses are not counted yet.
+
 ### Sim dropdowns show icons in Firefox
 
 The Combat Sim zone list and the Lab Sim monster list now show their game icons in Firefox, which previously showed plain text only.

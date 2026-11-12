@@ -262,13 +262,13 @@ describe('lazy websocket subscription', () => {
 
         ws.onCalls[before].handler({
             characterLoadoutMap: {
-                1: { name: 'With', talismanIdMap: { 1: 2624, 2: 2625 } },
+                1: { name: 'With', talismanIdMap: { 1: 2624, 2: 0, 3: 0 } },
                 2: { name: 'Without' },
             },
         });
 
         const byName = Object.fromEntries(store.getAllSnapshots().map((s) => [s.name, s]));
-        expect(byName.With.talismanIdMap).toEqual({ 1: 2624, 2: 2625 });
+        expect(byName.With.talismanIdMap).toEqual({ 1: 2624, 2: 0, 3: 0 });
         expect('talismanIdMap' in byName.Without).toBe(false);
     });
 
