@@ -13,6 +13,9 @@ The Goal Planner, Enhancing XP/hr profit, the Enhancement Tracker and Loot Log e
 ### Task cowbells and the action bar run value
 
 Cowbell rewards in task profit are now worth a Bag of 10 Cowbells' sell price after its 18% tax, so they read lower than before. The action bar's "This run" value now uses your sell pricing after market tax, and marks drops it could not price with \*.
+### Total Profit tile lines up in columns
+
+The Total Profit tile now lines each party member's name, banked coins and per-day figure up in columns instead of centering every line on its own width.
 
 ### Shop Max sets the enhancement level on the test server
 

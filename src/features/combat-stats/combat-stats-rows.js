@@ -566,7 +566,11 @@ registerRow({
                         push: true,
                     },
                 ];
-            })
+            }),
+            // A table — the same three figures per member — so the names, coins
+            // and both figures line up in columns instead of each line centering
+            // on its own width
+            { align: true }
         );
 
         // The banked figures above price unopened chests at EV; when that EV is
