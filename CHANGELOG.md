@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sim dropdowns show icons in Firefox
+
+The Combat Sim zone list and the Lab Sim monster list now show their game icons in Firefox, which previously showed plain text only.
+
+### Bestiary plan warns when one zone beats the route
+
+When the planned route is much slower than (or earns far less than) the best single zone, an amber note says so above the table, and a "Plan X only" button shows that one-zone plan with a way back to the route.
+
+### Dropped saved parties are always reported
+
+When a sync joins two full lists of saved parties or rosters and the 40 cap drops some, the Party tab and Configure's Load party now say which, even if neither was open at the time.
+
 ### Reload prompt log and optional auto-reload
 
 Toolasha now keeps a short device-only log of every time it asks you to reload, which you can copy from Settings > Diagnostics. A new off-by-default setting can reload for you after a sync pull or backup restore, with a countdown and a Cancel button, and never while you are using the page, running a simulator or syncing.
