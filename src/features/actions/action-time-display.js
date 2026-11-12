@@ -6208,9 +6208,19 @@ class ActionTimeDisplay {
         // The same sale the panel's profit/hr assumes for a drop: the player's Sell side, net of market tax
         // (none for an Iron Cow, nor under the personal-use sell-tax exclusion)
         const untaxed = config.getSettingValue('profitCalc_excludeSellTax', false) === true;
+        // A drop with no order on the Sell side (only a value-map estimate) is unpriced, as the panel's profit/hr
+        // treats it: counted as nothing, and the figure is marked as a floor
+        let unpriced = false;
         const value = lootEntryValue({ drops: totals.gained }, (itemHrid, level) => {
-            const { price } = getItemPriceInfo(itemHrid, { enhancementLevel: level, context: 'profit', side: 'sell' });
-            if (price === null) return null;
+            const { price, estimated } = getItemPriceInfo(itemHrid, {
+                enhancementLevel: level,
+                context: 'profit',
+                side: 'sell',
+            });
+            if (price === null || estimated) {
+                unpriced = true;
+                return null;
+            }
             return untaxed ? price : calculatePriceAfterTax(price);
         });
         const color =
@@ -6218,7 +6228,7 @@ class ActionTimeDisplay {
                 ? config.getSettingValue('color_profit', '#4ade80')
                 : config.getSettingValue('color_loss', '#f87171');
         const sign = value >= 0 ? '+' : '';
-        const valueHtml = `<span style="color:${color}; font-weight:600;">${sign}${formatLargeNumber(Math.abs(Math.round(value)))}</span>`;
+        const valueHtml = `<span style="color:${color}; font-weight:600;"${unpriced ? ' title="Some drops have no order on your selling side and are counted as nothing"' : ''}>${sign}${formatLargeNumber(Math.abs(Math.round(value)))}${unpriced ? '*' : ''}</span>`;
 
         // `currentCount` is the game's whole-run figure; `totals` only ever covers what the
         // recorder actually watched. Pairing them is only honest when recording began at or

@@ -14,6 +14,9 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     modesSeen: [],
+    /** Items priced by a custom buy price, and what it is */
+    custom: null,
+    customPrice: 0,
     setting: true,
     collections: null,
     characterId: 'char-1',
@@ -374,11 +377,12 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPriceInfo: (hrid, options = {}) => {
         const side = sideOfLookup(options);
         const price = side === 'bid' ? (BID[hrid] ?? BUY[hrid] ?? null) : (BUY[hrid] ?? null);
+        if (game.custom?.has(hrid)) return { price: game.customPrice, source: 'custom', estimated: false };
         return game.estimated.has(hrid) || (side === 'bid' && game.noBid.has(hrid))
             ? { price, source: 'value', estimated: true }
             : { price, source: 'book', estimated: false };
     },
-    getPricingMode: () => 'ask',
+    getPricingMode: (_context, side) => bookSideOf(game.pricingMode, side ?? 'sell'),
 }));
 vi.mock('../../utils/patient-tick.js', () => ({
     PATIENT_TICK_SETTING_KEYS: ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'],
@@ -488,6 +492,7 @@ beforeEach(() => {
     // Ask to buy, bid to sell: the numbers these tests are written in
     game.pricingMode = 'conservative';
     game.modesSeen = [];
+    game.custom = null;
     bus.settings = {};
     game.noTransmute = false;
     game.milkingLevel = 10;
@@ -631,23 +636,54 @@ describe("the maintainer's Amber row: Decompose 1472× Earrings Of Essence Find,
         expect(buyQuote(route.purchase, 4).gold).toBe(4 * 6_300_000);
     });
 
-    test('a patient buy waits in the queue: the cached asks do not price it, the week bound does', async () => {
+    test('a large patient buy is never priced at the bid past what the market is measured to trade', async () => {
+        const hrid = '/items/earrings_of_essence_find';
         game.pricingMode = 'optimistic';
         const route = earringsRoute(await buildCollectionRoutes());
         expect(route.purchase.ask).toBe(5_940_000);
-        BOOKS.byItem['/items/earrings_of_essence_find'] = {
+        BOOKS.byItem[hrid] = {
             lastUpdated: Date.now() - 3600 * 1000,
             asks: [{ listingId: 9001, price: 6_300_000, quantity: 2 }],
         };
-        // The book holds two earrings, and a bid at 5.94M buys neither of them: three are still to be had
-        const quote = buyQuote(route.purchase, 3);
-        expect(quote.fromBook).toBe(false);
-        expect(quote.gold).toBe(3 * 5_940_000);
+
+        // Volume unmeasured: nothing may be queued, so units past the visible book are not priced at all
+        const unmeasured = buyQuote(route.purchase, 3);
+        expect(unmeasured.feasible).toBe(false);
+        // ...and what the book does show is bought up the asks, not at the bid
+        expect(buyQuote(route.purchase, 2).gold).toBe(2 * 6_300_000);
+
+        // Measured: a quarter of 8 a day over 7 days (14 units) may queue at the bid, the rest walks the asks
+        VOLUME.perDay[hrid] = 8;
+        BOOKS.byItem[hrid].asks = [{ listingId: 9001, price: 6_300_000, quantity: 30 }];
+        const measured = buyQuote(route.purchase, 20);
+        expect(measured.feasible).toBe(true);
+        expect(measured.gold).toBe(14 * 5_940_000 + 6 * 6_300_000);
+        // Nothing past the 14 the market trades a week is bought without a book either
+        delete BOOKS.byItem[hrid];
+        expect(buyQuote(route.purchase, 14).gold).toBe(14 * 5_940_000);
+        expect(buyQuote(route.purchase, 20).feasible).toBe(false);
 
         // An instant buyer walks the same book
         game.pricingMode = 'conservative';
         const instant = earringsRoute(await buildCollectionRoutes());
+        BOOKS.byItem[hrid] = { lastUpdated: Date.now(), asks: [{ listingId: 1, price: 6_300_000, quantity: 2 }] };
         expect(buyQuote(instant.purchase, 3).feasible).toBe(false);
+    });
+
+    test('a custom buy price under the book is not read as a patient queue', async () => {
+        const hrid = '/items/earrings_of_essence_find';
+        game.pricingMode = 'optimistic';
+        game.custom = new Set([hrid]);
+        game.customPrice = 1_000_000;
+        const route = earringsRoute(await buildCollectionRoutes());
+        BOOKS.byItem[hrid] = {
+            lastUpdated: Date.now() - 3600 * 1000,
+            asks: [{ listingId: 9001, price: 6_300_000, quantity: 2 }],
+        };
+
+        // Priced as the instant path always was: flat at the quote within the book, infeasible past its depth
+        expect(buyQuote(route.purchase, 2).gold).toBe(2 * 6_300_000);
+        expect(buyQuote(route.purchase, 3).feasible).toBe(false);
     });
 
     test('moving the Buy/Sell dropdowns prices the routes again', async () => {

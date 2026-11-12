@@ -5,6 +5,7 @@
 
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { pricesMoved } from '../../utils/price-change.js';
 import * as houseCostCalculator from '../../utils/house-cost-calculator.js';
 import { coinFormatter, formatWithSeparator } from '../../utils/formatters.js';
@@ -240,6 +241,15 @@ class HouseCostDisplay {
                 this.refresh();
             }
         });
+
+        // Materials are priced on the player's Buy side: an open modal reprices when it moves
+        for (const key of ['profitCalc_pricingMode', ...PATIENT_TICK_SETTING_KEYS]) {
+            config.onSettingChange(key, () => {
+                if (this.isInitialized) {
+                    this.refresh();
+                }
+            });
+        }
     }
 
     /**

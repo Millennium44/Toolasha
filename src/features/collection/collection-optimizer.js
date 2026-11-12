@@ -33,7 +33,7 @@ import profitCalculator from '../market/profit-calculator.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { ownUseCompare } from '../market/tooltip-prices.js';
-import { getItemPriceInfo, isPriceEstimated } from '../../utils/market-data.js';
+import { getItemPriceInfo, getPricingMode, isPriceEstimated } from '../../utils/market-data.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { capProfitRateCached, hasMeasuredVolume, prefetchLiquidity } from '../../utils/liquidity-cap.js';
@@ -165,6 +165,17 @@ function cachedAsks(hrid) {
 }
 
 /**
+ * Whether the player's live Buy side is a queued bid for this item: the mode's buy side is the bid and
+ * the quote is a book price (a custom price or an estimate is not a queue to wait in).
+ * @param {string} hrid
+ * @returns {boolean}
+ */
+function isPatientBuy(hrid) {
+    if (getPricingMode('profit', 'buy') !== 'bid') return false;
+    return getItemPriceInfo(hrid, { context: 'profit', side: 'buy', marketQuote: true }).source === 'book';
+}
+
+/**
  * What buying a quantity of a route's source costs ({@link buyCost}): up the
  * cached book from the route's quote, and no more than a week's traded volume
  * ({@link weeklySellable} — the same measured bound as selling, either way a
@@ -196,10 +207,24 @@ export function createBuyQuote() {
             });
         }
         const market = markets.get(purchase.hrid);
-        const bestListed = Math.min(...(market.listings || []).map((level) => Number(level?.price) || Infinity));
-        // Quoted under the cheapest listing: the buy is a queued order, not a walk up the asks
-        const patient = market.listings && Number(purchase.ask) < bestListed;
-        return buyCost(units, { ask: purchase.ask, ...market, listings: patient ? null : market.listings, already });
+        if (!isPatientBuy(purchase.hrid)) return buyCost(units, { ask: purchase.ask, ...market, already });
+
+        // A patient buy waits in the queue, but only as much as the market is measured to trade; what is
+        // past that is bought up the cached asks from the live ask, so a large buy is never priced at the bid
+        const cap = Number.isFinite(market.weekly) ? Math.max(0, market.weekly) : 0;
+        const total = already + units;
+        const queued = Math.max(0, Math.min(total, cap) - Math.min(already, cap));
+        const rest = units - queued;
+        if (rest <= 1e-9)
+            return { gold: queued * purchase.ask, feasible: true, limit: cap, fromBook: false, unpriced: false };
+        const liveAsk = getItemPriceInfo(purchase.hrid, { mode: 'ask', side: 'buy', marketQuote: true }).price;
+        const top =
+            liveAsk > 0 ? liveAsk : Math.min(...(market.listings || []).map((l) => Number(l?.price) || Infinity));
+        if (!(top > 0 && Number.isFinite(top))) {
+            return { gold: NaN, feasible: false, limit: cap, fromBook: false, unpriced: true };
+        }
+        const walked = buyCost(rest, { ask: top, ...market, already: already + queued });
+        return { ...walked, gold: queued * purchase.ask + walked.gold };
     };
 }
 
