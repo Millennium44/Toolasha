@@ -11,7 +11,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const character = vi.hoisted(() => ({ id: 'market123', mode: 'standard' }));
-const history = vi.hoisted(() => ({ rows: [], cooldownMs: 0 }));
+const history = vi.hoisted(() => ({ rows: [], cooldownMs: 0, source: 'mooket2', fetchGate: null, fetchCalls: [] }));
 
 const storageMock = vi.hoisted(() => {
     const stores = new Map();
@@ -113,9 +113,13 @@ vi.mock('./market-history-api.js', () => ({
     default: {
         connect: () => {},
         disconnect: () => {},
-        fetchHistory: async () => history.rows,
+        fetchHistory: async (itemHrid) => {
+            history.fetchCalls.push({ itemHrid, source: history.source });
+            if (history.fetchGate) await history.fetchGate;
+            return history.rows;
+        },
         cooldownRemainingMs: () => history.cooldownMs,
-        currentSource: () => ({ key: 'mooket2', hasVolume: true, avgLabel: 'Avg' }),
+        currentSource: () => ({ key: history.source, hasVolume: history.source === 'mooket2', avgLabel: 'Avg' }),
     },
 }));
 
@@ -334,7 +338,52 @@ describe('disable() always leaves the feature re-initialisable', () => {
         // leave the newly re-created chart blank until the item or day range changed.
         panel.prefs.open = true;
         await panel.showItem('/items/cheese', 0);
-        expect(panel.shown).toBe('/items/cheese:0:7');
+        expect(panel.shown).toBe('/items/cheese:0:7:mooket2');
+    });
+});
+
+describe('the history source is part of what the chart shows', () => {
+    beforeEach(() => {
+        history.source = 'mooket2';
+        history.fetchGate = null;
+        history.fetchCalls = [];
+        panel.shown = null;
+        panel.title = { textContent: '' };
+        panel.prefs.open = true;
+        panel.drawChart = vi.fn();
+    });
+
+    test('asking again for the same item after switching pools fetches again', async () => {
+        await panel.showItem('/items/cheese', 0);
+        history.source = 'mooket1';
+        await panel.showItem('/items/cheese', 0);
+
+        expect(history.fetchCalls.map((call) => call.source)).toEqual(['mooket2', 'mooket1']);
+        expect(panel.drawChart.mock.calls.map((call) => call[1].key)).toEqual(['mooket2', 'mooket1']);
+    });
+
+    test('a response that lands after a switch is not drawn under the new pool', async () => {
+        let release;
+        history.fetchGate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const pending = panel.showItem('/items/cheese', 0);
+        history.source = 'mooket1';
+        release();
+        await pending;
+
+        expect(panel.drawChart).not.toHaveBeenCalled();
+        // and the next ask is not suppressed by the abandoned one
+        history.fetchGate = null;
+        await panel.showItem('/items/cheese', 0);
+        expect(panel.drawChart).toHaveBeenCalledTimes(1);
+        expect(panel.drawChart.mock.calls[0][1].key).toBe('mooket1');
+    });
+
+    test('an unchanged source is not refetched', async () => {
+        await panel.showItem('/items/cheese', 0);
+        await panel.showItem('/items/cheese', 0);
+        expect(history.fetchCalls).toHaveLength(1);
     });
 });
 

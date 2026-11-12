@@ -1215,7 +1215,10 @@ class MarketHistoryPanel {
             this.prefs.lastItem = { itemHrid, enhancementLevel };
             this.savePrefs();
         }
-        const key = `${priceKey(itemHrid, enhancementLevel)}:${this.prefs.days}`;
+        // The source is part of what the chart shows: the same item at the same range reads differently
+        // from another pool (and labels its third line differently), so a switch must refetch
+        const source = marketHistoryAPI.currentSource();
+        const key = `${priceKey(itemHrid, enhancementLevel)}:${this.prefs.days}:${source.key}`;
         if (!this.prefs.open || this.shown === key) return;
         // Drawing while folded shows the canvas in a panel with no fixed height, and a responsive chart
         // then grows without limit. Keep the title true and let expanding draw it.
@@ -1229,10 +1232,15 @@ class MarketHistoryPanel {
         const level = Number(enhancementLevel) || 0;
         this.title.textContent = `${this.itemName(itemHrid)}${level > 0 ? ` +${level}` : ''}`;
 
-        const source = marketHistoryAPI.currentSource();
         const rows = await marketHistoryAPI.fetchHistory(itemHrid, level, this.prefs.days);
-        // The item may have changed while the request was in flight
-        if (this.shown !== key) return;
+        // The item, the range or the source may have changed while the request was in flight. The source
+        // is rechecked against the live setting too: a paced fetch can answer from a pool newer than the
+        // one this call began under, and a newer showItem would not have replaced `shown` if nothing else
+        // asked for a chart.
+        if (this.shown !== key || marketHistoryAPI.currentSource().key !== source.key) {
+            if (this.shown === key) this.shown = null;
+            return;
+        }
 
         const cooldownMs = rows === null ? marketHistoryAPI.cooldownRemainingMs(source.key) : 0;
         if (cooldownMs > 0) {
@@ -1248,7 +1256,7 @@ class MarketHistoryPanel {
 
         this.drawnAt = Date.now();
         this.awaitingHistory = false;
-        this.drawChart(buildHistorySeries(rows, this.prefs.days));
+        this.drawChart(buildHistorySeries(rows, this.prefs.days), source);
         this.drawAftermath(priceKey(itemHrid, level), rows);
     }
 
@@ -1309,14 +1317,18 @@ class MarketHistoryPanel {
         }
     }
 
-    /** @param {Array<Object>} series - Result of buildHistorySeries */
-    drawChart(series) {
+    /**
+     * @param {Array<Object>} series - Result of buildHistorySeries
+     * @param {Object} [seriesSource] - The source the series was fetched under; labels and the volume bars
+     *   follow it rather than the live setting, which may have moved on
+     */
+    drawChart(series, seriesSource) {
         if (!this.canvas || typeof Chart === 'undefined') return;
 
         // The source decides two things about how its data is drawn: what the
         // third line is called (a real transacted average, or a computed midpoint
         // of the quotes), and whether there is any volume to draw at all.
-        const source = marketHistoryAPI.currentSource();
+        const source = seriesSource || marketHistoryAPI.currentSource();
 
         // Grouping is for drawing only; `rawSeries` stays the per-reading series
         const rawSeries = series;
