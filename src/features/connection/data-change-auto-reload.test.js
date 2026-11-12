@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
     restoring: false,
     pending: 0,
     flushFails: false,
+    syncBusy: false,
     flushGate: null,
     logged: [],
 }));
@@ -56,6 +57,10 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
+vi.mock('../sync/sync-manager.js', () => ({
+    default: { isOperationInFlight: () => state.syncBusy },
+}));
+
 vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
     ...(await importOriginal()),
     toolashaRoot: () => ({
@@ -93,6 +98,7 @@ beforeEach(() => {
     state.restoring = false;
     state.pending = 0;
     state.flushFails = false;
+    state.syncBusy = false;
     state.flushGate = null;
     state.logged = [];
     state.dm = {};
@@ -207,6 +213,17 @@ describe('what holds it back', () => {
         expect(reloadSpy).toHaveBeenCalledTimes(1);
     });
 
+    test('a sync push or pull in flight delays it until the sync ends', async () => {
+        prompt();
+        state.syncBusy = true;
+        await advance(40 * SEC);
+        expect(reloadSpy).not.toHaveBeenCalled();
+        expect(toastText()).toContain('sync is still running');
+        state.syncBusy = false;
+        await advance(RECHECK_MS + SEC);
+        expect(reloadSpy).toHaveBeenCalledTimes(1);
+    });
+
     test('a restore still writing delays it', async () => {
         prompt();
         state.restoring = true;
@@ -291,24 +308,28 @@ describe('ending the wait', () => {
 
     test('turning the setting off during the wait cancels it', async () => {
         prompt();
+        const handle = prompt();
         state.setting = 'off';
         state.settingCallbacks.forEach((cb) => cb());
         await advance(60 * SEC);
         expect(reloadSpy).not.toHaveBeenCalled();
         expect(activeToastCount()).toBe(0);
+        expect(handle.outcome()).toBe('cancelled');
     });
 
     test('a character switch cancels it', async () => {
-        prompt();
+        const handle = prompt();
         state.dm.character_switching.forEach((cb) => cb());
         await advance(60 * SEC);
         expect(reloadSpy).not.toHaveBeenCalled();
+        expect(handle.outcome()).toBe('cancelled');
     });
 
     test('disable clears timers, notice and listeners', async () => {
-        prompt();
+        const handle = prompt();
         window.dispatchEvent(new Event('keydown'));
         auto.disable();
+        expect(handle.outcome()).toBe('cancelled');
         expect(vi.getTimerCount()).toBe(0);
         expect(activeToastCount()).toBe(0);
         expect(auto.interactionHandler).toBeNull();

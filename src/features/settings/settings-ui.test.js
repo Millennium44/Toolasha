@@ -1792,6 +1792,10 @@ describe('restoring a backup says whether it worked', () => {
 
     test('a restore that latched stores is logged as a restore prompt naming them', async () => {
         reloadPrompts.length = 0;
+        let promptsWhenAlertShown = null;
+        globalThis.alert.mockImplementationOnce(() => {
+            promptsWhenAlertShown = reloadPrompts.length;
+        });
         mocks.importResult = {
             restored: { settings: 12, xpHistory: 3 },
             expected: { settings: 12, xpHistory: 3 },
@@ -1801,6 +1805,8 @@ describe('restoring a backup says whether it worked', () => {
 
         await restore({ formatVersion: 1, stores: { settings: {}, xpHistory: {} } });
 
+        // Recorded after the blocking alert closes, so an automatic countdown starts visible
+        expect(promptsWhenAlertShown).toBe(0);
         expect(reloadPrompts).toHaveLength(1);
         expect(reloadPrompts[0]).toMatchObject({ source: 'restore', records: ['settings', 'xpHistory'] });
     });

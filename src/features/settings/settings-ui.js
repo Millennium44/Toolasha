@@ -1999,7 +1999,9 @@ class SettingsUI {
                 const restoredMessage =
                     `Restored ${total} entries across ${Object.keys(restored).length} stores. ` +
                     'Reload now — changes made before reloading will not be kept.';
-                // No outcome here: closing the alert is not an answer, so the entry ends as
+                alert(restoredMessage);
+                // Recorded after the alert closes, so an automatic reload's countdown starts when the
+                // player can see it. Closing the alert is not an answer, so the entry ends as
                 // reloaded, auto-reloaded or page-closed
                 recordReloadPrompt({
                     source: 'restore',
@@ -2007,7 +2009,6 @@ class SettingsUI {
                     records: landed,
                     characterId: dataManager.getCurrentCharacterId?.() ?? null,
                 });
-                alert(restoredMessage);
             } catch (error) {
                 console.error('[SettingsUI] Restoring backup failed:', error);
                 alert('Restoring the backup failed: ' + error.message);

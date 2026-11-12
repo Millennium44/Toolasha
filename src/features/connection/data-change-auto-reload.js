@@ -24,6 +24,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { onPrompt } from '../../core/reload-log.js';
+import syncManager from '../sync/sync-manager.js';
 import { toolashaRoot } from '../../utils/bundle-bridge.js';
 import {
     addInteractionListeners,
@@ -109,7 +110,7 @@ class DataChangeAutoReload {
         this.initialized = true;
 
         const offPrompt = onPrompt((handle) => this._onPrompt(handle));
-        const onSwitching = () => this._cancelEpisode();
+        const onSwitching = () => this._cancelEpisode('cancelled');
         dataManager.on('character_switching', onSwitching);
         this.unsubscribers.push(offPrompt, () => dataManager.off('character_switching', onSwitching));
 
@@ -119,7 +120,7 @@ class DataChangeAutoReload {
 
     /** Tear everything down: timers, listeners, notice. The reload record stays; it has to outlive this page. */
     disable() {
-        this._cancelEpisode();
+        this._cancelEpisode('cancelled');
         for (const off of this.unsubscribers.splice(0)) {
             try {
                 off();
@@ -225,6 +226,7 @@ class DataChangeAutoReload {
         if (isSimRunning()) return 'sim';
         if (isToolashaInputFocused()) return 'input';
         if (storage.isRestoreInProgress?.()) return 'restore';
+        if (syncManager.isOperationInFlight?.()) return 'sync';
         return null;
     }
 
@@ -238,7 +240,7 @@ class DataChangeAutoReload {
         if (!episode || episode.offered) return;
 
         if (getConfiguredSeconds() <= 0) {
-            this._cancelEpisode();
+            this._cancelEpisode('cancelled');
             return;
         }
         if (!this.toast?.element?.isConnected) {
@@ -260,7 +262,9 @@ class DataChangeAutoReload {
                     ? 'a simulator run is going'
                     : blocked === 'input'
                       ? 'a text box is being edited'
-                      : 'a restore is still writing';
+                      : blocked === 'sync'
+                        ? 'a sync is still running'
+                        : 'a restore is still writing';
             setNoticeText(
                 this.toast,
                 `Stored data changed. Toolasha will reload this tab once ${reason} is over, unless you use the page first.`
@@ -285,7 +289,7 @@ class DataChangeAutoReload {
         // Anything could have happened during the flush
         if (this.episode !== episode || episode.offered) return;
         if (getConfiguredSeconds() <= 0) {
-            this._cancelEpisode();
+            this._cancelEpisode('cancelled');
             return;
         }
         if (episode.lastInteractionAt > 0 || !this.toast?.element?.isConnected) {
@@ -323,7 +327,7 @@ class DataChangeAutoReload {
         if (!this.episode) return;
         const seconds = getConfiguredSeconds();
         if (seconds <= 0) {
-            this._cancelEpisode();
+            this._cancelEpisode('cancelled');
             return;
         }
         // Only a live countdown is re-timed; an offer already shown stays as it is

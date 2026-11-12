@@ -2979,6 +2979,15 @@ class SyncManager {
     }
 
     /**
+     * Whether a push or pull is running right now. A reload in the middle of one would cut off the push of a
+     * merged union.
+     * @returns {boolean} True while an operation holds the lock
+     */
+    isOperationInFlight() {
+        return Boolean(this.busy);
+    }
+
+    /**
      * Put a reload prompt in the reload log, naming the records that forced it.
      * @param {string} source - Which path asked
      * @param {string} message - What the player was told
