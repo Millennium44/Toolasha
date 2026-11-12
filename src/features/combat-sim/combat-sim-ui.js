@@ -3219,24 +3219,25 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                     // button is a handoff, not a form. A failed write logs from
                     // inside the savings module rather than freezing the row.
                     const rawCost = button.getAttribute('data-ability-cost');
-                    addAbilityGoal({
+                    const saved = await addAbilityGoal({
                         abilityHrid: button.getAttribute('data-ability-hrid'),
                         targetLevel: Number(button.getAttribute('data-ability-level')) || 0,
                         cost: rawCost === '' || rawCost == null ? null : Number(rawCost),
                         label: button.getAttribute('data-ability-label') || '',
                     });
-                    button.textContent = 'Saving ✓';
+                    // False: the character changed under the write, nothing was saved
+                    button.textContent = saved === false ? 'Switched, retry' : 'Saving ✓';
                 } else if (action === 'save-house') {
                     // Same fire-and-forget as the ability goal: the write is
                     // asynchronous, the button is a handoff rather than a form
                     const rawCost = button.getAttribute('data-house-cost');
-                    addHouseGoal({
+                    const saved = await addHouseGoal({
                         houseRoomHrid: button.getAttribute('data-house-hrid'),
                         targetLevel: Number(button.getAttribute('data-house-level')) || 0,
                         cost: rawCost === '' || rawCost == null ? null : Number(rawCost),
                         label: button.getAttribute('data-house-label') || '',
                     });
-                    button.textContent = 'Saving ✓';
+                    button.textContent = saved === false ? 'Switched, retry' : 'Saving ✓';
                 } else if (action === 'enhance') {
                     // The stack is picked now, from the live inventory: the
                     // game's handler crashes on a hash it cannot find, and the

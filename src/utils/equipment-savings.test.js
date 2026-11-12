@@ -758,3 +758,85 @@ describe('folding an older list into the new key shape', () => {
         expect(migrateSavingsTargets(null)).toEqual({});
     });
 });
+
+describe('a goal requested before the record was read, then a character switch', () => {
+    /** Park the next storage read until the returned function is called */
+    function gateNextRead() {
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        storageMock.tryGet.mockImplementationOnce(async (key, store = 'settings') => {
+            await gate;
+            const map = storageMock.storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        });
+        return release;
+    }
+
+    async function switchTo(characterId, record) {
+        dataManagerMock.characterId = characterId;
+        storageMock.storeFor('settings').set(`equipmentSavings_${characterId}`, record);
+        await loadSavingsRecord();
+    }
+
+    const fierce = { abilities: { '/abilities/fierce_aura': { targetLevel: 55, cost: 3, label: 'Fierce Aura Lv55' } } };
+
+    test.each([
+        [
+            'an ability goal',
+            () => addAbilityGoal({ abilityHrid: '/abilities/toxic_pollen', targetLevel: 30, cost: 123 }),
+            () => hasAbilityGoal('/abilities/toxic_pollen'),
+        ],
+        [
+            'a house goal',
+            () => addHouseGoal({ houseRoomHrid: '/house_rooms/dojo', targetLevel: 3, cost: 5 }),
+            () => hasHouseGoal('/house_rooms/dojo'),
+        ],
+    ])('%s is refused, not filed under the character switched to', async (_name, add, present) => {
+        resetAbilityGoals({ loaded: false });
+        resetHouseGoals({ loaded: false });
+        const release = gateNextRead();
+        const pending = add();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        await switchTo('char2', fierce);
+        storageMock.set.mockClear();
+        release();
+
+        expect(await pending).toBe(false);
+        expect(present()).toBe(false);
+        expect(stored.writes).toEqual([]);
+        expect(storageMock.storeFor('settings').has('equipmentSavings_char1')).toBe(false);
+        expect(storageMock.storeFor('settings').get('equipmentSavings_char2')).toEqual(fierce);
+    });
+
+    test('a removal is refused the same way and leaves the new character goal alone', async () => {
+        resetAbilityGoals({ loaded: false });
+        const release = gateNextRead();
+        const pending = removeAbilityGoal('/abilities/fierce_aura');
+        await Promise.resolve();
+        await Promise.resolve();
+
+        await switchTo('char2', fierce);
+        release();
+
+        expect(await pending).toBe(false);
+        expect(hasAbilityGoal('/abilities/fierce_aura')).toBe(true);
+    });
+
+    test('an add with no switch still succeeds and keeps the goals already stored', async () => {
+        stored.record = fierce;
+        resetAbilityGoals({ loaded: false });
+
+        expect(await addAbilityGoal({ abilityHrid: '/abilities/toxic_pollen', targetLevel: 30, cost: 1 })).toBe(true);
+
+        expect(Object.keys(stored.record.abilities).sort()).toEqual([
+            '/abilities/fierce_aura',
+            '/abilities/toxic_pollen',
+        ]);
+    });
+});

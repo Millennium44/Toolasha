@@ -583,9 +583,27 @@ export async function saveSavingsRecord(gear) {
     return write();
 }
 
-/** Read the record once, for a caller that arrived before the panel did */
+/** @returns {string|null} The character on screen now */
+function currentWho() {
+    return dataManager.getCurrentCharacterId() || null;
+}
+
+/**
+ * Read the record once, for a caller that arrived before the panel did.
+ *
+ * The character is captured before the wait: a switch during the read makes the
+ * loader drop its stale read, but the caller still holds module goals that now
+ * belong to someone else, and a write would file this caller's goal under them.
+ *
+ * @returns {Promise<boolean>} False when the character changed meanwhile, so the
+ *   caller must not touch the goals or write; the player retries
+ */
 async function ensureLoaded() {
-    if (!loaded) await loadSavingsRecord();
+    const who = currentWho();
+    const waited = !loaded;
+    if (waited) await loadSavingsRecord();
+    // Whoever the load filed the goals under must still be the one on screen
+    return currentWho() === who && (!waited || owner === who);
 }
 
 /**
@@ -600,27 +618,29 @@ async function ensureLoaded() {
  * @param {number} goal.targetLevel - The level being saved for
  * @param {number|null} goal.cost - Coins for the books, or null when unpriced
  * @param {string} [goal.label] - How it should read, e.g. `Fierce Aura Lv46`
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} False when the character changed while the record was being read; nothing was saved
  */
 export async function addAbilityGoal({ abilityHrid, targetLevel, cost, label } = {}) {
-    if (!abilityHrid) return;
-    await ensureLoaded();
+    if (!abilityHrid) return true;
+    if (!(await ensureLoaded())) return false;
 
     goals[abilityHrid] = normalizeGoal(abilityHrid, { targetLevel, cost, label, updatedAt: Date.now() });
     await write();
+    return true;
 }
 
 /**
  * Stop saving for a level.
  * @param {string} abilityHrid - The ability
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} False when the character changed while the record was being read; nothing was removed
  */
 export async function removeAbilityGoal(abilityHrid) {
-    await ensureLoaded();
-    if (!goals[abilityHrid]) return;
+    if (!(await ensureLoaded())) return false;
+    if (!goals[abilityHrid]) return true;
 
     delete goals[abilityHrid];
     await write();
+    return true;
 }
 
 /**
@@ -673,11 +693,11 @@ export function resetAbilityGoals({ loaded: hasLoaded = true } = {}) {
  * @param {number} goal.targetLevel - The level being saved for, capped at the game's own
  * @param {number|null} goal.cost - Coins for the build, or null when unpriced
  * @param {string} [goal.label] - How it should read, e.g. `Mystical Study Lv5`
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} False when the character changed while the record was being read; nothing was saved
  */
 export async function addHouseGoal({ houseRoomHrid, targetLevel, cost, label } = {}) {
-    if (!houseRoomHrid) return;
-    await ensureLoaded();
+    if (!houseRoomHrid) return true;
+    if (!(await ensureLoaded())) return false;
 
     rooms[houseRoomHrid] = normalizeGoal(
         houseRoomHrid,
@@ -685,19 +705,21 @@ export async function addHouseGoal({ houseRoomHrid, targetLevel, cost, label } =
         maxHouseRoomLevel()
     );
     await write();
+    return true;
 }
 
 /**
  * Stop saving for a room level.
  * @param {string} houseRoomHrid - The room
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} False when the character changed while the record was being read; nothing was removed
  */
 export async function removeHouseGoal(houseRoomHrid) {
-    await ensureLoaded();
-    if (!rooms[houseRoomHrid]) return;
+    if (!(await ensureLoaded())) return false;
+    if (!rooms[houseRoomHrid]) return true;
 
     delete rooms[houseRoomHrid];
     await write();
+    return true;
 }
 
 /**

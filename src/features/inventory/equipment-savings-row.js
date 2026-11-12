@@ -945,10 +945,10 @@ export function watchedAbilityGoals() {
  * @returns {Promise<void>}
  */
 export async function watchAbility(abilityHrid, targetLevel, cost = undefined) {
-    if (!abilityHrid || !(targetLevel > 0)) return;
+    if (!abilityHrid || !(targetLevel > 0)) return true;
 
     const priced = cost === undefined ? abilityBookCost(abilityHrid, targetLevel) : cost;
-    await addAbilityGoal({
+    return addAbilityGoal({
         abilityHrid,
         targetLevel,
         cost: priced,
@@ -962,7 +962,7 @@ export async function watchAbility(abilityHrid, targetLevel, cost = undefined) {
  * @returns {Promise<void>}
  */
 export async function unwatchAbility(abilityHrid) {
-    await removeAbilityGoal(abilityHrid);
+    return removeAbilityGoal(abilityHrid);
 }
 
 /**
@@ -1084,11 +1084,11 @@ export function watchedHouseGoals() {
  * @returns {Promise<void>}
  */
 export async function watchHouse(houseRoomHrid, targetLevel, cost = undefined) {
-    if (!houseRoomHrid || !(targetLevel > 0)) return;
+    if (!houseRoomHrid || !(targetLevel > 0)) return true;
 
     const wanted = Math.min(maxHouseRoomLevel(), Math.floor(Number(targetLevel) || 0));
     const priced = cost === undefined ? houseUpgradeCost(houseRoomHrid, wanted) : cost;
-    await addHouseGoal({
+    return addHouseGoal({
         houseRoomHrid,
         targetLevel: wanted,
         cost: priced,
@@ -1102,7 +1102,7 @@ export async function watchHouse(houseRoomHrid, targetLevel, cost = undefined) {
  * @returns {Promise<void>}
  */
 export async function unwatchHouse(houseRoomHrid) {
-    await removeHouseGoal(houseRoomHrid);
+    return removeHouseGoal(houseRoomHrid);
 }
 
 /**
