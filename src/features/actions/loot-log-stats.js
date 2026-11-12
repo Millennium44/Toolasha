@@ -8,7 +8,9 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
-import { getItemPrices } from '../../utils/market-data.js';
+import { getItemPrices, getItemPriceInfo } from '../../utils/market-data.js';
+import { priceMaterial } from '../../utils/enhancement-input-pricing.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { formatLargeNumber, numberFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -38,7 +40,7 @@ import { resolveCurrencyValue } from './loot-log-currency.js';
 import { lootEntryIdentity } from './loot-log-analytics.js';
 import { reconstructEnhancingRun, computeEnhancingSummary, mergeEnhancingSummaries } from './enhancing-loot-summary.js';
 import { enhancementCalculator, enhancementConfig } from '../../utils/bundle-bridge.js';
-import { getEnhancementMaterialPrice, getCheapestProtectionPrice } from '../enhancement/tooltip-enhancement.js';
+import { getCheapestProtectionPrice } from '../enhancement/tooltip-enhancement.js';
 
 /**
  * Why the protection figures on an enhancing run are not measurements.
@@ -328,6 +330,12 @@ class LootLogStats {
             this.unregisterHandlers.push(config.onSettingChange(key, () => this.syncParts()));
         }
 
+        // The enhancing summary prices inputs on the player's Buy side and the piece on their Sell side;
+        // a drawn row is stamped by its entry alone, so a moved side has to redraw it
+        for (const key of ['profitCalc_pricingMode', ...PATIENT_TICK_SETTING_KEYS]) {
+            this.unregisterHandlers.push(config.onSettingChange(key, () => this.repriceStampedRows()));
+        }
+
         this.initialized = true;
     }
 
@@ -518,18 +526,20 @@ class LootLogStats {
 
             // The protection quote is read once: a craft-priced protection with an unpriced input comes back
             // flagged partial, so the figure is a floor and the row says so instead of reading as firm
-            const protectionQuote = getCheapestProtectionPrice(run.baseHrid, { mode: 'ask' });
+            const protectionQuote = getCheapestProtectionPrice(run.baseHrid);
             const summary = computeEnhancingSummary(run, {
                 calculateEnhancement,
                 params,
-                // Same pricing the live Enhancement Tracker uses, so the loot-log
-                // figures line up with it — getEnhancementMaterialPrice carries the
-                // production-cost/NPC fallbacks that a raw market lookup lacks.
-                materialPrice: (hrid) => getEnhancementMaterialPrice(hrid, 'ask') || 0,
+                // Same pricing the live Enhancement Tracker uses (the player's profit pricing mode on the
+                // buy side, with the production-cost/NPC fallbacks a raw market lookup lacks), so the
+                // loot-log figures line up with it.
+                materialPrice: (hrid) => priceMaterial(hrid).price || 0,
                 protectionPrice: () => protectionQuote?.price || 0,
+                // What the piece sells for on the player's Sell side. A price filled in from the official
+                // value map (nobody lists on that side) is no sale price: unknown, not an estimate booked as profit.
                 itemValue: (hrid, level) => {
-                    const prices = getItemPrices(hrid, level);
-                    return prices ? prices.bid : null;
+                    const info = getItemPriceInfo(hrid, { enhancementLevel: level, context: 'profit', side: 'sell' });
+                    return info.price === null || info.estimated ? null : info.price;
                 },
                 itemDetails,
                 // Untaxed for an Iron Cow character: it has no market access to pay this on.

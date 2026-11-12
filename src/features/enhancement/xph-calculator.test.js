@@ -97,8 +97,20 @@ vi.mock('../../utils/command-registry.js', () => ({
     unregisterCommand: () => {},
 }));
 
+/** The profit pricing mode the mocked price lookup resolves the Sell side from */
+const profitMode = vi.hoisted(() => ({ value: 'conservative' }));
+
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrices: vi.fn((hrid, level) => prices[`${hrid}::${level}`] ?? null),
+    // Same side mapping as the real getPricingMode(profit, sell): conservative/patientBuy sell at the bid,
+    // hybrid/optimistic at the ask. A zero or missing side on the book is the value map's estimate.
+    getItemPriceInfo: vi.fn((hrid, { enhancementLevel = 0, context, side } = {}) => {
+        const book = prices[`${hrid}::${enhancementLevel}`];
+        if (!book || context !== 'profit' || side !== 'sell') return { price: null, source: null, estimated: false };
+        const basis = ['conservative', 'patientBuy'].includes(profitMode.value) ? 'bid' : 'ask';
+        const real = book[basis] > 0;
+        const price = real ? book[basis] : (book.estimate ?? null);
+        return { price, source: real ? 'book' : price === null ? null : 'value', estimated: !real && price !== null };
+    }),
 }));
 
 vi.mock('../../utils/liquidity-cap.js', () => ({
@@ -152,6 +164,7 @@ beforeEach(() => {
     liquidityResult.limit = null;
     capCalls.length = 0;
     xpCalls.length = 0;
+    profitMode.value = 'conservative';
 });
 
 describe('calculateItemXPH', () => {
@@ -176,13 +189,37 @@ describe('calculateItemXPH', () => {
         expect(result.profitUnavailableReason).toBeNull();
     });
 
-    test('falls back to ask when the finished item has no bid', () => {
+    test('profit follows the Sell side of the profit pricing mode: bid when conservative, ask when optimistic', () => {
+        prices[`${ITEM}::5`] = { ask: 500, bid: 400 };
+
+        profitMode.value = 'conservative';
+        const instant = calculateItemXPH(ITEM, itemDetails, 5, 0, params);
+        profitMode.value = 'optimistic';
+        const patient = calculateItemXPH(ITEM, itemDetails, 5, 0, params);
+
+        expect(instant.profitPerHour).toBeCloseTo(400 * (1 - MARKET_TAX) - 200 - 100);
+        expect(patient.profitPerHour).toBeCloseTo(500 * (1 - MARKET_TAX) - 200 - 100);
+        expect(patient.profitEstimated).toBe(false);
+    });
+
+    test('a side the book does not list is the value map estimate, kept but flagged, never the other side', () => {
+        // Bid empty on a conservative sell: the other side's 500 is not what the player sells at
+        prices[`${ITEM}::5`] = { ask: 500, bid: 0, estimate: 300 };
+
+        const result = calculateItemXPH(ITEM, itemDetails, 5, 0, params);
+
+        expect(result.profitPerHour).toBeCloseTo(300 * (1 - MARKET_TAX) - 200 - 100);
+        expect(result.profitEstimated).toBe(true);
+        expect(profitCellHTML(result)).toContain('*');
+    });
+
+    test('a side with neither a listing nor an estimate leaves the row unpriced, not zero', () => {
         prices[`${ITEM}::5`] = { ask: 500, bid: 0 };
 
         const result = calculateItemXPH(ITEM, itemDetails, 5, 0, params);
 
-        const expectedProfit = 500 * (1 - MARKET_TAX) - 200 - 100;
-        expect(result.profitPerHour).toBeCloseTo(expectedProfit);
+        expect(result.profitPerHour).toBeNull();
+        expect(result.profitUnavailableReason).toBe('unpriced');
     });
 
     test('profit is unavailable when the +0 item has no known acquisition cost', () => {
@@ -207,7 +244,7 @@ describe('calculateItemXPH', () => {
     });
 
     test('an item whose enhanced form cannot be priced is labelled, not zero or free', () => {
-        // No entry in `prices` at all for +5 — getItemPrices answers null.
+        // No entry in `prices` at all for +5 — getItemPriceInfo answers unpriced.
         const result = calculateItemXPH(ITEM, itemDetails, 5, 0, params);
 
         expect(result.profitPerHour).toBeNull();

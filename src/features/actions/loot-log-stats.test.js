@@ -2,7 +2,7 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 import dataManager from '../../core/data-manager.js';
-import { getItemPrices } from '../../utils/market-data.js';
+import { getItemPrices, getItemPriceInfo } from '../../utils/market-data.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
@@ -57,6 +57,7 @@ vi.mock('../../utils/efficiency.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: vi.fn(),
+    getItemPriceInfo: vi.fn(() => ({ price: null, source: null, estimated: false })),
 }));
 
 vi.mock('../market/expected-value-calculator.js', () => ({
@@ -89,6 +90,13 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getEnhancementMaterialPrice: (...args) => enhancing.material(...args),
     getCheapestProtectionPrice: (...args) => enhancing.protection(...args),
 }));
+// The live Enhancement Tracker's material rule, which the loot log shares
+vi.mock('../../utils/patient-tick.js', () => ({
+    PATIENT_TICK_SETTING_KEYS: ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'],
+}));
+vi.mock('../../utils/enhancement-input-pricing.js', () => ({
+    priceMaterial: (...args) => ({ price: enhancing.material(...args) }),
+}));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
     marketDepthCap: () => null,
@@ -98,26 +106,54 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     enhancementConfig: () => (enhancing.calculateEnhancement ? { getEnhancingParams: () => ({}) } : null),
 }));
 
-describe('the loot log records enhancing costs at the ask', () => {
-    test('materials and protection are priced with the side forced, not the profit mode', () => {
+describe('the loot log prices enhancing the way the live Enhancement Tracker does', () => {
+    const itemDetailMap = {
+        '/items/sword': { itemLevel: 10, enhancementCosts: [{ itemHrid: '/items/shard', count: 1 }] },
+    };
+    const render = () => {
         enhancing.calculateEnhancement = () => ({ attempts: 6, protectionCount: 1 });
-        enhancing.material.mockClear();
-        enhancing.protection.mockClear();
-        dataManager.getInitClientData.mockReturnValue({
-            itemDetailMap: {
-                '/items/sword': { itemLevel: 10, enhancementCosts: [{ itemHrid: '/items/shard', count: 1 }] },
-            },
-        });
+        dataManager.getInitClientData.mockReturnValue({ itemDetailMap });
         try {
             const div = document.createElement('div');
             new LootLogStats().injectEnhancingSummary(div, {
                 drops: { '/items/sword::0': 5, '/items/sword::1': 1 },
                 actionCount: 6,
             });
-            expect(enhancing.material).toHaveBeenCalledWith('/items/shard', 'ask');
-            expect(enhancing.protection).toHaveBeenCalledWith('/items/sword', { mode: 'ask' });
+            return div.textContent;
         } finally {
             enhancing.calculateEnhancement = null;
+        }
+    };
+
+    test('materials and protection use the profit mode, with no side forced', () => {
+        enhancing.material.mockClear();
+        enhancing.protection.mockClear();
+        render();
+        expect(enhancing.material).toHaveBeenCalledWith('/items/shard');
+        expect(enhancing.protection).toHaveBeenCalledWith('/items/sword');
+    });
+
+    test('the finished item is valued on the profit Sell side, and an estimate is no value', () => {
+        const values = [];
+        const spy = vi.fn((hrid, options) => {
+            values.push([hrid, options]);
+            return { price: 5000, source: 'book', estimated: false };
+        });
+        getItemPriceInfo.mockImplementation(spy);
+        try {
+            render();
+            expect(values.length).toBeGreaterThan(0);
+            for (const [, options] of values) {
+                expect(options).toMatchObject({ context: 'profit', side: 'sell' });
+            }
+            // A real sale price does book a profit line
+            expect(render()).not.toContain('no +1 price');
+
+            // A sale price that is only the value map's estimate leaves the profit unknown, not booked
+            getItemPriceInfo.mockImplementation(() => ({ price: 9000, source: 'value', estimated: true }));
+            expect(render()).toContain('Profit: no +1 price');
+        } finally {
+            getItemPriceInfo.mockImplementation(() => ({ price: null, source: null, estimated: false }));
         }
     });
 });

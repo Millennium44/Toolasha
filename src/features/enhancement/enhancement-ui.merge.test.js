@@ -60,7 +60,9 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     markPanelInteracted: () => {},
 }));
 
-vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => null }));
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPriceInfo: () => ({ price: null, source: null, estimated: false }),
+}));
 
 const { default: enhancementUI } = await import('./enhancement-ui.js');
 

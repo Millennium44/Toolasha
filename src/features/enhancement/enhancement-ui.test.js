@@ -59,7 +59,16 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     markPanelInteracted: () => {},
 }));
 
-vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid, level) => prices[`${hrid}::${level}`] || null }));
+/** What the mocked profit-Sell lookup answers, per `hrid::level`: `{ sell: {price, estimated}, ... }` by pricing mode */
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPriceInfo: (hrid, { enhancementLevel, context, side }) => {
+        const entry = prices[`${hrid}::${enhancementLevel}`];
+        const hit = context === 'profit' && side === 'sell' ? entry : null;
+        return hit
+            ? { price: hit.price, source: 'book', estimated: Boolean(hit.estimated) }
+            : { price: null, source: null, estimated: false };
+    },
+}));
 
 const { default: enhancementUI } = await import('./enhancement-ui.js');
 
@@ -98,7 +107,7 @@ afterEach(() => {
 
 describe('worth-it value', () => {
     test('does not quote a net gain when the base item has no price', () => {
-        prices['/items/foo::3'] = { bid: 10000 };
+        prices['/items/foo::3'] = { price: 10000 };
 
         const html = enhancementUI.generateWorthItHTML(sessionFixture({ currentLevel: 3 }));
 
@@ -106,10 +115,29 @@ describe('worth-it value', () => {
         expect(html).not.toContain('Worth it (net');
     });
 
+    test('a +N sale price that is only a value-map estimate is no price: worth-it unknown', () => {
+        prices['/items/foo::0'] = { price: 1000 };
+        prices['/items/foo::3'] = { price: 20000, estimated: true };
+
+        const html = enhancementUI.generateWorthItHTML(sessionFixture({ currentLevel: 3 }));
+
+        expect(html).toContain('worth-it unknown');
+    });
+
+    test('values the piece at the price the profit Sell side answers, and says so', () => {
+        prices['/items/foo::0'] = { price: 1000 };
+        prices['/items/foo::3'] = { price: 15000 };
+
+        const html = enhancementUI.generateWorthItHTML(sessionFixture({ currentLevel: 3 }));
+
+        expect(html).toContain('+3 sale value');
+        expect(html).not.toContain('(bid)');
+    });
+
     test('names the level the session started from as the piece given up', () => {
-        prices['/items/foo::0'] = { bid: 1000 };
-        prices['/items/foo::5'] = { bid: 6000 };
-        prices['/items/foo::8'] = { bid: 20000 };
+        prices['/items/foo::0'] = { price: 1000 };
+        prices['/items/foo::5'] = { price: 6000 };
+        prices['/items/foo::8'] = { price: 20000 };
 
         const html = enhancementUI.generateWorthItHTML(sessionFixture({ startLevel: 5, currentLevel: 8 }));
 

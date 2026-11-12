@@ -104,7 +104,7 @@ describe('costVsExpected', () => {
 });
 
 describe('valueVsCost', () => {
-    const prices = (n) => (hrid, level) => (level === 0 ? { bid: 0, ask: 0 } : { bid: n, ask: n });
+    const prices = (n) => (hrid, level) => (level === 0 ? { price: 0 } : { price: n });
 
     test('a protection entry with units and no cost nulls both readings despite a positive total', () => {
         const run = session({
@@ -143,35 +143,48 @@ describe('valueVsCost', () => {
     });
 
     test('subtracts the base value given up', () => {
-        const getPrices = (hrid, level) => (level === 0 ? { bid: 1000 } : { bid: 10000 });
+        const getPrices = (hrid, level) => (level === 0 ? { price: 1000 } : { price: 10000 });
         const v = valueVsCost(session({ totalCost: 2000 }), getPrices);
         // (10000 − 1000) after fee − 2000.
         expect(v.net).toBeCloseTo(9000 * (1 - MARKET_SELL_TAX) - 2000, 5);
     });
 
     test('net is null when the +N level has no market price', () => {
-        const getPrices = (hrid, level) => (level === 0 ? { bid: 1000 } : null);
+        const getPrices = (hrid, level) => (level === 0 ? { price: 1000 } : null);
         const v = valueVsCost(session(), getPrices);
         expect(v.valueN).toBeNull();
         expect(v.net).toBeNull();
     });
 
-    test('a bid filled in from the value map is no price: the net is unknown, not a sale', () => {
-        const estimatedN = (hrid, level) => (level === 0 ? { bid: 1000 } : { bid: 20000, bidEstimated: true });
+    test('a price filled in from the value map is no price: the net is unknown, not a sale', () => {
+        const estimatedN = (hrid, level) => (level === 0 ? { price: 1000 } : { price: 20000, estimated: true });
         const vN = valueVsCost(session({ totalCost: 2000 }), estimatedN);
         expect(vN.valueN).toBeNull();
         expect(vN.net).toBeNull();
 
-        const estimated0 = (hrid, level) => (level === 0 ? { bid: 1000, bidEstimated: true } : { bid: 20000 });
+        const estimated0 = (hrid, level) => (level === 0 ? { price: 1000, estimated: true } : { price: 20000 });
         const v0 = valueVsCost(session({ totalCost: 2000 }), estimated0);
         expect(v0.value0).toBeNull();
         expect(v0.net).toBeNull();
     });
 
+    test('a lookup that follows the Sell side values the piece at the side the player sells on', () => {
+        const book = { bid: 8000, ask: 12000 };
+        const sellAt = (side) => (hrid, level) => (level === 0 ? { price: 0 } : { price: book[side] });
+
+        const instant = valueVsCost(session({ totalCost: 2000 }), sellAt('bid'));
+        const patient = valueVsCost(session({ totalCost: 2000 }), sellAt('ask'));
+
+        expect(instant.valueN).toBe(8000);
+        expect(patient.valueN).toBe(12000);
+        expect(patient.net - instant.net).toBeCloseTo(4000 * (1 - MARKET_SELL_TAX), 5);
+    });
+
     test('a session picked up at +5 nets against the +5 it started from, not a +0', () => {
         // The session only spent +5 → +8; the +0 → +5 path is inside the +5
         // piece, so subtracting a +0 would count that path as profit.
-        const getPrices = (hrid, level) => ({ 0: { bid: 1000 }, 5: { bid: 6000 }, 8: { bid: 20000 } })[level] || null;
+        const getPrices = (hrid, level) =>
+            ({ 0: { price: 1000 }, 5: { price: 6000 }, 8: { price: 20000 } })[level] || null;
         const v = valueVsCost(session({ startLevel: 5, currentLevel: 8, totalCost: 2000 }), getPrices);
         expect(v.baseLevel).toBe(5);
         expect(v.value0).toBe(6000);
@@ -179,7 +192,7 @@ describe('valueVsCost', () => {
     });
 
     test('net is unknown when the starting level is unpriced even though +0 is listed', () => {
-        const getPrices = (hrid, level) => ({ 0: { bid: 1000 }, 8: { bid: 20000 } })[level] || null;
+        const getPrices = (hrid, level) => ({ 0: { price: 1000 }, 8: { price: 20000 } })[level] || null;
         const v = valueVsCost(session({ startLevel: 5, currentLevel: 8 }), getPrices);
         expect(v.value0).toBeNull();
         expect(v.net).toBeNull();
@@ -206,7 +219,7 @@ describe('valueVsCost', () => {
     });
 
     test('net is unknown when the +0 opportunity value is unpriced', () => {
-        const getPrices = (hrid, level) => (level === 3 ? { bid: 10000 } : null);
+        const getPrices = (hrid, level) => (level === 3 ? { price: 10000 } : null);
         const v = valueVsCost(session(), getPrices);
         expect(v.valueN).toBe(10000);
         expect(v.value0).toBeNull();

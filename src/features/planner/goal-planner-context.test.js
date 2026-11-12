@@ -14,6 +14,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import config from '../../core/config.js';
 
 const game = vi.hoisted(() => ({
     actionDetailMap: {},
@@ -119,8 +120,13 @@ const mockBounded = (rates) => ({
     }),
     measured: liquidity.measured,
 });
-const craft = vi.hoisted(() => ({ plan: null }));
-vi.mock('../crafting-plan/crafting-plan-calculator.js', () => ({ computeBestCraftingPlan: () => craft.plan }));
+const craft = vi.hoisted(() => ({ plan: null, calls: [] }));
+vi.mock('../crafting-plan/crafting-plan-calculator.js', () => ({
+    computeBestCraftingPlan: (...args) => {
+        craft.calls.push(args);
+        return craft.plan;
+    },
+}));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     calculateEnhancementPath: () => enh.path,
     getProductionChainTime: () => 0,
@@ -596,6 +602,23 @@ describe('training rates keep the signed margin the rankings drop', () => {
 describe('a crafted piece’s prerequisite carries the start bonuses of the quoted craft', () => {
     afterEach(() => {
         craft.plan = null;
+    });
+
+    test('acquire prices the buy-or-craft plan on the profit pricing mode, not a pinned ask', async () => {
+        craft.plan = { strategy: 'craft', totalCost: 100, unitCost: 100, actionHrid: '/actions/cooking/stew' };
+        const spy = vi.spyOn(config, 'getSettingValue');
+        try {
+            for (const mode of ['conservative', 'optimistic', 'patientBuy']) {
+                spy.mockImplementation((key, fallback) => (key === 'profitCalc_pricingMode' ? mode : fallback));
+                craft.calls.length = 0;
+                const context = await buildPlannerContext();
+                context.acquire('/items/stew');
+                // A profit-mode name (never the raw 'ask') is what sends each leg through the profit buy side
+                expect(craft.calls[0][2]).toBe(mode);
+            }
+        } finally {
+            spy.mockRestore();
+        }
     });
 
     test('Artisan Tea raises the requirement the planner checks, as it does the crafted price', async () => {

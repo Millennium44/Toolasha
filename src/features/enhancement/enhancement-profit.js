@@ -101,12 +101,13 @@ export const MARKET_SELL_TAX = MARKET_TAX;
  * leaves the +0 to +5 path out of the cost entirely.
  *
  * @param {Object} session - Live enhancement session
- * @param {(hrid: string, level: number) => ({bid:number, ask:number, bidEstimated?:boolean}|null)} getPrices
- *   - Market price lookup (injected for testability)
+ * @param {(hrid: string, level: number) => ({price:number|null, estimated?:boolean}|null)} getPrices
+ *   - What the piece sells for at a level on the player's own Sell side (profit pricing mode, patient tick),
+ *   injected for testability; `estimated` marks a price filled in from the official value map
  * @param {number} [sellTax] - Fraction taken on a sale; `MARKET_SELL_TAX`, or `0` for the
  *   current Iron Cow character, which has no market access to sell an enhanced piece on
  * @returns {{level:number, baseLevel:number, spent:number, valueN:number|null, value0:number|null,
- *   net:number|null, sellTax:number}|null} null when an input was unpriced; `value0` is the bid at `baseLevel`, the session's start level
+ *   net:number|null, sellTax:number}|null} null when an input was unpriced; `value0` is the sale price at `baseLevel`, the session's start level
  */
 export function valueVsCost(session, getPrices, sellTax = isIronCowCharacter() ? 0 : MARKET_SELL_TAX) {
     if (!session?.itemHrid) return null;
@@ -119,10 +120,10 @@ export function valueVsCost(session, getPrices, sellTax = isIronCowCharacter() ?
     const spent = session.totalCost || 0;
     const nPrices = getPrices?.(session.itemHrid, level) || null;
     const basePrices = getPrices?.(session.itemHrid, baseLevel) || null;
-    // A bid filled in from the official value map (nobody bids) is an estimate, not what the piece
-    // would fetch: a net built on it would read as a sale price. It counts as no price.
-    const valueN = nPrices?.bidEstimated === true ? null : (nPrices?.bid ?? null);
-    const value0 = basePrices?.bidEstimated === true ? null : (basePrices?.bid ?? null);
+    // A price filled in from the official value map (nobody lists on that side) is an estimate, not what the
+    // piece would fetch: a net built on it would read as a sale price. It counts as no price.
+    const valueN = nPrices?.estimated === true ? null : (nPrices?.price ?? null);
+    const value0 = basePrices?.estimated === true ? null : (basePrices?.price ?? null);
 
     if (valueN == null || value0 == null) return { level, baseLevel, spent, valueN, value0, net: null, sellTax };
     const keep = 1 - sellTax;
