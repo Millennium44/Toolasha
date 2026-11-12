@@ -670,6 +670,25 @@ describe("the maintainer's Amber row: Decompose 1472× Earrings Of Essence Find,
         expect(buyQuote(instant.purchase, 3).feasible).toBe(false);
     });
 
+    test('units queued at the bid do not use up the ask depth the rest of a patient buy walks', async () => {
+        const hrid = '/items/earrings_of_essence_find';
+        game.pricingMode = 'optimistic';
+        const route = earringsRoute(await buildCollectionRoutes());
+        VOLUME.perDay[hrid] = 8; // 14 units a week may queue
+        BOOKS.byItem[hrid] = { lastUpdated: Date.now(), asks: [{ listingId: 9001, price: 6_300_000, quantity: 6 }] };
+
+        // 14 queue at the bid; the other 6 take the six listed asks
+        const quote = buyQuote(route.purchase, 20);
+        expect(quote.feasible).toBe(true);
+        expect(quote.gold).toBe(14 * 5_940_000 + 6 * 6_300_000);
+        // Split across plan steps: 10 bought earlier all queued, so this step queues 4 and takes the 6 asks
+        const later = buyQuote(route.purchase, 10, 10);
+        expect(later.feasible).toBe(true);
+        expect(later.gold).toBe(4 * 5_940_000 + 6 * 6_300_000);
+        // ...and one more unit runs past the listed asks
+        expect(buyQuote(route.purchase, 21).feasible).toBe(false);
+    });
+
     test('a custom buy price under the book is not read as a patient queue', async () => {
         const hrid = '/items/earrings_of_essence_find';
         game.pricingMode = 'optimistic';
