@@ -13,6 +13,22 @@ The Goal Planner, Enhancing XP/hr profit, the Enhancement Tracker and Loot Log e
 ### Task cowbells and the action bar run value
 
 Cowbell rewards in task profit are now worth a Bag of 10 Cowbells' sell price after its 18% tax, so they read lower than before. The action bar's "This run" value now uses your sell pricing after market tax, and marks drops it could not price with \*.
+### Party members' dungeon keys count in Consumables
+
+In a dungeon party, every member's table now has an entry-key row from the party's key-count message, and their "stops in" counts it. Other members' sections show what they are short and its cost, without buy links.
+
+### Consumables tile counts keys and updates on purchase
+
+The tile's You/Party countdowns and Ask/day now include entry keys, and it reads your live inventory, so a purchase shows within about a second instead of at the next battle.
+
+### Key costs follow your key pricing setting
+
+On craft cost, the entry-key row is priced at the recipe, and its buy opens the missing crafting materials (net of stock, with Artisan) in one list with the rest of Buy all. A chip adds chest-key materials. Party members' keys are priced at market.
+
+### Chest keys in Consumables
+
+Your section gets a dim chest-key row counted in Cost/day but never in "stops in", and the readiness card says how many chest keys the planned runs need. Its member list is now one row each (held, runs, short), and costs read in plain M/K.
+
 ### Total Profit tile lines up in columns
 
 The Total Profit tile now lines each party member's name, banked coins and per-day figure up in columns instead of centering every line on its own width.
