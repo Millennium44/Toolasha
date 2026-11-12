@@ -126,6 +126,17 @@ describe('buildConsumablePools', () => {
         expect(all).not.toContain('/items/unpriced_cake');
     });
 
+    test('every price is read on the profit Buy side, the cost the sim shows, not a context-free ask', () => {
+        resolveItemPrice.mockClear();
+        buildConsumablePools(foodGameData());
+        buildBuffDrinkPools(foodGameData());
+
+        expect(resolveItemPrice.mock.calls.length).toBeGreaterThan(0);
+        for (const [, options] of resolveItemPrice.mock.calls) {
+            expect(options).toEqual({ side: 'buy', context: 'profit' });
+        }
+    });
+
     test('a zero price is known only when the player typed it (a custom price); a quote of 0 is still unpriced (M01)', () => {
         resolveItemPrice.mockImplementation((hrid) =>
             hrid === '/items/unpriced_cake' ? { price: 0, custom: true } : { price: PRICES[hrid] ?? 0 }

@@ -1677,9 +1677,9 @@ export const settingsGroups = {
                     { value: 'decomposeChainPerHour', label: 'Full decompose chain per hour' },
                 ],
                 help:
-                    'Which figure the marketplace sort button ranks by. The alchemy modes insta-buy the item at ask, ' +
-                    'run its best alchemy action, and insta-sell the outputs at bid, whatever the global pricing mode is. The chain mode decomposes the item and ' +
-                    'then everything it yields, selling what is left after tax; unlike the alchemy modes it follows your Buy/Sell pricing settings. ' +
+                    'Which figure the marketplace sort button ranks by. The alchemy modes buy the item on your Buy side, ' +
+                    'run its best alchemy action, and sell the outputs on your Sell side (the Buy/Sell dropdowns). The chain mode decomposes the item and ' +
+                    'then everything it yields, selling what is left after tax, on the same Buy/Sell pricing settings. ' +
                     'The dropdown next to the sort button changes this too.',
             },
             fillMarketOrderPrice: {
@@ -5304,7 +5304,7 @@ export const settingsGroups = {
                 help:
                     'Ranks each item’s next collection-points rung by net gold per point across crafting, ' +
                     'decompose chains, shop gear decomposed, transmuting and gathering (buying on the market ' +
-                    'does not collect; by-products count as sold at the bid after tax), and plans the best ' +
+                    'does not collect; by-products count as sold on your Sell side after tax), and plans the best ' +
                     'route to +N points. Appears once the Collections tab has loaded.',
             },
         },
