@@ -754,9 +754,16 @@ class PhiloCalculator {
                 if (rawPrice === null) return null;
                 return this.patientQuote(rawPrice, 'buy', basis, priceData, hrid);
             },
+            // The base item is bought on the same side as the materials above: this table's mode, its patient
+            // tick on a plain book quote (a custom price, a shop floor or an estimate has no queue to jump)
             priceBase: (hrid) => {
-                const base = resolveItemPrice(hrid, { side: 'buy', mode: 'ask', context: 'profit' });
-                return !base.missing && base.price > 0 ? base.price : null;
+                const base = resolveItemPrice(hrid, { side: 'buy', mode: buyType, context: 'profit' });
+                if (base.missing || !(base.price > 0)) return null;
+                if (base.custom || base.estimated) return base.price;
+                const book = ironCowBook(hrid) ?? marketAPI.getPrice(hrid, 0);
+                return base.price === book?.[buyType]
+                    ? this.patientQuote(base.price, 'buy', buyType, book, hrid)
+                    : base.price;
             },
             getItemName: (hrid) => this.getItemName(hrid),
         };

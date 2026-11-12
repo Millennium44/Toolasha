@@ -392,12 +392,12 @@ describe('badges', () => {
 
         const badge = container.querySelector('.toolasha-profit-indicator');
         expect(badge.title).toContain('decompose');
-        expect(badge.title).toContain('insta-sell at bid');
+        expect(badge.title).toContain('Buy and Sell sides');
     });
 });
 
 describe('pricing', () => {
-    test('quotes the insta flow regardless of the global pricing mode', async () => {
+    test('the alchemy profit modes follow the global pricing mode: nothing pins it', async () => {
         buildGrid(['item_a']);
         engine.answers = { '/items/item_a': { transmute: priced(100, 1) } };
         engine.settings.profitCalc_pricingMode = 'optimistic';
@@ -405,7 +405,34 @@ describe('pricing', () => {
         marketSort.sortMode = 'alchemyProfit';
         await marketSort.sortByProfitability();
 
-        expect(engine.pricingModes).toContain('conservative');
+        expect(engine.pricingModes).toEqual([]);
+    });
+
+    test('moving the pricing mode or either patient tick drops the alchemy figures and badges, and the next sort re-prices', async () => {
+        const container = buildGrid(['item_a']);
+        engine.answers = { '/items/item_a': { transmute: priced(100, 1) } };
+        marketSort.initialize();
+        marketSort.sortMode = 'alchemyProfit';
+        await marketSort.sortByProfitability();
+        expect(badges(container)).not.toEqual([null]);
+
+        for (const key of ['profitCalc_pricingMode', 'profitCalc_patientTickBuy', 'profitCalc_patientTickSell']) {
+            expect(engine.settingListeners[key]).toHaveLength(1);
+            engine.answers = { '/items/item_a': { transmute: priced(100, 1) } };
+            await marketSort.sortByProfitability();
+            expect(marketSort.alchemyCache.size).toBe(1);
+
+            engine.settingListeners[key][0]();
+
+            expect(marketSort.alchemyCache.size).toBe(0);
+            expect(badges(container)).toEqual([null]);
+            expect(marketSort.hasSorted).toBe(false);
+        }
+
+        // The next click prices the item afresh, from what the calculator says now
+        engine.answers = { '/items/item_a': { transmute: priced(250, 2) } };
+        await marketSort.sortByProfitability();
+        expect(marketSort.alchemyCache.get('/items/item_a')[0].profitPerAction).toBe(250);
     });
 
     test('the production mode does not pin the pricing mode at all', async () => {
@@ -638,11 +665,11 @@ describe('decompose chain mode', () => {
         expect(engine.settingListeners.profitCalc_pricingMode).toHaveLength(0);
     });
 
-    test('a pricing change leaves the other modes badges where they are', async () => {
+    test('a pricing change leaves the production profit badges where they are', async () => {
         twoLevel();
         const container = buildGrid(['item_a']);
         marketSort.initialize();
-        marketSort.sortMode = 'alchemyProfitPerHour';
+        marketSort.sortMode = 'profit';
         engine.candidates = {};
         await marketSort.sortByProfitability();
         const before = badges(container);

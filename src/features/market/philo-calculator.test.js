@@ -481,6 +481,43 @@ describe('cost basis', () => {
             expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(10 * nextPriceUp(100), 6);
         });
 
+        describe('the base item being refined', () => {
+            const BASE_HRID = '/items/test_base';
+
+            beforeEach(() => {
+                mocks.itemDetails[BASE_HRID] = { name: 'Test Base', isTradable: true };
+                mocks.refineActions['/actions/refine_test'] = {
+                    outputItems: [{ itemHrid: REFINED_HRID }],
+                    inputItems: [{ itemHrid: OTHER_HRID, count: 10 }],
+                    upgradeItemHrid: BASE_HRID,
+                };
+                mocks.prices[`${BASE_HRID}+0`] = { ask: 1000, bid: 800 };
+            });
+
+            test('is bought on the same side as the materials: ask when conservative, bid when optimistic', () => {
+                calc.pricingMode = 'conservative';
+                expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(10 * 200 + 1000, 6);
+                calc.pricingMode = 'optimistic';
+                expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(10 * 100 + 800, 6);
+            });
+
+            test('global mode ticks the base like every other buy read', () => {
+                mocks.globalPricingMode = 'optimistic';
+                mocks.patientTickBuy = true;
+                calc.pricingMode = 'global';
+                expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(
+                    10 * nextPriceUp(100) + nextPriceUp(800),
+                    6
+                );
+            });
+
+            test('an explicit mode is not ticked', () => {
+                mocks.patientTickBuy = true;
+                calc.pricingMode = 'optimistic';
+                expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(10 * 100 + 800, 6);
+            });
+        });
+
         // The craft arithmetic lives in utils/refined-item-cost.js now, shared
         // with the alchemy history viewers. These pin what this table shows.
         test('the cheaper of the +0 listing and the craft is the cost basis', () => {

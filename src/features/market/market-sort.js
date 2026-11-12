@@ -13,12 +13,10 @@
  * choice, the tea costs and the coin fee, and re-deriving any of it here would
  * be a second opinion about the same number.
  *
- * The one thing the two alchemy-profit modes insist on is the pricing: the requested flow is
- * insta-buy the input at ask and insta-sell the outputs at bid, which is the
- * `'conservative'` pricing mode whatever the user's global setting says. That
- * is pinned with `withProfitPricingMode` around the calculator calls rather
- * than by touching the setting, so nothing else in the script sees it move.
- * The chain mode is the exception: it follows the Buy/Sell pricing settings.
+ * The pricing is the player's own in every alchemy mode: the two alchemy-profit
+ * modes quote the calculator under the profit pricing mode and patient ticks
+ * (the Buy/Sell dropdowns), as the chain mode does, so the ranking is the one
+ * the alchemy panel shows.
  */
 
 import config from '../../core/config.js';
@@ -31,7 +29,6 @@ import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { formatLargeNumber, formatKMB } from '../../utils/formatters.js';
 import { resolveActionContext } from '../../utils/action-context.js';
-import { withProfitPricingMode } from '../../utils/market-data.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose-chain-value.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
@@ -73,12 +70,9 @@ const ALCHEMY_ACTIONS = [
     { action: 'transmute', method: 'calculateTransmuteProfit', withEnhancement: false },
 ];
 
-/** Ask in, bid out — the flow the alchemy modes quote, regardless of the global setting */
-const ALCHEMY_PRICING_MODE = 'conservative';
-
 const ALCHEMY_TOOLTIP =
-    'Insta-buy at ask, best alchemy action, insta-sell at bid — includes catalyst cost if the ' +
-    "engine's current catalyst setting uses one. Ignores the global pricing mode on purpose.";
+    'Best alchemy action on this item, priced on your Buy and Sell sides (the Buy/Sell dropdowns) — includes ' +
+    "catalyst cost if the engine's current catalyst setting uses one.";
 
 const CHAIN_TOOLTIP =
     'Buy the item, decompose it, decompose the gear that yields, and so on down to items that cannot be ' +
@@ -451,13 +445,14 @@ class MarketSort {
     }
 
     /**
-     * The Buy/Sell pricing settings changed: every cached figure was priced under the old ones. The chain sort
-     * follows those settings, so the badges it drew are stale too; they come off and the next click re-ranks.
+     * The Buy/Sell pricing settings changed: every cached figure was priced under the old ones. The alchemy sorts
+     * (the two profit modes and the chain) follow those settings, so the badges they drew are stale too; they come
+     * off and the next click re-ranks.
      * @returns {void}
      */
     handlePricingChange() {
         this.clearCaches();
-        if (!getSortMode(this.sortMode).chain || !this.hasSorted) return;
+        if (!isAlchemyMode(this.sortMode) || !this.hasSorted) return;
         document.querySelectorAll('.toolasha-profit-indicator').forEach((el) => el.remove());
         this.hasSorted = false;
         this.sortDirection = 'desc';
@@ -686,10 +681,9 @@ class MarketSort {
      *
      * The whole calculation is the alchemy profit calculator's — coinify,
      * decompose and transmute each asked once, ineligible ones answering null
-     * and dropping out. The pricing is pinned to `'conservative'` for the
-     * duration: ask for what goes in, bid for what comes out, which is the
-     * insta-buy/insta-sell flow these modes describe and is not necessarily the
-     * user's global pricing mode.
+     * and dropping out. The pricing is the player's own profit pricing mode
+     * (Buy side in, Sell side out, patient ticks included), as the alchemy
+     * panel quotes it.
      *
      * Memoised per item until the prices behind it are refetched, because the
      * grid asks about hundreds of items and each answer is three calculator
@@ -705,30 +699,28 @@ class MarketSort {
 
         const candidates = [];
         try {
-            withProfitPricingMode(ALCHEMY_PRICING_MODE, () => {
-                for (const { action, method, withEnhancement } of ALCHEMY_ACTIONS) {
-                    let data;
-                    try {
-                        data = withEnhancement
-                            ? alchemyProfitCalculator[method](itemHrid, 0, false, null, actionContext)
-                            : alchemyProfitCalculator[method](itemHrid, false, null, null, actionContext);
-                    } catch {
-                        continue;
-                    }
-                    if (!data) continue;
-
-                    const profitPerAction = Number(data.profitPerAction);
-                    const profitPerHour = Number(data.profitPerHour);
-                    if (!Number.isFinite(profitPerAction) || !Number.isFinite(profitPerHour)) continue;
-
-                    candidates.push({
-                        action,
-                        profitPerAction,
-                        profitPerHour,
-                        catalyst: data.winningCatalystHrid || null,
-                    });
+            for (const { action, method, withEnhancement } of ALCHEMY_ACTIONS) {
+                let data;
+                try {
+                    data = withEnhancement
+                        ? alchemyProfitCalculator[method](itemHrid, 0, false, null, actionContext)
+                        : alchemyProfitCalculator[method](itemHrid, false, null, null, actionContext);
+                } catch {
+                    continue;
                 }
-            });
+                if (!data) continue;
+
+                const profitPerAction = Number(data.profitPerAction);
+                const profitPerHour = Number(data.profitPerHour);
+                if (!Number.isFinite(profitPerAction) || !Number.isFinite(profitPerHour)) continue;
+
+                candidates.push({
+                    action,
+                    profitPerAction,
+                    profitPerHour,
+                    catalyst: data.winningCatalystHrid || null,
+                });
+            }
         } catch (error) {
             console.error('[Market Sort] Alchemy pricing failed for', itemHrid, error);
         }
