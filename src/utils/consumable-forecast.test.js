@@ -21,6 +21,34 @@ const drink = {
     pricePerItem: 50,
 };
 
+describe('forecast: which price a day of it costs', () => {
+    test('the configured Buy-side price wins, and the raw ask stays on askPrice for the instant-buy check', () => {
+        const instant = forecast({ ...drink, priceValue: 50 });
+        const patient = forecast({ ...drink, priceValue: 40 });
+
+        expect(instant.price).toBe(50);
+        expect(patient.price).toBe(40);
+        expect(patient.costPerDay).toBeCloseTo(24 * 40, 6);
+        expect(patient.askPrice).toBe(50);
+    });
+
+    test('a configured side with no price is unpriced even when an ask is listed, never free', () => {
+        const unpriced = forecast({ ...drink, priceValue: null });
+
+        expect(unpriced.price).toBeNull();
+        expect(unpriced.costPerDay).toBeNull();
+        expect(refillFor(unpriced, 3600).cost).toBeNull();
+        expect(unpriced.askPrice).toBe(50);
+    });
+
+    test('an entry without a configured price keeps pricing at its own price', () => {
+        const key = forecast({ ...drink });
+
+        expect(key.price).toBe(50);
+        expect(key.askPrice).toBe(50);
+    });
+});
+
 describe('forecast', () => {
     test('turns a rate per second into a day and a countdown', () => {
         const result = forecast(drink);

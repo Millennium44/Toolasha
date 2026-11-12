@@ -7,7 +7,7 @@ import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { numberFormatter } from '../../utils/formatters.js';
-import { getItemPrices } from '../../utils/market-data.js';
+import { getItemPriceInfo } from '../../utils/market-data.js';
 import dom from '../../utils/dom.js';
 import tooltipObserver from '../../core/tooltip-observer.js';
 
@@ -252,15 +252,15 @@ class TooltipConsumables {
         // Restore per second (for over-time items)
         const restorePerSecond = recoveryDuration > 0 ? restoreAmount / recoveryDuration : 0;
 
-        // Get market price for cost calculations
-        // The reconciled book (an Iron Cow character's own valuation included), which also says
-        // when the ask is a value-map stand-in rather than a listing
-        const price = getItemPrices(itemHrid, 0);
-        const askPrice = price?.ask || 0;
-        const askEstimated = Boolean(price?.askEstimated);
+        // Market price for cost calculations: what the player pays, on their own Buy side (profit pricing
+        // mode, patient tick, custom price, an Iron Cow character's own valuation), which also says when
+        // the figure is a value-map stand-in rather than a listing
+        const price = getItemPriceInfo(itemHrid, { context: 'profit', side: 'buy' });
+        const buyPrice = price.price > 0 ? price.price : 0;
+        const buyEstimated = buyPrice > 0 && price.estimated;
 
         // Cost per HP or MP
-        const costPerPoint = askPrice > 0 ? askPrice / restoreAmount : 0;
+        const costPerPoint = buyPrice > 0 ? buyPrice / restoreAmount : 0;
 
         // Daily max based on COOLDOWN, not recovery duration
         const usesPerDay = cooldownDuration > 0 ? (24 * 60 * 60) / cooldownDuration : 0;
@@ -272,8 +272,8 @@ class TooltipConsumables {
             restorePerSecond,
             recoveryDuration, // How long healing takes
             cooldownDuration, // How often you can use it
-            askPrice,
-            askEstimated,
+            buyPrice,
+            buyEstimated,
             costPerPoint,
             dailyMax,
             usesPerDay,
@@ -319,10 +319,10 @@ class TooltipConsumables {
 
         // Cost efficiency line
         if (stats.costPerPoint > 0) {
-            const mark = stats.askEstimated ? '~' : '';
-            const title = stats.askEstimated ? ' title="Estimated from the game value map, not a live listing"' : '';
-            html += `<div${title}>Cost: ${mark}${numberFormatter(stats.costPerPoint, 1)} per ${stats.restoreType} (ask)</div>`;
-        } else if (stats.askPrice === 0) {
+            const mark = stats.buyEstimated ? '~' : '';
+            const title = stats.buyEstimated ? ' title="Estimated from the game value map, not a live listing"' : '';
+            html += `<div${title}>Cost: ${mark}${numberFormatter(stats.costPerPoint, 1)} per ${stats.restoreType} (buy)</div>`;
+        } else if (stats.buyPrice === 0) {
             html += `<div style="color: gray; font-style: italic;">Cost: No market data</div>`;
         }
 

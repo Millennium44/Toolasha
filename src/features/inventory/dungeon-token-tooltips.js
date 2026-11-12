@@ -275,12 +275,13 @@ class DungeonTokenTooltips {
     }
 
     /**
-     * Handle cowbell tooltip — show value based on bag of 10 cowbells market price
+     * Handle cowbell tooltip — show value based on bag of 10 cowbells market price, on the same side
+     * of the book as every token line here (an empty side is left unpriced, not read off the other)
      */
     _handleCowbell(tooltipElement, isCollectionTooltip) {
         const prices = getItemPrices(BAG_OF_COWBELLS, 0);
-        const bagPrice = prices?.ask > 0 ? prices.ask : prices?.bid > 0 ? prices.bid : 0;
-        if (bagPrice <= 0) return;
+        const bagPrice = getPricingSide() === 'bid' ? prices?.bid : prices?.ask;
+        if (!(bagPrice > 0)) return;
 
         const cowbellValue = Math.floor(bagPrice / 10);
 

@@ -633,7 +633,8 @@ export function calculateAllHousesCost(characterHouseRooms) {
         const level = houseData.level || 0;
         if (level === 0) continue;
 
-        const cost = calculateHouseBuildCost(houseRoomHrid, level);
+        // Net worth values the rooms at the instant ask, whatever the Buy dropdown says
+        const cost = calculateHouseBuildCost(houseRoomHrid, level, { pricing: 'ask' });
         totalCost += cost;
 
         // Get human-readable name

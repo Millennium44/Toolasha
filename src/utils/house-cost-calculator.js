@@ -11,23 +11,28 @@
  *
  * ## Which side of the book
  *
- * The buy side — the ask. Every question asked of this is some form of "what
- * would it cost me to do this now": the Houses panel's affordability count, the
- * upgrade advisor, the equipment savings goals, the combat score's estimate of
- * what a character's rooms represent. Buying the materials is what any of those
- * would involve, and the ask is what buying costs.
+ * The player's Buy side — the Buy dropdown of the Buy/Sell pair (profit pricing
+ * mode, patient tick, custom buy price). Every question asked of this is some
+ * form of "what would it cost me to do this": the Houses panel's affordability
+ * count, the house modal's cost column, the goal planner, the house ROI board.
+ * Buying the materials is what any of those would involve, and the Buy side is
+ * what the player has said buying costs them.
+ *
+ * Net worth and the combat score ask for `{ pricing: 'ask' }` instead: a value
+ * the character's rooms represent is not a purchase plan, and those figures
+ * stay on the instant ask whatever the dropdown says.
  *
  * It used to price at the ask/bid midpoint, which is a defensible number for
  * nothing in particular and had the concrete cost that the same room was quoted
- * two different figures in two of this script's own panels — the advisor and the
- * savings row already asked for the ask. One side, and it is the one the money
- * actually leaves at.
+ * two different figures in two of this script's own panels. One side per
+ * question, never a midpoint.
  *
- * When there is no ask, the one side the book has is still a market price, so
- * the bid stands in; a material with no book at all falls back to what the
- * vendor pays for it — a floor, but dropping the material would understate the
- * room by exactly that material. Custom price overrides apply, because they
- * come in through {@link getItemPrice} like every other priced feature.
+ * When the chosen side has no price, the ask then the bid stand in (the sides
+ * the book has are still market prices); a material with no book at all falls
+ * back to what the vendor pays for it — a floor, but dropping the material
+ * would understate the room by exactly that material. Custom price overrides
+ * apply, because they come in through {@link getItemPrice} like every other
+ * priced feature.
  */
 
 import dataManager from '../core/data-manager.js';
@@ -56,14 +61,23 @@ export async function initialize() {
 /**
  * What one unit of a build material costs.
  *
- * Ask first (with any custom override), the bid when nobody is selling, and
- * the vendor's sell price when there is no book at all. Zero only when the
- * game itself has no price for the item.
+ * The player's Buy side first (with any custom override), then the ask and the
+ * bid when that side has nothing, and the vendor's sell price when there is no
+ * book at all. Zero only when the game itself has no price for the item. With
+ * `pricing: 'ask'` the first step is the plain ask (net worth, combat score).
  *
  * @param {string} itemHrid - Item HRID
+ * @param {'buy'|'ask'} [pricing='buy'] - 'buy' follows the Buy dropdown; 'ask' is the instant ask
  * @returns {number} Price in coins
  */
-function materialUnitPrice(itemHrid) {
+function materialUnitPrice(itemHrid, pricing = 'buy') {
+    if (pricing !== 'ask') {
+        const configured = getItemPrice(itemHrid, { context: 'profit', side: 'buy' });
+        if (configured !== null && configured !== 0) {
+            return configured;
+        }
+    }
+
     const ask = getItemPrice(itemHrid, { mode: 'ask', side: 'buy' });
     if (ask !== null && ask !== 0) {
         return ask;
@@ -82,9 +96,11 @@ function materialUnitPrice(itemHrid) {
  * Calculate the total cost to build a house room to a specific level
  * @param {string} houseRoomHrid - House room HRID (e.g., '/house_rooms/dojo')
  * @param {number} currentLevel - Target level (1-8)
+ * @param {Object} [options]
+ * @param {'buy'|'ask'} [options.pricing='buy'] - The player's Buy side, or the instant ask for a valuation
  * @returns {number} Total build cost in coins
  */
-export function calculateHouseBuildCost(houseRoomHrid, currentLevel) {
+export function calculateHouseBuildCost(houseRoomHrid, currentLevel, { pricing = 'buy' } = {}) {
     const gameData = dataManager.getInitClientData();
     if (!gameData) return 0;
 
@@ -112,7 +128,7 @@ export function calculateHouseBuildCost(houseRoomHrid, currentLevel) {
                 continue;
             }
 
-            totalCost += item.count * materialUnitPrice(item.itemHrid);
+            totalCost += item.count * materialUnitPrice(item.itemHrid, pricing);
         }
     }
 
@@ -145,7 +161,8 @@ export function calculateBattleHousesCost(characterHouseRooms) {
         const level = houseData.level || 0;
         if (level === 0) continue;
 
-        const cost = calculateHouseBuildCost(houseRoomHrid, level);
+        // A value of the character's battle rooms, not a purchase: the instant ask
+        const cost = calculateHouseBuildCost(houseRoomHrid, level, { pricing: 'ask' });
         totalCost += cost;
 
         // Get human-readable name

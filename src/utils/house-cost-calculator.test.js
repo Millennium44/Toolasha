@@ -25,8 +25,12 @@ vi.mock('../api/marketplace.js', () => ({
 // The pricing chain reads through getItemPrice, mode by mode. `prices` maps
 // itemHrid -> {ask, bid}; a missing side or item answers null, like the real one.
 vi.mock('./market-data.js', () => ({
-    getItemPrice: (itemHrid, { mode, side } = {}) =>
-        state.custom?.[itemHrid]?.[side ?? 'sell'] ?? state.prices[itemHrid]?.[mode] ?? null,
+    // `context: 'profit'` is the player's Buy side, which `state.buyBasis` fixes to a book side (default: none,
+    // so the chain falls through to the forced ask/bid below, as before)
+    getItemPrice: (itemHrid, { mode, side, context } = {}) =>
+        state.custom?.[itemHrid]?.[side ?? 'sell'] ??
+        state.prices[itemHrid]?.[context === 'profit' ? state.buyBasis : mode] ??
+        null,
 }));
 
 const {
@@ -60,6 +64,32 @@ describe('calculateHouseBuildCost', () => {
     beforeEach(() => {
         state.gameData = { houseRoomDetailMap };
         state.prices = { '/items/plank': { ask: 12, bid: 8 } };
+        state.buyBasis = undefined;
+    });
+
+    test('follows the player Buy side: the ask for an instant buyer, the bid for a patient one', () => {
+        state.buyBasis = 'ask';
+        expect(calculateHouseBuildCost('/house_rooms/dojo', 2)).toBe(100 + 10 * 12);
+        state.buyBasis = 'bid';
+        expect(calculateHouseBuildCost('/house_rooms/dojo', 2)).toBe(100 + 10 * 8);
+    });
+
+    test('net worth asks for the instant ask, whatever the Buy side says', () => {
+        state.buyBasis = 'bid';
+        expect(calculateHouseBuildCost('/house_rooms/dojo', 2, { pricing: 'ask' })).toBe(100 + 10 * 12);
+        expect(calculateBattleHousesCost({ '/house_rooms/dojo': { level: 2 } }).totalCost).toBe(100 + 10 * 12);
+    });
+
+    test('a Buy side with nothing on it falls back to the other side, then the vendor, never to zero', () => {
+        state.buyBasis = 'bid';
+        state.prices = { '/items/plank': { ask: 12 } };
+        expect(calculateHouseBuildCost('/house_rooms/dojo', 2)).toBe(100 + 10 * 12);
+        state.prices = {};
+        state.gameData = {
+            houseRoomDetailMap,
+            itemDetailMap: { '/items/plank': { sellPrice: 3 } },
+        };
+        expect(calculateHouseBuildCost('/house_rooms/dojo', 2)).toBe(100 + 10 * 3);
     });
 
     test('a build is costed at the buy override, not the sell override', () => {

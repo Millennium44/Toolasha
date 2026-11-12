@@ -22,6 +22,7 @@ const game = vi.hoisted(() => ({
     items: {},
     gearConcentration: 0,
     prices: {},
+    buySide: 'ask',
     map: new Map(),
 }));
 
@@ -45,7 +46,12 @@ vi.mock('../core/data-manager.js', () => ({
 vi.mock('./tea-parser.js', () => ({ getDrinkConcentration: () => game.gearConcentration }));
 vi.mock('./action-context.js', () => ({ resolveActionContext: () => ({ equipment: new Map(), drinks: [] }) }));
 vi.mock('./action-calculator.js', () => ({ calculateActionStats: () => null }));
-vi.mock('./market-data.js', () => ({ getItemPrices: (hrid) => game.prices[hrid] ?? null }));
+vi.mock('./market-data.js', () => ({
+    getItemPrices: (hrid) => game.prices[hrid] ?? null,
+    // The player's Buy side: the book side the profit mode names, read off the same table
+    getItemPrice: (hrid, { context, side } = {}) =>
+        context === 'profit' && side === 'buy' ? (game.prices[hrid]?.[game.buySide ?? 'ask'] ?? null) : null,
+}));
 
 const forecastMod = await import('./consumable-forecast.js');
 const { skillingConsumables, skillingActionTypes, isSkillingActionType, runningActionTypeHrid, actionTypeLabel } =
@@ -78,6 +84,7 @@ beforeEach(() => {
     game.actionDetails = {};
     game.gearConcentration = 0;
     game.prices = {};
+    game.buySide = 'ask';
     game.map = new Map();
     game.items = {
         '/items/gathering_tea': tea('Gathering Tea', 5),
@@ -262,6 +269,40 @@ describe('every ending', () => {
         expect(sides.bidUnpriced).toBe(1);
         expect(forecasts[1].price).toBeNull();
         expect(forecastMod.refillFor(forecasts[1], 86400).cost).toBeNull();
+    });
+
+    test('a tea costs what the player Buy side says, and the raw ask stays for the instant-buy check', () => {
+        runForaging();
+        game.slots = [slot('/items/gathering_tea')];
+        game.inventory = [stack('/items/gathering_tea', 5)];
+        game.prices['/items/gathering_tea'] = { ask: 1000, bid: 900 };
+        const perDay = 86400 / (300 / 1.129);
+
+        game.buySide = 'ask';
+        const instant = skillingConsumables(FORAGING).forecasts[0];
+        game.buySide = 'bid';
+        const patient = skillingConsumables(FORAGING).forecasts[0];
+
+        expect(instant.price).toBe(1000);
+        expect(patient.price).toBe(900);
+        expect(patient.costPerDay).toBeCloseTo(perDay * 900, 3);
+        // The two-sided cost stays labeled, and the buy-now check still sees the ask
+        expect(patient.askPrice).toBe(1000);
+        expect(forecastMod.costPerDaySides([patient]).ask).toBeCloseTo(perDay * 1000, 3);
+    });
+
+    test('a tea with a listed ask but nothing on the Buy side is unpriced there, never free', () => {
+        runForaging();
+        game.slots = [slot('/items/gathering_tea')];
+        game.inventory = [stack('/items/gathering_tea', 5)];
+        game.prices['/items/gathering_tea'] = { ask: 1000, bid: 0 };
+        game.buySide = 'bid';
+
+        const entry = skillingConsumables(FORAGING).forecasts[0];
+
+        expect(entry.price).toBeNull();
+        expect(entry.costPerDay).toBeNull();
+        expect(entry.askPrice).toBe(1000);
     });
 
     test('nothing priced at all leaves the total unknown, not zero', () => {

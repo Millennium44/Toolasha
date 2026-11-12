@@ -33,7 +33,10 @@
  * @property {boolean} rateKnown - Whether consumption is measured or known to be zero
  * @property {number|null} secondsLeft - Until it runs out; `Infinity` when unused, null when unknown
  * @property {number|null} costPerDay - What a day of it costs, or null with no price
- * @property {number|null} price - Price per item, or null
+ * @property {number|null} price - Price per item on the player's Buy side (the profit pricing mode, patient
+ *   tick included), or null; an entry that carries no configured price falls back to its raw `pricePerItem`
+ * @property {number|null} askPrice - The raw top ask per item, or null: what an instant buy pays, which the
+ *   buy-now-or-order decision weighs against the queue (`price` can be a bid under a patient mode)
  * @property {{ask: number|null, bid: number|null}} costPerDaySides - A day's cost at each side
  */
 
@@ -51,7 +54,11 @@ export function forecast(entry, prices = null) {
             ? Number(rawRate)
             : null;
     const rateKnown = rate !== null;
-    const price = Number(entry?.pricePerItem) > 0 ? Number(entry.pricePerItem) : null;
+    const askPrice = Number(entry?.pricePerItem) > 0 ? Number(entry.pricePerItem) : null;
+    // The configured Buy-side figure (`priceValue`, null when that side is unpriced) wins where the entry
+    // carries one; entries built without it (entry keys, which follow their own key pricing) keep their price
+    const configured = entry && 'priceValue' in entry;
+    const price = configured ? (Number(entry.priceValue) > 0 ? Number(entry.priceValue) : null) : askPrice;
 
     // Not being used is not the same as lasting forever, but it is the same
     // arithmetic — what keeps them apart is that the headline ignores anything
@@ -71,6 +78,7 @@ export function forecast(entry, prices = null) {
         perDay,
         secondsLeft,
         price,
+        askPrice,
         costPerDay: !rateKnown || price === null ? null : perDay * price,
         costPerDaySides: { ask: side(prices?.ask), bid: side(prices?.bid) },
         // A side filled from the game's market value is not a listing anyone can trade against
