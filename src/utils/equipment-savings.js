@@ -602,8 +602,8 @@ async function ensureLoaded() {
     const who = currentWho();
     const waited = !loaded;
     if (waited) await loadSavingsRecord();
-    // Whoever the load filed the goals under must still be the one on screen
-    return currentWho() === who && (!waited || owner === who);
+    // The load must have committed (not superseded, not unreadable) for the one on screen
+    return currentWho() === who && (!waited || (owner === who && loaded));
 }
 
 /**

@@ -828,6 +828,39 @@ describe('a goal requested before the record was read, then a character switch',
         expect(hasAbilityGoal('/abilities/fierce_aura')).toBe(true);
     });
 
+    test('a record that cannot be read refuses the add and writes nothing', async () => {
+        stored.record = fierce;
+        resetAbilityGoals({ loaded: false });
+        storageMock.unavailable = true;
+        storageMock.set.mockClear();
+
+        expect(await addAbilityGoal({ abilityHrid: '/abilities/toxic_pollen', targetLevel: 30, cost: 1 })).toBe(false);
+        expect(await addHouseGoal({ houseRoomHrid: '/house_rooms/dojo', targetLevel: 3, cost: 1 })).toBe(false);
+
+        expect(stored.writes).toEqual([]);
+        storageMock.unavailable = false;
+        expect(stored.record).toEqual(fierce);
+    });
+
+    test('a read superseded by one that could not commit refuses the add and writes nothing', async () => {
+        stored.record = fierce;
+        resetAbilityGoals({ loaded: false });
+        const release = gateNextRead();
+        const pending = addAbilityGoal({ abilityHrid: '/abilities/toxic_pollen', targetLevel: 30, cost: 1 });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        storageMock.unavailable = true;
+        await loadSavingsRecord(); // a newer, unreadable load for the same character
+        storageMock.set.mockClear();
+        release();
+
+        expect(await pending).toBe(false);
+        expect(stored.writes).toEqual([]);
+        storageMock.unavailable = false;
+        expect(stored.record).toEqual(fierce);
+    });
+
     test('an add with no switch still succeeds and keeps the goals already stored', async () => {
         stored.record = fierce;
         resetAbilityGoals({ loaded: false });

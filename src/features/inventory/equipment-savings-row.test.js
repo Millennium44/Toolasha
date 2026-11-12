@@ -124,7 +124,11 @@ vi.mock('../../core/storage.js', () => ({
         setJSON: async () => {},
         get: async (_k, _s, fallback = null) => fallback,
         tryGet: async () =>
-            game.stored ? { found: true, value: structuredClone(game.stored) } : { found: false, value: null },
+            game.unreadable
+                ? null
+                : game.stored
+                  ? { found: true, value: structuredClone(game.stored) }
+                  : { found: false, value: null },
         set: async (key, value) => {
             game.writes.push({ key, value });
             return true;
@@ -265,7 +269,7 @@ const {
     houseRoomLevels,
     default: equipmentSavings,
 } = await import('./equipment-savings-row.js');
-const { flushSavingsWrites } = await import('../../utils/equipment-savings.js');
+const { flushSavingsWrites, resetAbilityGoals } = await import('../../utils/equipment-savings.js');
 
 beforeEach(() => {
     resetSpriteSheetCache();
@@ -4367,6 +4371,38 @@ describe('Equipment Watch item requirement warnings', () => {
             expect(text()).not.toContain(FAILED);
         } finally {
             game.skills = null;
+        }
+    });
+});
+
+describe('a refused Watch keeps the form', () => {
+    test('a house level whose save was refused stays in the form with what was typed', async () => {
+        equipmentSavingsPanel.show();
+        await flushSavingsWrites();
+        equipmentSavingsPanel.panel.querySelector('[data-add-house]').click();
+        const list = equipmentSavingsPanel.panel.querySelector('select[class*="toolasha-select"]');
+        const roomSelect = Array.from(equipmentSavingsPanel.panel.querySelectorAll('select')).find((select) =>
+            Array.from(select.options).some((option) => option.value === '/house_rooms/mystical_study')
+        );
+        roomSelect.value = '/house_rooms/mystical_study';
+        roomSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(list).not.toBeNull();
+
+        // The record cannot be read back, so the save is refused rather than written over it
+        resetAbilityGoals({ loaded: false });
+        game.unreadable = true;
+        game.writes.length = 0;
+        try {
+            const save = equipmentSavingsPanel.panel.querySelector('[data-save-house]');
+            save.click();
+            for (let i = 0; i < 40; i++) await Promise.resolve();
+
+            expect(game.writes).toEqual([]);
+            const again = equipmentSavingsPanel.panel.querySelector('[data-save-house]');
+            expect(again).not.toBeNull();
+            expect(again.textContent).toBe('Switched, retry');
+        } finally {
+            game.unreadable = false;
         }
     });
 });

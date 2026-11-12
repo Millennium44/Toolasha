@@ -942,7 +942,7 @@ export function watchedAbilityGoals() {
  * @param {string} abilityHrid - The ability
  * @param {number} targetLevel - The level wanted
  * @param {number|null} [cost] - Coins, when the market cannot be asked
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} False when the character changed meanwhile and nothing was saved
  */
 export async function watchAbility(abilityHrid, targetLevel, cost = undefined) {
     if (!abilityHrid || !(targetLevel > 0)) return true;
@@ -959,7 +959,7 @@ export async function watchAbility(abilityHrid, targetLevel, cost = undefined) {
 /**
  * Stop saving for a level of an ability.
  * @param {string} abilityHrid - The ability
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} False when the character changed meanwhile and nothing was removed
  */
 export async function unwatchAbility(abilityHrid) {
     return removeAbilityGoal(abilityHrid);
@@ -1081,7 +1081,7 @@ export function watchedHouseGoals() {
  * @param {string} houseRoomHrid - The room
  * @param {number} targetLevel - The level wanted, capped at the one the game builds to
  * @param {number|null} [cost] - Coins, when the market cannot be asked
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} False when the character changed meanwhile and nothing was saved
  */
 export async function watchHouse(houseRoomHrid, targetLevel, cost = undefined) {
     if (!houseRoomHrid || !(targetLevel > 0)) return true;
@@ -1099,7 +1099,7 @@ export async function watchHouse(houseRoomHrid, targetLevel, cost = undefined) {
 /**
  * Stop saving for a level of a house room.
  * @param {string} houseRoomHrid - The room
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} False when the character changed meanwhile and nothing was removed
  */
 export async function unwatchHouse(houseRoomHrid) {
     return removeHouseGoal(houseRoomHrid);
@@ -4437,11 +4437,16 @@ function housePicker() {
         // so the estimate on screen can be one level behind the one being saved
         const fresh = houseUpgradeCost(editing.houseRoomHrid, editing.houseLevel);
         const typed = editing.houseCost === '' ? null : Number(editing.houseCost);
-        await watchHouse(
+        const saved = await watchHouse(
             editing.houseRoomHrid,
             editing.houseLevel,
             fresh !== null ? fresh : Number.isFinite(typed) ? typed : null
         );
+        if (saved === false) {
+            // Refused (the character changed under the write): keep the form and what was typed
+            save.textContent = 'Switched, retry';
+            return;
+        }
         editing.houseRoomHrid = '';
         editing.houseLevel = 0;
         editing.houseCost = '';
@@ -4635,11 +4640,16 @@ function abilityPicker() {
         // so the estimate on screen can be one level behind the one being saved
         const fresh = abilityBookCost(editing.abilityHrid, editing.abilityLevel);
         const typed = editing.abilityCost === '' ? null : Number(editing.abilityCost);
-        await watchAbility(
+        const saved = await watchAbility(
             editing.abilityHrid,
             editing.abilityLevel,
             fresh !== null ? fresh : Number.isFinite(typed) ? typed : null
         );
+        if (saved === false) {
+            // Refused (the character changed under the write): keep the form and what was typed
+            save.textContent = 'Switched, retry';
+            return;
+        }
         editing.abilityHrid = '';
         editing.abilityLevel = 0;
         editing.abilityCost = '';
