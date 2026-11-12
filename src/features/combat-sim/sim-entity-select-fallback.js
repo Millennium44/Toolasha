@@ -212,13 +212,16 @@ export function enhanceSimEntitySelect(select) {
     }
 
     function open() {
-        if (popup || destroyed || select.disabled || !select.isConnected) return;
+        if (popup || destroyed || select.disabled || !select.isConnected || select.options.length === 0) return;
         syncButton();
+        // Mouse opens do not focus a button on macOS Firefox/Safari; keys need the focus.
+        button.focus?.();
         popup = document.createElement('div');
         popup.className = POPUP_CLASS;
         popup.id = `${id}-list`;
         popup.setAttribute('role', 'listbox');
-        popup.style.zIndex = String(config.Z_FLOATING_PANEL + 100);
+        // Same value as panel-z-index's PANEL_Z_CAP + 1 (that module pulls in storage, so it is not imported).
+        popup.style.zIndex = String(config.Z_FLOATING_PANEL + 99 + 1);
         const selected = selectedOption();
         items = [];
         [...select.options].forEach((option, i) => {
@@ -327,6 +330,12 @@ export function enhanceSimEntitySelect(select) {
                 }
         }
     };
+    // Firefox fires a button's click on Space keyup; keydown already handled the key.
+    const onKeyUp = (event) => {
+        if (event.key === ' ') event.preventDefault();
+    };
+    const labelEls = [...(select.labels || [])];
+    const onLabelClick = () => button.focus?.();
     const onClick = () => (popup ? close() : open());
     const onSelectChange = () => syncButton();
 
@@ -338,6 +347,8 @@ export function enhanceSimEntitySelect(select) {
         observers.forEach((observer) => observer.disconnect());
         button.removeEventListener('keydown', onKeyDown);
         button.removeEventListener('click', onClick);
+        button.removeEventListener('keyup', onKeyUp);
+        labelEls.forEach((l) => l.removeEventListener('click', onLabelClick));
         select.removeEventListener('change', onSelectChange);
         shadowed.forEach((name) => delete select[name]);
         button.remove();
@@ -371,6 +382,8 @@ export function enhanceSimEntitySelect(select) {
 
     button.addEventListener('keydown', onKeyDown);
     button.addEventListener('click', onClick);
+    button.addEventListener('keyup', onKeyUp);
+    labelEls.forEach((l) => l.addEventListener('click', onLabelClick));
     select.addEventListener('change', onSelectChange);
     const selectObserver = new MutationObserver(() => {
         if (select.isConnected) refresh();
@@ -394,7 +407,13 @@ export function enhanceSimEntitySelect(select) {
 
     enhanced.set(select, { refresh, destroy });
     const labels = [...(select.labels || [])].map((l) => l.id).filter(Boolean);
+    const labelText = labelEls
+        .map((l) => l.textContent.trim())
+        .filter(Boolean)
+        .join(' ');
     if (labels.length) button.setAttribute('aria-labelledby', labels.join(' '));
+    else if (labelText) button.setAttribute('aria-label', labelText);
+    else if (select.getAttribute('aria-label')) button.setAttribute('aria-label', select.getAttribute('aria-label'));
     syncButton();
 }
 

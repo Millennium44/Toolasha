@@ -178,4 +178,20 @@ describe('fallback icon dropdown', () => {
         expect(select.classList.contains('toolasha-sim-entity-select-hidden')).toBe(false);
         expect(select.querySelector('selectedcontent')).not.toBeNull();
     });
+
+    test('Space keyup is cancelled, open focuses the button, empty list does not open, label names and focuses', () => {
+        populateSimEntitySelect(select, entries);
+        const up = new KeyboardEvent('keyup', { key: ' ', bubbles: true, cancelable: true });
+        button().dispatchEvent(up);
+        expect(up.defaultPrevented).toBe(true);
+        button().click();
+        expect(document.activeElement).toBe(button());
+        expect(button().getAttribute('aria-label')).toBe('Monster');
+        button().blur();
+        panel.querySelector('label').click();
+        expect(document.activeElement).toBe(button());
+        populateSimEntitySelect(select, []);
+        button().click();
+        expect(popup()).toBeNull();
+    });
 });
