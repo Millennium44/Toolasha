@@ -12082,6 +12082,12 @@ describe('upgrade trims: Score and drink relevance', () => {
             abilityDetailMap: abilities,
             itemDetailMap: {
                 [SWORD]: { name: 'Sword', equipmentDetail: { combatStats: weaponStats } },
+                '/items/test_pouch': { name: 'Pouch', equipmentDetail: { combatStats: {} } },
+                '/items/bloom_ring': { name: 'Bloom Ring', equipmentDetail: { combatStats: { bloom: 0.1 } } },
+                '/items/enh_ring': {
+                    name: 'Enh Ring',
+                    equipmentDetail: { combatStats: {}, combatEnhancementBonuses: { blaze: 0.01 } },
+                },
                 ...Object.fromEntries([
                     coffee('/items/ultra_melee_coffee', 'Ultra Melee Coffee', 'melee_level'),
                     coffee('/items/magic_coffee', 'Magic Coffee', 'magic_level'),
@@ -12127,6 +12133,46 @@ describe('upgrade trims: Score and drink relevance', () => {
             const list = offered(player(['/abilities/frenzy', '/abilities/fire']), gd);
             expect(list).toContain('/items/magic_coffee');
             expect(list).not.toContain('/items/ranged_coffee');
+        });
+
+        const withRing = (hrid) => {
+            const dto = player();
+            dto.equipment = { ...dto.equipment, '/equipment_types/ring': { hrid } };
+            return dto;
+        };
+
+        test('gear that rolls Bloom or Blaze keeps Magic coffee for a melee build, and still drops Ranged', () => {
+            for (const hrid of ['/items/bloom_ring', '/items/enh_ring']) {
+                const list = offered(withRing(hrid), data());
+                expect(list).toContain('/items/magic_coffee');
+                expect(list).not.toContain('/items/ranged_coffee');
+            }
+        });
+
+        test('an aura whose buffs scale with Ranged keeps Ranged coffee although it has no combat style', () => {
+            const aura = {
+                manaCost: 10,
+                abilityEffects: [
+                    {
+                        effectType: '/ability_effect_types/buff',
+                        combatStyleHrid: '',
+                        buffs: [{ typeHrid: '/buff_types/critical_rate', multiplierForSkillHrid: '/skills/ranged' }],
+                    },
+                ],
+            };
+            const gd = data(
+                { slashDamage: 10 },
+                { '/abilities/frenzy': ability('slash'), '/abilities/critical_aura': aura }
+            );
+            const list = offered(player(['/abilities/frenzy', '/abilities/critical_aura']), gd);
+            expect(list).toContain('/items/ranged_coffee');
+            expect(list).not.toContain('/items/magic_coffee');
+        });
+
+        test('a worn item the game data does not describe keeps everything', () => {
+            const list = offered(withRing('/items/mystery_ring'), data());
+            expect(list).toContain('/items/magic_coffee');
+            expect(list).toContain('/items/ranged_coffee');
         });
 
         test('a magic weapon keeps Magic coffee and drops Ranged', () => {

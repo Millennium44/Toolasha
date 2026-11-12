@@ -2323,8 +2323,11 @@ export function slotWarnings(playerDTO, gameData) {
  * a Magic or Ranged coffee for a melee-only build produced the same -17% as any other coffee that merely
  * replaced a good one, one row per tier per slot. A level buff counts only when the weapon's style, or an
  * equipped ability's damage style, reads that level (engine/combat-unit.js: melee, ranged and magic damage each
- * use their own level). Intelligence counts when any equipped ability costs mana, and cast speed when any ability
- * is equipped. Anything the data cannot settle (no weapon, an ability missing from the game data) is kept.
+ * use their own level), or a buff of an equipped ability scales with that skill (`multiplierForSkillHrid`, as
+ * Critical Aura does with Ranged), or worn gear grants Blaze, Bloom or Ripple (magic scaling, rolled on every
+ * cast). Intelligence counts when any equipped ability costs mana or scales with it, and cast speed when any
+ * ability is equipped. Anything the data cannot settle (no weapon, an ability or worn item missing from the game
+ * data) is kept.
  * @param {Object} playerDTO - Player DTO
  * @param {Object} gameData - Game data payload
  * @returns {(buffType: string) => boolean}
@@ -2333,18 +2336,38 @@ export function drinkBuffUsability(playerDTO, gameData) {
     const weapon = getPlayerCombatStyle(playerDTO || {}, gameData || { itemDetailMap: {} });
     const abilities = (Array.isArray(playerDTO?.abilities) ? playerDTO.abilities : []).filter((a) => a?.hrid);
     const details = abilities.map((a) => gameData?.abilityDetailMap?.[a.hrid]);
-    const known = weapon !== 'unknown' && details.every(Boolean);
+    const equipped = Object.values(playerDTO?.equipment || {}).filter((item) => item?.hrid);
+    const equipDetails = equipped.map((item) => gameData?.itemDetailMap?.[item.hrid]?.equipmentDetail);
+    const known = weapon !== 'unknown' && details.every(Boolean) && equipDetails.every(Boolean);
     if (!known) return () => true;
 
     const styles = new Set([weapon]);
+    let scalesWithIntelligence = false;
     for (const detail of details) {
         for (const effect of detail.abilityEffects || []) {
             if (effect.combatStyleHrid) styles.add(effect.combatStyleHrid.split('/').pop());
+            // An aura or buff can scale with a skill level (CombatSimulator.scaledBuff) with no combat style of
+            // its own: Critical Aura scales with Ranged on an otherwise melee build
+            for (const buff of effect.buffs || []) {
+                const skill = String(buff?.multiplierForSkillHrid || '').split('/')[2];
+                if (!skill) continue;
+                // Power folds into melee in the game's own scaling
+                styles.add(skill === 'power' ? 'slash' : skill);
+                if (skill === 'intelligence') scalesWithIntelligence = true;
+            }
         }
     }
+    // Gear that rolls Blaze (magic damage) or Bloom (a magic heal) on every ability cast, whatever abilities are
+    // equipped (CombatSimulator processAbility); Ripple is kept with them
+    const procs = ['blaze', 'bloom', 'ripple'];
+    const grantsProc = equipDetails.some((detail) =>
+        procs.some((stat) => detail.combatStats?.[stat] > 0 || detail.combatEnhancementBonuses?.[stat] > 0)
+    );
+    if (grantsProc) styles.add('magic');
     const melee = ['stab', 'slash', 'smash'];
     const usesMelee = melee.some((style) => styles.has(style));
-    const usesMana = details.some((detail) => !Number.isFinite(detail.manaCost) || detail.manaCost > 0);
+    const usesMana =
+        scalesWithIntelligence || details.some((detail) => !Number.isFinite(detail.manaCost) || detail.manaCost > 0);
     return (type) => {
         switch (type) {
             case '/buff_types/ranged_level':
