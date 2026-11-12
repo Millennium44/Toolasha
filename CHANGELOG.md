@@ -13,6 +13,7 @@ With "I own the inputs" on, a refined cape now costs its base cape plus its refi
 ### Dungeon luck counts refinement chests
 
 The dungeon chest luck tooltip now adds a line per player for refinement chests, a separate roll from the main chest: how many dropped against how many the dungeon's tier rate expects (0% at T0, about 33% at T1, certain from T2), and how lucky that is.
+
 ### Bestiary plan skips shaky dungeons and charges for wipes
 
 A new Min clear % setting (default 70%) leaves out of the route any dungeon that clears less often than that, and lists it with the reason. A dungeon timed only from your clean clears is slowed by its wipe share (time ÷ (1 − wipe share)), shown as "+N% for wipes" on its row.

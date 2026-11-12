@@ -376,6 +376,25 @@ export function dungeonRatesFromRuns({ runs = [], tier = null, partySize = 1, ac
 }
 
 /**
+ * How many of your clears fall inside the window failures were being recorded in.
+ *
+ * Failures are recorded only once the player opts in, so clears from before the first recorded failure say
+ * nothing about how often you fail. They count only if no clear has come since (then all of them do).
+ *
+ * @param {Array<Object>} clears - Clears at this tier and party
+ * @param {Array<Object>} fails - Failed attempts at this tier and party
+ * @returns {number}
+ */
+export function clearsSinceFirstFailure(clears, fails) {
+    const all = clears || [];
+    const at = (run) => new Date(run?.timestamp).getTime();
+    const failTimes = (fails || []).map(at).filter(Number.isFinite);
+    const since = failTimes.length ? Math.min(...failTimes) : -Infinity;
+    const recent = all.filter((run) => !(at(run) < since)).length;
+    return recent || all.length;
+}
+
+/**
  * The share of your dungeon time that goes to clears, from the failures you recorded.
  *
  * Your clear rate is clears over the time they and the failures took, which is the
@@ -399,10 +418,7 @@ export function clearTimeShare(clears, fails, clearSeconds) {
     if (!failed) return 1;
     const all = clears || [];
     if (!all.length) return 0;
-    const at = (run) => new Date(run?.timestamp).getTime();
-    const failTimes = fails.map(at).filter(Number.isFinite);
-    const since = failTimes.length ? Math.min(...failTimes) : -Infinity;
-    const recent = all.filter((run) => !(at(run) < since)).length;
+    const recent = clearsSinceFirstFailure(all, fails);
     const clearMs = Number(clearSeconds) > 0 ? Number(clearSeconds) * 1000 : 0;
     // With no clear time to weigh against, each failure is simply one more clear's time
     if (!clearMs) return (recent || all.length) / ((recent || all.length) + failed);

@@ -90,6 +90,7 @@ import {
     rescaleDungeonRates,
     dungeonRatesFromRuns,
     clearTimeShare,
+    clearsSinceFirstFailure,
     provenDungeonTier,
     runTierOf,
     formatPlanHours,
@@ -1781,9 +1782,18 @@ const HIGH_WIPE_SHARE = 0.25;
  * @param {number} input.failed - The sim's wiped runs
  * @returns {{rate: number, source: string}|null}
  */
-export function dungeonClearRate({ usedOwn, clearsHere, fails, completions, failed }) {
-    const clears = Array.isArray(clearsHere) ? clearsHere.length : 0;
-    if (usedOwn && fails > 0 && clears > 0) return { rate: clears / (clears + fails), source: 'your runs' };
+export function dungeonClearRate({ usedOwn, clearsHere, failedRuns = null, fails = 0, completions, failed }) {
+    // Failures are recorded only once the player opts in, so the clears counted against them are the ones since
+    // the first recorded failure (the window `clearTimeShare` uses), not every clear in the history
+    const failCount = Array.isArray(failedRuns) ? failedRuns.length : fails;
+    const clears = Array.isArray(clearsHere)
+        ? Array.isArray(failedRuns) && failedRuns.length
+            ? clearsSinceFirstFailure(clearsHere, failedRuns)
+            : clearsHere.length
+        : 0;
+    if (usedOwn && failCount > 0 && clears > 0) {
+        return { rate: clears / (clears + failCount), source: 'your runs' };
+    }
     if (completions + failed > 0) return { rate: completions / (completions + failed), source: 'sim' };
     return null;
 }
@@ -1966,7 +1976,7 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
         // Only a time built from your clears and the spawn tables, with no failure on record, leaves its wipes
         // out; the sim's time and a stretch of it (which keeps the sim's wiping hours) already hold them
         clearInfo: wipeTimeInfo(
-            dungeonClearRate({ usedOwn, clearsHere, fails, completions, failed }),
+            dungeonClearRate({ usedOwn, clearsHere, failedRuns: failedAttempts, completions, failed }),
             !(leavesWipesOut && fails === 0)
         ),
     });
@@ -6649,10 +6659,7 @@ class CombatSimUI {
             this._persistBestiaryPlanPrefs();
             if (this._bestiaryPlanActive) this._drawBestiaryPlan();
             // The table's Bestiary column marks the dungeons the minimum leaves out, so it is drawn again
-            const args = this._allZonesRedrawArgs;
-            if (this._allZonesResults && args && !this._isBusy()) {
-                this._displayAllZonesResults(this._allZonesResults, args.hours, args.gameData, args.playerHrid);
-            }
+            this._redrawAllZonesTable();
         });
         box.querySelector('#mwi-csim-bestiary-plan-btn').addEventListener('click', (event) => {
             event.stopPropagation();
@@ -12578,6 +12585,17 @@ class CombatSimUI {
     }
 
     /**
+     * Draw the All Zones table again from its remembered results, without re-simulating anything.
+     * @private
+     */
+    _redrawAllZonesTable() {
+        const args = this._allZonesRedrawArgs;
+        if (this._allZonesResults && args && !this._isBusy()) {
+            this._displayAllZonesResults(this._allZonesResults, args.hours, args.gameData, args.playerHrid);
+        }
+    }
+
+    /**
      * Draw the Bestiary planner again from memory, after a sync pull changed its inputs.
      * @private
      */
@@ -12692,6 +12710,8 @@ class CombatSimUI {
                         await this._loadBestiaryPlanPrefs();
                         // The planner draws its inputs from memory, so it is drawn again where it is shown
                         this._redrawBestiaryPlannerWhenIdle();
+                        // The table's Bestiary column marks what the minimum leaves out, so a pulled minimum redraws it
+                        if (has('bestiaryPlanMinClear')) this._redrawAllZonesTable();
                     })()
                 );
             }

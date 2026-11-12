@@ -12732,6 +12732,27 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
                     ).toBeNull();
                 });
 
+                test('only the clears since the first recorded failure count against the failures', () => {
+                    // Failures are recorded only once the player opts in: 300 older clears say nothing about wipes
+                    const at = (n) => ({ timestamp: `2026-10-${String(n).padStart(2, '0')}T00:00:00Z` });
+                    const old = Array.from({ length: 300 }, () => at(1));
+                    const clears = [...old, at(6), at(7)];
+                    const failedRuns = [at(5), at(5)];
+                    expect(
+                        dungeonClearRate({ usedOwn: true, clearsHere: clears, failedRuns, completions: 0, failed: 0 })
+                    ).toEqual({ rate: 0.5, source: 'your runs' });
+                    // With no clear since, the old ones are all there is to go on
+                    expect(
+                        dungeonClearRate({
+                            usedOwn: true,
+                            clearsHere: old,
+                            failedRuns: [at(9)],
+                            completions: 0,
+                            failed: 0,
+                        }).rate
+                    ).toBeCloseTo(300 / 301, 9);
+                });
+
                 test('an ordinary zone passes through untouched', () => {
                     const plain = { zoneHrid: 'z|T0', creditsPerHour: { a: 1 } };
                     expect(withWipeRules(plain)).toBe(plain);
@@ -13160,6 +13181,15 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
             const input = ui.panel.querySelector('#mwi-csim-bestiary-plan-minclear');
             input.value = '0';
             input.dispatchEvent(new window.Event('change', { bubbles: true }));
+            await vi.waitFor(() => expect(bestiaryCell('Chimerical Den').textContent).not.toContain('left out'));
+        });
+
+        test('a pulled minimum redraws the table, so its Bestiary column drops a stale left-out mark', async () => {
+            ui._bestiaryPlanMinClear = undefined;
+            await ui._displayAllZonesResults([denT2()], 24, gameData);
+            expect(bestiaryCell('Chimerical Den').textContent).toContain('left out');
+            mocks.store.set('settings:combatSimBestiaryPlanMinClear', 0);
+            await ui._adoptPulledSettings({ settings: ['combatSimBestiaryPlanMinClear'] });
             await vi.waitFor(() => expect(bestiaryCell('Chimerical Den').textContent).not.toContain('left out'));
         });
 
