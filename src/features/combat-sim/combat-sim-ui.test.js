@@ -11761,6 +11761,37 @@ describe('the score tie-break tolerance in the Bestiary planner', () => {
             expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-only-note')).toBeNull();
         });
 
+        test('the copied text says the plan is narrowed, and the notify button says one zone', async () => {
+            await plan();
+            const routeText = ui._bestiaryPlanText();
+            expect(routeText).not.toContain('Narrowed');
+            click('#mwi-csim-bestiary-plan-only');
+            const text = ui._bestiaryPlanText();
+            expect(text.split('\n')[0]).toBe('Narrowed to Farm T0 (route skipped)');
+            expect(text).toContain('Bestiary plan');
+            const notify = ui.panel.querySelector('#mwi-csim-bestiary-plan-notify');
+            if (notify.style.display !== 'none') expect(notify.textContent).toContain('(one zone only)');
+        });
+
+        test('a narrowed plan that earns nothing falls back to the route, not "no zone earns a point"', async () => {
+            await plan();
+            ui._bestiaryPlanZones.push({ zoneHrid: 'dead|T0', name: 'Dead T0', creditsPerHour: {} });
+            ui._bestiaryPlanOnly = 'dead|T0';
+            ui._drawBestiaryPlan();
+            expect(ui._bestiaryPlanOnly).toBeNull();
+            expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-out').textContent).not.toContain('No zone');
+            expect(rowNames()[0]).toContain('Hive');
+        });
+
+        test('cleanup forgets the narrowing with the zones', async () => {
+            await plan();
+            click('#mwi-csim-bestiary-plan-only');
+            ui.destroy();
+            expect(ui._bestiaryPlanZones).toBeNull();
+            expect(ui._bestiaryPlanOnly).toBeNull();
+            ui.buildPanel();
+        });
+
         test('hours mode: a route that earns far fewer points than one zone says so', async () => {
             await plan({ mode: 'hours', value: '0.5' });
             expect(note().textContent).toMatch(

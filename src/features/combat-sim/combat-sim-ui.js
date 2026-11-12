@@ -6897,7 +6897,10 @@ class CombatSimUI {
         const plan = this._currentBestiaryPlan();
         if (!plan) return '';
         const totals = this._bestiaryPlanMode === 'total' ? this._bestiaryTotalGap() : null;
-        return formatPlanText(plan, { monsterName: (hrid) => this._bestiaryMonsterName(hrid), totals });
+        const text = formatPlanText(plan, { monsterName: (hrid) => this._bestiaryMonsterName(hrid), totals });
+        // The copied plan must not read as the route: say it is one zone held the whole way
+        const only = this._bestiaryPlanOnly && plan.segments.length ? plan.segments[0].name : null;
+        return only ? `Narrowed to ${only} (route skipped)\n${text}` : text;
     }
 
     /**
@@ -6929,7 +6932,12 @@ class CombatSimUI {
             }
         }
 
-        const plan = this._currentBestiaryPlan();
+        let plan = this._currentBestiaryPlan();
+        // A narrowed plan that earns nothing is not "no zone earns a point": the narrowing goes, the route shows
+        if (this._bestiaryPlanOnly && !plan?.segments.length) {
+            this._bestiaryPlanOnly = null;
+            plan = this._currentBestiaryPlan();
+        }
         if (copyBtn) copyBtn.style.display = plan?.segments.length ? '' : 'none';
         const esc = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
         const skipped = this._bestiaryPlanSkipped || 0;
@@ -7212,7 +7220,7 @@ class CombatSimUI {
         if (goal === null) {
             button.style.display = 'none';
         } else {
-            button.textContent = `Notify me at ${formatWithSeparator(goal)} points`;
+            button.textContent = `Notify me at ${formatWithSeparator(goal)} points${this._bestiaryPlanOnly ? ' (one zone only)' : ''}`;
             button.title = "Sets this character's Bestiary points target to that total and turns the alert on.";
             button.addEventListener('click', async (event) => {
                 event.stopPropagation();
@@ -11671,6 +11679,7 @@ class CombatSimUI {
         this._seekResults = null;
         this._bestiaryPlanActive = false;
         this._bestiaryPlanZones = null;
+        this._bestiaryPlanOnly = null;
         if (this._bestiaryListener) {
             dataManager.off?.('monsters_updated', this._bestiaryListener);
             this._bestiaryListener = null;
