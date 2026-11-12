@@ -3730,6 +3730,20 @@ describe('the stopped-after-apply toast says what the player must do', () => {
         expect(stop({ latched: 0, complete: false, mergeHeld: held }).message).toContain('Reload and pull again');
     });
 
+    test('only the cases that ask for a reload are logged as reload prompts', () => {
+        reloadPrompts.length = 0;
+        stop({ latched: 0, complete: false, mergeHeld: held });
+        expect(reloadPrompts).toHaveLength(1);
+        expect(reloadPrompts[0]).toMatchObject({ source: 'sync-pull' });
+        toasts.at(-1).onClose('dismiss');
+        expect(reloadPrompts[0].outcome).toBe('dismissed');
+        stop({ latched: 0, complete: true, mergeHeld: held });
+        stop({ latched: 0, complete: true, mergeFailed: failedMerge });
+        expect(reloadPrompts).toHaveLength(1);
+        stop({ latched: 1, complete: true });
+        expect(reloadPrompts).toHaveLength(2);
+    });
+
     test('held records alone ask only for another pull', () => {
         const message = stop({ latched: 0, complete: true, mergeHeld: held }).message;
         expect(message).toContain('Pull again');

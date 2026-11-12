@@ -3037,10 +3037,15 @@ class SyncManager {
         } else if (complete === false) {
             // A store write that timed out is counted as failed but not latched (its outcome is
             // uncertain), so it can still land later, unguarded: only a reload settles it
+            const reloadPrompt = this._recordReloadPrompt(
+                'sync-pull',
+                'Sync stopped before all downloaded data could be applied; reload and pull again advised',
+                latchedKeys
+            );
             showToast(
                 'Sync stopped before all downloaded data could be applied. Reload and pull again to retry the ' +
                     'remaining records.',
-                { kind: 'warn', duration: 0 }
+                { kind: 'warn', duration: 0, onClose: () => reloadPrompt?.settle('dismissed') }
             );
         } else if (mergeHeld?.length) {
             showToast(
