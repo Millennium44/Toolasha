@@ -455,9 +455,14 @@ export function calculateDailyRate(total, durationSeconds) {
 }
 
 /**
- * Format loot items for display
+ * Format loot items for display, most valuable first.
+ *
+ * `totalValue` is each drop at the player's configured Sell side (the profit pricing mode, patient tick,
+ * custom price, Iron Cow value, and a dungeon chest's measured luck), the same figure `valueOfLoot().value`
+ * and a Party Loot card use, so the drop order of the popup, the chat line's top drop and Party Loot agree.
+ * The popup's own Ask/Bid income and consumable figures are separate and untouched.
  * @param {Object} lootMap - totalLootMap from player data
- * @returns {Array} Array of { count, itemHrid, itemName, rarity }
+ * @returns {Array} Array of { count, itemHrid, itemName, rarity, totalValue }
  */
 export function formatLootList(lootMap) {
     if (!lootMap) {
@@ -469,22 +474,7 @@ export function formatLootList(lootMap) {
     for (const loot of Object.values(lootMap)) {
         const itemDetails = dataManager.getItemDetails(loot.itemHrid);
 
-        let totalValue = 0;
-        if (loot.itemHrid === '/items/coin') {
-            totalValue = loot.count;
-        } else if (itemDetails?.isOpenable) {
-            const ev =
-                expectedValueCalculator.getCachedValue(loot.itemHrid) ||
-                expectedValueCalculator.calculateSingleContainer(loot.itemHrid);
-            if (ev !== null && ev > 0) {
-                totalValue = ev * loot.count;
-            }
-        } else {
-            const prices = ironCowBook(loot.itemHrid) ?? marketAPI.getPrice(loot.itemHrid);
-            if (prices) {
-                totalValue = prices.ask * loot.count;
-            }
-        }
+        const totalValue = valueOfLoot(loot).value;
 
         items.push({
             count: loot.count,

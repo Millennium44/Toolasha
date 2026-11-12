@@ -6,6 +6,8 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const observerState = vi.hoisted(() => ({ handler: null }));
+/** The book side the token lines read, and the bag's book */
+const book = vi.hoisted(() => ({ side: 'ask', bag: { ask: 1000, bid: 900 } }));
 
 vi.mock('../../core/config.js', () => ({
     default: { isFeatureEnabled: () => true, getSetting: () => true, COLOR_TOOLTIP_INFO: '#abc' },
@@ -30,9 +32,9 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrices: (hrid) => (hrid === '/items/bag_of_10_cowbells' ? { ask: 1000, bid: 900 } : null),
+    getItemPrices: (hrid) => (hrid === '/items/bag_of_10_cowbells' ? book.bag : null),
 }));
-vi.mock('../../utils/token-valuation.js', () => ({ tokenPricingSide: () => 'ask' }));
+vi.mock('../../utils/token-valuation.js', () => ({ tokenPricingSide: () => book.side }));
 vi.mock('../market/expected-value-calculator.js', () => ({ default: { calculateExpectedValue: () => null } }));
 vi.mock('../../utils/dom.js', () => ({
     default: {
@@ -96,6 +98,27 @@ describe('token values through the tooltip observer', () => {
         await Promise.resolve();
         expect(el.querySelector('.dungeon-token-shop-injected')).not.toBeNull();
         expect(el.dataset.dungeonProcessedItem).toBe('Cowbell');
+    });
+
+    test('the cowbell line reads the same side as the other token lines, never the other one', async () => {
+        const valueLine = async () => {
+            const el = itemTooltip('Cowbell');
+            observerState.handler(el);
+            await Promise.resolve();
+            return el.querySelector('.dungeon-token-shop-injected')?.textContent ?? null;
+        };
+
+        book.side = 'ask';
+        expect(await valueLine()).toContain('100 gold');
+        book.side = 'bid';
+        expect(await valueLine()).toContain('90 gold');
+
+        // The chosen side has no listing: unpriced, not read off the ask
+        book.bag = { ask: 1000, bid: 0 };
+        expect(await valueLine()).toBeNull();
+
+        book.side = 'ask';
+        book.bag = { ask: 1000, bid: 900 };
     });
 
     test('a cowbell collection tooltip gets its value line in the collection content', async () => {

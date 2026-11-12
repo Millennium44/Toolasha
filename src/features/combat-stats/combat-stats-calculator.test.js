@@ -671,3 +671,36 @@ describe('the configured Buy/Sell price (`.value`)', () => {
         expect(stats.income.value).toBe(500 + 100000);
     });
 });
+
+describe('the drop list is ordered on the configured Sell side', () => {
+    const player = {
+        name: 'You',
+        loot: {
+            // Raw ask says the cheese leads; the player's Sell side (a bid) says the milk does
+            cheese: { itemHrid: '/items/cheese', count: 10 },
+            milk: { itemHrid: '/items/milk', count: 10 },
+        },
+        deathCount: 0,
+        consumables: [],
+    };
+
+    test('follows the configured price, not the raw ask', () => {
+        market.prices = { '/items/cheese': { ask: 500, bid: 100 }, '/items/milk': { ask: 200, bid: 150 } };
+        const prices = { '/items/cheese': 100, '/items/milk': 150 };
+        configured.price = (hrid) => prices[hrid];
+
+        const stats = calculatePlayerStats(player, 3600);
+
+        expect(stats.lootList.map((item) => item.itemHrid)).toEqual(['/items/milk', '/items/cheese']);
+        expect(stats.lootList[0].totalValue).toBe(1500);
+
+        // Patient: the same book now reads the other way round
+        prices['/items/cheese'] = 500;
+        prices['/items/milk'] = 200;
+        const patient = calculatePlayerStats(player, 3600);
+        expect(patient.lootList.map((item) => item.itemHrid)).toEqual(['/items/cheese', '/items/milk']);
+        // The popup's own Ask/Bid income is the raw book either way
+        expect(patient.income.ask).toBe(10 * 500 + 10 * 200);
+        expect(patient.income.bid).toBe(10 * 100 + 10 * 150);
+    });
+});

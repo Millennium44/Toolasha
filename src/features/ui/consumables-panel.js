@@ -3564,7 +3564,8 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             const noAsk = !entry.costPerDaySides.ask || entry.askEstimated;
             const strategy = buyStrategy({
                 count: need.count,
-                ask: noAsk && realBid ? null : entry.price,
+                // What an instant buy pays: the raw top ask, not the player's Buy side (a bid under a patient mode)
+                ask: noAsk && realBid ? null : (entry.askPrice ?? entry.price),
                 bid: realBid && entry.perDay ? realBid / entry.perDay : null,
                 secondsLeft: entry.secondsLeft,
                 fillSeconds: this._fillSeconds(entry.itemHrid, need.count),

@@ -83,7 +83,10 @@ vi.mock('../../core/data-manager.js', () => ({
         },
     },
 }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid) => game.prices[hrid] ?? null }));
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrices: (hrid) => game.prices[hrid] ?? null,
+    getItemPrice: (hrid) => game.prices[hrid]?.ask ?? null,
+}));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
     createAutofillManager: () => ({ initialize: () => {}, setQuantity: () => {} }),

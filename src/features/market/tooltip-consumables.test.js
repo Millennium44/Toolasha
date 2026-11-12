@@ -7,8 +7,13 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const observerState = vi.hoisted(() => ({ handler: null }));
 
+const pricing = vi.hoisted(() => ({ mode: 'conservative' }));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => true, COLOR_TOOLTIP_INFO: '#abc' },
+    default: {
+        getSetting: () => true,
+        getSettingValue: (key, fallback) => (key === 'profitCalc_pricingMode' ? pricing.mode : fallback),
+        COLOR_TOOLTIP_INFO: '#abc',
+    },
 }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
@@ -131,10 +136,19 @@ describe('consumable tooltips in a translated client', () => {
         expect(el.querySelector('.consumable-stats-injected')).not.toBeNull();
     });
 
-    test('the cost line names the side it prices', async () => {
-        const el = itemTooltip('Cheese');
-        observerState.handler(el);
-        await Promise.resolve();
-        expect(el.querySelector('.consumable-stats-injected').textContent).toContain('per HP (ask)');
+    test('the cost per point is priced on the player Buy side: ask when conservative, bid when optimistic', async () => {
+        const costLine = async () => {
+            const el = itemTooltip('Cheese');
+            observerState.handler(el);
+            await Promise.resolve();
+            return el.querySelector('.consumable-stats-injected').textContent;
+        };
+
+        // The book is 50 ask / 40 bid and the cheese restores 100 HP
+        pricing.mode = 'conservative';
+        expect(await costLine()).toContain('Cost: 0.5 per HP (buy)');
+        pricing.mode = 'optimistic';
+        expect(await costLine()).toContain('Cost: 0.4 per HP (buy)');
+        pricing.mode = 'conservative';
     });
 });

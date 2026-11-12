@@ -31,7 +31,7 @@
 
 import dataManager from '../core/data-manager.js';
 import { forecast, drinkRatePerDay } from './consumable-forecast.js';
-import { getItemPrices } from './market-data.js';
+import { getItemPrice, getItemPrices } from './market-data.js';
 import { getDrinkConcentration } from './tea-parser.js';
 import { resolveActionContext } from './action-context.js';
 import { runningAction } from './combat-actions.js';
@@ -44,6 +44,16 @@ export const COMBAT_ACTION_TYPE = '/action_types/combat';
 const EXCLUDED_ACTION_TYPES = new Set(['/action_types/labyrinth', '/action_types/special']);
 
 const NS_PER_SECOND = 1e9;
+
+/**
+ * One unit on the player's Buy side (profit pricing mode, patient tick, custom price, Iron Cow value).
+ * @param {string} itemHrid - Item HRID
+ * @returns {number|null} Coins, or null when that side is unpriced
+ */
+function configuredBuyPrice(itemHrid) {
+    const price = getItemPrice(itemHrid, { context: 'profit', side: 'buy' });
+    return typeof price === 'number' && price > 0 ? price : null;
+}
 
 /**
  * An action type's name in words.
@@ -204,6 +214,8 @@ export function skillingConsumables(actionTypeHrid, { prices = getItemPrices } =
                 consumptionRate: perDay === null ? null : perDay / 86400,
                 consumedPerDay: perDay === null ? null : Math.ceil(perDay),
                 pricePerItem: Number(price?.ask) > 0 ? price.ask : null,
+                // What a day of it costs on the player's Buy side; the raw ask above stays for the instant-buy check
+                priceValue: configuredBuyPrice(slot.itemHrid),
             },
             price
         );
