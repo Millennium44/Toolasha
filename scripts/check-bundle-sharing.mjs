@@ -106,6 +106,10 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/talisman-bonuses.js',
+        'Pure talisman arithmetic and constants; the bonus set rides on the equipment Map under a Symbol.for key, which every bundle resolves to the same symbol, so no module state exists to diverge.',
+    ],
+    [
         'src/utils/html-escape.js',
         // A tiny pure string transformation, with no imports, shared state, or DOM dependencies.
         'stateless HTML escaping; no runtime identity or state to share',
