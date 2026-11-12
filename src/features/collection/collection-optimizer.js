@@ -223,7 +223,14 @@ export function createBuyQuote() {
         if (!(top > 0 && Number.isFinite(top))) {
             return { gold: NaN, feasible: false, limit: cap, fromBook: false, unpriced: true };
         }
-        const walked = buyCost(rest, { ask: top, ...market, already: already + queued });
+        // The asks walked so far are only what earlier steps bought past the queue; queued units took no
+        // listings. The week's volume the queue used is gone for a buy with no book to walk.
+        const walked = buyCost(rest, {
+            ask: top,
+            ...market,
+            weekly: Number.isFinite(market.weekly) ? Math.max(0, market.weekly - cap) : market.weekly,
+            already: Math.max(0, already - cap),
+        });
         return { ...walked, gold: queued * purchase.ask + walked.gold };
     };
 }
