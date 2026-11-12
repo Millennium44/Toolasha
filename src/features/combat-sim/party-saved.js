@@ -332,13 +332,22 @@ export async function loadCappedSeen(key) {
  */
 export async function dismissCapped(key, ids) {
     try {
+        // Only ids the record still holds can show a note, so those (plus the new ones) are all that is kept:
+        // bounded by the record's own cap, with no cut by dismissal order that could drop one still in it
+        let held = null;
+        try {
+            held = new Set(Object.keys(normalizeCapped((await storage.get(key, STORE, null))?.capped, Date.now())));
+        } catch {
+            held = null;
+        }
         const result = await storage.update(
             CAPPED_SEEN_KEY,
             (current) => {
                 const seen = current && typeof current === 'object' ? { ...current } : {};
                 const all = seen.ids && typeof seen.ids === 'object' ? { ...seen.ids } : {};
                 const have = Array.isArray(all[key]) ? all[key] : [];
-                const next = [...have.filter((id) => !ids.includes(id)), ...ids].slice(-MAX_CAPPED);
+                const kept = have.filter((id) => !ids.includes(id) && (!held || held.has(id)));
+                const next = [...kept, ...ids];
                 if (next.length === have.length && next.every((id, i) => id === have[i])) return undefined;
                 all[key] = next;
                 seen.ids = all;

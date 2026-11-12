@@ -466,16 +466,29 @@ describe('evictions past the cap, recorded in the fold', () => {
             // on a device whose clock runs behind)
             const later = { capped: { ...record.capped, c: { name: 'Gamma', at: now - 90000 } } };
             expect(unseenCapped(later, seen).map((e) => e.name)).toEqual(['Gamma']);
-            // Dismissing again keeps what was dismissed; the list is capped at 20, newest kept
+            // Dismissing again keeps what was dismissed, while the record still holds it
+            db.values.set(SAVED_ROSTERS_KEY, { savedAt: 1, parties: [], removed: {}, capped: later.capped });
             await dismissCapped(SAVED_ROSTERS_KEY, ['c']);
             expect((await loadCappedSeen(SAVED_ROSTERS_KEY)).ids).toEqual(['a', 'b', 'c']);
-            await dismissCapped(
-                SAVED_ROSTERS_KEY,
-                Array.from({ length: 25 }, (_, i) => `n${i}`)
-            );
-            const ids = (await loadCappedSeen(SAVED_ROSTERS_KEY)).ids;
-            expect(ids).toHaveLength(MAX_CAPPED);
-            expect(ids.at(-1)).toBe('n24');
+        });
+
+        test('20 equal-stamp evictions dismissed, then one more: none of the 20 comes back', async () => {
+            const at = Date.now() - 1000;
+            const twenty = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`e${i}`, { name: `E${i}`, at }]));
+            db.values.set(SAVED_ROSTERS_KEY, { savedAt: 1, parties: [], removed: {}, capped: twenty });
+            await dismissCapped(SAVED_ROSTERS_KEY, Object.keys(twenty));
+            // One more eviction folds in (the record keeps 20: the newest, so one of the old ones is cut)
+            const newer = { ...twenty, e20: { name: 'E20', at: at + 5 } };
+            db.values.set(SAVED_ROSTERS_KEY, { savedAt: 2, parties: [], removed: {}, capped: newer });
+            const record = await loadSavedRosters();
+            await dismissCapped(SAVED_ROSTERS_KEY, ['e20']);
+            const seen = await loadCappedSeen(SAVED_ROSTERS_KEY);
+            expect(unseenCapped(record, seen)).toEqual([]);
+            // Ids the record no longer holds are dropped, so the list stays within the record's own cap
+            expect(seen.ids.length).toBeLessThanOrEqual(MAX_CAPPED + 1);
+            expect((await loadCappedSeen(SAVED_ROSTERS_KEY)).ids).toContain('e20');
+            for (const id of Object.keys(record.capped))
+                expect((await loadCappedSeen(SAVED_ROSTERS_KEY)).ids).toContain(id);
         });
 
         test('the older high-water stamp is still read, until ids are stored', () => {
