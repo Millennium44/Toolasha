@@ -714,7 +714,7 @@ describe('decompose chain mode', () => {
         expect(badges(container)[0].startsWith('≥')).toBe(true);
         expect(cached.partialItems).toContain('/items/term_d');
         const title = container.querySelector('.toolasha-profit-indicator').title;
-        expect(title).toContain('no real bid for');
+        expect(title).toContain('no real sell order on the side your pricing uses for');
         expect(title).toContain(engine.itemDetails['/items/term_d']?.name || '/items/term_d');
     });
 

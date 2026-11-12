@@ -1562,6 +1562,56 @@ describe('the Decompose chain/hr sort', () => {
         expect(bestItems.modal.querySelector('tbody tr').children[4].textContent).toBe(formatKMB(900));
     });
 
+    test("a chain top that is the row's own winner keeps the capped figure, its marker and its pending note", () => {
+        fixture();
+        const winner = { ...step(500, 360), profitPerHour: 2000 };
+        market.candidates['/items/item_d'] = [winner];
+        bestItems.sortMode = 'decomposeChainPerHour';
+        const capped = {
+            ...row('item_d', 500),
+            profitData: winner,
+            uncappedProfitPerHour: 2000,
+            liquidityLimit: { note: 'Volume-capped', detail: 'sells slowly' },
+        };
+        open([capped]);
+        let cell = bestItems.modal.querySelector('tbody tr').children[5];
+        expect(cell.textContent).toContain(formatKMB(500));
+        expect(cell.textContent).toContain('vol-capped');
+        expect(cell.title).toBe('');
+
+        // Still awaiting its liquidity check: the note stays, the raw figure is not shown as final
+        bestItems.cachedRankings.decompose = [{ ...capped, liquidityLimit: undefined, capPending: true }];
+        bestItems.renderTable();
+        cell = bestItems.modal.querySelector('tbody tr').children[5];
+        expect(cell.textContent).toContain('checking');
+
+        // Same figure, no profitData to compare setups by: the uncapped figure identifies the winner
+        bestItems.cachedRankings.decompose = [{ ...capped, profitData: null }];
+        bestItems.renderTable();
+        expect(bestItems.modal.querySelector('tbody tr').children[5].textContent).toContain(formatKMB(500));
+        // The tie-break follows the cell
+        expect(bestItems.rowProfitPerHour(capped)).toBe(500);
+    });
+
+    test("a chain that picked another setup shows that step's figure, says it was not volume-checked, and sorts on it", () => {
+        fixture();
+        const fast = { ...step(500, 3600), profitPerHour: 777_000, winningCatalystHrid: '/items/prime_catalyst' };
+        market.candidates['/items/item_d'] = [fast];
+        bestItems.sortMode = 'decomposeChainPerHour';
+        const own = { ...step(500, 360), profitPerHour: 900, winningCatalystHrid: null };
+        const capped = {
+            ...row('item_d', 400),
+            profitData: own,
+            uncappedProfitPerHour: 900,
+            liquidityLimit: { note: 'Volume-capped', detail: 'x' },
+        };
+        open([capped]);
+        const cell = bestItems.modal.querySelector('tbody tr').children[5];
+        expect(cell.textContent).toBe(formatKMB(777_000));
+        expect(cell.title).toContain('not volume-checked');
+        expect(bestItems.rowProfitPerHour(capped)).toBe(777_000);
+    });
+
     test('a chain top step with no figure of its own leaves the row profit in the cell', () => {
         fixture();
         market.candidates['/items/item_d'] = [step(500, 360)];

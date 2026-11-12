@@ -864,18 +864,43 @@ class AlchemyBestItems {
     }
 
     /**
-     * The profit per hour the Profit/hr column shows for a row. Outside the chain sorts it is the row's single-step
-     * winner. In a chain sort the row's catalyst and breakdown are the chain's first step ({@link chainView}), so
-     * the cell shows that step's own figure, the one the breakdown adds up to; a chain with no first step (or one
-     * without a finite figure) falls back to the row's own.
+     * The chain's first step when it is a different setup from the row's own single-step winner and has a figure
+     * of its own. When the chain kept the row's winner (same catalyst and consumables, or the same figure before
+     * any volume cap) the row's own, possibly volume-capped, figure stands and this is null.
+     * @param {Object} item - A ranking row
+     * @returns {{figure: number}|null}
+     */
+    differentChainStep(item) {
+        if (!this.isChainMode()) return null;
+        this.chainPerHour(item.itemHrid);
+        const top = this.chainTopFor(item.itemHrid);
+        const figure = Number(top?.profitPerHour);
+        if (!Number.isFinite(figure)) return null;
+        const own = item.profitData;
+        const hrids = (data) =>
+            (data?.consumableCosts ?? [])
+                .map((c) => c?.itemHrid)
+                .filter(Boolean)
+                .sort()
+                .join(',');
+        const sameSetup =
+            Boolean(own) &&
+            (own.winningCatalystHrid || null) === (top.winningCatalystHrid || null) &&
+            hrids(own) === hrids(top);
+        const rowFigure = item.uncappedProfitPerHour ?? item.profitPerHour;
+        if (sameSetup || Math.abs(figure - rowFigure) <= 1e-9 * Math.max(1, Math.abs(rowFigure))) return null;
+        return { figure };
+    }
+
+    /**
+     * The profit per hour the Profit/hr column shows for a row. Outside the chain sorts, and in them when the chain
+     * kept the row's own winner, it is the row's figure (volume cap included). When the chain picked another setup
+     * the cell shows that step's own figure, the one the breakdown adds up to.
      * @param {Object} item - A ranking row
      * @returns {number}
      */
     rowProfitPerHour(item) {
-        if (!this.isChainMode()) return item.profitPerHour;
-        this.chainPerHour(item.itemHrid);
-        const figure = Number(this.chainTopFor(item.itemHrid)?.profitPerHour);
-        return Number.isFinite(figure) ? figure : item.profitPerHour;
+        return this.differentChainStep(item)?.figure ?? item.profitPerHour;
     }
 
     /**
@@ -1548,15 +1573,18 @@ class AlchemyBestItems {
                     chainTd.textContent = working ? '\u2026' : '\u2014';
                     const unpricedNames = this.chainItemNames(this.chainNoteFor(item.itemHrid)?.unpriced);
                     if (working) chainTd.title = 'Working this out the way the item tooltip does';
-                    else if (unpricedNames) chainTd.title = `No figure: no real ask or bid for ${unpricedNames}`;
-                    else chainTd.title = 'Part of this chain has no real ask or bid, so it has no figure';
+                    else if (unpricedNames)
+                        chainTd.title = `No figure: no real order on the side your pricing uses for ${unpricedNames}`;
+                    else
+                        chainTd.title =
+                            'Part of this chain has no real order on the side your pricing uses, so it has no figure';
                     chainTd.style.cssText = 'padding: 4px 8px; text-align: right; color: #555;';
                 } else {
                     const partialNames = this.chainItemNames(this.chainNoteFor(item.itemHrid)?.partial);
                     chainTd.textContent = `${partialNames ? '≥' : ''}${formatKMB(Math.round(chainValue))}`;
                     const hover = this.chainHover(item.itemHrid, item.shopPriced);
                     chainTd.title = partialNames
-                        ? `${hover ? `${hover}\n` : ''}A lower bound: no real bid for ${partialNames}, counted at zero`
+                        ? `${hover ? `${hover}\n` : ''}A lower bound: no real sell order on the side your pricing uses for ${partialNames}, counted at zero`
                         : hover;
                     chainTd.style.cssText = `padding: 4px 8px; text-align: right; color: ${chainValue >= 0 ? '#4ade80' : '#f87171'};`;
                 }
@@ -1567,15 +1595,17 @@ class AlchemyBestItems {
             // says so, and one still awaiting its liquidity check says that too,
             // rather than silently showing a number that might still drop
             const profitTd = document.createElement('td');
-            // A chain sort shows the chain's first step, which is a different setup from the row's own winner
-            // when the chain picked another: the liquidity cap and its pending note belong to the winner
-            const stepFigure = chainMode && setup !== item ? Number(setup.profitData?.profitPerHour) : NaN;
-            const chainStepShown = Number.isFinite(stepFigure);
-            const profitVal = Math.round(chainStepShown ? stepFigure : item.profitPerHour);
+            // A chain sort shows the chain's first step only when it is a different setup from the row's own
+            // winner; the liquidity cap and its pending note belong to the winner
+            const chainStep = this.differentChainStep(item);
+            const chainStepShown = chainStep !== null;
+            const profitVal = Math.round(chainStepShown ? chainStep.figure : item.profitPerHour);
             profitTd.textContent = formatKMB(profitVal);
             profitTd.style.cssText = `padding: 4px 8px; text-align: right; color: ${profitVal >= 0 ? '#4ade80' : '#f87171'};`;
             if (chainStepShown) {
-                // No marker: the volume check ran on the row's own winner, not on this step
+                profitTd.title =
+                    "The chain's setup for this one step, which differs from the best single-step setup. " +
+                    'It was not volume-checked.';
             } else if (item.capPending) {
                 profitTd.insertAdjacentHTML(
                     'beforeend',

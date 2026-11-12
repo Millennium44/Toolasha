@@ -622,7 +622,7 @@ class MarketSort {
      * @param {Object|null} [alchemyContext] - The alchemy gear and drinks, resolved once by the caller
      * @returns {Promise<{profit: number|null, detail: string|null, partial?: boolean, partialItems?: string[]}>}
      *   The figure, what it describes, whether it is a lower bound (a decompose chain with an output or crate
-     *   content that has no real bid), and the hrids counted at zero
+     *   content that has no real order on the mode's sell side), and the hrids counted at zero
      */
     async calculateItemProfit(itemHrid, gameData, alchemyContext = null) {
         const mode = getSortMode(this.sortMode);
@@ -738,7 +738,7 @@ class MarketSort {
     }
 
     /**
-     * The whole decompose chain of an item, ask in and taxed bid out.
+     * The whole decompose chain of an item, on the sides the Buy/Sell pricing settings trade on, taxed on sale.
      *
      * The arithmetic and its per-snapshot caches are shared with the Alchemy
      * panel's Best Items tab, in `utils/decompose-chain-value.js`.
@@ -843,8 +843,8 @@ class MarketSort {
                     .map((hrid) => dataManager.getItemDetails(hrid)?.name || hrid)
                     .join(', ');
                 indicator.title += names
-                    ? ` (lower bound: no real bid for ${names}, counted at zero)`
-                    : ' (lower bound: some output or crate content has no real bid, counted at zero)';
+                    ? ` (lower bound: no real sell order on the side your pricing uses for ${names}, counted at zero)`
+                    : ' (lower bound: some output or crate content has no real sell order on the side your pricing uses, counted at zero)';
             }
         }
 
