@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Shop Max sets the enhancement level on the test server
+
+In the tester shop's buy dialog for equipment, the Max beside Enhancement Level now fills +10, the highest level the shop sells, instead of doing nothing; the Max beside Quantity still fills the most you can afford.
+
 ### Decompose chain figures follow your Buy/Sell pricing
 
 The Decompose chain/hr sorts in Alchemy Best Items and the Marketplace now price with your Buy and Sell dropdowns, ticks included, instead of always buying at the ask and selling at the bid, so they agree with the item tooltip's chain line. In chain mode a row's Profit/hr now matches its expanded breakdown.

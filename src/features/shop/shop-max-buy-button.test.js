@@ -133,6 +133,61 @@ describe('shop Max buy button', () => {
         expect(buyClick).not.toHaveBeenCalled();
     });
 
+    test('equipment dialog: Max beside Enhancement Level sets 10, Quantity Max fills the affordable maximum', async () => {
+        document.body.innerHTML = `
+            <div class="ShopPanel_modalContent">
+                <div class="ShopPanel_inputContainer">
+                    <div class="Input_inputContainer"><input type="number" value="0"></div>
+                    <div class="Input_inputContainer"><input type="number" value="1"></div>
+                </div>
+                <div>You Pay: 50</div>
+                <button class="Button_button Button_success">Buy</button>
+            </div>`;
+        const container = document.querySelector('[class*="ShopPanel_inputContainer"]');
+        const [enhancement, quantity] = container.querySelectorAll('input');
+        const buttons = container.querySelectorAll('.toolasha-shop-max-buy-button');
+        expect(buttons).toHaveLength(0);
+        state.owned = 40;
+        shopMaxBuyButton.initialize();
+        state.handlers.find((h) => h.className === 'ShopPanel_inputContainer').callback(container);
+        const injected = container.querySelectorAll('.toolasha-shop-max-buy-button');
+        expect(injected).toHaveLength(2);
+        expect(injected[0].previousElementSibling.contains(enhancement)).toBe(true);
+        expect(injected[1].previousElementSibling.contains(quantity)).toBe(true);
+
+        injected[0].click();
+        await flush();
+        expect(enhancement.value).toBe('10');
+        expect(quantity.value).toBe('1');
+
+        injected[1].click();
+        await flush();
+        expect(quantity.value).toBe('40');
+        expect(enhancement.value).toBe('10');
+    });
+
+    test('equipment dialog with a separate container per input: only the first gets the enhancement Max', async () => {
+        document.body.innerHTML = `
+            <div class="ShopPanel_modalContent">
+                <div class="ShopPanel_inputContainer"><div class="Input_inputContainer"><input type="number" value="0"></div></div>
+                <div class="ShopPanel_inputContainer"><div class="Input_inputContainer"><input type="number" value="1"></div></div>
+                <div>You Pay: 50</div>
+                <button class="Button_button Button_success">Buy</button>
+            </div>`;
+        const [c1, c2] = document.querySelectorAll('[class*="ShopPanel_inputContainer"]');
+        state.owned = 40;
+        shopMaxBuyButton.initialize();
+        const cb = state.handlers.find((h) => h.className === 'ShopPanel_inputContainer').callback;
+        cb(c1);
+        cb(c2);
+        c1.querySelector('.toolasha-shop-max-buy-button').click();
+        await flush();
+        expect(c1.querySelector('input').value).toBe('10');
+        c2.querySelector('.toolasha-shop-max-buy-button').click();
+        await flush();
+        expect(c2.querySelector('input').value).toBe('40');
+    });
+
     test('steps down to a purchase cap using the disabled Buy button, still without clicking it', async () => {
         const { container, input, buyClick } = modal({ cap: 9 });
         state.owned = 100;

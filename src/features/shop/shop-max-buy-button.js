@@ -25,6 +25,8 @@ import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownershi
 const SETTING = 'shop_maxBuyButton';
 const BUTTON_CLASS = 'toolasha-shop-max-buy-button';
 const STYLE_ID = 'mwi-shop-max-buy-button-style';
+// The tester shop's cap on the enhancement level of bought equipment
+const MAX_BOUGHT_ENHANCEMENT_LEVEL = 10;
 
 // The injected button has no native styling of its own; match the game's dark theme.
 const BUTTON_CSS = `
@@ -110,22 +112,42 @@ class ShopMaxBuyButton {
      * @param {string} [panelKey] - the PANEL_CLASSES key of the panel the dialog belongs to
      */
     injectButton(container, modalContentClass, panelKey) {
-        if (container.querySelector(`.${BUTTON_CLASS}`)) return;
+        const scope = (modalContentClass && container.closest(`[class*="${modalContentClass}"]`)) || container;
+        // Equipment dialogs (tester shop) have two number inputs: Enhancement Level, then Quantity.
+        // Identify them by order, not label text, which changes with the game language.
+        const dialogInputs = [...scope.querySelectorAll('input[type="number"]')];
+        const isEquipment = dialogInputs.length >= 2;
 
-        const input = container.querySelector('input[type="number"]');
-        const inputWrapper = container.querySelector('[class*="Input_inputContainer"]');
-        if (!input || !inputWrapper) return;
+        for (const input of container.querySelectorAll('input[type="number"]')) {
+            const inputWrapper = input.closest('[class*="Input_inputContainer"]');
+            if (!inputWrapper || !container.contains(inputWrapper)) continue;
+            if (inputWrapper.nextElementSibling?.classList.contains(BUTTON_CLASS)) continue;
+            const isEnhancement = isEquipment && input === dialogInputs[0];
 
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = BUTTON_CLASS;
-        button.textContent = 'Max';
-        button.addEventListener('click', (event) => {
-            event.preventDefault();
-            this.handleMaxClick(container, input, modalContentClass, panelKey);
-        });
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = BUTTON_CLASS;
+            button.textContent = 'Max';
+            button.addEventListener('click', (event) => {
+                event.preventDefault();
+                if (isEnhancement) {
+                    this.handleMaxEnhancementClick(input);
+                } else {
+                    this.handleMaxClick(container, input, modalContentClass, panelKey);
+                }
+            });
 
-        inputWrapper.insertAdjacentElement('afterend', button);
+            inputWrapper.insertAdjacentElement('afterend', button);
+        }
+    }
+
+    /**
+     * Enhancement Level Max: the tester shop refuses bought enhancement levels above +10.
+     * @param {HTMLInputElement} input
+     */
+    handleMaxEnhancementClick(input) {
+        this._fills.get(input)?.cancel();
+        setReactInputValue(input, MAX_BOUGHT_ENHANCEMENT_LEVEL);
     }
 
     /**
