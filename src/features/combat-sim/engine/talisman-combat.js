@@ -51,7 +51,9 @@ export function computeTalismanCombat({ talismans, belt, gameData, modeledStats 
         const slot = talisman?.slotIndex;
         if (!Number.isInteger(slot) || slot < 1 || slot > slots || seenSlots.has(slot)) continue;
         seenSlots.add(slot);
-        for (const modifier of talisman.modifiers || []) {
+        // A saved or imported build can hold anything here; a non-list is no lines
+        if (!Array.isArray(talisman.modifiers)) continue;
+        for (const modifier of talisman.modifiers) {
             const scaled = scaleTalismanModifier(modifier, modifierDetailMap, power);
             if (!scaled || scaled.detail.targetHrid !== TARGET_COMBAT) continue;
             for (const key of scaled.detail.keys || []) {

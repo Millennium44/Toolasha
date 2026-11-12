@@ -176,10 +176,16 @@ export function resolveLoadoutTalismans(talismanIdMap, ownedTalismans) {
  * @returns {Array<{slotIndex: number, modifiers: Array<{hrid: string, grade: number}>}>}
  */
 export function toSimTalismans(talismans) {
-    return (talismans || []).map((t) => ({
-        slotIndex: t.slotIndex,
-        modifiers: (t.modifiers || []).map((m) => ({ hrid: m.hrid, grade: m.grade })),
-    }));
+    // Pasted or imported builds can hold anything: skip records that are not objects, and lines that are not
+    // objects with a string hrid, rather than throwing out of the DTO build
+    return (Array.isArray(talismans) ? talismans : [])
+        .filter((t) => t && typeof t === 'object')
+        .map((t) => ({
+            slotIndex: t.slotIndex,
+            modifiers: (Array.isArray(t.modifiers) ? t.modifiers : [])
+                .filter((m) => m && typeof m === 'object' && typeof m.hrid === 'string')
+                .map((m) => ({ hrid: m.hrid, grade: m.grade })),
+        }));
 }
 
 /**

@@ -21,6 +21,7 @@ const labMonsters = vi.hoisted(() => ({ list: [] }));
 
 /** Community buff levels the mocked data manager reports, by buff hrid */
 const community = vi.hoisted(() => ({ levels: {} }));
+const ownedTalismans = vi.hoisted(() => ({ list: [] }));
 
 /** Backing store for the mocked storage module: `${storeName}:${key}` -> value */
 const db = vi.hoisted(() => ({ map: new Map(), unavailable: false, hold: null }));
@@ -80,6 +81,7 @@ vi.mock('../../core/data-manager.js', () => ({
         // The community buff levels the server is running, which the skilling
         // metrics and the combat experience award both read live
         getCommunityBuffLevel: (hrid) => community.levels[hrid] || 0,
+        getCharacterTalismans: () => ownedTalismans.list,
         getCharacterGuildBuffLevel: (hrid) => shrines.owned[hrid] || 0,
         getInventory: () => bag.items,
         getEquipment: () => new Map(worn.map),
@@ -8737,5 +8739,35 @@ describe('beacon coverage corner dots', () => {
     test('with the switch off, newly drawn coverage gets no dot', () => {
         configMock.getSetting.mockImplementation((key) => key !== 'labyrinthBeaconDots');
         expect(dotOf(cellWith((c) => labyrinthClearRate.appendBeaconOverlay(c, false, '')))).toBeNull();
+    });
+});
+
+describe('the snapshot fingerprint and talismans', () => {
+    const loadout = {
+        name: 'Fighting',
+        equipment: [{ itemHrid: '/items/sword', enhancementLevel: 5 }],
+        talismanIdMap: { 1: 2624, 2: 0, 3: 0 },
+    };
+    const owned = (grade) => [{ id: 2624, slotIndex: 1, modifiers: [{ hrid: '/talisman_modifiers/armor', grade }] }];
+
+    afterEach(() => {
+        for (const key of Object.keys(gear.snapshots)) delete gear.snapshots[key];
+        ownedTalismans.list = [];
+    });
+
+    test('a reroll on a slotted talisman (same id, new lines) changes it', () => {
+        Object.assign(gear.snapshots, { 1: loadout });
+        ownedTalismans.list = owned(1);
+        const before = labyrinthClearRate._snapshotContentFingerprint();
+        ownedTalismans.list = owned(2);
+        expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
+    });
+
+    test('a loadout that names no talismans keeps its fingerprint whatever is owned', () => {
+        Object.assign(gear.snapshots, { 1: { ...loadout, talismanIdMap: { 1: 0, 2: 0, 3: 0 } } });
+        ownedTalismans.list = [];
+        const plain = labyrinthClearRate._snapshotContentFingerprint();
+        ownedTalismans.list = owned(3);
+        expect(labyrinthClearRate._snapshotContentFingerprint()).toBe(plain);
     });
 });
