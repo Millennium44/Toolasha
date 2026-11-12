@@ -10,6 +10,38 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Opening a chest with the Combat Sim (or any other Toolasha panel) open now shows the game's loot dialog and the Treasure popup on top instead of underneath, and clicking another Toolasha panel no longer dismisses the Treasure popup.
 
+### Production costs follow your Artisan Tea stock
+
+Enhancement and upgrade costs now drop or restore the Artisan Tea discount as soon as you buy or run out of the tea you have slotted, instead of keeping the old figure.
+
+### Settings and records no longer vanish when a save fails
+
+Moving an old shared setting or list to your character no longer deletes the old copy if the save fails, and never overwrites a newer value you saved meanwhile.
+
+### Task reroll spending survives a failed history save
+
+A finished task's reroll spend stays on your live record until it is safely in history, so a storage hiccup can no longer erase it.
+
+### Goal Planner warns when a new goal could not be saved
+
+If saving a new goal fails, the planner says so under the form and keeps the form open instead of acting as if the goal was kept.
+
+### Backups and sync no longer report partial copies as complete
+
+A full backup now fails with an error naming the store if any store cannot be read completely, sync keeps retrying a record it could not merge (and still asks before replacing your edits), and the prompt after an interrupted pull says when a reload is needed.
+
+### Equipment Watch goals stay with their character
+
+Switching characters while a goal is being saved no longer files it under the new character; the button says to retry and keeps what you typed.
+
+### Marketplace shortcuts respect where you navigate
+
+A shortcut now gives up if you pick another item yourself, ignores the wrong buy or sell window, and never overwrites a quantity you typed.
+
+### Market History follows the pool you pick
+
+Changing the history source refetches the chart instead of showing the previous pool's data under the new label, and a lookup caught mid-switch can no longer leave a false zero volume.
+
 <!-- shipped in 3.85.0 -->
 
 ### Combat Sim Upgrade list trims drink and ability-order noise
