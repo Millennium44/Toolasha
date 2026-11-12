@@ -34,6 +34,7 @@
  */
 
 import config from '../../core/config.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import dataManager from '../../core/data-manager.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
@@ -3813,6 +3814,9 @@ consumablesPanel.restore();
 // disagree", which was true only between ticks. Subscribed at module scope with
 // the rest of this panel's wiring, since it has no feature-registry lifecycle.
 for (const key of [
+    // Cost per day and the refill cost are priced on the player's Buy side
+    'profitCalc_pricingMode',
+    ...PATIENT_TICK_SETTING_KEYS,
     'consumables_idleLoadoutPlan',
     'consumables_labPerRunBasis',
     'market_consumableBuyOpenRecommended',

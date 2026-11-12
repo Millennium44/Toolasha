@@ -20,6 +20,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { rows, blank, itemIcon, skillIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
@@ -776,6 +777,14 @@ let priceFeed = 0;
 marketAPI.on(() => {
     priceFeed++;
 });
+
+// The build cost follows the player's Buy side: a move of it re-counts the tile and redraws an open panel
+for (const key of ['profitCalc_pricingMode', ...PATIENT_TICK_SETTING_KEYS]) {
+    config.onSettingChange(key, () => {
+        priceFeed++;
+        if (housesPanel.panel) housesPanel._render();
+    });
+}
 
 /**
  * What the Houses tile would count, without counting it.

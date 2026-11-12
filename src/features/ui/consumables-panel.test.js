@@ -176,6 +176,14 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
+describe('the panel notices a move of the Buy side', () => {
+    test('the pricing mode and both patient ticks are watched, so cost per day does not wait for the tick', () => {
+        for (const key of ['profitCalc_pricingMode', 'profitCalc_patientTickBuy', 'profitCalc_patientTickSell']) {
+            expect(settings.listeners[key]).toHaveLength(1);
+        }
+    });
+});
+
 describe('whether the panel was open', () => {
     test('a fresh panel opens centered in the available viewport', async () => {
         Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 });

@@ -91,7 +91,9 @@ vi.mock('../../utils/market-data.js', () => ({
         const entry = game.prices[itemHrid];
         const price = typeof entry === 'object' && entry !== null ? entry[game.sellBasis] : entry;
         const priced = context === 'profit' && side === 'sell' && Number.isFinite(price);
-        return priced ? { price, source: 'book', estimated: false } : { price: null, source: null, estimated: false };
+        return priced
+            ? { price, source: 'book', estimated: game.estimatedDrops?.has(itemHrid) === true }
+            : { price: null, source: null, estimated: false };
     },
 }));
 
@@ -475,6 +477,22 @@ describe('updateRunSoFar — "so far this run"', () => {
         game.sellBasis = 'ask';
         actionTimeDisplay.updateRunSoFar({ id: 1, currentCount: 100 }, gatheringDetails);
         expect(actionTimeDisplay.runElement.innerHTML).toContain('1.92K');
+    });
+
+    test('a drop with only a value-map estimate on the Sell side is unpriced and marks the figure a floor', () => {
+        game.runGathering = { gained: { '/items/milk': 100, '/items/cheese': 10 }, from: 0, to: 1000 };
+        game.prices['/items/milk'] = 10;
+        game.prices['/items/cheese'] = 500;
+        game.estimatedDrops = new Set(['/items/cheese']);
+        try {
+            actionTimeDisplay.updateRunSoFar({ id: 1, currentCount: 100 }, gatheringDetails);
+        } finally {
+            game.estimatedDrops = null;
+        }
+
+        // Only the milk counts (100 x 10 x 0.96); the estimated cheese is nothing, not 4,800
+        expect(actionTimeDisplay.runElement.innerHTML).toContain('960*');
+        expect(actionTimeDisplay.runElement.innerHTML).toContain('counted as nothing');
     });
 
     test('the personal-use sell-tax exclusion leaves the sale untaxed, as the panel’s profit/hr does', () => {
