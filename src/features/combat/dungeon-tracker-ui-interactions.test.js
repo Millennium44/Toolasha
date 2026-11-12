@@ -366,3 +366,29 @@ describe('average baseline marker target', () => {
         vi.unstubAllGlobals();
     });
 });
+
+describe('dragging and stacking', () => {
+    test('a collapsed tracker is not raised over the game when its header is pressed', async () => {
+        const { bringPanelToFront: raise } = await import('../../utils/panel-z-index.js');
+        raise.mockClear();
+        const container = buildContainer('<div id="mwi-dt-header"></div>');
+        const interactions = new DungeonTrackerUIInteractions(makeState({ isCollapsed: true }), null, null);
+        interactions.container = container;
+        interactions.callbacks = {};
+        interactions.setupDragging();
+        container.querySelector('#mwi-dt-header').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        expect(raise).not.toHaveBeenCalled();
+    });
+
+    test('an expanded tracker still comes to the front when its header is pressed', async () => {
+        const { bringPanelToFront: raise } = await import('../../utils/panel-z-index.js');
+        raise.mockClear();
+        const container = buildContainer('<div id="mwi-dt-header"></div>');
+        const interactions = new DungeonTrackerUIInteractions(makeState({ isCollapsed: false }), null, null);
+        interactions.container = container;
+        interactions.callbacks = {};
+        interactions.setupDragging();
+        container.querySelector('#mwi-dt-header').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        expect(raise).toHaveBeenCalledWith(container);
+    });
+});

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Collapsed dungeon tracker stays behind game panels
+
+Dragging the collapsed dungeon tracker no longer lifts it above the game's own windows, so an item or crafting panel opened afterwards shows in front of it. The expanded tracker still comes to the front when you grab it.
+
 ### Reset to Party moves the sim zone right after a reload
 
 The Combat Sim's Reset to Party now sets Zone and Tier to the zone chosen on your My Party tab as soon as the page loads, instead of waiting for the next party update. If the party has no zone set, it uses the party fight you are running.

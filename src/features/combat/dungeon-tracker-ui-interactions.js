@@ -102,7 +102,10 @@ class DungeonTrackerUIInteractions {
                 return;
             }
 
-            bringPanelToFront(this.container);
+            // A collapsed tracker lives in the HUD band, below the game's own
+            // dialogs; raising it into the panel band on a drag left it over
+            // every game panel opened afterwards
+            if (!this.state.isCollapsed) bringPanelToFront(this.container);
             this.isDragging = true;
             const rect = this.container.getBoundingClientRect();
             this.dragOffset = {
