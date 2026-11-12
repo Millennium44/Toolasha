@@ -53,6 +53,22 @@ note() { echo "==> $*"; }
 COMMON_DIR="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
 ROOT="$(dirname "$COMMON_DIR")"
 INTEG="$(dirname "$ROOT")/Toolasha-integ"
+
+# Leave the integration worktree clean whatever way the run ends. It is this script's own scratch tree, and a
+# tracked file left modified (a CHANGELOG.md with ten entries missing, 2026-11-12) is carried silently into the
+# next branch checked out there. Reported first, so a leftover is seen rather than just reverted.
+leave_integ_clean() {
+    [ -d "$INTEG" ] || return 0
+    local dirty
+    dirty="$(git -C "$INTEG" status --porcelain --untracked-files=no 2>/dev/null)"
+    [ -z "$dirty" ] && return 0
+    echo "==> Integration worktree had uncommitted changes on exit; restoring tracked files:" >&2
+    git -C "$INTEG" diff --stat >&2 || true
+    git -C "$INTEG" cherry-pick --abort >/dev/null 2>&1 || true
+    git -C "$INTEG" checkout -q -- . 2>/dev/null || git -C "$INTEG" reset -q --hard 2>/dev/null || true
+}
+trap leave_integ_clean EXIT
+
 REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
 OWNER="${REPO%%/*}"
 NAME="${REPO##*/}"
