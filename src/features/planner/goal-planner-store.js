@@ -225,14 +225,25 @@ export async function saveGoals(goals) {
  * @returns {Promise<Array<Object>>} What was written
  */
 async function writeGoals(clean) {
+    return (await writeGoalsChecked(clean)).goals;
+}
+
+/**
+ * {@link writeGoals}, saying whether the write landed. A failed save keeps the list in memory for the
+ * record's next save to retry, but nothing is on disk until one lands.
+ * @param {Array<Object>} clean - Normalized goals
+ * @returns {Promise<{goals: Array<Object>, saved: boolean}>} What was written, and whether it was saved
+ */
+async function writeGoalsChecked(clean) {
+    let saved = false;
     try {
         claimGoals();
         goalsRecord.set(clean);
-        await goalsRecord.save();
+        saved = (await goalsRecord.save()) === true;
     } catch (error) {
         console.error('[GoalPlanner] Saving goals failed:', error);
     }
-    return clean;
+    return { goals: clean, saved };
 }
 
 /** @returns {Promise<*>} The pending goal writes, for tests and shutdown */
@@ -259,10 +270,11 @@ export async function addGoal(raw) {
  * `outcome` is one of: `added`; `duplicate` (the same goal is already on the list); `full` (the list is
  * at {@link MAX_GOALS}, so nothing was written and the caller should say so where the player pressed);
  * `invalid` (the form made no goal); `switched` (the character changed during the read, so nothing was
- * written and the list is the departing character's).
+ * written and the list is the departing character's); `unsaved` (the goal is on the returned list and held in
+ * memory, but the save failed, so it is not on disk and the caller should say so).
  *
  * @param {Object} raw - A goal from the creation form
- * @returns {Promise<{goals: Array<Object>, outcome: 'added'|'duplicate'|'full'|'invalid'|'switched'}>}
+ * @returns {Promise<{goals: Array<Object>, outcome: 'added'|'duplicate'|'full'|'invalid'|'switched'|'unsaved'}>}
  */
 export async function tryAddGoal(raw) {
     const goal = normalizeGoal(raw);
@@ -283,7 +295,8 @@ export async function tryAddGoal(raw) {
     // The cap stops a new goal; it never takes out one already on the list
     if (goals.length >= MAX_GOALS) return { goals, outcome: 'full' };
 
-    return { goals: await writeGoals([...goals, goal]), outcome: 'added' };
+    const written = await writeGoalsChecked([...goals, goal]);
+    return { goals: written.goals, outcome: written.saved ? 'added' : 'unsaved' };
 }
 
 /**

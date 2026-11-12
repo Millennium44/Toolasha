@@ -9,7 +9,7 @@
  * The storage and data-manager doubles follow `utils/character-key.test.js`.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const mockDataManager = vi.hoisted(() => ({
     currentCharacterId: 'market123',
@@ -496,5 +496,64 @@ describe('merging two devices goal lists', () => {
     test('a goal deleted on one device comes back — no tombstones, documented', () => {
         expect(mergeGoalLists([], [goal('a', 1)]).map((entry) => entry.id)).toEqual(['a']);
         expect(mergeGoalLists([goal('a', 1)], []).map((entry) => entry.id)).toEqual(['a']);
+    });
+});
+
+describe('tryAddGoal says whether the goal was saved', () => {
+    const gold = { id: 'g1', type: 'gold', amount: 12_345 };
+    const real = mockStorage.set.getMockImplementation();
+    let unsavedCharacters = 0;
+
+    beforeEach(() => {
+        // A failed write stays asked for and folds into that key's next write, by design; each test gets a
+        // character of its own so none inherits another's
+        mockDataManager.currentCharacterId = `unsaved-${++unsavedCharacters}`;
+    });
+    afterEach(() => {
+        mockStorage.set.mockImplementation(real);
+        _resetGoalsRecord();
+    });
+
+    test('a landed save is "added" and is on disk', async () => {
+        const result = await tryAddGoal(gold);
+        expect(result.outcome).toBe('added');
+        expect(settings().get(`${GOALS_KEY}_${mockDataManager.currentCharacterId}`)).toHaveLength(1);
+    });
+
+    test('a refused write is "unsaved": the goal is on the returned list but not on disk', async () => {
+        mockStorage.set.mockImplementation(async () => false);
+        const result = await tryAddGoal(gold);
+
+        expect(result.outcome).toBe('unsaved');
+        expect(result.goals.map((entry) => entry.id)).toEqual(['g1']);
+        expect(settings().has(`${GOALS_KEY}_${mockDataManager.currentCharacterId}`)).toBe(false);
+    });
+
+    test('a throwing write is "unsaved" too', async () => {
+        mockStorage.set.mockImplementation(async () => {
+            throw new Error('disk gone');
+        });
+        expect((await tryAddGoal(gold)).outcome).toBe('unsaved');
+    });
+
+    test('the held goal is carried by the next save once storage recovers, without a duplicate', async () => {
+        mockStorage.set.mockImplementation(async () => false);
+        await tryAddGoal(gold);
+        mockStorage.set.mockImplementation(real);
+
+        const second = await tryAddGoal({ id: 'g2', type: 'gold', amount: 99_999 });
+
+        expect(second.outcome).toBe('added');
+        expect(
+            settings()
+                .get(`${GOALS_KEY}_${mockDataManager.currentCharacterId}`)
+                .map((entry) => entry.id)
+        ).toEqual(['g1', 'g2']);
+    });
+
+    test('a duplicate, an invalid form and a full list write nothing and are not "unsaved"', async () => {
+        await tryAddGoal(gold);
+        expect((await tryAddGoal({ ...gold, id: 'other' })).outcome).toBe('duplicate');
+        expect((await tryAddGoal({ type: 'nonsense' })).outcome).toBe('invalid');
     });
 });

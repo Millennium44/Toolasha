@@ -747,6 +747,16 @@ class GoalPlannerPanel {
             if (JSON.stringify(previous) !== JSON.stringify(goals)) await this.replan();
             return;
         }
+        if (outcome === 'unsaved') {
+            // On the list for now (so it is planned and shown) but not on disk: say so under the form and
+            // leave the form open, rather than closing it as if the goal had been kept
+            this.addNotice =
+                'The goal was added but could not be saved, so it may be lost if you close or reload the game. ' +
+                'Changing the goal list again tries to save it once more.';
+            this._render();
+            await this.replan();
+            return;
+        }
         this.addNotice = null;
         this.formType = null;
         this._render();

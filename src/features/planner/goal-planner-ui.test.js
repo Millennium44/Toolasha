@@ -12,7 +12,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ data: {}, onGet: null }));
+const store = vi.hoisted(() => ({ data: {}, onGet: null, failWrites: false }));
 // Mutable so a test can simulate a character switch mid-await; every other
 // test leaves it at the default and never notices it exists.
 const character = vi.hoisted(() => ({ id: 'char1' }));
@@ -55,6 +55,7 @@ vi.mock('../../core/storage.js', () => ({
         tryGet: async (key) =>
             store.data[key] != null ? { found: true, value: store.data[key] } : { found: false, value: null },
         set: async (key, value, _name, _immediate, options = {}) => {
+            if (store.failWrites) return false;
             const folded = options?.fold ? options.fold(store.data[key] ?? undefined, value) : undefined;
             store.data[key] = folded === undefined ? value : folded;
             return true;
@@ -138,7 +139,7 @@ vi.mock('./goal-planner-context.js', () => ({
 }));
 
 const { goalPlannerPanel } = await import('./goal-planner-ui.js');
-const { MAX_GOALS } = await import('./goal-planner-store.js');
+const { MAX_GOALS, _resetGoalsRecord } = await import('./goal-planner-store.js');
 
 const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 const text = () => document.getElementById('toolasha-goal-planner-panel')?.textContent ?? '';
@@ -1687,6 +1688,30 @@ describe('a full goal list', () => {
         expect(goalPlannerPanel.formType).toBe('gold');
         expect(document.querySelector('#toolasha-goal-planner-panel [data-goal-add] input').value).toBe('7B');
         expect(store.data.goalPlannerGoals_char1).toHaveLength(MAX_GOALS);
+    });
+
+    test('a goal whose save failed is not reported as added: the notice says so and the form stays open', async () => {
+        // A failed write stays asked for and folds into that key's next write, by design. Its own character
+        // keeps it out of every other test's list.
+        character.id = 'char-unsaved';
+        await openForm();
+        store.failWrites = true;
+        try {
+            const field = document.querySelector('#toolasha-goal-planner-panel [data-goal-add] input');
+            field.value = '7B';
+
+            await goalPlannerPanel.addGoal({ type: 'gold', amount: 7_000_000_000 });
+
+            expect(text()).toContain('could not be saved');
+            expect(goalPlannerPanel.formType).toBe('gold');
+            expect(document.querySelector('#toolasha-goal-planner-panel [data-goal-add] input').value).toBe('7B');
+            expect(store.data['goalPlannerGoals_char-unsaved']).toBeUndefined();
+            // Still held and planned for this session, so the next save carries it
+            expect(goalPlannerPanel.goals).toHaveLength(1);
+        } finally {
+            store.failWrites = false;
+            _resetGoalsRecord();
+        }
     });
 
     test('the press that takes the last place adds, closes the form and shows no warning', async () => {
