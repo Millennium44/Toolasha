@@ -66,13 +66,13 @@ export function cheaperSwapTrade(row) {
 
 /**
  * Whether a row clears the noise as an improvement on any metric, so folding must never hide it. A cheaper
- * swap's profit gain does not count (that is what makes it a cheaper swap); every other row's does.
+ * swap's profit gain counts here: it is not ranked by Score, but hiding a swap that really does earn more is
+ * the worse failure, so it stays on screen with its label.
  * @param {Object} row - Result row
  * @returns {boolean}
  */
 export function clearsNoiseAsImprovement(row) {
     if (improvesBeyondNoise(row)) return true;
-    if (isCheaperSwap(row)) return false;
     return row?.significantBy?.profit === true && row.deltas?.profit > 0;
 }
 

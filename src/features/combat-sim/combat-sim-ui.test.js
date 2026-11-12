@@ -2323,11 +2323,24 @@ describe('the panel', () => {
             expect(cards()).toHaveLength(8);
         });
 
-        test('the CSV exports every row, says which were folded and carries the cheaper-swap note', () => {
+        test('a cheaper swap whose profit clears the noise stays on screen with its label, however it ranks', () => {
             const rows = [...'ABCDEFGH'].map((n) => lose(`Coffee ${n}`));
             rows[7] = swap('Defense Coffee', {
                 deltas: { dps: -17.4, profit: 2 },
                 sig: { dps: true, profit: true },
+                gain: 80_000,
+            });
+            draw(rows);
+            const text = drawn().find((t) => t.includes('Defense Coffee'));
+            expect(text).toContain('saves');
+        });
+
+        test('the CSV exports every row, says which were folded and carries the cheaper-swap note', () => {
+            const rows = [...'ABCDEFGH'].map((n) => lose(`Coffee ${n}`));
+            // profit inside its error bar, so this cheaper swap folds like the others
+            rows[7] = swap('Defense Coffee', {
+                deltas: { dps: -17.4, profit: 2 },
+                sig: { dps: true },
                 gain: 80_000,
             });
             const exported = [];
@@ -2342,6 +2355,23 @@ describe('the panel', () => {
             expect(sheet.rows.filter((r) => r.folded === 'yes')).toHaveLength(5);
             expect(sheet.rows.find((r) => r.upgrade.includes('Defense')).tradeNote).toContain('saves');
             expect(sheet.columns.map((c) => c.key)).toEqual(expect.arrayContaining(['folded', 'tradeNote']));
+        });
+
+        test('a budget plan that picks a cheaper swap labels the pick with what it trades', () => {
+            const cheaper = swap('Defense Coffee', {
+                deltas: { dps: -17.4, profit: 2 },
+                sig: { dps: true, profit: true },
+                gain: 80_000,
+            });
+            ui._upgradeBudget = 1_000_000;
+            ui._upgradePlanMetric = 'profit';
+            ui._viewChoices = { wide: 'table', narrow: 'table' };
+            ui._renderUpgradeResults({ baseline: BASELINE, results: [cheaper, lose('Coffee B')], food: null });
+            const plan = ui.panel.querySelector('#mwi-csim-upgrade-budget');
+            expect(plan.textContent).toContain('Defense Coffee');
+            expect(plan.querySelector('[data-cheaper-swap]').textContent).toContain('saves');
+            ui._upgradeBudget = 0;
+            ui._upgradePlanMetric = null;
         });
 
         test('the budget plan is fed every row, folded or not', () => {

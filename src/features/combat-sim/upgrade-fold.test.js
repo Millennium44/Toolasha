@@ -79,9 +79,13 @@ describe('isCheaperSwap', () => {
 });
 
 describe('clearsNoiseAsImprovement', () => {
-    test('a cheaper swap profit gain does not count, any other clearing improvement does', () => {
+    test('a cheaper swap whose profit clears the noise is never folded, though Score does not rank it', () => {
         const cheaper = swap('A', { deltas: { dps: -17, profit: 2 }, sig: { dps: true, profit: true }, gain: 5 });
-        expect(clearsNoiseAsImprovement(cheaper)).toBe(false);
+        expect(isCheaperSwap(cheaper)).toBe(true);
+        expect(clearsNoiseAsImprovement(cheaper)).toBe(true);
+        // and the same swap with its profit inside the noise folds like any other loser
+        const noisy = swap('A2', { deltas: { dps: -17, profit: 2 }, sig: { dps: true }, gain: 5 });
+        expect(clearsNoiseAsImprovement(noisy)).toBe(false);
         expect(clearsNoiseAsImprovement(swap('B', { deltas: { dps: 1 }, sig: { dps: true } }))).toBe(true);
         expect(clearsNoiseAsImprovement(swap('C', { deltas: { xp: 5, dps: -17 }, sig: { xp: true, dps: true } }))).toBe(
             true

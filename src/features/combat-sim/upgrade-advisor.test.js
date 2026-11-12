@@ -255,6 +255,7 @@ const {
     attemptsNoise,
     rateDeltaNoisePct,
     significantDeltas,
+    deathCountsDiffer,
     generateDrinkCandidates,
     drinkCapacity,
     abilitySlotUnlocks,
@@ -11892,6 +11893,73 @@ describe('upgrade trims: Score and drink relevance', () => {
         economics: { repayHours: Infinity, profitGainPerHour: gain },
         significantBy: { ...NOISY, ...sig },
         deltas: { dps: 0, xp: 0, profit: 0, deaths: 0, encounters: 0, ...deltas },
+    });
+
+    describe('deaths are judged on the counts, not on the percentage', () => {
+        test('200 deaths becoming 2 clears the noise; 6 becoming 3 and 0 becoming 0 do not', () => {
+            expect(deathCountsDiffer(200, 2)).toBe(true);
+            expect(deathCountsDiffer(6, 3)).toBe(false);
+            expect(deathCountsDiffer(0, 0)).toBe(false);
+            expect(deathCountsDiffer(0, 10)).toBe(true);
+            expect(deathCountsDiffer(0, 3)).toBe(false);
+        });
+
+        test('significantDeltas uses the counts when it has them, so a real survival upgrade is not "noise"', () => {
+            const deltas = { dps: 0, xp: 0, profit: 0, deaths: -99, encounters: 0 };
+            // the percentage error of 200 -> 2 is 71%: 1.96 * 71 = 139 > 99, the old verdict
+            const noise = { dps: 1, xp: 1, profit: 1, deaths: 71, encounters: 1 };
+            expect(significantDeltas(deltas, noise).deaths).toBe(false);
+            expect(significantDeltas(deltas, noise, { deathCounts: { baseline: 200, upgraded: 2 } }).deaths).toBe(true);
+            const small = { ...deltas, deaths: -50 };
+            expect(significantDeltas(small, noise, { deathCounts: { baseline: 6, upgraded: 3 } }).deaths).toBe(false);
+        });
+    });
+
+    describe('a cheaper swap ranks no lower than a free swap that is worse in every way', () => {
+        const free = (name, gain, dpsPct, sigProfit) => {
+            const base = { profitPerHour: 1000 };
+            const up = { profitPerHour: 1000 + gain };
+            const deltas = { dps: dpsPct, xp: 0, profit: gain / 10, deaths: 0, encounters: dpsPct };
+            return {
+                candidate: {
+                    type: 'drink',
+                    description: name,
+                    currentHrid: '/items/ultra_melee_coffee',
+                    drinkIndex: 0,
+                },
+                cost: 0,
+                deltas,
+                // the real economics: a free row reads repay 0 whatever it earns
+                economics: computeEconomics(0, base, up),
+                goldPer: {
+                    dps: Infinity,
+                    xp: Infinity,
+                    profit: gain > 0 ? 0 : Infinity,
+                    deaths: Infinity,
+                    encounters: Infinity,
+                },
+                significantBy: { dps: true, xp: false, profit: sigProfit, encounters: true, deaths: false },
+            };
+        };
+
+        test('the worse swap no longer earns a repay placing the cheaper one is denied', () => {
+            const cheaper = free('Defense Coffee', 80_000, -17, true);
+            const worse = free('Ultra Defense Coffee', -67_000, -17, true);
+            const rows = [cheaper, worse];
+            assignRankScores(rows);
+            expect(worse.score).toBe(0);
+            expect(cheaper.score).toBeGreaterThanOrEqual(worse.score);
+            assignScores(rows);
+            expect(cheaper.score).toBeGreaterThanOrEqual(worse.score);
+        });
+
+        test('a free row that does gain keeps its repay placing', () => {
+            const real = free('Real', 5_000, 2, true);
+            real.significantBy.dps = true;
+            const rows = [real];
+            assignRankScores(rows);
+            expect(real.rankPoints.repay).toMatchObject({ place: 1 });
+        });
     });
 
     describe('a deaths change counts toward Score only when it clears the noise', () => {

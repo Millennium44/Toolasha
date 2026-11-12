@@ -5799,7 +5799,14 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             costUnpricedBaseline
         );
         const noise = rateDeltaNoisePct(base.result, simResult, playerHrid);
-        const significantBy = significantDeltas(deltas, noise, { baseline: base.metrics, upgraded: metrics });
+        const significantBy = significantDeltas(deltas, noise, {
+            baseline: base.metrics,
+            upgraded: metrics,
+            deathCounts: {
+                baseline: base.result?.deaths?.[playerHrid],
+                upgraded: simResult?.deaths?.[playerHrid],
+            },
+        });
         if (costUnpriced.length) {
             significantBy.profit = false;
             goldPer.profit = Infinity;
@@ -5942,6 +5949,10 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                         row.alongside.significantBy = significantDeltas(row.alongside.deltas, row.alongside.noise, {
                             baseline: baselineMetrics,
                             upgraded: bothMetrics,
+                            deathCounts: {
+                                baseline: baselineResult?.deaths?.[playerHrid],
+                                upgraded: bothResult?.deaths?.[playerHrid],
+                            },
                         });
                         // What the combined run left unpriced, with the level's own: the combined profit is a ceiling
                         // on both counts. Kept on `alongside` (additive) so a card showing the combined figure can say so
@@ -6686,6 +6697,24 @@ export function rateDeltaNoisePct(baselineResult, upgradedResult, playerHrid) {
 }
 
 /**
+ * Whether two death counts differ by more than their Poisson error: |a - b| > Z * sqrt(a + b).
+ *
+ * The percentage test on `noise.deaths` cannot say this. A reduction is capped at -100% while the error bar of
+ * a small count is not, so 200 deaths becoming 2 read as "within noise" (1.96 * 71% > 99%), and a real survival
+ * upgrade lost its Score credit and could fold. On counts, 200 -> 2 is a 198 gap against 28, and 6 -> 3 (a
+ * 0.06 -> 0.03/hr "-50%" over 100 h) is 3 against 5.9: noise.
+ * @param {number} baselineDeaths - Deaths in the baseline run
+ * @param {number} upgradedDeaths - Deaths in the candidate's run
+ * @returns {boolean}
+ */
+export function deathCountsDiffer(baselineDeaths, upgradedDeaths) {
+    const a = Math.max(0, Number(baselineDeaths) || 0);
+    const b = Math.max(0, Number(upgradedDeaths) || 0);
+    if (a === b) return false;
+    return Math.abs(a - b) > SIGNIFICANCE_Z * Math.sqrt(a + b);
+}
+
+/**
  * Which of a row's deltas cleared their own error bar.
  *
  * Profit is judged in gold, not in percent. Its percentage delta is a share of the net profit, which near
@@ -6699,11 +6728,15 @@ export function rateDeltaNoisePct(baselineResult, upgradedResult, playerHrid) {
  * @param {Object} [metrics] - `{ baseline, upgraded }` metrics from `computeMetrics`, for the profit verdict
  * @returns {Object} Per-metric booleans
  */
-export function significantDeltas(deltas, noise, { baseline, upgraded } = {}) {
+export function significantDeltas(deltas, noise, { baseline, upgraded, deathCounts } = {}) {
     const verdict = {};
     for (const key of Object.keys(deltas || {})) {
         const error = noise?.[key];
         verdict[key] = Number.isFinite(error) ? Math.abs(deltas[key]) > SIGNIFICANCE_Z * error : true;
+    }
+    // Deaths are counted, not summed: judged on the counts when the runs are in hand (see `deathCountsDiffer`)
+    if ('deaths' in verdict && deathCounts) {
+        verdict.deaths = deathCountsDiffer(deathCounts.baseline, deathCounts.upgraded);
     }
     const goldChange = (upgraded?.profitPerHour ?? NaN) - (baseline?.profitPerHour ?? NaN);
     if ('profit' in verdict && Number.isFinite(noise?.profit) && Number.isFinite(goldChange)) {
@@ -6953,7 +6986,15 @@ export const SCORE_METRICS = [
         // scores nothing. A row with no verdict (an older run) keeps the figure it had.
         value: (r) => (r.significantBy?.deaths === false ? Infinity : r.goldPer?.deaths),
     },
-    { key: 'repay', label: 'Repay time', lowerIsBetter: true, value: (r) => r.economics?.repayHours },
+    {
+        key: 'repay',
+        label: 'Repay time',
+        lowerIsBetter: true,
+        // A free row reads repay 0 whatever it earns (see computeEconomics). One that earns nothing, or loses
+        // profit, repays nothing: it must not take the best repay placing over a row that does.
+        value: (r) =>
+            r.economics?.repayHours === 0 && r.economics?.profitGainPerHour <= 0 ? Infinity : r.economics?.repayHours,
+    },
     { key: 'roi', label: 'ROI (1yr)', lowerIsBetter: false, value: (r) => r.economics?.roiAnnualPct },
 ];
 

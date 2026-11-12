@@ -1295,6 +1295,19 @@ export function cheaperSwapText(result) {
 }
 
 /**
+ * The "saves X/hr, costs Y% DPS" chip of a coffee swap that earns its profit by being cheaper, at the cost of
+ * power; empty for every other row. Said on the row, in the budget plan's picks, and not ranked by Score.
+ * @param {Object} result - A result row
+ * @returns {string} HTML
+ */
+export function cheaperSwapChipHtml(result) {
+    if (!isCheaperSwap(result)) return '';
+    const text = cheaperSwapText(result);
+    const title = `${text}. The coffee is cheaper, so the profit rises, but the fight gets worse beyond the sampling error. Not ranked by Score.`;
+    return `<span data-cheaper-swap title="${escapeAttribute(title)}" style="${ROW_NOTE_STYLE} background:rgba(232,168,124,0.18); color:#e8a87c;">${escapeAttribute(text)}</span>`;
+}
+
+/**
  * The qualifiers a row cannot be read correctly without.
  *
  * Both of them were previously invisible or buried in a tab tooltip:
@@ -1366,13 +1379,7 @@ export function upgradeRowNotesHtml(result) {
         );
     }
 
-    // A coffee swap that earns its profit by being cheaper, at the cost of power: said on the row, and not ranked
-    if (isCheaperSwap(result)) {
-        const text = cheaperSwapText(result);
-        notes.push(
-            `<span data-cheaper-swap title="${escapeAttribute(`${text}. The coffee is cheaper, so the profit rises, but the fight gets worse beyond the sampling error. Not ranked by Score.`)}" style="${ROW_NOTE_STYLE} background:rgba(232,168,124,0.18); color:#e8a87c;">${escapeAttribute(text)}</span>`
-        );
-    }
+    notes.push(cheaperSwapChipHtml(result));
 
     // A close call simulated again for longer: its figures come from that run, against a baseline of the same length
     if (result?.resim) {
@@ -16304,7 +16311,9 @@ class CombatSimUI {
                 const picks = plan.picks
                     .map(
                         (pick) => `<div style="display:flex; justify-content:space-between; gap:10px; padding:1px 0;">
-                            <span style="color:#e0e0e0;">${simCandidateLabelHtml(pick.candidate)}${
+                            <span style="color:#e0e0e0;">${simCandidateLabelHtml(pick.candidate)}${cheaperSwapChipHtml(
+                                rows.find((row) => row.candidate === pick.candidate)
+                            )}${
                                 pick.provisional && !plan.provisional
                                     ? `<span style="color:#e8a87c; font-size:9px; margin-left:4px;"
                                         title="This gain on ${plan.metric.label} is inside the simulation's
