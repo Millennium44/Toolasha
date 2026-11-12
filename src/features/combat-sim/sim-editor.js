@@ -1914,14 +1914,47 @@ export class SimEditor {
     }
 
     /**
+     * The party record to read the zone from. `party_updated` is the live record. The one `init_character_data`
+     * carried is the same record (the My Party tab renders `partyInfo.party.actionHrid` and `difficultyTier`
+     * from either), and right after a reload it is the only one there is; it is believed unless a fight's roster
+     * names a different set of people than its slots do, which means the party changed after login unseen.
+     *
+     * @private
+     * @returns {{info: Object|null, stale: boolean}}
+     */
+    _zoneSourceInfo() {
+        const info = dataManager.characterData?.partyInfo;
+        if (!info) return { info: null, stale: false };
+        if (dataManager.partyInfoSource === 'party') return { info, stale: false };
+        const slotIds = Object.values(info.partySlotMap || {})
+            .filter((entry) => entry?.characterID)
+            .map((entry) => String(entry.characterID))
+            .sort()
+            .join(',');
+        const roster = dataManager.battlePartyRoster?.members;
+        if (slotIds && roster?.length) {
+            const rosterIds = roster
+                .map((member) => String(member.characterID))
+                .sort()
+                .join(',');
+            if (rosterIds !== slotIds) return { info: null, stale: true };
+        }
+        return { info, stale: false };
+    }
+
+    /**
      * The party's combat zone and tier, or the reason there is none to follow.
+     *
+     * Order: the party's chosen zone and tier (the party record), then, only when that record carries no combat
+     * zone, the combat action this character is running (a party's zone is shared, so a party member's running
+     * combat action is the party's). Never a queued action, and never a record that is out of date.
      *
      * @private
      * @returns {{zone: {zoneHrid: string, tier: number}|null, note: string}}
      */
     _partyZone() {
         const outOfDate = { zone: null, note: 'Your party data is out of date, so your zone is unchanged.' };
-        const { info, stale } = this._trustedPartyInfo();
+        const { info, stale } = this._zoneSourceInfo();
         if (stale) return outOfDate;
         const party = info?.party;
         if (!party) return { zone: null, note: 'You are not in a party, so your zone is unchanged.' };
@@ -1931,11 +1964,19 @@ export class SimEditor {
         // An empty map (a dungeon run) cannot say who is in the party; a map that names others can
         if (slots.length && !slots.some((entry) => String(entry.characterID) === String(selfId))) return outOfDate;
         const zoneHrid = String(party.actionHrid || '');
-        if (!zoneHrid.startsWith('/actions/combat/')) {
-            return { zone: null, note: 'The party has no zone set, so your zone is unchanged.' };
+        if (zoneHrid.startsWith('/actions/combat/')) {
+            const tier = Number(party.difficultyTier);
+            return { zone: { zoneHrid, tier: Number.isInteger(tier) && tier >= 0 ? tier : 0 }, note: '' };
         }
-        const tier = Number(party.difficultyTier);
-        return { zone: { zoneHrid, tier: Number.isInteger(tier) && tier >= 0 ? tier : 0 }, note: '' };
+        const running = runningCombatAction(dataManager.getCurrentActions?.() || []);
+        if (running) {
+            const tier = Number(running.difficultyTier);
+            return {
+                zone: { zoneHrid: running.actionHrid, tier: Number.isInteger(tier) && tier >= 0 ? tier : 0 },
+                note: '',
+            };
+        }
+        return { zone: null, note: 'The party has no zone set, so your zone is unchanged.' };
     }
 
     /**

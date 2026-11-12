@@ -3961,18 +3961,55 @@ describe('Reset to Party picks your party loadout and the party zone', () => {
         }
     });
 
-    test('a login-time record is not trusted: loadout falls back to the action, zone says out of date', async () => {
+    test('after a reload (login record, no party_updated yet) the party zone from the record is followed', async () => {
         bridge.snapshots = [
             { id: 900401, name: 'FromSlot', actionTypeHrid: COMBAT },
             { id: 555, name: 'FromAction', actionTypeHrid: COMBAT },
         ];
         game.actions = [{ actionHrid: ZONE, characterLoadoutID: 555, isDone: false, ordinal: 1 }];
         game.partyInfoSource = 'login';
-        const { el, editor, onResetToParty } = setup(partyInfo());
+        const { el, editor, onResetToParty } = setup(partyInfo({ tier: 2 }));
         await editor.resetToParty({ fromButton: true });
+        // the loadout path still distrusts a login record and reads the running action
         expect(editor.getSelectedLoadoutName()).toBe('FromAction');
+        expect(onResetToParty).toHaveBeenCalledWith({ zoneHrid: ZONE, tier: 2 });
+        expect(el.textContent).not.toContain('out of date');
+    });
+
+    test('the party chosen zone beats the running action', async () => {
+        game.partyInfoSource = 'login';
+        game.actions = [{ actionHrid: '/actions/combat/swamp_planet', difficultyTier: 0, isDone: false, ordinal: 1 }];
+        const { editor, onResetToParty } = setup(partyInfo({ tier: 2 }));
+        await editor.resetToParty({ fromButton: true });
+        expect(onResetToParty).toHaveBeenCalledWith({ zoneHrid: ZONE, tier: 2 });
+    });
+
+    test('a record with no combat zone falls back to the RUNNING combat action, not a queued one', async () => {
+        game.partyInfoSource = 'login';
+        game.actions = [
+            { actionHrid: '/actions/combat/queued_zone', difficultyTier: 4, isDone: false, ordinal: 2 },
+            { actionHrid: '/actions/combat/golem_cave', difficultyTier: 2, isDone: false, ordinal: 1 },
+        ];
+        const { editor, onResetToParty } = setup(partyInfo({ actionHrid: '' }));
+        await editor.resetToParty({ fromButton: true });
+        expect(onResetToParty).toHaveBeenCalledWith({ zoneHrid: '/actions/combat/golem_cave', tier: 2 });
+    });
+
+    test('not in a party: the zone is unchanged, with a note, even with a combat action running', async () => {
+        game.partyInfoSource = 'login';
+        game.actions = [{ actionHrid: ZONE, difficultyTier: 2, isDone: false, ordinal: 1 }];
+        const { el, editor, onResetToParty } = setup(null);
+        await editor.resetToParty({ fromButton: true });
         expect(onResetToParty).not.toHaveBeenCalled();
-        expect(el.textContent).toContain('Your party data is out of date');
+        expect(el.textContent).toContain('You are not in a party');
+    });
+
+    test('a fresh party_updated still wins over what the queue holds', async () => {
+        game.partyInfoSource = 'party';
+        game.actions = [{ actionHrid: '/actions/combat/swamp_planet', difficultyTier: 0, isDone: false, ordinal: 1 }];
+        const { editor, onResetToParty } = setup(partyInfo({ tier: 3 }));
+        await editor.resetToParty({ fromButton: true });
+        expect(onResetToParty).toHaveBeenCalledWith({ zoneHrid: ZONE, tier: 3 });
     });
 
     test('a fight roster naming you does not make a login-time record current', async () => {
