@@ -2306,3 +2306,51 @@ describe('Mirror owned inputs remain required while shopping', () => {
         }
     );
 });
+
+describe('a craft bill for several things at once (the dungeon key route)', () => {
+    const LOGS = '/items/cedar_lumber';
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        state.settingsEnabled = true;
+        state.calcCalls = [];
+        state.characterId = 'char1';
+        state.items = { [LOGS]: { name: 'Cedar Lumber', isTradable: true } };
+        buildMarketplaceDom();
+    });
+
+    afterEach(() => {
+        missingMaterials.cleanup?.();
+        vi.useRealTimers();
+        state.settingsEnabled = false;
+        state.inventory = [];
+        state.actionMaterials = [];
+        ledger.claims = {};
+    });
+
+    test("sums each action's Artisan-applied requirement and nets the stock held once", async () => {
+        // The calculator already applied Artisan per craft: 6 lumber for each action batch
+        state.actionMaterials = [{ itemHrid: LOGS, itemName: 'Cedar Lumber', required: 6, missing: 6 }];
+        state.inventory = [{ itemHrid: LOGS, enhancementLevel: 0, count: 5 }];
+
+        const opening = missingMaterials.openCraftBill([
+            { actionHrid: '/actions/crafting/entry_key', numActions: 3 },
+            { actionHrid: '/actions/crafting/chest_key', numActions: 2 },
+        ]);
+        await vi.advanceTimersByTimeAsync(600);
+        expect(await opening).toBe(true);
+
+        // Asked of the same calculator the panel button uses, once per action
+        expect(state.calcCalls.map((call) => [call[0], call[1]])).toEqual([
+            ['/actions/crafting/entry_key', 3],
+            ['/actions/crafting/chest_key', 2],
+        ]);
+        // 6 + 6 needed, 5 held: 7 missing (not 6 + 1, which netting per action would give)
+        expect(document.querySelector(`[data-item-hrid="${LOGS}"]`)?.getAttribute('data-missing-quantity')).toBe('7');
+    });
+
+    test('nothing to craft opens nothing', async () => {
+        expect(await missingMaterials.openCraftBill([{ actionHrid: '/actions/x', numActions: 0 }])).toBe(false);
+        expect(state.calcCalls).toHaveLength(0);
+    });
+});

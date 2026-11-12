@@ -166,6 +166,7 @@ import * as deferredLoad from '../utils/deferred-load.js';
 import * as dropSources from '../utils/drop-sources.js';
 import * as dungeonKeyForecast from '../utils/dungeon-key-forecast.js';
 import * as dungeonKeys from '../utils/dungeon-keys.js';
+import * as dungeonPartyKeys from '../utils/dungeon-party-keys.js';
 import * as dungeonChestLuck from '../utils/dungeon-chest-luck.js';
 import * as dungeonLevelGap from '../utils/dungeon-level-gap.js';
 import * as equipmentSavings from '../utils/equipment-savings.js';
@@ -348,6 +349,7 @@ toolashaRoot.Utils = {
     dropSources,
     dungeonKeyForecast,
     dungeonKeys,
+    dungeonPartyKeys,
     dungeonChestLuck,
     dungeonLevelGap,
     equipmentSavings,

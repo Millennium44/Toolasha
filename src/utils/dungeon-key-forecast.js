@@ -92,6 +92,8 @@ export function heldInInventory(items, itemHrid) {
  * @param {Object} [input.lootMap] - Raw player loot, including chests skipped from priced key rows
  * @param {number} [input.durationSeconds] - The session the breakdown covers
  * @param {number|null} [input.fallbackPrice] - Price when the breakdown has none
+ * @param {Object} [input.lootKeyTable] - Chest hrid to the key it implies; entry keys by default,
+ *   `DUNGEON_CHEST_CHEST_KEYS` for a chest key (regular and refinement chests both count)
  * @returns {Object} A breakdown-shaped entry for `forecast()`
  */
 export function keyConsumableEntry({
@@ -102,15 +104,14 @@ export function keyConsumableEntry({
     lootMap,
     durationSeconds,
     fallbackPrice = null,
+    lootKeyTable = DUNGEON_CHEST_ENTRY_KEYS,
 }) {
     const row = (keyBreakdown || []).find((entry) => entry?.itemHrid === itemHrid) || null;
 
     let rawCount = row?.count;
     let hasCount = row !== null;
     if (!row && lootMap && typeof lootMap === 'object') {
-        const matchingChests = Object.values(lootMap).filter(
-            (loot) => DUNGEON_CHEST_ENTRY_KEYS[loot?.itemHrid] === itemHrid
-        );
+        const matchingChests = Object.values(lootMap).filter((loot) => lootKeyTable[loot?.itemHrid] === itemHrid);
         if (
             matchingChests.length &&
             matchingChests.every(
