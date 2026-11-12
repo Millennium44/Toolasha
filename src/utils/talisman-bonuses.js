@@ -183,6 +183,55 @@ export function toSimTalismans(talismans) {
 }
 
 /**
+ * A sim player's talismans as text lines for display, scaled by the belt it wears: one entry per slotted
+ * talisman the belt has room for, each with `Name +value` lines. Empty off the test server and without a belt.
+ * @param {Array<Object>|null|undefined} talismans - `dto.talismans`
+ * @param {{itemHrid: string, enhancementLevel?: number}|null} belt
+ * @param {Object} itemDetailMap
+ * @param {Object} modifierDetailMap
+ * @param {number[]} [enhancementTable]
+ * @returns {Array<{slotIndex: number, lines: string[]}>}
+ */
+export function describeSimTalismans(talismans, belt, itemDetailMap, modifierDetailMap, enhancementTable) {
+    if (!isTestServer() || !belt?.itemHrid || !Array.isArray(talismans) || !modifierDetailMap) return [];
+    const slots = getBeltSlotCount(belt, itemDetailMap);
+    const power = getTalismanPower(belt, itemDetailMap, enhancementTable);
+    const out = [];
+    for (const talisman of [...talismans].sort((x, y) => (x?.slotIndex || 0) - (y?.slotIndex || 0))) {
+        const slot = talisman?.slotIndex;
+        if (!Number.isInteger(slot) || slot < 1 || slot > slots) continue;
+        const lines = [];
+        for (const modifier of talisman.modifiers || []) {
+            const scaled = scaleTalismanModifier(modifier, modifierDetailMap, power);
+            if (!scaled) continue;
+            const trim = (n) => String(Number(n.toFixed(2)));
+            const shown = scaled.detail.isPercent ? `${trim(scaled.value * 100)}%` : trim(scaled.value);
+            lines.push(`${scaled.detail.name} ${scaled.value > 0 ? '+' : ''}${shown}`);
+        }
+        out.push({ slotIndex: slot, lines });
+    }
+    return out;
+}
+
+/**
+ * The slotted talismans another player's shared data lists (`profile.slottedTalismans`, and the same field
+ * on a shared loadout): `[{talismanTypeHrid, modifiers:[{hrid, grade}], slotIndex 1..3}]`, no id, only slotted
+ * ones. Read defensively: a record that is not a slotted one with a usable line list is dropped.
+ * @param {*} list - The field as the wire sent it
+ * @returns {Array<{slotIndex: number, modifiers: Array<{hrid: string, grade: number}>}>|null} Null when the
+ *   field is absent or not a list (the sender said nothing), an array (possibly empty) when it is one
+ */
+export function sharedSlottedTalismans(list) {
+    if (!Array.isArray(list)) return null;
+    return toSimTalismans(
+        list.filter((t) => t && Number.isInteger(t.slotIndex) && t.slotIndex >= 1 && Array.isArray(t.modifiers))
+    ).map((t) => ({
+        ...t,
+        modifiers: t.modifiers.filter((m) => typeof m.hrid === 'string' && Number.isFinite(m.grade)),
+    }));
+}
+
+/**
  * A loadout's talisman bonuses: its own belt (from its saved equipment) and its own talismans.
  * @param {Object} params
  * @param {Object|null} params.talismanIdMap - The loadout's map

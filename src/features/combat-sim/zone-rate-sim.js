@@ -29,6 +29,7 @@ import {
 import { runSimulation } from './combat-sim-runner.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { characterKey } from '../../utils/character-key.js';
+import { resolveLoadoutTalismans } from '../../utils/talisman-bonuses.js';
 import { ZONE_SIM_RATES_KEY, loadoutSignature, saveZoneSimRate } from '../../utils/all-zones-snapshot.js';
 
 /** The length the queue's button asks for */
@@ -97,7 +98,8 @@ export async function prepareZoneRateRun(
             name: snapshot.name || null,
             signature: loadoutSignature(
                 snapshot,
-                typeof store?.resolveEquipment === 'function' ? store.resolveEquipment(snapshot) : snapshot.equipment
+                typeof store?.resolveEquipment === 'function' ? store.resolveEquipment(snapshot) : snapshot.equipment,
+                resolveLoadoutTalismans(snapshot.talismanIdMap, dataManager.getCharacterTalismans?.())
             ),
         };
     }

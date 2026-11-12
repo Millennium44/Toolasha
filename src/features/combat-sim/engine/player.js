@@ -4,6 +4,8 @@ import CombatUnit from './combat-unit.js';
 import Consumable from './consumable.js';
 import Equipment from './equipment.js';
 import HouseRoom from './house-room.js';
+import { computeTalismanCombat } from './talisman-combat.js';
+import { getGameData } from './game-data.js';
 
 /**
  * Every combat stat that comes from worn equipment.
@@ -11,6 +13,8 @@ import HouseRoom from './house-room.js';
  * Module scope because the list itself was being allocated on every call, and
  * the call happens on every fury stack change — which is most swings.
  */
+const BELT_TYPE = '/equipment_types/belt';
+
 const EQUIPMENT_STATS = [
     'stabAccuracy',
     'slashAccuracy',
@@ -84,7 +88,13 @@ const EQUIPMENT_STATS = [
     'retaliation',
     'maxHitpointsRatio',
     'maxManapointsRatio',
+    // A belt's own stats: the server lists them in combatStats
+    'talismanSlots',
+    'talismanPower',
 ];
+
+/** The stats a talisman line can feed: the gear stats, and damageTaken (kept apart, see CombatUnit) */
+export const TALISMAN_MODELED_STATS = new Set([...EQUIPMENT_STATS, 'damageTaken']);
 
 class Player extends CombatUnit {
     equipment = {
@@ -103,6 +113,18 @@ class Player extends CombatUnit {
         '/equipment_types/ring': null,
         '/equipment_types/charm': null,
     };
+
+    /**
+     * The talismans this player wears (unscaled `{slotIndex, modifiers}`), from the DTO. Their combat lines are
+     * scaled by the belt in `equipment` when the stats are built.
+     */
+    talismans = [];
+
+    /**
+     * The talisman-only mechanics (echo, smite, shatter, fortify, overkill) as scaled values. Carried for a later
+     * change; nothing in the fight reads them yet.
+     */
+    talismanMechanics = {};
 
     constructor() {
         super();
@@ -155,6 +177,8 @@ class Player extends CombatUnit {
             }
         });
 
+        player.talismans = Array.isArray(dto.talismans) ? dto.talismans : [];
+
         player.debuffOnLevelGap = dto.debuffOnLevelGap;
 
         return player;
@@ -183,6 +207,8 @@ class Player extends CombatUnit {
             const piece = this.equipment[slots[i]];
             signature += piece ? `${slots[i]}=${piece.hrid}+${piece.enhancementLevel || 0};` : `${slots[i]}=;`;
         }
+        // Talismans scale by the belt (already in the signature) and are applied only when the game data says so
+        signature += `|t=${getGameData()?.talismansEnabled ? JSON.stringify(this.talismans) : ''}`;
         if (this._equipmentStatsSignature === signature) return this._equipmentStatsCache;
 
         const pieces = [];
@@ -198,6 +224,18 @@ class Player extends CombatUnit {
             for (let j = 0; j < pieces.length; j++) total += pieces[j].getCombatStat(stat);
             stats[stat] = total;
         }
+
+        const talisman = computeTalismanCombat({
+            talismans: this.talismans,
+            belt: this.equipment[BELT_TYPE],
+            gameData: getGameData(),
+            modeledStats: TALISMAN_MODELED_STATS,
+        });
+        for (const stat of Object.keys(talisman.stats)) {
+            if (stat !== 'damageTaken') stats[stat] += talisman.stats[stat];
+        }
+        this.talismanDamageTaken = talisman.stats.damageTaken || 0;
+        this.talismanMechanics = talisman.mechanics;
 
         this._equipmentStatsSignature = signature;
         this._equipmentStatsCache = stats;

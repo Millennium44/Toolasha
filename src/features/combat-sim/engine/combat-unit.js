@@ -52,6 +52,8 @@ class CombatUnit {
      * @type {Map<string, number>|null}
      */
     taskMonsterKills = null;
+    /** The Damage Taken a unit's talismans give (negative is less damage taken); set by Player */
+    talismanDamageTaken = 0;
     isStunned = false;
     stunExpireTime = null;
     isBlinded = false;
@@ -343,7 +345,8 @@ class CombatUnit {
             this.combatDetails.rangedEvasionRating += baseRangedEvasion * boost.ratioBoost;
         }
 
-        this.combatDetails.combatStats.damageTaken = boostOf('/buff_types/damage_taken').flatBoost;
+        this.combatDetails.combatStats.damageTaken =
+            this.talismanDamageTaken + boostOf('/buff_types/damage_taken').flatBoost;
 
         this.combatDetails.magicAccuracyRating =
             (10 + this.combatDetails.attackLevel) *
@@ -671,7 +674,8 @@ class CombatUnit {
 
     clearCCs() {
         this.clearCCStatuses();
-        this.combatDetails.combatStats.damageTaken = 0;
+        // Back to what the unit's own talismans give: the curse's share goes with its buff
+        this.combatDetails.combatStats.damageTaken = this.talismanDamageTaken;
     }
 
     getBuffBoosts(type) {

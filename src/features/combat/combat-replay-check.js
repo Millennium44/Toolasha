@@ -396,6 +396,7 @@ const SNAPSHOT_FIELDS = [
     'guildCombatBuffs',
     'guildShrineLevels',
     'achievementCombatBuffs',
+    'talismans',
 ];
 
 /** The levels the combat engine reads. Skilling levels do not enter a fight. */
@@ -451,6 +452,8 @@ export function applyLoadoutSnapshot(dto, snapshot) {
     if (!snapshot) return dto;
 
     const merged = { ...dto, ...snapshot.levels };
+    // A snapshot describes a whole build: talismans it does not name were not worn, whatever is worn now
+    delete merged.talismans;
     for (const key of SNAPSHOT_FIELDS) {
         if (snapshot[key] !== undefined && snapshot[key] !== null) merged[key] = snapshot[key];
     }
