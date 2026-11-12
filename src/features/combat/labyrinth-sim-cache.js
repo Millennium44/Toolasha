@@ -489,7 +489,21 @@ export const simCacheMethods = {
                 parts.push(`${location}=${item.itemHrid}+${item.enhancementLevel || 0}`);
             }
         }
-        return `:worn=${parts.sort().join(',')}${this._fallbackAbilitiesPart()}`;
+        const talismans = this._liveTalismanLines();
+        return `:worn=${parts.sort().join(',')}${this._fallbackAbilitiesPart()}${talismans ? `:tl=${talismans}` : ''}`;
+    },
+
+    /**
+     * The talismans slotted right now, as the DTO builder reads them: slot, then each line's hrid and grade.
+     * A room that sims the worn kit keeps these (see buildLabyrinthPlayerDTO), and a reroll or a swap keeps the
+     * talisman's id, so nothing else names them. Empty off the test server, where none is ever slotted.
+     * @returns {string} '' or e.g. '1:/talisman_modifiers/armor@2+...;2:...'
+     */
+    _liveTalismanLines() {
+        const slotted = dataManager.getSlottedTalismans?.() || [];
+        return slotted
+            .map((t) => `${t.slotIndex}:${(t.modifiers || []).map((m) => `${m.hrid}@${m.grade}`).join('+')}`)
+            .join(';');
     },
 
     /**
