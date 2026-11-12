@@ -633,3 +633,139 @@ describe('a shortcut intent cannot outlive the action that made it', () => {
         }
     });
 });
+
+describe('a shortcut follows the item and the player it was pressed for', () => {
+    const showing = (iconName, level = 0) => {
+        document.querySelector('.MarketplacePanel_currentItem__x')?.remove();
+        const el = document.createElement('div');
+        el.className = 'MarketplacePanel_currentItem__x';
+        el.innerHTML =
+            `<svg><use href="/s.svg#${iconName}"></use></svg>` +
+            (level ? `<div class="Item_enhancementLevel__x">+${level}</div>` : '');
+        document.body.appendChild(el);
+    };
+    const buttons = () =>
+        `<div class="MarketplacePanel_actionButtonText__x">Sell</div>`.replace(
+            /^(.*)$/,
+            '<button class="b">$1</button>'
+        );
+    const modal = (title) => {
+        const el = document.createElement('div');
+        el.innerHTML = `
+            <div class="MarketplacePanel_header__x">${title}</div>
+            <div class="MarketplacePanel_quantityInputs__x"><input value="1" /></div>`;
+        document.body.appendChild(el);
+        return el;
+    };
+    const trusted = (type) => {
+        const event = new Event(type, { bubbles: true });
+        Object.defineProperty(event, 'isTrusted', { value: true });
+        return event;
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        marketplaceShortcuts.pendingIntent = null;
+    });
+    afterEach(() => vi.useRealTimers());
+
+    test('native navigation to another item revokes the opener, which presses nothing', async () => {
+        showing('a');
+        document.body.insertAdjacentHTML(
+            'beforeend',
+            `<div class="Item_amountInputContainer"><input value="500" /></div>`
+        );
+        const press = vi.fn();
+        document.body.insertAdjacentHTML('beforeend', buttons());
+        document.querySelector('.b').addEventListener('click', press);
+
+        const pending = marketplaceShortcuts.executeAction('sell', '/items/a', 0);
+        await vi.advanceTimersByTimeAsync(100);
+        showing('b'); // the player picks B by hand
+        await vi.advanceTimersByTimeAsync(400);
+        await pending;
+
+        expect(press).not.toHaveBeenCalled();
+        expect(marketplaceShortcuts.pendingQuantity).toBeNull();
+    });
+
+    test('a button is held while the page still shows the previous item, then pressed once it arrives', async () => {
+        showing('old');
+        document.body.insertAdjacentHTML('beforeend', buttons());
+        const press = vi.fn();
+        document.querySelector('.b').addEventListener('click', press);
+
+        const pending = marketplaceShortcuts.executeAction('sell', '/items/a', 0);
+        await vi.advanceTimersByTimeAsync(400);
+        expect(press).not.toHaveBeenCalled();
+        showing('a');
+        await vi.advanceTimersByTimeAsync(200);
+        await pending;
+        expect(press).toHaveBeenCalledTimes(1);
+    });
+
+    test('the same item at another enhancement level is another item', async () => {
+        showing('a', 3);
+        document.body.insertAdjacentHTML('beforeend', buttons());
+        const press = vi.fn();
+        document.querySelector('.b').addEventListener('click', press);
+
+        const pending = marketplaceShortcuts.executeAction('sell', '/items/a', 0);
+        await vi.advanceTimersByTimeAsync(7000);
+        await pending;
+        expect(press).not.toHaveBeenCalled();
+    });
+
+    test('a modal for the other side never consumes the quantity', () => {
+        marketplaceShortcuts.pendingQuantity = 500;
+        marketplaceShortcuts.pendingIntent = { itemHrid: '/items/a', enhancementLevel: 0, sell: true, seq: 1 };
+        const buy = modal('Buy Now');
+        marketplaceShortcuts.autofillQuantity(buy);
+        vi.advanceTimersByTime(200);
+        expect(buy.querySelector('input').value).toBe('1');
+        expect(marketplaceShortcuts.pendingQuantity).toBe(500);
+
+        const sell = modal('Sell Now');
+        marketplaceShortcuts.autofillQuantity(sell);
+        vi.advanceTimersByTime(200);
+        expect(sell.querySelector('input').value).toBe('500');
+    });
+
+    test('a modal while the page shows another item drops the quantity', () => {
+        showing('b');
+        marketplaceShortcuts.pendingQuantity = 500;
+        marketplaceShortcuts.pendingIntent = { itemHrid: '/items/a', enhancementLevel: 0, sell: true, seq: 1 };
+        const sell = modal('Sell Now');
+        marketplaceShortcuts.autofillQuantity(sell);
+        vi.advanceTimersByTime(200);
+        expect(sell.querySelector('input').value).toBe('1');
+        expect(marketplaceShortcuts.pendingQuantity).toBeNull();
+    });
+
+    test('a quantity the player types before the fill lands is kept', () => {
+        marketplaceShortcuts.pendingQuantity = 500;
+        const sell = modal('Sell Now');
+        marketplaceShortcuts.autofillQuantity(sell);
+        const input = sell.querySelector('input');
+        input.value = '7';
+        input.dispatchEvent(trusted('input'));
+        vi.advanceTimersByTime(200);
+        expect(input.value).toBe('7');
+    });
+
+    test('script-made input events do not stop the fill, and a closed modal is left alone', () => {
+        marketplaceShortcuts.pendingQuantity = 500;
+        const sell = modal('Sell Now');
+        marketplaceShortcuts.autofillQuantity(sell);
+        sell.querySelector('input').dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(200);
+        expect(sell.querySelector('input').value).toBe('500');
+
+        marketplaceShortcuts.pendingQuantity = 9;
+        const closing = modal('Sell Now');
+        marketplaceShortcuts.autofillQuantity(closing);
+        closing.remove();
+        vi.advanceTimersByTime(200);
+        expect(closing.querySelector('input').value).toBe('1');
+    });
+});

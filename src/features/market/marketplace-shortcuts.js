@@ -16,6 +16,8 @@ import { parseItemCount } from '../../utils/number-parser.js';
 import { GAME_COLORS } from '../../utils/game-look.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { isMobileMode } from '../../utils/mobile.js';
+import { itemHridFromIcon } from '../../utils/item-icon.js';
+import { GAME } from '../../utils/selectors.js';
 
 /** Native input value setter for triggering React state updates */
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -39,6 +41,7 @@ class MarketplaceShortcuts {
         // Owner of pendingQuantity: the executeAction call that set it. A newer call, a failed opener or the
         // post-click window running out clears it, so it cannot fill an unrelated later form.
         this.actionSeq = 0;
+        this.pendingIntent = null;
         this.addMode = false;
         this.lifecycleGeneration = 0;
     }
@@ -380,6 +383,19 @@ class MarketplaceShortcuts {
     }
 
     /**
+     * The item the marketplace is showing right now, read off the page.
+     * @returns {{itemHrid: string, enhancementLevel: number}|null} Null when the panel shows none (or none readable)
+     */
+    currentMarketItem() {
+        const element = document.querySelector(GAME.MARKETPLACE_CURRENT_ITEM);
+        if (!element) return null;
+        const itemHrid = itemHridFromIcon(element, dataManager.getInitClientData?.()?.itemDetailMap);
+        if (!itemHrid) return null;
+        const match = element.querySelector('[class*="Item_enhancementLevel"]')?.textContent.match(/\+(\d+)/);
+        return { itemHrid, enhancementLevel: match ? parseInt(match[1], 10) : 0 };
+    }
+
+    /**
      * Execute a marketplace action
      * @param {string} actionType - 'sell', 'buy', 'sell-listing', 'buy-listing'
      * @param {string} itemHrid - Item HRID
@@ -389,9 +405,27 @@ class MarketplaceShortcuts {
         const generation = this.lifecycleGeneration;
         const seq = ++this.actionSeq;
         // A newer shortcut press, or teardown, revokes this run's pending openers.
-        const isCancelled = () => generation !== this.lifecycleGeneration || seq !== this.actionSeq;
+        // The native marketplace can also move on without a shortcut press: once the page has shown the
+        // requested item, showing a different one means the player navigated, and this run is theirs no longer.
+        let reachedItem = false;
+        const showsRequested = (current) =>
+            current.itemHrid === itemHrid && current.enhancementLevel === (Number(enhancementLevel) || 0);
+        reachedItem = Boolean(this.currentMarketItem() && showsRequested(this.currentMarketItem()));
+        const isCancelled = () => {
+            if (generation !== this.lifecycleGeneration || seq !== this.actionSeq) return true;
+            const current = this.currentMarketItem();
+            if (current && showsRequested(current)) reachedItem = true;
+            return Boolean(reachedItem && current && !showsRequested(current));
+        };
+        // Never press a button while the page shows a different item than was asked for (it may not have
+        // caught up with the navigation yet). An unreadable page is no evidence either way.
+        const isReady = () => {
+            const current = this.currentMarketItem();
+            return !current || showsRequested(current);
+        };
         // Quantity left over from an earlier shortcut belongs to that shortcut, not this one.
         this.pendingQuantity = null;
+        this.pendingIntent = null;
 
         // Read quantity from item submenu input before navigating away
         const amountInput = document.querySelector('[class*="Item_amountInputContainer"] input');
@@ -416,27 +450,40 @@ class MarketplaceShortcuts {
             }
         }
 
+        // What the quantity belongs to; a modal for another item or the other side never consumes it
+        if (this.pendingQuantity) {
+            const sell = actionType === 'sell' || actionType === 'sell-listing';
+            this.pendingIntent = { itemHrid, enhancementLevel: Number(enhancementLevel) || 0, sell, seq };
+        }
+
         // Navigate to marketplace for this item
         navigateToMarketplace(itemHrid, enhancementLevel);
 
         // Wait for the marketplace panel to render
         await new Promise((r) => setTimeout(r, 300));
-        if (isCancelled()) return;
+        if (isCancelled()) {
+            // Cancelled by native navigation there is no newer shortcut to own the quantity; drop it
+            if (generation === this.lifecycleGeneration && seq === this.actionSeq) {
+                this.pendingQuantity = null;
+                this.pendingIntent = null;
+            }
+            return;
+        }
 
         let opened = false;
         try {
             switch (actionType) {
                 case 'sell':
-                    await this.clickInstantActionButton('Sell', 3000, isCancelled);
+                    await this.clickInstantActionButton('Sell', 3000, isCancelled, isReady);
                     break;
                 case 'buy':
-                    await this.clickInstantActionButton('Buy', 3000, isCancelled);
+                    await this.clickInstantActionButton('Buy', 3000, isCancelled, isReady);
                     break;
                 case 'sell-listing':
-                    await this.clickListingButton('+ New Sell Listing', 'Button_sell', 3000, isCancelled);
+                    await this.clickListingButton('+ New Sell Listing', 'Button_sell', 3000, isCancelled, isReady);
                     break;
                 case 'buy-listing':
-                    await this.clickListingButton('+ New Buy Listing', 'Button_buy', 3000, isCancelled);
+                    await this.clickListingButton('+ New Buy Listing', 'Button_buy', 3000, isCancelled, isReady);
                     break;
             }
             opened = true;
@@ -445,10 +492,10 @@ class MarketplaceShortcuts {
             if (!isCancelled()) {
                 try {
                     if (actionType === 'sell') {
-                        await this.clickListingButton('+ New Sell Listing', 'Button_sell', 3000, isCancelled);
+                        await this.clickListingButton('+ New Sell Listing', 'Button_sell', 3000, isCancelled, isReady);
                         opened = true;
                     } else if (actionType === 'buy') {
-                        await this.clickListingButton('+ New Buy Listing', 'Button_buy', 3000, isCancelled);
+                        await this.clickListingButton('+ New Buy Listing', 'Button_buy', 3000, isCancelled, isReady);
                         opened = true;
                     }
                 } catch {
@@ -459,12 +506,18 @@ class MarketplaceShortcuts {
 
         // Nothing opened: the stored quantity has no form to fill and must not wait for a later unrelated one.
         if (!opened) {
-            if (seq === this.actionSeq) this.pendingQuantity = null;
+            if (seq === this.actionSeq) {
+                this.pendingQuantity = null;
+                this.pendingIntent = null;
+            }
             return;
         }
         // Opened: the modal observer consumes the quantity within moments; if it never does, drop it.
         this.timerRegistry.scheduleTimeout(() => {
-            if (seq === this.actionSeq) this.pendingQuantity = null;
+            if (seq === this.actionSeq) {
+                this.pendingQuantity = null;
+                this.pendingIntent = null;
+            }
         }, 3000);
     }
 
@@ -474,9 +527,10 @@ class MarketplaceShortcuts {
      * @param {string} buttonText - 'Sell' or 'Buy'
      * @param {number} timeout - Max wait time in ms (default 3000)
      * @param {Function|null} isCancelled - Polled each tick; true stops the search without clicking
+     * @param {Function|null} isReady - Polled each tick; false holds the click (the page shows another item)
      * @returns {Promise<void>}
      */
-    async clickInstantActionButton(buttonText, timeout = 3000, isCancelled = null) {
+    async clickInstantActionButton(buttonText, timeout = 3000, isCancelled = null, isReady = null) {
         const start = Date.now();
 
         return new Promise((resolve, reject) => {
@@ -486,7 +540,10 @@ class MarketplaceShortcuts {
                     reject(new Error('Cancelled'));
                     return;
                 }
-                const actionTexts = document.querySelectorAll('[class*="MarketplacePanel_actionButtonText"]');
+                const actionTexts =
+                    isReady && !isReady()
+                        ? []
+                        : document.querySelectorAll('[class*="MarketplacePanel_actionButtonText"]');
                 for (const div of actionTexts) {
                     // Skip entries with SVGs (those are icon-only buttons)
                     if (!div.querySelector('svg') && div.textContent.trim() === buttonText) {
@@ -517,9 +574,10 @@ class MarketplaceShortcuts {
      * @param {string} partialClass - Partial CSS class to match (e.g. 'Button_sell')
      * @param {number} timeout - Max wait time in ms (default 3000)
      * @param {Function|null} isCancelled - Polled each tick; true stops the search without clicking
+     * @param {Function|null} isReady - Polled each tick; false holds the click (the page shows another item)
      * @returns {Promise<void>}
      */
-    async clickListingButton(buttonText, partialClass, timeout = 3000, isCancelled = null) {
+    async clickListingButton(buttonText, partialClass, timeout = 3000, isCancelled = null, isReady = null) {
         const start = Date.now();
 
         return new Promise((resolve, reject) => {
@@ -529,7 +587,7 @@ class MarketplaceShortcuts {
                     reject(new Error('Cancelled'));
                     return;
                 }
-                const candidates = document.querySelectorAll(`[class*="${partialClass}"]`);
+                const candidates = isReady && !isReady() ? [] : document.querySelectorAll(`[class*="${partialClass}"]`);
                 for (const btn of candidates) {
                     if (btn.textContent.trim() === buttonText) {
                         clearInterval(interval);
@@ -569,11 +627,39 @@ class MarketplaceShortcuts {
             headerText.includes('Sell Listing');
         if (!isMarketplaceModal) return;
 
+        // A quantity belongs to one shortcut: the other side's form, or another item's, is not its form
+        const intent = this.pendingIntent;
+        if (intent) {
+            const sellModal = headerText.includes('Sell');
+            if (sellModal !== intent.sell) return;
+            const current = this.currentMarketItem();
+            if (
+                current &&
+                (current.itemHrid !== intent.itemHrid || current.enhancementLevel !== intent.enhancementLevel)
+            ) {
+                this.pendingQuantity = null;
+                this.pendingIntent = null;
+                return;
+            }
+        }
+
         // Delay to run after auto-click-max which fires synchronously on modal appearance
         const qty = this.pendingQuantity;
         this.pendingQuantity = null;
+        this.pendingIntent = null;
+
+        // A value the player types before the fill lands is theirs; only real (trusted) input counts, the
+        // game's own and other scripts' synthetic events do not
+        let editedByPlayer = false;
+        const noteEdit = (event) => {
+            if (event.isTrusted) editedByPlayer = true;
+        };
+        modal.addEventListener('input', noteEdit, true);
+        const wasConnected = modal.isConnected;
 
         this.timerRegistry.scheduleTimeout(() => {
+            modal.removeEventListener('input', noteEdit, true);
+            if (editedByPlayer || (wasConnected && !modal.isConnected)) return;
             // Nothing is written when the field cannot be identified: the
             // alternative was the old positional guess, which in a woken sell
             // modal is the price field. An unfilled quantity costs the player a
@@ -1027,6 +1113,7 @@ class MarketplaceShortcuts {
 
         this.itemNameToHridCache = null;
         this.pendingQuantity = null;
+        this.pendingIntent = null;
         this.addMode = false;
         this.isInitialized = false;
     }
