@@ -2323,7 +2323,7 @@ describe('the panel', () => {
             expect(cards()).toHaveLength(8);
         });
 
-        test('a cheaper swap whose profit clears the noise stays on screen with its label, however it ranks', () => {
+        test('a labeled cheaper swap ranked below the top three of its slot folds even when its profit clears the noise', () => {
             const rows = [...'ABCDEFGH'].map((n) => lose(`Coffee ${n}`));
             rows[7] = swap('Defense Coffee', {
                 deltas: { dps: -17.4, profit: 2 },
@@ -2331,8 +2331,10 @@ describe('the panel', () => {
                 gain: 80_000,
             });
             draw(rows);
-            const text = drawn().find((t) => t.includes('Defense Coffee'));
-            expect(text).toContain('saves');
+            expect(drawn().some((t) => t.includes('Defense Coffee'))).toBe(false);
+            expect(toggles()[0].textContent).toBe('+5 more');
+            toggles()[0].click();
+            expect(drawn().find((t) => t.includes('Defense Coffee'))).toContain('saves');
         });
 
         test('the CSV exports every row, says which were folded and carries the cheaper-swap note', () => {

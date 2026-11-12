@@ -73,6 +73,7 @@ export function cheaperSwapTrade(row) {
  */
 export function clearsNoiseAsImprovement(row) {
     if (improvesBeyondNoise(row)) return true;
+    if (isCheaperSwap(row)) return false;
     return row?.significantBy?.profit === true && row.deltas?.profit > 0;
 }
 
