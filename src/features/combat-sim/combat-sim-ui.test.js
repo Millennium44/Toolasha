@@ -2339,10 +2339,10 @@ describe('the panel', () => {
 
         test('the CSV exports every row, says which were folded and carries the cheaper-swap note', () => {
             const rows = [...'ABCDEFGH'].map((n) => lose(`Coffee ${n}`));
-            // profit inside its error bar, so this cheaper swap folds like the others
+            // a cheaper swap: it folds like the other non-improvements
             rows[7] = swap('Defense Coffee', {
                 deltas: { dps: -17.4, profit: 2 },
-                sig: { dps: true },
+                sig: { dps: true, profit: true },
                 gain: 80_000,
             });
             const exported = [];

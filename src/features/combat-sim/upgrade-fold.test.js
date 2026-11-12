@@ -105,6 +105,29 @@ describe('clearsNoiseAsImprovement', () => {
     });
 });
 
+describe('rows without a verdict, and profit slivers', () => {
+    test('a cheaper swap needs its profit gain to clear the noise before it is labeled', () => {
+        const sliver = swap('Defense Coffee', { deltas: { dps: -17, profit: 0.2 }, sig: { dps: true }, gain: 900 });
+        expect(isCheaperSwap(sliver)).toBe(false);
+        const real = swap('Defense Coffee', {
+            deltas: { dps: -17, profit: 2 },
+            sig: { dps: true, profit: true },
+            gain: 9e4,
+        });
+        expect(isCheaperSwap(real)).toBe(true);
+    });
+
+    test('a row from a run before verdicts existed is never folded', () => {
+        const rows = Array.from({ length: 6 }, (_, i) => {
+            const r = swap(`Old ${i}`, { deltas: { dps: -10 } });
+            delete r.significantBy;
+            return r;
+        });
+        expect(clearsNoiseAsImprovement(rows[0])).toBe(true);
+        expect(planFold(rows).folded.size).toBe(0);
+    });
+});
+
 describe('planFold', () => {
     const slotRows = (slot, n) =>
         Array.from({ length: n }, (_, i) => swap(`S${slot}-${i}`, { slot, deltas: { dps: -10 }, sig: { dps: true } }));

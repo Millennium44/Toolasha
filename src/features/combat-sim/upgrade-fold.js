@@ -38,7 +38,7 @@ function improvesBeyondNoise(row) {
 
 /**
  * A drink swap that gains profit only because the new coffee is cheaper: it loses DPS or EXP beyond the noise,
- * gains profit, and improves nothing beyond the noise. It is a trade (power for gold), not an upgrade, so
+ * gains profit beyond the noise, and improves nothing beyond the noise. It is a trade (power for gold), not an upgrade, so
  * the Score does not rank it and the row says what it trades.
  * @param {Object} row - Result row
  * @returns {boolean}
@@ -49,6 +49,8 @@ export function isCheaperSwap(row) {
     const gain = row.economics?.profitGainPerHour;
     if (!Number.isFinite(gain) || gain <= 0) return false;
     const sig = row.significantBy;
+    // A within-noise profit sliver is not a saving to quote
+    if (sig.profit !== true) return false;
     const d = row.deltas;
     const loses = (sig.dps === true && d.dps < 0) || (sig.xp === true && d.xp < 0);
     return loses && !improvesBeyondNoise(row);
@@ -66,12 +68,14 @@ export function cheaperSwapTrade(row) {
 
 /**
  * Whether a row clears the noise as an improvement on any metric, so folding must never hide it. A cheaper
- * swap's profit gain counts here: it is not ranked by Score, but hiding a swap that really does earn more is
- * the worse failure, so it stays on screen with its label.
+ * swap's profit gain does not count (that is what makes it a labeled, unranked cheaper swap). A row with no
+ * `significantBy` (a remembered run from before verdicts existed) was never judged, so it counts: it is never
+ * folded.
  * @param {Object} row - Result row
  * @returns {boolean}
  */
 export function clearsNoiseAsImprovement(row) {
+    if (row && row.candidate && (!row.significantBy || !row.deltas)) return true;
     if (improvesBeyondNoise(row)) return true;
     if (isCheaperSwap(row)) return false;
     return row?.significantBy?.profit === true && row.deltas?.profit > 0;
