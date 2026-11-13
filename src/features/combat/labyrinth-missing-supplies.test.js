@@ -29,13 +29,19 @@ vi.mock('../../core/config.js', () => ({
     default: { getSetting: vi.fn(() => true), getSettingValue: (_key, fallback) => game.basis || fallback },
 }));
 vi.mock('../../core/storage.js', () => ({
-    default: { get: async (key, _store, fallback) => game.stored[key] ?? fallback },
+    default: {
+        get: async (key, _store, fallback) => game.stored[key] ?? fallback,
+        // Like the real tryGet: null when the read fails, {found, value} otherwise
+        tryGet: async (key) => {
+            if (game.targetReadFails) return null;
+            return key in game.stored ? { found: true, value: game.stored[key] } : { found: false, value: null };
+        },
+    },
 }));
 vi.mock('../../utils/character-key.js', () => ({
-    readScoped: async () => {
-        if (game.ledgerError) throw new Error('storage down');
-        return game.ledger;
-    },
+    readScoped: async () => game.ledger,
+    // Like the real readScopedChecked: a failed read is {ok: false}, never a throw or a default
+    readScopedChecked: async () => (game.ledgerError ? { ok: false, value: null } : { ok: true, value: game.ledger }),
 }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
@@ -88,6 +94,7 @@ describe('labyrinth missing supplies', () => {
         game.stored = {};
         game.ledger = [];
         game.ledgerError = false;
+        game.targetReadFails = false;
         game.characterId = 'char1';
         game.basis = 'measured';
         config.getSetting.mockReturnValue(true);
@@ -254,6 +261,20 @@ describe('labyrinth missing supplies', () => {
         await handleClick();
         expect(openShoppingList).not.toHaveBeenCalled();
         expect(showToast.mock.calls[0][0]).toMatch(/could not read/i);
+    });
+
+    test('a failed read of the run target says so instead of falling back to five runs', async () => {
+        game.stored = { consumablesLabRuns: 10 };
+        game.targetReadFails = true;
+        await handleClick();
+        expect(openShoppingList).not.toHaveBeenCalled();
+        expect(showToast.mock.calls[0][0]).toMatch(/could not read/i);
+    });
+
+    test('a target that was never saved uses the default of five runs', async () => {
+        game.targetReadFails = false;
+        await handleClick();
+        expect(showToast.mock.calls.some((c) => /could not read/i.test(c[0]))).toBe(false);
     });
 
     test('a character switch during the read drops the press', async () => {

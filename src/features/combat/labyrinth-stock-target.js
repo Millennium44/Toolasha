@@ -9,7 +9,7 @@
 
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
-import { readScoped } from '../../utils/character-key.js';
+import { readScopedChecked } from '../../utils/character-key.js';
 import { measuredRuns, observedUse } from './labyrinth-run-ledger-math.js';
 
 /** The client's base carry caps, standing in only until characterInfo states the real ones. */
@@ -64,12 +64,18 @@ export function labShortfall(perRun, runs, held) {
 /**
  * The stored stock target, read from storage exactly as the Consumables panel loads it, so it is
  * the same with the panel closed, or never opened.
- * Rejects when storage cannot be read: a caller must not turn that into a zero need.
+ * Rejects when storage cannot be read: `storage.get` and `readScoped` answer a failed read with their
+ * default, which would size the list to five runs or an empty ledger without a word, so the checked
+ * reads tell a failed read from a value that was never saved. A caller must not turn that into a list.
  * @returns {Promise<{runs: number, ledgerRuns: Array<Object>, basis: string}>}
  */
 export async function readLabStockTarget() {
-    const runs = Number(await storage.get('consumablesLabRuns', 'settings', DEFAULT_LAB_RUNS)) || DEFAULT_LAB_RUNS;
-    const ledger = await readScoped('labyrinthRunLedger', 'labyrinth', []);
+    const stored = await storage.tryGet('consumablesLabRuns', 'settings');
+    if (!stored) throw new Error('Could not read the Consumables run target');
+    const runs = (stored.found && Number(stored.value)) || DEFAULT_LAB_RUNS;
+    const read = await readScopedChecked('labyrinthRunLedger', 'labyrinth');
+    if (!read.ok) throw new Error('Could not read the labyrinth run ledger');
+    const ledger = read.value;
     const basis = config.getSettingValue('consumables_labPerRunBasis', 'measured') || 'measured';
     return { runs, ledgerRuns: Array.isArray(ledger) ? ledger : [], basis };
 }
