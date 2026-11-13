@@ -20,7 +20,7 @@
 import { MEASURED_ODDS, buildProblem, advise, gradeOdds, isFocusable, solveSteps } from './talisman-reroll-solver.js';
 
 /** Time one slice of a solve may take before the page gets a turn */
-const SLICE_MS = 12;
+const SLICE_MS = 8;
 
 /** The orb a cost is counted in: a full reroll at the top grade (Reforging), else the first full-reroll orb */
 const FULL_MODE = '/talisman_reroll_modes/full';

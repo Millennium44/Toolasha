@@ -97,6 +97,12 @@ export const MUTATION_STATE_LIMIT = 25000;
 /** The largest state space solved at the game's top grade; above it grades are clamped lower */
 export const CLAMP_STATE_LIMIT = 40000;
 
+/** Heap-loop work (edges relaxed) between yields: about a millisecond or two, so a slice stays short */
+const WORK_PER_SLICE = 8000;
+
+/** Per-state loops yield every 128 states: each state can cost a fixed-point solve, so 2048 ran to 100 ms or more */
+const STATE_YIELD_MASK = 127;
+
 function choose(n, k) {
     if (k < 0 || k > n) return 0;
     let result = 1;
@@ -563,6 +569,7 @@ export function* solveSteps(problem, options = {}) {
                 if (u < orb.minUnlocked) continue;
                 const members = stateMembers((s) => stLock[s] === lock);
                 if (members.length === 0) continue;
+                if (lock >= 0) yield;
                 const draws = drawLines(u, lockMask(lock), lockJunk(lock), { cap: orb.cap });
                 const id = addNode(
                     0,
@@ -575,7 +582,7 @@ export function* solveSteps(problem, options = {}) {
         } else if (orb.mode === MODES.typesOnly) {
             const groups = new Map();
             for (let s = 0; s < S; s++) {
-                if ((s & 2047) === 2047) yield;
+                if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
                 const u = stCodes[s].length;
                 if (u < orb.minUnlocked) continue;
                 const lock = stLock[s];
@@ -586,7 +593,9 @@ export function* solveSteps(problem, options = {}) {
                 if (!groups.has(key)) groups.set(key, { lock, grades, members: [] });
                 groups.get(key).members.push(s);
             }
+            let groupCount = 0;
             for (const { lock, grades, members } of groups.values()) {
+                if (++groupCount % 64 === 0) yield;
                 const draws = drawLines(grades.length, lockMask(lock), lockJunk(lock), { grades, focus: true });
                 const id = addNode(
                     0,
@@ -600,7 +609,7 @@ export function* solveSteps(problem, options = {}) {
             if (!useMutation) continue;
             const take = Math.max(1, orb.lineCount);
             for (let s = 0; s < S; s++) {
-                if ((s & 2047) === 2047) yield;
+                if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
                 const codes = stCodes[s];
                 const u = codes.length;
                 if (u < Math.max(orb.minUnlocked, take)) continue;
@@ -635,7 +644,7 @@ export function* solveSteps(problem, options = {}) {
             }
         } else if (orb.mode === MODES.permute) {
             for (let s = 0; s < S; s++) {
-                if ((s & 2047) === 2047) yield;
+                if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
                 const codes = stCodes[s];
                 if (codes.length < Math.max(2, orb.minUnlocked)) continue;
                 const labels = codes.map(labelOf);
@@ -653,7 +662,7 @@ export function* solveSteps(problem, options = {}) {
         } else if (orb.mode === MODES.gradeShift) {
             const same = Math.max(0, 1 - orb.down - orb.up);
             for (let s = 0; s < S; s++) {
-                if ((s & 2047) === 2047) yield;
+                if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
                 const codes = stCodes[s];
                 if (codes.length < orb.minUnlocked) continue;
                 let current = new Map([['', { codes: [], p: 1 }]]);
@@ -687,7 +696,7 @@ export function* solveSteps(problem, options = {}) {
     // Deterministic moves: lock a line (Binding Orb, replaces the old lock) and unlock (free)
     const predecessors = Array.from({ length: S }, () => []);
     for (let s = 0; s < S; s++) {
-        if ((s & 2047) === 2047) yield;
+        if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
         const codes = stCodes[s];
         const lock = stLock[s];
         if (binding) {
@@ -792,7 +801,7 @@ export function* solveSteps(problem, options = {}) {
             for (const s of node.members) if (!finalized[s]) finalize(s, value, 1, id - S);
         }
         step++;
-        if (work > 200000) {
+        if (work > WORK_PER_SLICE) {
             work = 0;
             yield;
         }
@@ -802,7 +811,7 @@ export function* solveSteps(problem, options = {}) {
     const rerollValue = new Float64Array(S).fill(Infinity);
     const groupValue = new Map();
     for (let s = 0; s < S; s++) {
-        if ((s & 2047) === 2047) yield;
+        if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
         if (stLock[s] < 0 || !Number.isFinite(V[s])) continue;
         let bestValue = Infinity;
         for (const id of groupOfState[s]) {
@@ -837,7 +846,7 @@ export function* solveSteps(problem, options = {}) {
     let i = 0;
     let sinceYield = 0;
     while (i < order.length) {
-        if (++sinceYield > 2000) {
+        if (++sinceYield > 200) {
             sinceYield = 0;
             yield;
         }
