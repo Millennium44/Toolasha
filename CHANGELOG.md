@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 The Solo gathering rows in an item tooltip now skip the market sell tax when "Exclude sell tax (producing for personal use)" is on, and show the same ⚠ marker as the skill-page tile.
 
+### Dungeon tracker notices a party switching dungeons
+
+When your party moves straight to a different dungeon, the run in progress now ends as a cancel instead of lingering; the tracker was reading a "Battle started" field the game never sends.
+
 ### Open in Optimizer from skill pages
 
 Gathering and production skill pages get an Open in Optimizer button (behind the ⋯ controls on phones, in the title bar on desktop) that opens the side panel on the Optimizer set to that skill and action.
