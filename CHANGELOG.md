@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Scroll chips and Scroll Planner offered once more
+
+If you have "Simulate missing scroll effects" or the Scroll Planner turned off, the update popup offers each one again, once, with its switch. Nothing is turned on for you.
+
 ### Labyrinth "Buy missing supplies" no longer makes the row taller
 
 The button now sits beside the Supplies label instead of on a line of its own, so the Labyrinth's bottom row keeps its normal height.
