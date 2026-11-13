@@ -753,13 +753,13 @@ export class TalismanRankingSectionBase {
             this._improve = null;
             this._renderImprove();
             this._orbs = makeOrbSolver(() => this._aborted || !current());
+            // Read now, with the controls the run reads before its first await: a later edit must not relabel it
+            const ref = solverOrbReference(this._orbs);
+            const started = this._budgetState(ref);
             const result = await this._runRanking(current, this._orbs);
             if (!current() || !result) return;
             if (result.setMode === 'budget') {
-                // What the field held, and the orb it was converted with (the run's own weights)
-                const ref = solverOrbReference(this._orbs);
-                const state = this._budgetState(ref);
-                result.budgetCoins = state.ok ? state.coins : typed.budgetCoins;
+                result.budgetCoins = started.ok ? started.coins : typed.budgetCoins;
                 result.budgetOrbName = ref?.name || 'Reforging Orb';
             }
             this._result = result;

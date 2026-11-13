@@ -253,6 +253,19 @@ describe('the budget field', () => {
         expect(q('stale').style.display).toBe('none');
     });
 
+    test('editing the budget while a run is in flight leaves the result labelled with the run-start budget', async () => {
+        pick('set-mode', 'budget');
+        type('15m');
+        const running = section._onRun();
+        type('6m');
+        await running;
+        expect(section._result.budget).toBeCloseTo(50, 6);
+        expect(section._result.budgetCoins).toBe(15e6);
+        expect(text()).toContain('Budget: 15m coins (≈50 orbs)');
+        // The field now differs from what was ranked, so the result is stale
+        expect(q('stale').style.display).toBe('block');
+    });
+
     test('the budget is not persisted: a new section starts at the default', () => {
         type('99m');
         mount();
