@@ -2710,6 +2710,7 @@ export const settingsGroups = {
                 label: 'Skilling Simulator/Optimizer: Talismans section (test server)',
                 type: 'checkbox',
                 default: true,
+                hidden: !isTestServer(),
                 help:
                     'Test server only. Adds a Talismans section to the Optimizer tab: ranks every skilling talisman ' +
                     'line for one of its actions (exact, from the profit and experience math), recommends a set ' +
@@ -3449,6 +3450,7 @@ export const settingsGroups = {
                 label: 'Combat Simulator: Talisman lines ranking (test server)',
                 type: 'checkbox',
                 default: true,
+                hidden: !isTestServer(),
                 help:
                     'Test server only. Adds a Talisman lines section to the Upgrade tab: ranks every combat talisman ' +
                     'line by what it adds to your build (by sim in the chosen zone) and recommends a set (Practical, ' +
@@ -3460,6 +3462,7 @@ export const settingsGroups = {
                 label: 'Combat Simulator: Talisman lines Balanced weight, EXP/hr',
                 type: 'number',
                 default: 1,
+                hidden: !isTestServer(),
                 min: 0,
                 help: 'How much the EXP/hr % gain counts in the Talisman lines "Balanced" ranking.',
             },
@@ -3468,6 +3471,7 @@ export const settingsGroups = {
                 label: 'Combat Simulator: Talisman lines Balanced weight, Profit/hr',
                 type: 'number',
                 default: 1,
+                hidden: !isTestServer(),
                 min: 0,
                 help: 'How much the Profit/hr % gain counts in the Talisman lines "Balanced" ranking.',
             },
@@ -3476,6 +3480,7 @@ export const settingsGroups = {
                 label: 'Combat Simulator: Talisman lines Balanced weight, DPS',
                 type: 'number',
                 default: 1,
+                hidden: !isTestServer(),
                 min: 0,
                 help: 'How much the DPS % gain counts in the Talisman lines "Balanced" ranking.',
             },

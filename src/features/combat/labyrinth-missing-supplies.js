@@ -1,7 +1,7 @@
 /**
  * Labyrinth Missing Supplies Button
  *
- * Adds a button next to the Labyrinth entry screen's "Supplies" label that opens the marketplace
+ * Replaces the Labyrinth entry screen's "Supplies" label with a button that opens the marketplace
  * on whatever Torch/Shroud/Beacon is short of its carry cap, quantities already filled in.
  *
  * The fork already restocked labyrinth supplies from the Consumables panel (its Labyrinth block's
@@ -101,16 +101,20 @@ export function handleClick() {
     openShoppingList(missing, { heading: 'Lab supplies' });
 }
 
+const HIDDEN_LABEL_ATTR = 'data-mwi-lab-supplies-label-hidden';
+
 function createButton() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = BUTTON_CLASS;
-    button.textContent = 'Buy missing supplies';
+    button.textContent = 'Buy supplies';
     button.title = 'Open the marketplace on whichever supplies are short of your carry cap';
+    // Sits where the game's "Supplies" heading was and keeps its line: the font and line height come from the
+    // heading's own class on the wrapper, and an inset shadow instead of a border adds no height
     button.style.cssText =
-        'margin: 0 0 0 8px; padding: 0 8px; line-height: 14px; vertical-align: top; ' +
-        'background: rgba(91, 141, 239, 0.15); color: #ffffff; border: 1px solid rgba(91, 141, 239, 0.4); ' +
-        'border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 600;';
+        'margin: 0; padding: 0 10px; font: inherit; line-height: inherit; color: #ffffff; ' +
+        'background: rgba(91, 141, 239, 0.15); border: none; box-shadow: inset 0 0 0 1px rgba(91, 141, 239, 0.5); ' +
+        'border-radius: 6px; cursor: pointer;';
     button.addEventListener('click', () => {
         try {
             handleClick();
@@ -122,9 +126,10 @@ function createButton() {
 }
 
 /**
- * Inject the button inline at the end of the "Supplies" label, once per rendered panel instance. On a line of its
- * own it made the supplies column taller than the floor column beside it, and the whole bottom row grew. It hangs
- * from a zero-width holder, so the centered label text stays centered over the supplies.
+ * Replace the "Supplies" heading with the button, once per rendered panel instance. Beside the heading it made the
+ * row taller (on its own line) or ran into the floor column (on a phone's narrow supplies column); in the heading's
+ * place it keeps the row's height and is centered at any width. The game's heading is hidden, not removed, so
+ * React still owns it, and `disable()` shows it again.
  * @param {Element} grid - The LabyrinthPanel_suppliesGrid element
  */
 export function injectButton(grid) {
@@ -132,10 +137,13 @@ export function injectButton(grid) {
     if (!wrapper || wrapper.querySelector(`.${BUTTON_CLASS}`)) return;
     const label = wrapper.querySelector('[class*="LabyrinthPanel_label"]');
     if (!label) return;
-    const holder = document.createElement('span');
-    holder.style.cssText = 'display: inline-block; width: 0; white-space: nowrap; vertical-align: top;';
+    const holder = document.createElement('div');
+    // The heading's own class: same font, margins and centering as the line it replaces
+    holder.className = label.className;
     holder.appendChild(createButton());
-    label.appendChild(holder);
+    label.setAttribute(HIDDEN_LABEL_ATTR, '');
+    label.style.display = 'none';
+    label.insertAdjacentElement('afterend', holder);
 }
 
 let unregister = null;
@@ -152,7 +160,11 @@ export function initialize() {
 export function disable() {
     unregister?.();
     unregister = null;
-    document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((el) => el.remove());
+    document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((el) => el.parentElement?.remove());
+    document.querySelectorAll(`[${HIDDEN_LABEL_ATTR}]`).forEach((label) => {
+        label.style.display = '';
+        label.removeAttribute(HIDDEN_LABEL_ATTR);
+    });
 }
 
 export default { name: 'Labyrinth Missing Supplies Button', initialize, disable };

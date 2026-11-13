@@ -122,14 +122,20 @@ describe('labyrinth missing supplies', () => {
         expect(calculateMissingSupplies()).toEqual([]);
     });
 
-    test('injectButton puts one button inline in the Supplies label, not on a row of its own', () => {
+    test('injectButton puts one button in place of the Supplies label, with the label hidden, not removed', () => {
         const { wrapper, label, grid } = makeSuppliesBlock();
         injectButton(grid);
         injectButton(grid);
         const buttons = wrapper.querySelectorAll('button');
         expect(buttons).toHaveLength(1);
-        expect(label.contains(buttons[0])).toBe(true);
-        expect(label.nextElementSibling).toBe(grid);
+        expect(buttons[0].textContent).toBe('Buy supplies');
+        // The button's line takes the heading's own class, sits where it was, and the heading stays in the DOM
+        const holder = buttons[0].parentElement;
+        expect(holder.className).toBe(label.className);
+        expect(label.nextElementSibling).toBe(holder);
+        expect(holder.nextElementSibling).toBe(grid);
+        expect(label.isConnected).toBe(true);
+        expect(label.style.display).toBe('none');
     });
 
     test('pressing the button hands the live shortfall to the shopping list', () => {
@@ -174,6 +180,11 @@ describe('labyrinth missing supplies', () => {
         feature.disable();
         expect(game.unregister).toHaveBeenCalled();
         expect(document.querySelectorAll('button')).toHaveLength(0);
+        // Every hidden heading shows again, and no empty holder is left behind
+        for (const label of document.querySelectorAll('[class*="LabyrinthPanel_label"]')) {
+            expect(label.style.display).toBe('');
+        }
+        expect(document.querySelectorAll('[class*="LabyrinthPanel_label"]')).toHaveLength(2);
     });
 
     test('does nothing when the setting is off', () => {
