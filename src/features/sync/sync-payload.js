@@ -1599,14 +1599,28 @@ const MIGRATION_RECORD_PREFIX = 'settings_key_migrations_';
  * @returns {Promise<boolean>} Whether every record is back
  */
 async function restoreMigrationRecords(records) {
-    const wanted = records ? Object.keys(records).length : 0;
+    if (!records || Object.keys(records).length === 0) return true;
+    // Only the records that are gone now: the pull's own reconcile cleared those. One still stored is either
+    // unchanged or newer — a session that took over, or another tab, wrote it since it was read — and putting the
+    // copy read before the pull back over it would undo that. A batch read that fails puts all of them back,
+    // as before: a record restored over its own value is a no-op, one left forgotten re-runs migrations
+    let current = null;
+    try {
+        current = await storage.tryGetMany(Object.keys(records), SETTINGS_STORE);
+    } catch (error) {
+        console.warn('[Sync] Could not read the settings migration records back before restoring them:', error);
+    }
+    const missing = current
+        ? Object.fromEntries(Object.entries(records).filter(([key]) => !current.get(key)?.found))
+        : records;
+    const wanted = Object.keys(missing).length;
     if (wanted === 0) return true;
     // putAll reports a failed transaction as a short count, not a throw; one retry covers a
     // transient abort, and a second short write is said plainly because the next load would
     // re-run those migrations over the player's settings
     for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-            const written = await storage.putAll(SETTINGS_STORE, records, { bypassRestoreLatch: true });
+            const written = await storage.putAll(SETTINGS_STORE, missing, { bypassRestoreLatch: true });
             if (written === wanted) return true;
         } catch (error) {
             console.error('[Sync] Could not put the settings migration records back after a failed pull:', error);
@@ -1615,7 +1629,7 @@ async function restoreMigrationRecords(records) {
     console.error(
         '[Sync] The settings migration records could not be restored after a failed pull; the next load may ' +
             're-run settings migrations. Keys:',
-        Object.keys(records)
+        Object.keys(missing)
     );
     return false;
 }

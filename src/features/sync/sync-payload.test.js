@@ -3620,3 +3620,63 @@ describe('a pull taken over before its import writes nothing (#960)', () => {
         expect(importedPayloads[0].stores.dungeonRuns.run1).toEqual({ kills: 9 });
     });
 });
+
+describe('only the key-migration records the pull cleared are put back', () => {
+    const CLEARED = 'settings_key_migrations_applied_script_settingsMap_abc';
+    const REWRITTEN = 'settings_key_migrations_applied_script_settingsMap_def';
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
+
+    test('a record a newer session wrote while the pull ran is not rolled back', async () => {
+        storeState.stores.settings[CLEARED] = ['old-a'];
+        storeState.stores.settings[REWRITTEN] = ['old-d'];
+        reconcileKeyMigrationState.mockImplementationOnce(async () => {
+            delete storeState.stores.settings[CLEARED];
+        });
+        let owned = true;
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: (local, incoming) => {
+                // The session that takes over saves a newer record for another map, then owns the operation
+                storeState.stores.settings[REWRITTEN] = ['old-d', 'new-d'];
+                owned = false;
+                return [...local, ...incoming];
+            },
+            label: 'fake',
+        });
+        storeState.stores.dungeonRuns = { run_char: ['local'] };
+
+        try {
+            const result = await applyPayload(
+                payloadOf({
+                    settings: { script_settingsMap_abc: { chatCommands: { isTrue: false } } },
+                    dungeonRuns: { run_char: ['remote'] },
+                }),
+                { mode: 'merge', canContinue: () => owned }
+            );
+            expect(result).toEqual({ superseded: true });
+        } finally {
+            off();
+        }
+
+        expect(storeState.stores.settings[CLEARED]).toEqual(['old-a']);
+        expect(storeState.stores.settings[REWRITTEN]).toEqual(['old-d', 'new-d']);
+    });
+
+    test('the same holds when the import throws', async () => {
+        storeState.stores.settings[CLEARED] = ['old-a'];
+        storeState.stores.settings[REWRITTEN] = ['old-d'];
+        reconcileKeyMigrationState.mockImplementationOnce(async () => {
+            delete storeState.stores.settings[CLEARED];
+            storeState.stores.settings[REWRITTEN] = ['old-d', 'new-d'];
+        });
+        importOutcome.throws = new Error('listStores failed');
+
+        await expect(
+            applyPayload(payloadOf({ settings: { script_settingsMap_abc: { chatCommands: { isTrue: false } } } }))
+        ).rejects.toThrow('listStores failed');
+
+        expect(storeState.stores.settings[CLEARED]).toEqual(['old-a']);
+        expect(storeState.stores.settings[REWRITTEN]).toEqual(['old-d', 'new-d']);
+    });
+});
