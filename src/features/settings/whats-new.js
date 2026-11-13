@@ -294,7 +294,7 @@ function changelogPage(parsed, page, pageSize) {
 /**
  * What switching a re-offered setting on does for this particular player, when that depends on
  * saved state. Without it the popup could say "nothing changes" to someone it changes things for.
- * @param {string} id - A setting on `REOFFERED_SETTINGS`
+ * @param {string} id - The setting id of an entry on `REOFFERED_SETTINGS`
  * @returns {string|null}
  */
 function reofferDetail(id) {
@@ -927,7 +927,8 @@ class WhatsNew {
         // and riding the 3-second write debounce held the whole start for it
         await storage.setJSON(
             this._stateKey(),
-            // `offeredIds`: the re-offered settings already shown (see REOFFERED_SETTINGS). An older build
+            // `offeredIds`: the re-offered settings already shown, as keys: a plain id (round 1) or `id#N`
+            // (round N; see REOFFERED_SETTINGS). An older build
             // reads only the identity and `knownIds` and ignores it; one that rewrites the record drops
             // it, which at worst offers a setting that is still off once more.
             { ...identity, knownIds: schemaIds, offeredIds, seenAt: Date.now() },
