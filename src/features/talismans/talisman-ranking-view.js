@@ -76,7 +76,7 @@ const TIP_GRADE = 'The grade each line is measured at. Other grades are shown fr
 const SET_MODE_HELP = {
     practical:
         'At most one Special line (Echo, Fortify, Overkill, Shatter, Smite) per talisman, and grades no higher than Cap.',
-    ideal: 'The measured grade for every line, with no limit on Special lines. Shows what the best case is worth, not what is cheap to roll.',
+    ideal: 'The measured grade for every line, with no limit on how many different Special lines (a second copy of the same Special adds nothing, measured). Shows what the best case is worth, not what is cheap to roll.',
     budget: 'The most valuable set whose expected orb cost per talisman fits your budget (grades no higher than Cap, at most one Special per talisman).',
 };
 const TIP_SET = 'Which kind of set to recommend. Hover an option for what it does.';
@@ -1045,7 +1045,7 @@ export class TalismanRankingSectionBase {
                         : '#aaa';
                 const marks = [
                     row.special
-                        ? '<span title="Special line: a Practical set holds at most one per talisman" style="color:#c084fc;">◆</span>'
+                        ? '<span title="Special line: a Practical set holds at most one per talisman, and a second copy of the same Special adds nothing (measured)" style="color:#c084fc;">◆</span>'
                         : '',
                     !exact && row.nonlinear
                         ? '<span title="Not linear in its value: the scaled grades are rough" style="color:#888;">~</span>'
@@ -1176,7 +1176,7 @@ export class TalismanRankingSectionBase {
             result.setMode === 'budget'
                 ? `Budget: ${budgetText(result)} per talisman, grades up to G${result.setGrade}, at most one Special per talisman`
                 : result.setMode === 'ideal'
-                  ? `Ideal: G${result.grade}, no limit on Special lines`
+                  ? `Ideal: G${result.grade}, no limit on different Special lines`
                   : `Practical: grades capped at G${result.setGrade}, at most one Special per talisman`;
         const orbNotes = set.talismans.some((t) => t.cost) ? [orbScaleNote(this._orbs), coresNote()] : [];
         return (
