@@ -8,6 +8,8 @@ import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import { getItemPrice, getItemPriceInfo, getItemPrices, getModeBookSellPrice } from './market-data.js';
 import { isPatientTickOn, patientTickPrice } from './patient-tick.js';
+import { isTesterShopEntry } from './shop-index.js';
+import { testerShopEnabled } from './tester-shop.js';
 
 /** Essence a dungeon token falls back to when its shop prices nothing. */
 const TOKEN_ESSENCE_MAP = {
@@ -179,7 +181,8 @@ const NO_LINES = Object.freeze([]);
 
 /**
  * @typedef {Object} ShopLineIndex
- * @property {Map<string, Object>} firstByItem - itemHrid → the first line selling it
+ * @property {Map<string, Object>} firstByItem - itemHrid → the first line selling it (the test server's Tester tab excluded)
+ * @property {Map<string, Object>} testerFirstByItem - itemHrid → the first Tester-tab line selling it
  * @property {Map<string, Object[]>} byCurrency - currency → lines with it among their costs, in map order
  * @property {Map<string, Object[]>} singleCurrency - currency → lines paid for with it alone, in map order
  */
@@ -195,11 +198,24 @@ const lineIndexes = new WeakMap();
  */
 function indexFor(shopMap) {
     if (!shopMap || typeof shopMap !== 'object')
-        return { firstByItem: new Map(), byCurrency: new Map(), singleCurrency: new Map() };
+        return {
+            firstByItem: new Map(),
+            testerFirstByItem: new Map(),
+            byCurrency: new Map(),
+            singleCurrency: new Map(),
+        };
     let index = lineIndexes.get(shopMap);
     if (index) return index;
-    index = { firstByItem: new Map(), byCurrency: new Map(), singleCurrency: new Map() };
-    for (const line of Object.values(shopMap)) {
+    index = { firstByItem: new Map(), testerFirstByItem: new Map(), byCurrency: new Map(), singleCurrency: new Map() };
+    for (const [key, line] of Object.entries(shopMap)) {
+        // The test server's Tester tab sells things at flat coin prices that no market ever offered; it
+        // prices an item only when the player has asked for it (see tester-shop.js), so it is kept apart
+        if (isTesterShopEntry(line, key)) {
+            if (line?.itemHrid && !index.testerFirstByItem.has(line.itemHrid)) {
+                index.testerFirstByItem.set(line.itemHrid, line);
+            }
+            continue;
+        }
         if (line?.itemHrid && !index.firstByItem.has(line.itemHrid)) index.firstByItem.set(line.itemHrid, line);
         const costs = shopCosts(line);
         const seen = new Set();
@@ -232,7 +248,8 @@ function firstLineSelling(shopMap, itemHrid) {
     if (!shopMap) return undefined;
     // Only a real item name is indexed; anything else keeps the plain scan
     if (!itemHrid) return Object.values(shopMap).find((entry) => entry?.itemHrid === itemHrid);
-    return indexFor(shopMap).firstByItem.get(itemHrid);
+    const index = indexFor(shopMap);
+    return index.firstByItem.get(itemHrid) ?? (testerShopEnabled() ? index.testerFirstByItem.get(itemHrid) : undefined);
 }
 
 /**

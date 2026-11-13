@@ -1782,3 +1782,30 @@ test('a queued save stays with its departing character after load handles are re
     expect(store.collections.favorites_iron456).toBeUndefined();
     expect(store.collections.favorites_market123).toEqual({ milk: true, log: true });
 });
+
+test('an item two gathering actions drop is credited to the action that yields the most of it', () => {
+    // The level-100 action lists first (the survey's key order) and drops Holy Milk once per roll
+    mockDataManager.clientData = {
+        actionDetailMap: {
+            '/actions/milking/eternal_holy_cow': {
+                baseTimeCost: 45e9,
+                levelRequirement: { level: 100 },
+                dropTable: [
+                    { itemHrid: '/items/holy_milk', dropRate: 1, minCount: 1, maxCount: 1 },
+                    { itemHrid: '/items/eternal_milk', dropRate: 0.1, minCount: 1, maxCount: 1 },
+                ],
+            },
+            '/actions/milking/holy_cow': {
+                baseTimeCost: 30e9,
+                levelRequirement: { level: 80 },
+                dropTable: [{ itemHrid: '/items/holy_milk', dropRate: 1, minCount: 1, maxCount: 3 }],
+            },
+        },
+    };
+
+    collectionFilters._buildItemActionCache();
+
+    expect(collectionFilters.itemActionCache.holy_milk.actionDetails.levelRequirement.level).toBe(80);
+    // An item only one action drops is unaffected
+    expect(collectionFilters.itemActionCache.eternal_milk.actionDetails.levelRequirement.level).toBe(100);
+});

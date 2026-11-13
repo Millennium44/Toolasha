@@ -5,6 +5,7 @@
 
 import dataManager from '../core/data-manager.js';
 import { openAlchemyOnItem } from './alchemy-navigation.js';
+import { isBetterGatheringSource } from './gathering-source.js';
 
 /**
  * Open the Alchemy panel with one item already selected, through the game's own item-menu handler
@@ -83,7 +84,16 @@ export function findActionForItem(itemHrid) {
     }
     if (gatheringMatches.length > 0) {
         const exact = gatheringMatches.find((a) => a.split('/').pop() === itemSlug);
-        return { actionHrid: exact || gatheringMatches[0], type: 'gathering' };
+        // Otherwise the action that yields the most of it, not whichever the map lists first
+        let best = gatheringMatches[0];
+        for (const candidate of gatheringMatches) {
+            if (
+                isBetterGatheringSource(gameData.actionDetailMap[best], gameData.actionDetailMap[candidate], itemHrid)
+            ) {
+                best = candidate;
+            }
+        }
+        return { actionHrid: exact || best, type: 'gathering' };
     }
 
     return null;

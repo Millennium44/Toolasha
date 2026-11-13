@@ -16,6 +16,7 @@ import { formatRelativeTime } from '../../utils/formatters.js';
 import { characterKey } from '../../utils/character-key.js';
 import { createCuratedRecord } from '../../utils/persisted-record.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
+import { isBetterGatheringSource } from '../../utils/gathering-source.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1424,7 +1425,16 @@ class CollectionFilters {
             if (actionDetails.dropTable?.length) {
                 for (const drop of actionDetails.dropTable) {
                     const itemId = drop.itemHrid?.split('/').pop();
-                    if (itemId && !(itemId in this.itemActionCache)) {
+                    // Gathering is first-come against production, but between gathering actions the one
+                    // yielding the most wins: a higher-tier action that drops a lower tier's item as a side
+                    // product must not stand in for the action that item is really gathered from
+                    const held = this.itemActionCache[itemId];
+                    if (
+                        itemId &&
+                        (!held ||
+                            (held.source === 'dropTable' &&
+                                isBetterGatheringSource(held.actionDetails, actionDetails, drop.itemHrid)))
+                    ) {
                         this.itemActionCache[itemId] = {
                             actionDetails,
                             outputIndex: actionDetails.dropTable.indexOf(drop),

@@ -585,7 +585,7 @@ class ProfitCalculator {
                     amount: reducedAmount,
                     askPrice: resolved.price ?? 0,
                     totalCost: (resolved.price ?? 0) * reducedAmount,
-                    missingPrice: resolved.missing,
+                    missingPrice: Boolean(resolved.missing) || Boolean(resolved.partial),
                     estimatedPrice: Boolean(resolved.estimated),
                     customPrice: resolved.custom,
                     isUpgradeItem: true,
@@ -623,7 +623,7 @@ class ProfitCalculator {
                     amount: reducedAmount,
                     askPrice: resolved.price ?? 0,
                     totalCost: (resolved.price ?? 0) * reducedAmount,
-                    missingPrice: resolved.missing,
+                    missingPrice: Boolean(resolved.missing) || Boolean(resolved.partial),
                     estimatedPrice: Boolean(resolved.estimated),
                     customPrice: resolved.custom,
                 });

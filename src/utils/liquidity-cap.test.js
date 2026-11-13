@@ -444,6 +444,48 @@ describe('prefetchLiquidity', () => {
     });
 });
 
+describe('sellsFromProfitData — bonus drops repeat with efficiency', () => {
+    test('a gathering rare find is counted per efficiency-boosted action, like the outputs beside it', () => {
+        const sells = sellsFromProfitData({
+            efficiencyMultiplier: 1.5,
+            baseOutputs: [{ itemHrid: '/items/eternal_milk', name: 'Eternal Milk', itemsPerHour: 30 }],
+            // Per base action, as the bonus-revenue calculator reports it
+            bonusRevenue: {
+                bonusDrops: [{ itemHrid: '/items/eternal_milk', itemName: 'Eternal Milk', dropsPerHour: 10 }],
+            },
+        });
+
+        expect(sells).toEqual([{ itemHrid: '/items/eternal_milk', name: 'Eternal Milk', unitsPerHour: 45 }]);
+    });
+});
+
+describe('sellsFromProfitData — bonus drops by shape', () => {
+    const bonus = { bonusDrops: [{ itemHrid: '/items/essence', itemName: 'Essence', dropsPerHour: 10 }] };
+
+    test('production: per efficiency-boosted action too', () => {
+        const sells = sellsFromProfitData({
+            itemHrid: '/items/cheese',
+            itemName: 'Cheese',
+            itemsPerHour: 100,
+            efficiencyMultiplier: 1.5,
+            bonusRevenue: bonus,
+        });
+
+        expect(sells.find((sold) => sold.itemHrid === '/items/essence').unitsPerHour).toBe(15);
+    });
+
+    test('alchemy (drop revenues) is left as it reports, whatever else the result carries', () => {
+        const sells = sellsFromProfitData({
+            itemHrid: '/items/mystery',
+            efficiencyMultiplier: 1.5,
+            dropRevenues: [{ itemHrid: '/items/gem', itemName: 'Gem', dropsPerHour: 4 }],
+            bonusRevenue: bonus,
+        });
+
+        expect(sells.find((sold) => sold.itemHrid === '/items/essence').unitsPerHour).toBe(10);
+    });
+});
+
 describe('sellsFromProfitData — the three calculator shapes', () => {
     test('gathering: the drop table plus bonus drops, aggregated per item', () => {
         const sells = sellsFromProfitData({

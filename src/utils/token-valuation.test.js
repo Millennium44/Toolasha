@@ -1,10 +1,18 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ initClientData: null, settings: {}, prices: {}, sources: {}, profitSellSide: 'bid' }));
+const game = vi.hoisted(() => ({
+    initClientData: null,
+    settings: {},
+    prices: {},
+    sources: {},
+    profitSellSide: 'bid',
+    testerShop: false,
+}));
 
 vi.mock('../core/data-manager.js', () => ({
     default: { getInitClientData: () => game.initClientData },
 }));
+vi.mock('./tester-shop.js', () => ({ testerShopEnabled: () => game.testerShop === true }));
 vi.mock('../core/config.js', () => ({
     default: { getSettingValue: (key, fallback) => game.settings[key] ?? fallback },
 }));
@@ -444,5 +452,44 @@ describe('shop line indexes', () => {
         const scans = spy.mock.calls.filter((c) => c[0] === shop).length;
         spy.mockRestore();
         expect(scans).toBe(0);
+    });
+});
+
+describe('shopPurchasePrice and the Tester tab', () => {
+    // The test server's Tester tab sells unlisted gear (talisman belts) for flat coins. That is not a
+    // price anyone can buy at on the market, so it must not stand in as an acquisition cost
+    const tester = {
+        '/shop_items/test/small_talisman_belt': {
+            hrid: '/shop_items/test/small_talisman_belt',
+            category: '/shop_categories/tester',
+            itemHrid: '/items/small_talisman_belt',
+            costs: [{ itemHrid: '/items/coin', count: 1_000_000 }],
+        },
+    };
+
+    test('an item only the Tester tab sells is unpriced while Tester pricing is off', () => {
+        expect(shopPurchasePrice('/items/small_talisman_belt', [tester], () => 1)).toBeNull();
+    });
+
+    test('with Tester pricing on, the Tester line prices an item no other shop sells', () => {
+        game.testerShop = true;
+        try {
+            expect(shopPurchasePrice('/items/small_talisman_belt', [tester], () => 1)).toBe(1_000_000);
+        } finally {
+            game.testerShop = false;
+        }
+    });
+
+    test('a real shop line wins over a Tester line for the same item', () => {
+        const shop = {
+            ...tester,
+            '/shop_items/general/small_talisman_belt': {
+                hrid: '/shop_items/general/small_talisman_belt',
+                category: '/shop_categories/general',
+                itemHrid: '/items/small_talisman_belt',
+                costs: [{ itemHrid: '/items/coin', count: 7_000_000 }],
+            },
+        };
+        expect(shopPurchasePrice('/items/small_talisman_belt', [shop], () => 1)).toBe(7_000_000);
     });
 });

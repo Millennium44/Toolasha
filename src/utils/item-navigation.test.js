@@ -59,6 +59,27 @@ describe('findActionForItem', () => {
         expect(result).toEqual({ actionHrid: '/actions/woodcutting/log', type: 'gathering' });
     });
 
+    test('names the action that yields the most of a dropped item, not the first listed', () => {
+        state.gameData = {
+            actionDetailMap: {
+                '/actions/woodcutting/ancient_arcane_tree': {
+                    baseTimeCost: 45e9,
+                    levelRequirement: { level: 100 },
+                    dropTable: [{ itemHrid: '/items/arcane_log', dropRate: 1, minCount: 1, maxCount: 1 }],
+                },
+                '/actions/woodcutting/arcane_tree': {
+                    baseTimeCost: 30e9,
+                    levelRequirement: { level: 80 },
+                    dropTable: [{ itemHrid: '/items/arcane_log', dropRate: 1, minCount: 1, maxCount: 3 }],
+                },
+            },
+        };
+        expect(findActionForItem('/items/arcane_log')).toEqual({
+            actionHrid: '/actions/woodcutting/arcane_tree',
+            type: 'gathering',
+        });
+    });
+
     test('returns null when no action produces or drops the item', () => {
         state.gameData = { actionDetailMap: {} };
         expect(findActionForItem('/items/nonexistent')).toBeNull();

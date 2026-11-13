@@ -2001,9 +2001,12 @@ class TooltipPrices {
                 continue;
             }
 
-            // Check if this action produces our item
+            // Check if this action produces our item. An item can sit in both tables of one action
+            // (Eternal Milk is a 10% regular drop and a 5% rare find on the Eternal Holy Cow), and
+            // the two rolls are independent, so the chance and the yield are both tables' together
             let foundInDrop = false;
-            let dropRate = 0;
+            let regularRate = 0;
+            let rareRate = 0;
             let isSolo = false;
 
             // Check drop table (both solo and zone actions)
@@ -2011,26 +2014,26 @@ class TooltipPrices {
                 for (const drop of action.dropTable) {
                     if (drop.itemHrid === itemHrid) {
                         foundInDrop = true;
-                        dropRate = drop.dropRate;
+                        regularRate += drop.dropRate || 0;
                         // Solo gathering has 100% drop rate (dropRate === 1)
                         // Zone gathering has < 100% drop rate
-                        isSolo = dropRate === 1;
-                        break;
+                        isSolo = regularRate === 1;
                     }
                 }
             }
 
             // Check rare drop table (rare finds - always zone actions)
-            if (!foundInDrop && action.rareDropTable) {
+            if (action.rareDropTable) {
                 for (const drop of action.rareDropTable) {
                     if (drop.itemHrid === itemHrid) {
                         foundInDrop = true;
-                        dropRate = drop.dropRate;
-                        isSolo = false; // Rare drops are never solo
-                        break;
+                        rareRate += drop.dropRate || 0;
                     }
                 }
             }
+            // Rare drops are never solo
+            if (rareRate > 0) isSolo = false;
+            const dropRate = regularRate + rareRate;
 
             if (foundInDrop || isSolo) {
                 const actionData = {
@@ -2067,7 +2070,13 @@ class TooltipPrices {
         for (const action of zoneActions) {
             const profitData = await calculateGatheringProfit(action.actionHrid, { keepSellTax: true });
             const output = profitData?.baseOutputs?.find((o) => o.itemHrid === itemHrid);
-            const itemsPerHour = output?.itemsPerHour ?? 0;
+            // The rare-find roll repeats with efficiency like the rest; its figures are per base action
+            const efficiency =
+                Number(profitData?.efficiencyMultiplier) > 0 ? Number(profitData.efficiencyMultiplier) : 1;
+            const rareFound = (profitData?.bonusRevenue?.bonusDrops || [])
+                .filter((drop) => drop.type === 'rare_find' && drop.itemHrid === itemHrid)
+                .reduce((sum, drop) => sum + (Number(drop.dropsPerHour) || 0) * efficiency, 0);
+            const itemsPerHour = (output?.itemsPerHour ?? 0) + rareFound;
 
             // For rare drops (< 1%), store items/day instead for better readability
             // For regular drops (>= 1%), store items/hr

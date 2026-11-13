@@ -32,6 +32,7 @@ import { resolveActionContext } from '../../utils/action-context.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose-chain-value.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import { isBetterGatheringSource } from '../../utils/gathering-source.js';
 
 /**
  * The sort modes the button offers, in dropdown order.
@@ -128,11 +129,11 @@ const SORT_SLICE_MS = 10;
 
 const GATHERING_ACTION_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
 
-/** @type {WeakMap<Object, Map<string, string>>} actionDetailMap → drop item → first gathering action that drops it */
+/** @type {WeakMap<Object, Map<string, string>>} actionDetailMap → drop item → the gathering action that yields the most of it */
 const gatheringActionIndexes = new WeakMap();
 
 /**
- * Which gathering action drops each item, first in the map's order. One pass per map object instead of
+ * Which gathering action yields the most of each item (see gathering-source.js; map order settles ties). One pass per map object instead of
  * a scan of every action for every tile that is not craftable.
  * @param {Object} actionDetailMap - `initClientData.actionDetailMap`
  * @returns {Map<string, string>} item hrid → action hrid
@@ -144,7 +145,10 @@ function gatheringActionIndex(actionDetailMap) {
     for (const [actionHrid, action] of Object.entries(actionDetailMap)) {
         if (!GATHERING_ACTION_TYPES.includes(action.type) || !action.dropTable) continue;
         for (const drop of action.dropTable) {
-            if (!index.has(drop.itemHrid)) index.set(drop.itemHrid, actionHrid);
+            const held = index.get(drop.itemHrid);
+            if (!held || isBetterGatheringSource(actionDetailMap[held], action, drop.itemHrid)) {
+                index.set(drop.itemHrid, actionHrid);
+            }
         }
     }
     gatheringActionIndexes.set(actionDetailMap, index);

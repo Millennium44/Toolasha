@@ -10,6 +10,7 @@ const chain = vi.hoisted(() => ({
     custom: null,
     shop: 0,
     production: 0,
+    productionPartial: false,
     pricingMode: 'ask',
     productionCostModes: [],
 }));
@@ -37,6 +38,7 @@ vi.mock('./enhancement-pricing.js', async (importOriginal) => ({
         chain.productionCostModes.push(mode);
         return chain.production;
     },
+    getProductionCostDetailed: () => ({ cost: chain.production, partial: chain.productionPartial }),
 }));
 
 import {
@@ -564,6 +566,7 @@ describe('resolveItemPrice', () => {
         chain.custom = null;
         chain.shop = 0;
         chain.production = 0;
+        chain.productionPartial = false;
         chain.pricingMode = 'ask';
         chain.productionCostModes = [];
     });
@@ -613,6 +616,21 @@ describe('resolveItemPrice', () => {
             missing: false,
             estimated: true,
             production: true,
+        });
+    });
+
+    test('a craft cost with an unpriced input is flagged partial, not passed off as the whole bill', () => {
+        // e.g. a belt whose cheese half is priced but whose dragon-leather half has no price anywhere
+        chain.production = 700;
+        chain.productionPartial = true;
+
+        expect(resolveItemPrice('/items/cheese')).toEqual({
+            price: 700,
+            custom: false,
+            missing: false,
+            estimated: true,
+            production: true,
+            partial: true,
         });
     });
 
