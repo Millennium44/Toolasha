@@ -554,20 +554,20 @@ export class TalismanRankingSectionBase {
                     <button data-role="belt-run" style="${CHIP_BUTTON_STYLE}" title="${escapeHtml(TIP_BELT_RUN)}">Check belts</button>
                     <span data-role="belt-estimate" style="color:${GAME_COLORS.textDim}; font-size:11px;" title="${escapeHtml(TIP_BELT_ESTIMATE)}"></span>
                 </div>
+                <div data-role="belt-stale" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
+                <div data-role="belt-results" style="margin-top:4px;"></div>
                 <div data-role="core-controls" style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin-top:6px;">
                     <span style="color:${ACCENT}; font-weight:700; font-size:12px;" title="${escapeHtml(TIP_CORE_HEAD)}">Core advisor</span>
                     <button data-role="core-run" style="${CHIP_BUTTON_STYLE}" title="${escapeHtml(TIP_CORE_RUN)}">Check cores</button>
                     <span style="color:${GAME_COLORS.textDim}; font-size:11px;" title="${escapeHtml(TIP_CORE_HEAD)}">Adds one line to a worn talisman; run the ranking first. No sims.</span>
                 </div>
+                <div data-role="core-stale" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
+                <div data-role="core-results" style="margin-top:4px;"></div>
                 <div data-role="progress" style="display:none; color:${GAME_COLORS.textDim}; font-size:11px; margin-top:4px;"></div>
                 <div data-role="notice" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
                 <div data-role="stale" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
                 <div data-role="results" style="margin-top:4px;"></div>
                 <div data-role="improve" style="margin-top:4px;"></div>
-                <div data-role="belt-stale" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
-                <div data-role="belt-results" style="margin-top:4px;"></div>
-                <div data-role="core-stale" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
-                <div data-role="core-results" style="margin-top:4px;"></div>
             </div>`;
         container.appendChild(root);
         this.root = root;

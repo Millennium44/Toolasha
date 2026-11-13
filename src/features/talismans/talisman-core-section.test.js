@@ -329,4 +329,19 @@ describe('the core advisor in the Optimizer', () => {
         expect(section._core.status).toBe('done');
         expect(q('core-run').style.display).toBe('');
     });
+
+    test('the belt and core results sit right under their own controls, not below the ranking table', () => {
+        const next = (role, n = 1) => {
+            let el = q(role);
+            for (let k = 0; k < n; k++) el = el.nextElementSibling;
+            return el?.dataset.role;
+        };
+        expect(next('core-controls')).toBe('core-stale');
+        expect(next('core-controls', 2)).toBe('core-results');
+        expect(next('belt-controls')).toBe('belt-stale');
+        expect(next('belt-controls', 2)).toBe('belt-results');
+        const order = [...q('core-controls').parentElement.children].map((el) => el.dataset.role);
+        expect(order.indexOf('core-results')).toBeLessThan(order.indexOf('results'));
+        expect(order.indexOf('belt-results')).toBeLessThan(order.indexOf('results'));
+    });
 });
