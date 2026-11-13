@@ -2801,8 +2801,8 @@ function calculateHouseUpgradeCost(candidate, gameData) {
                 total += count;
                 continue;
             }
-            const { price } = resolveItemPrice(entry.itemHrid, { context: 'profit', side: 'buy' });
-            if (!price || price <= 0) return null; // Unknown material cost must not rank as free
+            const { price, partial } = resolveItemPrice(entry.itemHrid, { context: 'profit', side: 'buy' });
+            if (partial || !price || price <= 0) return null; // Unknown material cost must not rank as free
             total += price * count;
         }
     }
@@ -2845,8 +2845,8 @@ export function houseUpgradeMaterials(candidate, gameData) {
     if (!counts.size) return [];
 
     const lines = [...counts.entries()].map(([itemHrid, count]) => {
-        const { price } = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy' });
-        const unitPrice = price > 0 ? price : null;
+        const { price, partial } = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy' });
+        const unitPrice = !partial && price > 0 ? price : null;
         return {
             itemHrid,
             name: gameData?.itemDetailMap?.[itemHrid]?.name || itemHrid.split('/').pop().replace(/_/g, ' '),
@@ -3403,7 +3403,7 @@ function cappedResale(credit, spend, built) {
 function enhancementMarketTrade(candidate) {
     const bought = priceAtLevel(candidate.currentHrid, candidate.upgradeLevel);
     // A cape's assumed value is what it is worth owned, not an offer to sell it: no trade to open
-    if (bought.assumed) return null;
+    if (bought.assumed || bought.partial) return null;
     const buy = bought.price;
     if (!(buy > 0)) return null;
     // The profit context, as `priceAtLevel` reads the buy: with no context the resolver reads the ask whatever the
@@ -4141,7 +4141,7 @@ function sellValue(hrid, level) {
  */
 function hasSalePrice(hrid, level) {
     const resolved = resolveItemPrice(hrid, { context: 'profit', side: 'sell', enhancementLevel: level });
-    return resolved?.price > 0;
+    return resolved?.price > 0 && !resolved.partial;
 }
 
 /**
@@ -4155,6 +4155,8 @@ function hasSalePrice(hrid, level) {
  * @returns {number} Proceeds, 0 when unpriced
  */
 function saleProceeds(resolved) {
+    // A partial craft cost is a lower bound, not a sale price: no credit
+    if (resolved?.partial) return 0;
     if (resolved?.production) return resolved.price > 0 ? resolved.price : 0;
     return afterSaleTax(resolved?.price);
 }
@@ -7521,7 +7523,7 @@ function explainLabCandidateCostAtTax(candidate, gameData, isSelf, route = true)
             price: saleProceeds(resolved),
             // False where there is no price at all (untradable, nothing listed), which
             // a note must tell apart from a price that is truly 0
-            priced: Number.isFinite(price),
+            priced: Number.isFinite(price) && !resolved.partial,
         };
     });
     detail.keptValue = detail.kept.reduce((sum, entry) => sum + entry.price, 0);
