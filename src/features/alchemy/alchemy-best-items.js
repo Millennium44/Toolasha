@@ -89,8 +89,11 @@ export const SORT_MODES = [
             'catalyst/tea setup best for the chain per hour), and sell what is left after market tax. Follows the ' +
             'Buy/Sell price dropdowns: Instant buys at the ask and sells at the bid, Patient buys at the bid and ' +
             'sells at the ask (one tick better with +1 / −1). A price that is only an estimate is never used. ' +
-            'Items with an unpriced step show no value and sort last. It still can differ from the item tooltip, ' +
-            'which values what you keep. A leading ≥ marks a figure with some output or bonus crate content ' +
+            "Items with an unpriced step show no value and sort last. It differs from the item tooltip's Full " +
+            'decompose chain line on purpose: the tooltip values an item you hold (at its own-use cost, keeping ' +
+            "what you mark) and picks each step's setup for gold per item, while this buys the item at market " +
+            "and picks every setup for the whole chain's gold per hour, so it is the same or higher. " +
+            'Chain/hr (own stock) matches the tooltip. A leading ≥ marks a figure with some output or bonus crate content ' +
             "unpriced, counted at zero. In this sort the Profit/hr column shows the chain's own first step.",
     },
     {
@@ -1268,7 +1271,8 @@ class AlchemyBestItems {
             own
                 ? 'Matches the item tooltip. The other chain sort assumes you buy the item at the market price instead.'
                 : `Follows your Buy/Sell dropdowns: buys at the ${sides.buy}, sells outputs at the ${sides.sell}. ` +
-                      'For stock you hold, use Chain/hr (own stock).'
+                      "It picks every step's setup for gold per hour, where the item tooltip picks for gold per item, " +
+                      'so it can read higher than the tooltip. For stock you hold, use Chain/hr (own stock).'
         );
         // The market chain never takes the shop's price: say so on the rows whose other figure did
         if (!own && shopPriced)
@@ -1389,6 +1393,10 @@ class AlchemyBestItems {
         hiddenToggle.addEventListener('click', () => {
             this.showHidden = !this.showHidden;
             this.renderTable();
+            // Bring the first revealed row into view: it can be far below the top of a long table
+            if (this.showHidden) {
+                this.modal?.querySelector('[data-mwi-best-hidden-row]')?.scrollIntoView?.({ block: 'center' });
+            }
         });
         controls.appendChild(hiddenToggle);
 
@@ -1701,7 +1709,17 @@ class AlchemyBestItems {
         const hiddenToggle = this.modal.querySelector('[data-mwi-hidden-toggle]');
         if (hiddenToggle) {
             hiddenToggle.style.display = hiddenSorted.length > 0 ? '' : 'none';
-            hiddenToggle.textContent = showHidden ? 'Hide hidden' : `Show hidden (${hiddenSorted.length})`;
+            // The count is of hidden items the other filters let through; say so when more are saved than that
+            const savedHidden = (this.hidden[this.currentType] || []).length;
+            const countLabel =
+                savedHidden > hiddenSorted.length
+                    ? `${hiddenSorted.length} of ${savedHidden}`
+                    : `${hiddenSorted.length}`;
+            hiddenToggle.textContent = showHidden ? `Hide hidden (${countLabel})` : `Show hidden (${countLabel})`;
+            hiddenToggle.title =
+                savedHidden > hiddenSorted.length
+                    ? `${savedHidden} items are hidden on this tab; ${hiddenSorted.length} match the current filters`
+                    : '';
         }
 
         // Update title
@@ -1783,11 +1801,20 @@ class AlchemyBestItems {
 
         const playerAlchemyLevel = getPlayerAlchemyLevel();
 
-        const drawn = visibleSorted.slice(0, maxRows).map((item) => ({ item, isHidden: false }));
-        if (showHidden) for (const item of hiddenSorted) drawn.push({ item, isHidden: true });
+        // Shown hidden rows sit where they would rank (dimmed, unranked) so they are never pushed past the cap
+        const drawn = [];
+        let rankedCount = 0;
+        for (const item of sorted) {
+            if (this.isHidden(this.currentType, item.itemHrid)) {
+                if (showHidden) drawn.push({ item, isHidden: true, rank: 0 });
+            } else if (rankedCount < maxRows) {
+                rankedCount++;
+                drawn.push({ item, isHidden: false, rank: rankedCount });
+            }
+        }
 
         for (let i = 0; i < drawn.length; i++) {
-            const { item, isHidden } = drawn[i];
+            const { item, isHidden, rank } = drawn[i];
             const row = document.createElement('tr');
             row.style.cssText = 'border-bottom: 1px solid #333;';
             if (isHidden) {
@@ -1812,7 +1839,7 @@ class AlchemyBestItems {
             rankTd.appendChild(hideBtn);
             const rankNumber = document.createElement('span');
             rankNumber.setAttribute('data-mwi-best-rank', 'true');
-            rankNumber.textContent = isHidden ? '' : String(i + 1);
+            rankNumber.textContent = isHidden ? '' : String(rank);
             rankTd.appendChild(rankNumber);
             row.appendChild(rankTd);
 

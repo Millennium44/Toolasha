@@ -2614,16 +2614,16 @@ describe('remembering the place and hiding rows', () => {
         expect(toggle().textContent).toBe('Show hidden (2)');
     });
 
-    test('Show hidden draws them dimmed after the ranked rows, unranked, with a control to unhide', async () => {
+    test('Show hidden draws them dimmed where they would rank, unranked, with a control to unhide', async () => {
         await open();
         pickType('coinify');
         hide(1);
         toggle().click();
-        expect(names()).toEqual(['a', 'c', 'b']);
-        expect(ranks()).toEqual(['1', '2', '']);
+        expect(names()).toEqual(['a', 'b', 'c']);
+        expect(ranks()).toEqual(['1', '', '2']);
         const hiddenRow = bestItems.modal.querySelector('[data-mwi-best-hidden-row]');
         expect(hiddenRow.style.opacity).toBe('0.5');
-        expect(toggle().textContent).toBe('Hide hidden');
+        expect(toggle().textContent).toBe('Hide hidden (1)');
 
         hiddenRow.querySelector('[data-mwi-best-unhide]').click();
         expect(names()).toEqual(['a', 'b', 'c']);
@@ -2631,6 +2631,40 @@ describe('remembering the place and hiding rows', () => {
         // Nothing left hidden: the toggle goes and the reveal switches itself off
         expect(toggle().style.display).toBe('none');
         expect(bestItems.showHidden).toBe(false);
+    });
+
+    test('Show hidden brings rows back even when the ranked list is at its 100-row cap', async () => {
+        vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
+        store.data.set(hiddenKey(), { coinify: ['/items/r5', '/items/r150'] });
+        vi.spyOn(bestItems, 'loadRankings').mockImplementation((type) => {
+            bestItems.cachedRankings[type] = Array.from({ length: 160 }, (_, i) => row(`r${i}`, 1000 - i));
+            bestItems.renderTable();
+        });
+        bestItems.itemsSpriteUrl = 'sprite';
+        await bestItems.openModal();
+        expect(names()).not.toContain('r5');
+        toggle().click();
+        // The hidden rows are drawn in their sorted place: one inside the top 100, one past it, both visible
+        const drawn = names();
+        expect(drawn[5]).toBe('r5');
+        expect(drawn).toContain('r150');
+        expect(bestItems.modal.querySelectorAll('[data-mwi-best-hidden-row]')).toHaveLength(2);
+        expect(ranks()[6]).toBe('6');
+
+        // Unhide from the shown row persists
+        bestItems.modal.querySelector('[data-mwi-best-unhide]').click();
+        expect(store.data.get(hiddenKey())).toEqual({ coinify: ['/items/r150'] });
+    });
+
+    test('the toggle says how many hidden items the other filters let through', async () => {
+        store.data.set(hiddenKey(), { coinify: ['/items/a', '/items/b'] });
+        vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
+        await open();
+        expect(toggle().textContent).toBe('Show hidden (2)');
+        bestItems.searchQuery = 'a';
+        bestItems.renderTable();
+        expect(toggle().textContent).toBe('Show hidden (1 of 2)');
+        expect(toggle().title).toContain('2 items are hidden');
     });
 
     test('hiding every row says so rather than claiming nothing is eligible', async () => {
