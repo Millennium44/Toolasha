@@ -115,6 +115,19 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         return { own: null, key, label };
     }
 
+    /**
+     * The context a run values, with the source it names, taken in one call (ranking and belt advisor alike).
+     * @param {string} type - The action's type hrid
+     * @returns {{context: {equipment: Map, drinks: Array}, source: Object}}
+     */
+    _gearContextFor(type) {
+        const source = this._gearSource(type);
+        const context = source.own
+            ? { equipment: source.own.equipment, drinks: source.own.drinks }
+            : resolveActionContext(type);
+        return { context, source };
+    }
+
     /** The host's gear, picked loadout or its rows, changed: a shown ranking may be for other gear */
     gearChanged() {
         this._refreshStale();
@@ -183,9 +196,10 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         const type = dataManager.getInitClientData?.()?.actionDetailMap?.[actionHrid]?.type;
         let gear = null;
         if (type) {
-            const context = resolveActionContext(type);
+            const { context, source } = this._gearContextFor(type);
             const belt = context?.equipment?.get?.(BELT_LOCATION);
             gear = {
+                source: source.key,
                 belt: belt ? [belt.itemHrid, belt.enhancementLevel || 0] : null,
                 talismans: talismanBonusesOf(context?.equipment),
             };
@@ -199,8 +213,9 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         const type = gameData?.actionDetailMap?.[actionHrid]?.type;
         if (!type) return 'No action selected: pick one in the Optimizer first.';
         if (!RANKABLE_SKILLING_TYPES.includes(type)) return 'Only gathering and production actions are valued.';
-        const belt = resolveActionContext(type)?.equipment?.get?.(BELT_LOCATION);
-        if (!belt?.itemHrid) return 'The gear this action runs with has no Talisman Belt.';
+        const { context, source } = this._gearContextFor(type);
+        const belt = context?.equipment?.get?.(BELT_LOCATION);
+        if (!belt?.itemHrid) return `${source.label} has no Talisman Belt.`;
         const count = beltCandidates(
             { hrid: belt.itemHrid, enhancementLevel: belt.enhancementLevel || 0 },
             gameData.itemDetailMap,
@@ -215,11 +230,17 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         const actionHrid = this._q('action')?.value || this._actionHrid;
         if (!actionHrid) return { status: 'refused', message: 'No action selected: pick one in the Optimizer first.' };
         this._progress('Valuing every candidate belt…');
+        // Gear and its name taken in one call, as in the ranking: the header names what the figures used
+        let source = null;
         const result = await runSkillingBeltAdvisor(
             { actionHrid, metricKey },
             {
                 getGameData: () => dataManager.getInitClientData(),
-                resolveContext: resolveActionContext,
+                resolveContext: (type) => {
+                    const picked = this._gearContextFor(type);
+                    source = picked.source;
+                    return picked.context;
+                },
                 evaluate: evaluateSkillingAction,
                 onProgress: ({ current: done, total, description }) => {
                     if (current()) this._progress(`${done} / ${total} · ${description}`);
@@ -227,7 +248,21 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
             },
             { abortSignal: () => this._aborted || !current() }
         );
-        return current() ? result : null;
+        if (!current()) return null;
+        if (source) {
+            result.gearKey = source.key;
+            result.gearLabel = source.label;
+            if (result.status === 'refused' && result.reason === 'no_belt') {
+                result.message = source.own
+                    ? `${source.label} has no Talisman Belt. Pick a loadout that wears one, or put a belt on it.`
+                    : `${source.label} has no Talisman Belt. Put one on first.`;
+            } else if (result.status === 'refused' && result.reason === 'no_talismans') {
+                result.message = `No skilling talisman is slotted in ${source.label}, so a belt changes nothing here.`;
+            } else if (result.actionName) {
+                result.context = `${result.actionName} · ${source.label}`;
+            }
+        }
+        return result;
     }
 
     async _runRanking(current, orbs) {
@@ -246,11 +281,9 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
             {
                 getGameData: () => dataManager.getInitClientData(),
                 resolveContext: (type) => {
-                    const picked = this._gearSource(type);
-                    source = picked;
-                    return picked.own
-                        ? { equipment: picked.own.equipment, drinks: picked.own.drinks }
-                        : resolveActionContext(type);
+                    const picked = this._gearContextFor(type);
+                    source = picked.source;
+                    return picked.context;
                 },
                 evaluate: evaluateSkillingAction,
                 orbs,
