@@ -20,6 +20,7 @@ import {
 import {
     SELECT_STYLE,
     TalismanRankingSectionBase,
+    UNPRICED_INPUTS_NOTE,
     evaluateSkillingAction,
     talismanRankingAvailableFor,
 } from './talisman-ranking-view.js';
@@ -168,6 +169,9 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
             parts.push(
                 `<div style="color:#ff9800; font-size:11px; margin-bottom:4px;">Some prices are missing and are left out: profit figures are floors.</div>`
             );
+        }
+        if (metric.key === 'profit' && result.hasUnpricedInputs) {
+            parts.push(`<div style="color:#ff9800; font-size:11px; margin-bottom:4px;">${UNPRICED_INPUTS_NOTE}.</div>`);
         }
         return parts;
     }

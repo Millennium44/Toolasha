@@ -43,6 +43,9 @@ export const CHIP_BUTTON_STYLE =
     'font-size:11px; cursor:pointer; font-family:inherit;';
 export const SELECT_STYLE = `background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:2px 4px; font-size:11px;`;
 
+/** The banner for a profit figure built with an input that has no price */
+export const UNPRICED_INPUTS_NOTE = 'Materials without a price are counted as free, so profit may be overstated';
+
 /** Budget per talisman when the player has not typed one, in Reforging Orb equivalents */
 export const DEFAULT_BUDGET = 20;
 
@@ -51,7 +54,8 @@ export const DEFAULT_BUDGET = 20;
  * calculator, and XP/hr from its actions per hour, efficiency and experience multiplier.
  * @param {string} actionHrid
  * @param {{equipment: Map, drinks: Array}} actionContext
- * @returns {Promise<{profitPerHour: number, revenuePerHour: number, xpPerHour: number, hasMissingPrices: boolean}|null>}
+ * @returns {Promise<{profitPerHour: number, revenuePerHour: number, xpPerHour: number, hasMissingPrices: boolean,
+ *   outputsUnpriced: boolean, unpricedCost: string[], unpricedCostRates: Object<string, number>}|null>}
  */
 export async function evaluateSkillingAction(actionHrid, actionContext) {
     const gameData = dataManager.getInitClientData();
@@ -69,11 +73,37 @@ export async function evaluateSkillingAction(actionHrid, actionContext) {
         ? calculateExperienceMultiplier(gain.skillHrid, action.type, actionContext).totalMultiplier
         : 0;
     const xpPerHour = (data.actionsPerHour || 0) * (data.efficiencyMultiplier || 1) * (gain?.value || 0) * multiplier;
+    // Inputs with no price (materials, drinks): the profit counts them as free. Rates are per hour, like the combat
+    // sim's running costs, so a line that makes the action spend more of one is told apart from one that does not
+    const perHour = (data.actionsPerHour || 0) * (data.efficiencyMultiplier || 1);
+    const unpricedCostRates = {};
+    for (const material of data.materialCosts || []) {
+        if (!material?.missingPrice) continue;
+        const name = material.itemName || material.itemHrid;
+        unpricedCostRates[name] = (unpricedCostRates[name] || 0) + (Number(material.amount) || 0) * perHour;
+    }
+    for (const drink of [...(data.teaCosts || []), ...(data.drinkCosts || [])]) {
+        if (!drink?.missingPrice) continue;
+        const name = drink.itemName || drink.name;
+        unpricedCostRates[name] = (unpricedCostRates[name] || 0) + (Number(drink.drinksPerHour) || 0);
+    }
+    const unpricedCost = Object.keys(unpricedCostRates);
+    const hasMissingPrices = Boolean(data.hasMissingPrices);
+    // What is left missing once the inputs are set aside: an output, a bonus drop, a conversion
+    const otherMissing =
+        (data.outputPriceMissing && !data.outputPriceEstimated) ||
+        Boolean(data.bonusRevenue?.hasMissingPrices) ||
+        [data.baseOutputs, data.gourmetBonuses, data.processingConversions].some(
+            (list) => Array.isArray(list) && list.some((entry) => entry?.missingPrice)
+        );
     return {
         profitPerHour: data.profitPerHour,
         revenuePerHour: data.revenuePerHour,
         xpPerHour,
-        hasMissingPrices: Boolean(data.hasMissingPrices),
+        hasMissingPrices,
+        outputsUnpriced: hasMissingPrices && (unpricedCost.length === 0 || Boolean(otherMissing)),
+        unpricedCost,
+        unpricedCostRates,
     };
 }
 
@@ -757,7 +787,7 @@ export class TalismanRankingSectionBase {
                         ? '<span title="Deaths/hr rose beyond its error bar with this line" style="color:#f87171;">⚠</span>'
                         : '',
                     row.costUnpriced?.length
-                        ? `<span data-cost-unpriced title="${escapeHtml(`No price for ${row.costUnpriced.join(', ')}: this line spends more of it and the profit counts that as free, so its profit gain is a ceiling`)}" style="color:#ff9800;">⚠</span>`
+                        ? `<span data-cost-unpriced title="${escapeHtml(`No price for ${row.costUnpriced.join(', ')}: this line spends more of it and the profit counts that as free (unpriced materials counted as free), so its profit gain is a ceiling`)}" style="color:#ff9800;">⚠</span>`
                         : '',
                     row.hasMissingPrices
                         ? '<span title="Some prices are missing: profit is a floor" style="color:#ff9800;">*</span>'
@@ -868,6 +898,9 @@ export class TalismanRankingSectionBase {
         }
         if (set.hasMissingPrices && metric.key === 'profit') {
             lines.push('Some prices are missing: these profit figures are floors.');
+        }
+        if (set.hasUnpricedInputs && metric.key === 'profit') {
+            lines.push(`${UNPRICED_INPUTS_NOTE}.`);
         }
         if (!this.exact && set.members.some((m) => m.assumedLinear && m.copies > 1)) {
             lines.push('Repeated lines outside the first few were assumed to add as much per copy as the first.');

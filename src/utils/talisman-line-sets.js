@@ -178,6 +178,30 @@ export function arrangeTalismans(picks, slots, linesPerTalisman = DEFAULT_LINES_
     return talismans.filter((t) => t.modifiers.length > 0);
 }
 
+/** A hair of difference between two sampled runs' per-hour spend of an unpriced item is not "more" of it */
+const UNPRICED_MORE_TOLERANCE = 0.02;
+
+/**
+ * The running costs (food, drinks, dungeon keys) a line's run counted at zero that the baseline's did not, or spends
+ * more of: profit built on them is a ceiling, not a figure (the real spend only lowers it).
+ * @param {Object} baseline - `computeMetrics` of the bare baseline
+ * @param {Object} measured - `computeMetrics` of the run with the line
+ * @returns {string[]} Names of the unpriced running costs the line adds to; empty when it adds none
+ */
+export function newlyUnpricedLineCosts(baseline, measured) {
+    const already = new Set(baseline?.unpricedCost || []);
+    const baseRates = baseline?.unpricedCostRates || {};
+    const rates = measured?.unpricedCostRates || {};
+    return (measured?.unpricedCost || []).filter((name) => {
+        if (!already.has(name)) return true;
+        const before = baseRates[name];
+        const after = rates[name];
+        // Unpriced in both runs but spent more of: the extra is free too. An unknown rate cannot clear it
+        if (!Number.isFinite(before) || !Number.isFinite(after)) return true;
+        return after > before * (1 + UNPRICED_MORE_TOLERANCE);
+    });
+}
+
 /**
  * A row's value at a grade: the per-grade figure when the row has one (measured, or scaled from the simulated
  * grade), else its measured value.
@@ -187,6 +211,8 @@ export function arrangeTalismans(picks, slots, linesPerTalisman = DEFAULT_LINES_
  */
 export function valueAtGrade(row, grade) {
     if (!row) return 0;
+    // A gain resting on an input counted as free is not a real gain: no set, plan or per-orb figure may build on it
+    if (row.gainUnreal) return 0;
     const at = row.byGrade?.[grade - 1];
     return Number.isFinite(at) ? at : Number(row.value) || 0;
 }
@@ -832,10 +858,15 @@ export async function runSkillingLineRanking(params, deps, options = {}) {
         budget,
     };
     let evaluations = 0;
-    // Any figure the run read with a price missing: its profit is a floor, and so is everything compared with it
+    // Any figure the run read with an output's price missing: its profit is a floor, and so is everything compared with
+    // it. A figure that does not say which side is missing (`outputsUnpriced`) is read as the output
     let anyMissing = false;
+    // Any figure with an input (material, drink) counted as free: its profit is overstated, never a floor
+    let anyUnpricedInputs = false;
+    const outputMissing = (figures) => Boolean(figures?.hasMissingPrices) && figures.outputsUnpriced !== false;
     const noteMissing = (figures) => {
-        if (figures?.hasMissingPrices) anyMissing = true;
+        if (outputMissing(figures)) anyMissing = true;
+        if (figures?.unpricedCost?.length) anyUnpricedInputs = true;
         return figures;
     };
     const yieldNow = deps.yieldNow || (() => new Promise((resolve) => setTimeout(resolve, 0)));
@@ -868,6 +899,7 @@ export async function runSkillingLineRanking(params, deps, options = {}) {
     const bareValue = read(bare);
     const stoppedResult = (rows, extra = {}) => ({
         hasMissingPrices: anyMissing,
+        hasUnpricedInputs: anyUnpricedInputs,
         status: 'stopped',
         ...base,
         rows: sortRows(rows),
@@ -880,11 +912,17 @@ export async function runSkillingLineRanking(params, deps, options = {}) {
         if (stopped()) return stoppedResult(rows);
         const byGrade = [];
         let missing = false;
+        const unpriced = new Set();
         for (let g = 1; g <= detail.gradeValues.length; g++) {
             const figures = await evaluateWith(lineCopies(detail.hrid, g, 1));
             byGrade.push(read(figures) - bareValue);
-            missing = missing || Boolean(figures?.hasMissingPrices);
+            missing = missing || outputMissing(figures);
+            // Inputs this line makes the action spend more of, counted as free (as the combat ranking does)
+            for (const name of newlyUnpricedLineCosts(bare, figures)) unpriced.add(name);
         }
+        const costUnpriced = [...unpriced];
+        // A profit gain resting on an input counted as free is a ceiling, not a gain: no set or plan builds on it
+        const gainUnreal = metric.key === 'profit' && costUnpriced.length > 0;
         rows.push({
             hrid: detail.hrid,
             name: detail.name,
@@ -896,6 +934,7 @@ export async function runSkillingLineRanking(params, deps, options = {}) {
             significant: true,
             noEffect: byGrade.every((v) => v === 0),
             hasMissingPrices: missing,
+            ...(costUnpriced.length ? { costUnpriced, gainUnreal } : {}),
         });
     }
 
@@ -984,7 +1023,10 @@ export async function runSkillingLineRanking(params, deps, options = {}) {
     }
     // The talismans the action's gear carries now: the context's own Map, untouched
     const worn = noteMissing(await deps.evaluate(actionHrid, { equipment: context.equipment, drinks: context.drinks }));
-    if (set) set.hasMissingPrices = anyMissing;
+    if (set) {
+        set.hasMissingPrices = anyMissing;
+        set.hasUnpricedInputs = anyUnpricedInputs;
+    }
     return {
         status: 'done',
         ...base,
@@ -998,6 +1040,7 @@ export async function runSkillingLineRanking(params, deps, options = {}) {
         current: worn ? { value: read(worn) - bareValue } : null,
         evaluations: evaluations + 1,
         hasMissingPrices: anyMissing,
+        hasUnpricedInputs: anyUnpricedInputs,
         rerollTargets: toRerollTargets(set),
     };
 }
