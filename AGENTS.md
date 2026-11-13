@@ -288,6 +288,12 @@ check without switching the main checkout, `bash scripts/dev-load-branch.sh <ref
 `../Toolasha-integ` and copies the result into `dist/`. Never run two git or gates jobs
 in one checkout at once.
 
+**The main checkout stays on `main`.** Several chats share it and assume `main`, so a PR branch checked out
+there collects other chats' commits (2026-11-13: five landed on another chat's PR branch and took a
+rebase and force-push to undo). Build an integration branch in its own worktree
+(`git worktree add ../Toolasha-<topic> -b <branch> origin/main`). Claude's `guard-bash` hook refuses a
+commit in the main checkout on any other branch unless it carries `ALLOW_BRANCH_COMMIT=1`.
+
 ## Project Structure (High-Level)
 
 ```
