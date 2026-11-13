@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Optimizer talisman ranking uses the loadout you picked
 
 The Skilling Optimizer's Talismans section now ranks on the loadout chosen in its Loadout dropdown, belt and talismans included, and its header names which loadout it read. With no loadout picked it uses the one the skill equips, as before.
+
 ### Labyrinth "Buy missing supplies" no longer makes the row taller
 
 The button now sits beside the Supplies label instead of on a line of its own, so the Labyrinth's bottom row keeps its normal height.
