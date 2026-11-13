@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Edit talismans in the Combat Sim
+
+On the test server, the Combat Sim's player editor now lets you change each belt slot's talisman lines (type and grade, up to four) to try a build before rolling it, with Reset to Current to go back to what you wear.
+
 ### Talisman line ranking in the Combat Sim and Skilling Optimizer
 
 On the test server, the Combat Sim's Upgrade tab and the Skilling Optimizer rank every talisman line for your build and recommend a set: Practical (one special per talisman, grades capped), Ideal, or within an orb budget. Lines are ranked by DPS, XP, profit or a Balanced mix, with value per orb and noise marked.
