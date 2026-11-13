@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Talisman line ranking in the Combat Sim and Skilling Optimizer
+
+On the test server, the Combat Sim's Upgrade tab and the Skilling Optimizer rank every talisman line for your build and recommend a set: Practical (one special per talisman, grades capped), Ideal, or within an orb budget. Lines are ranked by DPS, XP, profit or a Balanced mix, with value per orb and noise marked.
+
+### Improve mine: best next reroll for the talismans you own
+
+From the same panels, Improve mine lists the cheapest worthwhile upgrade for each of your talismans; "Aim for this" opens that talisman and hands the target to the reroll advisor.
+
 ### Loadouts warn about talismans that do nothing on the test server
 
 The Loadouts panel marks the selected loadout with ⚠ when one of its talismans was deleted, sits in a slot its belt does not have, or is the wrong kind (a skilling talisman in a combat loadout, or the reverse); hover for the reason.

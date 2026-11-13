@@ -32,6 +32,7 @@ import { loadoutSnapshot, dataManager as sharedDataManager } from '../../utils/b
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 import { maxEnhancementLevel, maxLevel } from '../../utils/game-maximums.js';
+import { SkillingTalismanSection, skillingTalismansAvailable } from '../talismans/skilling-talisman-section.js';
 
 function getLoadoutSnapshot() {
     return loadoutSnapshot() || loadoutSnapshotLocal;
@@ -127,6 +128,8 @@ class SkillingSimulatorUI {
         this._resultsArea = null;
         this._picker = null;
         this._pickerCleanup = null;
+        // The Talismans section (test server, `skillingOptimizer_talismans`): kept across panel rebuilds
+        this._talismanSection = null;
     }
 
     initialize() {
@@ -142,6 +145,11 @@ class SkillingSimulatorUI {
             { childList: true, subtree: true }
         );
         this._tryInjectTabButton();
+        // Turning the Talismans section on or off redraws an open panel
+        this._unsubscribeTalismans?.();
+        this._unsubscribeTalismans = config.onSettingChange?.('skillingOptimizer_talismans', () => {
+            if (this.isActive && this.panel) this._rebuildPanel();
+        });
     }
 
     // -------------------------------------------------------------------------
@@ -479,7 +487,37 @@ class SkillingSimulatorUI {
                 this._renderOptimizerResults(resultsArea, this.lastOptimizerResult, null, null);
         }
 
+        this._mountTalismans(panel);
         return panel;
+    }
+
+    /**
+     * Put the Talismans section under the panel, or take it away: test server, talisman tables, and the
+     * `skillingOptimizer_talismans` setting. The section (and a result it holds) survives a rebuild of the panel;
+     * its action list follows the Optimizer's skill and selection.
+     * @param {HTMLElement} panel
+     */
+    _mountTalismans(panel) {
+        const wanted = config.getSetting('skillingOptimizer_talismans') !== false && skillingTalismansAvailable();
+        if (!wanted) {
+            this._talismanSection?.detach();
+            this._talismanSection = null;
+            return;
+        }
+        const box = document.createElement('div');
+        box.className = 'toolasha-skilling-talismans-box';
+        box.style.marginTop = '16px';
+        panel.appendChild(box);
+        if (!this._talismanSection) {
+            this._talismanSection = new SkillingTalismanSection({
+                getSkill: () => this.currentSkill,
+                getSelectedActions: () => this.selectedActionHrids,
+            });
+            this._talismanSection.mount(box);
+        } else if (this._talismanSection.root) {
+            box.appendChild(this._talismanSection.root);
+            this._talismanSection.refreshActions();
+        }
     }
 
     _buildAlchemyItemOverrideRow() {
@@ -2143,6 +2181,10 @@ class SkillingSimulatorUI {
         this._actionBtnGetLabel = null;
         this._slotBtns.clear();
         this._teaBtns = [];
+        this._talismanSection?.detach();
+        this._talismanSection = null;
+        this._unsubscribeTalismans?.();
+        this._unsubscribeTalismans = null;
     }
 }
 

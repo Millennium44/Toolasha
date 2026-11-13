@@ -110,6 +110,24 @@ const ALLOWLIST = new Map([
         'Pure talisman arithmetic and constants; the bonus set rides on the equipment Map under a Symbol.for key, which every bundle resolves to the same symbol, so no module state exists to diverge.',
     ],
     [
+        'src/utils/talisman-reroll-solver.js',
+        // The reroll advisor (ui) and the Combat Sim's talisman line ranking (combat) both solve with it
+        'Pure solver: functions over a problem object and frozen measured odds; no module state to share.',
+    ],
+    [
+        'src/utils/talisman-line-sets.js',
+        // The Combat Sim's Talisman lines (combat) and the Skilling Optimizer's Talismans section (actions)
+        'Pure set building and skilling ranking over what each call is handed; no module state to share.',
+    ],
+    [
+        'src/utils/talisman-orb-costs.js',
+        'An orb-cost solver class whose cache lives on each instance the caller makes; no module state to share.',
+    ],
+    [
+        'src/utils/talisman-orb-weights.js',
+        'Stateless orb weighing over prices read on each call; no module state to share.',
+    ],
+    [
         'src/utils/html-escape.js',
         // A tiny pure string transformation, with no imports, shared state, or DOM dependencies.
         'stateless HTML escaping; no runtime identity or state to share',

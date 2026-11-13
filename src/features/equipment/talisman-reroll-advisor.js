@@ -37,7 +37,7 @@ import {
     scanControls,
 } from './talisman-step-controls.js';
 import { isTestServer } from '../../utils/game-server.js';
-import { getItemPriceInfo } from '../../utils/market-data.js';
+import { coinCost, orbWeights, roundWeights } from '../../utils/talisman-orb-weights.js';
 import { advise, buildProblem, meetsTarget, solveSteps, REROLL_MODES } from '../../utils/talisman-reroll-solver.js';
 
 const MODAL_CLASS = 'TalismanModal_talismanModal';
@@ -58,72 +58,17 @@ export const ADVISOR_HELP = [
         'unlocking is free.',
     'Approximations: junk types are lumped by their average weight, and the order in which Focus draws the lines ' +
         'is unknown. A talisman never holds one type twice (the game keys its lines by type).',
-    'Assumed, not measured: Exchange shuffles the unlocked grades uniformly; grades of lines added by talisman ' +
-        'cores (adding lines is not planned: the advice uses the lines the talisman has now).',
+    'Assumed, not measured: Exchange shuffles the unlocked grades uniformly.',
+    'Measured: lines from creating a talisman and from cores roll G1-G3 only, whatever the core (396 lines: 57 / 28 / ' +
+        '15%, the Reforging curve cut at G3). Adding lines is not planned: the advice uses the lines the talisman has now.',
     'Orbs are weighed by market price when every orb has a live listing, otherwise by the game item value; a coin ' +
         'cost is shown only when every orb the strategy uses has a market price.',
     'Do next step does one game action per click (choosing the orb in the picker first when needed) and then waits ' +
         'for the talisman to change; it never continues on its own.',
 ];
 
-/**
- * The cost weight of every orb, on one scale, and the market price of each orb that has one.
- * @param {Object} info - talismanInfo
- * @param {Object} itemDetailMap
- * @param {Function} [priceInfo] - getItemPriceInfo-shaped; injectable for tests
- * @returns {{weights: Object<string, number>, prices: Object<string, number>, scale: 'market'|'itemValue'|'count'}}
- */
-export function orbWeights(info, itemDetailMap, priceInfo = getItemPriceInfo) {
-    const hrids = [...Object.keys(info?.rerollInputMap || {})];
-    if (info?.lockInputItemHrid) hrids.push(info.lockInputItemHrid);
-    const prices = {};
-    for (const hrid of hrids) {
-        let quote = null;
-        try {
-            quote = priceInfo(hrid, { context: 'profit', side: 'buy', marketQuote: true });
-        } catch (error) {
-            console.error('[TalismanRerollAdvisor] Pricing an orb failed:', error);
-        }
-        // Only a live listing (or the player's own override) is a market price; an estimate is not
-        if (quote && (quote.source === 'book' || quote.source === 'custom') && quote.price > 0) {
-            prices[hrid] = quote.price;
-        }
-    }
-    if (hrids.length > 0 && hrids.every((hrid) => prices[hrid] > 0)) {
-        return { weights: { ...prices }, prices, scale: 'market' };
-    }
-    const values = {};
-    for (const hrid of hrids) values[hrid] = Number(itemDetailMap?.[hrid]?.sellPrice) || 0;
-    if (hrids.every((hrid) => values[hrid] > 0)) return { weights: values, prices, scale: 'itemValue' };
-    const ones = {};
-    for (const hrid of hrids) ones[hrid] = 1;
-    return { weights: ones, prices, scale: 'count' };
-}
-
-/**
- * Coins the expected orb counts cost, or null unless every orb used has a market price.
- * @param {Object<string, number>} counts
- * @param {Object<string, number>} prices - Market prices only
- * @returns {number|null}
- */
-export function coinCost(counts, prices) {
-    const used = Object.keys(counts || {});
-    if (used.length === 0) return null;
-    if (!used.every((hrid) => prices?.[hrid] > 0)) return null;
-    return used.reduce((sum, hrid) => sum + counts[hrid] * prices[hrid], 0);
-}
-
-/**
- * Weights rounded to two significant figures, so a small price move keeps the same solve.
- * @param {Object<string, number>} weights
- * @returns {Object<string, number>}
- */
-export function roundWeights(weights) {
-    const out = {};
-    for (const [hrid, value] of Object.entries(weights || {}))
-        out[hrid] = value > 0 ? Number(value.toPrecision(2)) : value;
-    return out;
-}
+// The orb scale is shared with the Combat Sim's talisman line ranking (utils/talisman-orb-weights.js)
+export { orbWeights, coinCost, roundWeights };
 
 function option(text, value) {
     const el = document.createElement('option');
@@ -380,6 +325,36 @@ class TalismanRerollAdvisor {
 
     targetKey(talisman) {
         return `${dataManager.getCurrentCharacterId?.() ?? ''}:${talisman.id}`;
+    }
+
+    /**
+     * Aim the advisor at a target for one of the character's talismans, from outside the window (the Combat Sim's
+     * "Aim for this"). The target shows when that talisman's window is next open, or at once if it is open now.
+     * @param {number|string} talismanId
+     * @param {Array<{hrid: string, minGrade: number}>} targets
+     * @returns {boolean} false when the advisor is not running (off, or not the test server), or the talisman is not
+     *   one of the current character's
+     */
+    aimAt(talismanId, targets) {
+        if (!this.initialized || talismanId === undefined || talismanId === null) return false;
+        // Only one of this character's own talismans: a target for anyone else's is never kept
+        const owned = dataManager.getCharacterTalismans?.() || [];
+        if (!owned.some((t) => String(t?.id) === String(talismanId))) return false;
+        const talisman = { id: talismanId };
+        // A panel already drawn for this talisman is built again, so its rows show the new target
+        if (this.panelTalismanKey === this.targetKey(talisman)) {
+            this.panel?.remove();
+            this.panel = null;
+            this.panelTalismanKey = null;
+        }
+        this.setTargets(
+            talisman,
+            (Array.isArray(targets) ? targets : []).map((t) => ({
+                hrid: t?.hrid,
+                minGrade: Math.floor(t?.minGrade) || 1,
+            }))
+        );
+        return true;
     }
 
     getTargets(talisman) {
@@ -818,5 +793,16 @@ class TalismanRerollAdvisor {
 }
 
 const talismanRerollAdvisor = new TalismanRerollAdvisor();
+
+/**
+ * Hand the reroll advisor a target for a talisman (see {@link TalismanRerollAdvisor#aimAt}). Another bundle reaches
+ * the same singleton through `Toolasha.UI.talismanRerollAdvisor.aimAt`.
+ * @param {number|string} talismanId
+ * @param {Array<{hrid: string, minGrade: number}>} targets
+ * @returns {boolean}
+ */
+export function setRerollTarget(talismanId, targets) {
+    return talismanRerollAdvisor.aimAt(talismanId, targets);
+}
 
 export default talismanRerollAdvisor;

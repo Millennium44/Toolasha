@@ -158,6 +158,7 @@ import {
 import { runSimulation, cancelActiveSimulations } from './combat-sim-runner.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
 import { PartyFinderTab } from './party-finder-ui.js';
+import { TalismanLineRankingSection, talismanRankingAvailable } from './talisman-line-ranking-ui.js';
 import {
     runUpgradeAnalysis,
     getStyleExcludedSkills,
@@ -3950,6 +3951,9 @@ class CombatSimUI {
         // Party tab (`party-finder-ui.js`): built while `combatSim_partyFinder` is on
         this._partyFinder = null;
         this._unsubscribePartyFinderSetting = null;
+        // Upgrade tab's Talisman lines section (`talisman-line-ranking-ui.js`): test server, behind its setting
+        this._talismanRanking = null;
+        this._unsubscribeTalismanRankingSetting = null;
         // Upgrade results as cards (`upgrade-cards.js`): the player's pick per form factor, what is open, which
         // sections show everything, and the verifies a card started. All in memory except the pick.
         this._viewChoices = normalizeViewChoices(null);
@@ -4545,6 +4549,11 @@ class CombatSimUI {
         triggerBar.querySelector('#mwi-csim-trigger-body').appendChild(triggerBox);
 
         upgradeContent.appendChild(triggerBar);
+        // The Talisman lines section (test server only, filled while its setting is on): see `_syncTalismanRanking`
+        const talismanRankBox = document.createElement('div');
+        talismanRankBox.id = 'mwi-csim-talisman-rank-box';
+        talismanRankBox.style.cssText = 'flex-shrink:0;';
+        upgradeContent.appendChild(talismanRankBox);
         const analysisNote = document.createElement('div');
         analysisNote.id = 'mwi-csim-analysis-note';
         analysisNote.style.cssText = 'display:none; flex-shrink:0; padding:6px 14px 0; color:#ff9800; font-size:12px;';
@@ -4652,6 +4661,11 @@ class CombatSimUI {
         this._unsubscribePartyFinderSetting?.();
         this._unsubscribePartyFinderSetting = config.onSettingChange('combatSim_partyFinder', () =>
             this._syncPartyFinderTab()
+        );
+        this._syncTalismanRanking();
+        this._unsubscribeTalismanRankingSetting?.();
+        this._unsubscribeTalismanRankingSetting = config.onSettingChange('combatSim_talismanLineRanking', () =>
+            this._syncTalismanRanking()
         );
         // The Configure and Upgrade Hours boxes are one setting: editing either updates the other
         for (const [id, twinId] of [
@@ -7481,6 +7495,10 @@ class CombatSimUI {
      */
     async _onSeek() {
         if (this._runStarting || this._upgradeRunning) return;
+        if (this._talismanRanking?.isBusy()) {
+            this._setStatus('A talisman ranking is running. Stop it in the Upgrade tab first.');
+            return;
+        }
         if (this.isRunning) {
             this._setStatus('A simulation is already running.');
             return;
@@ -7897,6 +7915,9 @@ class CombatSimUI {
             // The zone, tier or build may have been changed on Configure since a remembered result was drawn
             this._refreshCachedTriggerResult();
             this._refreshAnalysisNote();
+            // Game data may have arrived after the panel was built: the section is drawn once it can be
+            this._syncTalismanRanking();
+            this._talismanRanking?.onShow();
         } else if (tab === 'party') {
             if (partyContent) partyContent.style.display = 'flex';
             if (tabParty) tabParty.style.cssText = activeStyle;
@@ -7932,7 +7953,33 @@ class CombatSimUI {
      * @private
      */
     _isBusy() {
-        return Boolean(this._runStarting || this.isRunning || this._upgradeRunning || this._partyFinder?.isBusy());
+        return Boolean(
+            this._runStarting ||
+            this.isRunning ||
+            this._upgradeRunning ||
+            this._partyFinder?.isBusy() ||
+            this._talismanRanking?.isBusy()
+        );
+    }
+
+    /**
+     * Build or tear down the Upgrade tab's Talisman lines section to match `combatSim_talismanLineRanking`, the test
+     * server and the game data's talisman tables. Off takes the section, its listeners and any run in flight with it.
+     * @private
+     */
+    _syncTalismanRanking() {
+        if (!this.panel) return;
+        const box = this.panel.querySelector('#mwi-csim-talisman-rank-box');
+        const wanted =
+            Boolean(box) && config.getSetting('combatSim_talismanLineRanking') !== false && talismanRankingAvailable();
+        if (wanted && !this._talismanRanking) {
+            this._talismanRanking = new TalismanLineRankingSection(this);
+            this._talismanRanking.mount(box);
+        } else if (!wanted && this._talismanRanking) {
+            this._talismanRanking.detach();
+            this._talismanRanking = null;
+            if (box) box.textContent = '';
+        }
     }
 
     /**
@@ -7967,6 +8014,11 @@ class CombatSimUI {
         // A party search marks the panel running too, but this button is not its Stop: it has its own
         if (this._partyFinder?.isBusy()) {
             this._setStatus('A party search is running. Stop it on the Party tab first.');
+            return;
+        }
+        // Nor the Talisman lines ranking's: a sim started here would cancel its runs
+        if (this._talismanRanking?.isBusy()) {
+            this._setStatus('A talisman ranking is running. Stop it in the Upgrade tab first.');
             return;
         }
         if (this.isRunning) {
@@ -8333,6 +8385,11 @@ class CombatSimUI {
      * @private
      */
     async _onSimulateAllZones() {
+        // A sweep started here would cancel a talisman ranking's sims
+        if (this._talismanRanking?.isBusy()) {
+            this._setStatus('A talisman ranking is running. Stop it in the Upgrade tab first.');
+            return;
+        }
         if (this._runStarting || this.isRunning || this._upgradeRunning) return;
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
@@ -11584,6 +11641,10 @@ class CombatSimUI {
         this._unsubscribePartyFinderSetting = null;
         this._partyFinder?.detach();
         this._partyFinder = null;
+        this._unsubscribeTalismanRankingSetting?.();
+        this._unsubscribeTalismanRankingSetting = null;
+        this._talismanRanking?.detach();
+        this._talismanRanking = null;
         // An in-flight verify (or analysis) reads the abort flag and is terminated the way Stop terminates it
         this._upgradeAborted = true;
         cancelActiveSimulations();
@@ -13658,6 +13719,7 @@ class CombatSimUI {
     async _onUpgradeAnalyze() {
         if (this._isBusy()) {
             if (this._triggerRunning) this._setStatus('Trigger tuning is running. Press Stop or wait, then Analyze.');
+            else if (this._talismanRanking?.isBusy()) this._setStatus('A talisman ranking is running. Stop it first.');
             return;
         }
 
