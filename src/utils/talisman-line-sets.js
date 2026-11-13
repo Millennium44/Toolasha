@@ -399,6 +399,10 @@ export async function planBudgetSet(
 ) {
     const count = Math.max(0, Math.floor(slots || 0));
     let cheapest = Infinity;
+    let cheapestIsUpperBound = false;
+    // Targets over the budget whose cost is only the solver's upper bound: they are not taken (fitting cannot be
+    // shown), and the panel says they may fit
+    let overUpperBound = 0;
     if (count === 0 || !orbs) return { set: null, reason: 'no_orbs', cheapest };
     const taken = new Map();
     const talismans = [];
@@ -414,9 +418,16 @@ export async function planBudgetSet(
                     );
                     if (orbs.stopped()) return { set: null, reason: 'cancelled', cheapest };
                     if (!cost) continue;
-                    cheapest = Math.min(cheapest, cost.orbs);
-                    // More lines cost more: the rest of this kind is over budget too
-                    if (!(cost.orbs <= budget)) break;
+                    if (cost.orbs < cheapest) {
+                        cheapest = cost.orbs;
+                        cheapestIsUpperBound = Boolean(cost.upperBound);
+                    }
+                    // More lines cost more: the rest of this kind is over budget too. An upper bound over the
+                    // budget may truly fit, but is not counted as fitting
+                    if (!(cost.orbs <= budget)) {
+                        if (cost.upperBound) overUpperBound++;
+                        break;
+                    }
                     const value = pick.reduce((sum, r) => sum + valueOf(r), 0);
                     if (
                         !best ||
@@ -442,6 +453,8 @@ export async function planBudgetSet(
             set: null,
             reason: orbs.limited ? 'limited' : Number.isFinite(cheapest) ? 'budget' : 'no_value',
             cheapest,
+            cheapestIsUpperBound,
+            overUpperBound,
         };
     }
     const members = [];
@@ -472,9 +485,12 @@ export async function planBudgetSet(
             slotsFilled: talismans.length,
             // The solve cap cut the plan short: the slots left empty were never planned, not found unaffordable
             limited: Boolean(orbs.limited),
+            overUpperBound,
             withinNoise: members.filter((m) => !m.significant).length,
         },
         cheapest,
+        cheapestIsUpperBound,
+        overUpperBound,
     };
 }
 
@@ -494,6 +510,8 @@ export async function stampValuePerOrb(rows, { grade, typeHrid, orbs }) {
         if (cost && cost.orbs > 0) {
             row.orbCost = cost.orbs;
             row.perOrb = value / cost.orbs;
+            // An upper-bound cost makes this value per orb a floor
+            row.orbLimits = cost.upperBound ? cost.limits : null;
         }
     }
     return true;
@@ -592,7 +610,10 @@ export async function planImprovements(
                     }
                     const cost = await orbs.ownedCost(talisman, targets);
                     if (orbs.stopped()) return { status: 'cancelled', options: rankOptions(options, top) };
-                    if (cost && Number.isFinite(cost.orbs)) known.set(keyOf(talisman.id, pick, grade), cost.orbs);
+                    // Only an exact cost is a floor for harder targets: an upper bound may be above the truth
+                    if (cost && Number.isFinite(cost.orbs) && !cost.upperBound) {
+                        known.set(keyOf(talisman.id, pick, grade), cost.orbs);
+                    }
                     if (!cost || cost.status === 'met' || !(cost.orbs > 0)) continue;
                     const perOrb = gain / cost.orbs;
                     best = Math.max(best, perOrb);

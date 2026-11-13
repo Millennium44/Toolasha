@@ -714,3 +714,58 @@ describe('review round', () => {
         expect(text()).toContain('1 of 3 slots filled: no further target fit the budget.');
     });
 });
+
+describe('solver limits beside every cost', () => {
+    test('a set line, value per orb and an Improve mine option carry the note', async () => {
+        mocks.owned = [
+            talismanRow(42, [
+                { hrid: '/talisman_modifiers/armor', grade: 1 },
+                { hrid: '/talisman_modifiers/tenacity', grade: 1 },
+                { hrid: '/talisman_modifiers/max_hitpoints', grade: 1 },
+                { hrid: '/talisman_modifiers/hp_regen', grade: 1 },
+            ]),
+        ];
+        await run();
+        const limits = { gradeClamped: true, clampGrade: 5, mutationLeftOut: true };
+        const result = section._result;
+        const row = result.rows.find((r) => Number.isFinite(r.perOrb));
+        row.orbLimits = limits;
+        const set = {
+            ...result.set,
+            talismans: result.set.talismans.map((t) => ({ ...t, cost: { ...t.cost, limits, upperBound: true } })),
+        };
+        section._render({ ...result, set });
+        expect(text()).toContain('upper bound: grades above G5 counted as G5; Mutation left out');
+        expect(container.querySelector('td[title*="upper bound"]')).not.toBeNull();
+        section._improve = {
+            status: 'done',
+            ownerId: mocks.characterId,
+            options: [
+                {
+                    talisman: mocks.owned[0],
+                    targets: [{ hrid: '/talisman_modifiers/critical_damage', minGrade: 3 }],
+                    gain: 5,
+                    cost: { orbs: 10, limits, upperBound: true },
+                    perOrb: 0.5,
+                    withinNoise: 0,
+                },
+            ],
+        };
+        section._renderImprove();
+        expect(q('improve').textContent).toContain('upper bound: grades above G5 counted as G5; Mutation left out');
+    });
+
+    test('Budget says when a target over the budget was only an upper bound', async () => {
+        await run();
+        section._render({
+            ...section._result,
+            set: null,
+            setReason: 'budget',
+            budget: 2,
+            cheapest: 3,
+            cheapestIsUpperBound: true,
+            overUpperBound: 2,
+        });
+        expect(text()).toContain('2 targets over the budget were costed only as an upper bound');
+    });
+});
