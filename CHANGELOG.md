@@ -21,6 +21,9 @@ Test server. Beside Talisman lines in the Combat Sim and the Skilling Optimizer,
 ### Scroll chips and Scroll Planner offered once more
 
 If you have "Simulate missing scroll effects" or the Scroll Planner turned off, the update popup offers each one again, once, with its switch. Nothing is turned on for you.
+### Craft & Enhance window
+
+A new "Craft & Enhance" button on the Cheesesmithing, Crafting and Tailoring pages ranks gear made from dungeon drops or token-shop items. Each row shows craft cost, enhance cost to a level you pick (default +5, with +0 beside it), sale after tax, profit and XP per hour, and how many trade per day. Enhancing uses your own stats; owned drops count at their sale value, or as free with the switch.
 
 ### Compact talisman editing in the Combat Sim
 
