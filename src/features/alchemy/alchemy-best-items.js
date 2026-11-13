@@ -915,7 +915,9 @@ class AlchemyBestItems {
             container = visibleTabsContainer();
         }
         if (token !== this.returnToken || !container) return;
-        const reference = Array.from(container.children).find((tab) => tab.textContent?.includes('My Listings'));
+        // "My Listings" by name first; any native tab on a client in another language, since only its look is copied
+        const native = Array.from(container.children).filter((tab) => !tab.hasAttribute('data-mwi-custom-tab'));
+        const reference = native.find((tab) => tab.textContent?.includes('My Listings')) || native[native.length - 1];
         if (!reference) return;
 
         const tab = reference.cloneNode(true);
