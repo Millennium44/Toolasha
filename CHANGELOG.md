@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Labyrinth "Buy missing supplies" no longer makes the row taller
 
 The button now sits beside the Supplies label instead of on a line of its own, so the Labyrinth's bottom row keeps its normal height.
+
 ### Belt advisor: which Talisman Belt upgrade is worth buying
 
 Test server. Beside Talisman lines in the Combat Sim and the Skilling Optimizer, "Check belts" weighs higher levels of your belt and larger belts against their market cost, using the talismans you have slotted (a larger belt's new slots count as empty).
