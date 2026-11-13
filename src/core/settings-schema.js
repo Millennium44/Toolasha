@@ -4046,6 +4046,14 @@ export const settingsGroups = {
                 hidden: !isTestServer(),
                 help: 'Test server only. Beside each modifier line in the talisman window, the value your worn Talisman Belt turns it into (Talisman Power included), for example +4.5% → +5.66%',
             },
+            talismanRerollAdvisor: {
+                id: 'talismanRerollAdvisor',
+                label: 'Talisman window: Reroll advisor',
+                type: 'checkbox',
+                default: true,
+                hidden: !isTestServer(),
+                help: 'Test server only. Pick up to four lines you want in the talisman window; the advisor shows the next move (which orb, when to lock a line, whether to keep or use a new roll) and how many of each orb the best strategy spends on average. A coin cost appears only when every orb it uses has a market price. The advised game button is outlined, and Do next step presses it for you: one game action per click, never on its own',
+            },
             overlayPanel: {
                 id: 'overlayPanel',
                 label: 'Overlay Panel: One floating panel other features add a row to',

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Talisman reroll advisor on the test server
+
+In the talisman window, pick up to four lines you want and the advisor shows the cheapest next move (which orb, when to lock a line, whether to keep or use a new roll) and how many of each orb it expects to take, using measured reroll odds. It marks the button to press, and "Do next step" presses it for you, one game action per press.
+
 ### Dungeon token spend plan opens the buy dialog and can skip essence
 
 A "Buy best" button and a Buy button on each planned row now open that item's buy dialog in the Dungeon shop with the quantity typed in; you still press Buy in the game's dialog. A new "skip essence" box leaves essence out of the plan so spare tokens stay for next time.
