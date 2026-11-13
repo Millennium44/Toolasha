@@ -293,10 +293,6 @@ const {
     blockNearAnchor,
     compactTrialHtml,
     breakdownFor,
-    fightSidecarColumn,
-    fightSidecarPlacement,
-    fightSidecarStyle,
-    gridColumnCount,
     guildTrials,
     lastTrialPlayerRows,
     mergeWaveTiles,
@@ -1334,213 +1330,77 @@ describe('placeTrialBlock', () => {
         };
     }
 
-    test('a live fight puts the block beside the last boss, in the boss grid', () => {
-        // A wave of two bosses folds into one tile anchored on the *first* of
-        // them, so the block must be appended past both rather than inserted
-        // after the anchor — and stay on the bosses' row rather than wrapping.
-        const { root, grid, cards } = fightLayout(2);
-        const block = newBlock();
+    describe('the combat readout under the bosses', () => {
+        const setWidth = (el, prop, value) => Object.defineProperty(el, prop, { value, configurable: true });
+        const bossCountsAndWidths = [1, 2, 4].flatMap((bosses) => [
+            [bosses, 704],
+            [bosses, 300],
+        ]);
 
-        expect(placeTrialBlock(root, cards[0], block, 'Trial Badger')).toBe('fight-sidecar');
-        expect(grid.lastElementChild).toBe(block);
-        expect(block.previousElementSibling).toBe(cards[1]);
-        expect(block.style.gridRow).toBe('1');
-        // Explicitly the column after the two auto-placed bosses — never left
-        // to auto-placement, which fills the first free cell instead
-        expect(block.style.gridColumn).toBe('3');
-        // Not gathered into a mirrored row, and the payout block is left where it was
-        expect(grid.querySelector('.mwi-trial-box-row')).toBeNull();
-        expect(grid.firstElementChild).toBe(document.getElementById('payout'));
-    });
-
-    test('a wave that fills the grid puts the block under it rather than past its last column', () => {
-        // Trial Swarm's four monsters fill the game's four columns, and asking
-        // for a fifth is 176 × 4 + 220 wide — the fight grew a horizontal
-        // scrollbar and pushed itself out of view.
-        const { root, grid, cards } = fightLayout(4);
-        const block = newBlock();
-
-        expect(placeTrialBlock(root, cards[0], block, 'Trial Swarm')).toBe('fight-sidecar');
-        // Still after the last boss in the DOM, so the anchoring check holds
-        expect(grid.lastElementChild).toBe(block);
-        expect(block.style.gridRow).toBe('2');
-        expect(block.style.gridColumn).toBe('1 / -1');
-    });
-
-    test('the sidecar’s sizing follows its placement', () => {
-        const beside = fightSidecarStyle(fightSidecarPlacement(fightLayout(1).grid));
-        expect(beside).toContain('grid-row:1');
-        expect(beside).toContain('width:220px');
-        expect(beside).not.toContain('display:grid');
-
-        // Under the wave it may have the whole width, so its rows take columns
-        // of their own rather than making one long thin box
-        const under = fightSidecarStyle(fightSidecarPlacement(fightLayout(4).grid));
-        expect(under).toContain('grid-row:2');
-        expect(under).toContain('grid-column:1 / -1');
-        expect(under).toContain('max-width:100%');
-        expect(under).toContain('minmax(190px, 1fr)');
-        expect(under).not.toContain('width:220px');
-    });
-
-    test('a grid whose columns cannot be read keeps the sidecar beside the wave', () => {
-        // Failing closed: no template is not "the wave fills it", and moving the
-        // readout under a fight it fits beside would be a regression for every
-        // layout this rule cannot measure
-        const { grid } = fightLayout(4);
-        grid.style.gridTemplateColumns = '';
-
-        expect(fightSidecarPlacement(grid)).toEqual({ row: 1, column: '5', wrapped: false });
-        expect(gridColumnCount('')).toBe(0);
-        expect(gridColumnCount('none')).toBe(0);
-        expect(gridColumnCount('176px 176px 176px 176px')).toBe(4);
-        expect(gridColumnCount('repeat(4, 176px)')).toBe(4);
-        expect(gridColumnCount('repeat(2, 100px 20px)')).toBe(4);
-    });
-
-    describe('sidecar track fit', () => {
-        /**
-         * Give the grid and its panel a measured width.
-         * @param {Element} grid - The fight grid
-         * @param {number} width - Panel clientWidth
-         */
-        function measure(grid, width) {
-            Object.defineProperty(grid.parentElement, 'clientWidth', { value: width, configurable: true });
-            grid.style.columnGap = '2px';
+        for (const [bosses, width] of bossCountsAndWidths) {
+            test(`${bosses} boss(es) in a ${width}px grid: the block is the last item, below the cards, never in the payout's place`, () => {
+                const { root, grid, cards } = fightLayout(bosses);
+                setWidth(grid, 'clientWidth', width);
+                const block = newBlock();
+                expect(placeTrialBlock(root, cards[0], block, 'Trial Badger')).toBe('fight-below');
+                expect(grid.lastElementChild).toBe(block);
+                expect(block.previousElementSibling).toBe(cards[bosses - 1]);
+                expect(grid.firstElementChild).toBe(document.getElementById('payout'));
+                // nothing on the game's grid was rewritten
+                expect(grid.style.gridTemplateColumns).toBe('176px 176px 176px 176px');
+                expect(blockNearAnchor(block, cards[0], root)).toBe(true);
+            });
         }
 
-        test('the live shape (five 120px tracks, 724 wide, four cards) sizes the sidecar track', () => {
-            const { root, grid, cards } = fightLayout(4);
-            grid.style.gridTemplateColumns = '120px 120px 120px 120px 120px';
-            measure(grid, 724);
+        test('a wave remount that changes the boss count puts the readout back on its own last row, once', () => {
+            const { root, grid, cards } = fightLayout(2);
+            let placed = 0;
+            const opts = {
+                html: '<div>x</div>',
+                style: 'grid-column:1 / -1; grid-row:auto;',
+                anchored: (b) => blockNearAnchor(b, cards[0], root),
+                place: (b) => {
+                    placed += 1;
+                    return placeTrialBlock(root, cards[0], b, 'Trial Badger');
+                },
+            };
+            const block = guildTrials._placeBlock(root, 'tile:wave', opts);
+            guildTrials._placeBlock(root, 'tile:wave', opts);
+            expect(placed).toBe(1);
+            // the wave ends and four swarm bosses mount after the block
+            for (let i = 0; i < 4; i += 1) {
+                const boss = document.createElement('div');
+                boss.className = 'BattlePanel_combatUnit__z';
+                grid.appendChild(boss);
+            }
+            guildTrials._placeBlock(root, 'tile:wave', opts);
+            expect(placed).toBe(2);
+            expect(grid.lastElementChild).toBe(block);
+            guildTrials._placeBlock(root, 'tile:wave', opts);
+            expect(placed).toBe(2);
+        });
+
+        test('the payout is never placed inside the monsters area', () => {
+            const { root, monsters, grid, cards } = fightLayout(2);
+            document.getElementById('payout').remove();
             const block = newBlock();
-
-            expect(placeTrialBlock(root, cards[0], block, 'Trial Swarm')).toBe('fight-sidecar');
-            expect(block.style.gridRow).toBe('1');
-            expect(block.style.gridColumn).toBe('5');
-            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 220px');
-            // 4 x 120 + 220 + 4 gaps of 2 fits 724: nothing to scroll
-            expect(480 + 220 + 8).toBeLessThanOrEqual(724);
-            // Idempotent on a re-place
-            fightSidecarPlacement(grid);
-            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 220px');
+            placeTrialBlock(root, cards[0], block, 'Trial Badger');
+            guildTrials.sectionFolds = {};
+            guildTrials._renderPayout(
+                root,
+                [{ name: 'Trial Badger', type: 'combat', banked: 3, projected: 15, tierKnown: true }],
+                cards[0],
+                {
+                    buildersHall: { bonus: 0.2, level: 5, rules: null, source: 'test' },
+                    treasury: { bonus: 0.3, level: 5 },
+                }
+            );
+            const payout = document.querySelector('[data-mwi-block="payout"]');
+            expect(payout).toBeTruthy();
+            expect(monsters.contains(payout)).toBe(false);
+            expect(grid.contains(payout)).toBe(false);
+            expect(payout.nextElementSibling).toBe(document.querySelector('[class*="BattlePanel_battleArea"]'));
         });
-
-        test('a grid too narrow for the group wraps and leaves the template alone', () => {
-            const { root, grid, cards } = fightLayout(4);
-            grid.style.gridTemplateColumns = '120px 120px 120px 120px 120px';
-            measure(grid, 600);
-            const block = newBlock();
-
-            placeTrialBlock(root, cards[0], block, 'Trial Swarm');
-            expect(block.style.gridRow).toBe('2');
-            expect(block.style.gridColumn).toBe('1 / -1');
-            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 120px');
-        });
-
-        test('removal restores the original inline template, and a wave change re-measures', () => {
-            const { root, grid, cards } = fightLayout(4);
-            grid.style.gridTemplateColumns = '120px 120px 120px 120px 120px';
-            measure(grid, 724);
-            const block = newBlock();
-            block.dataset.mwiBlock = 'tile:a';
-            placeTrialBlock(root, cards[0], block, 'Trial Swarm');
-            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 220px');
-
-            restoreFightGrids(document);
-            // The block is still there, so the fit is kept
-            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 220px');
-            block.remove();
-            restoreFightGrids(document);
-            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 120px');
-            expect(grid.dataset.mwiFitCards).toBeUndefined();
-
-            // Fit, then the wave loses a card: the stale fit is dropped first
-            placeTrialBlock(root, cards[0], newBlock(), 'Trial Swarm');
-            cards[3].remove();
-            fightSidecarPlacement(grid);
-            expect(grid.dataset.mwiFitCards).toBe('3');
-            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 220px');
-        });
-
-        test('a track list the game rewrote over the fit is kept, not overwritten by the stale one', () => {
-            const { root, grid, cards } = fightLayout(4);
-            grid.style.gridTemplateColumns = '120px 120px 120px 120px 120px';
-            measure(grid, 724);
-            placeTrialBlock(root, cards[0], newBlock(), 'Trial Swarm');
-            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 220px');
-
-            // The wave drops to one boss and the game writes the new wave's tracks
-            cards.slice(1).forEach((card) => card.remove());
-            grid.style.gridTemplateColumns = '176px';
-            fightSidecarPlacement(grid);
-            expect(grid.style.gridTemplateColumns).toBe('176px 220px');
-
-            // And a trial that ends after the game rewrote the list leaves the game's list
-            grid.style.gridTemplateColumns = '150px';
-            restoreFightGrids(document);
-            expect(grid.style.gridTemplateColumns).toBe('150px');
-            expect(grid.dataset.mwiFitCards).toBeUndefined();
-        });
-
-        test('the old 4x176 shape behaves as before when the width is unknown or too small', () => {
-            const { grid } = fightLayout(4);
-            expect(fightSidecarPlacement(grid).wrapped).toBe(true);
-            measure(grid, 724);
-            expect(fightSidecarPlacement(grid).wrapped).toBe(true);
-            expect(grid.style.gridTemplateColumns).toBe('176px 176px 176px 176px');
-            const one = fightLayout(1).grid;
-            expect(fightSidecarPlacement(one)).toEqual({ row: 1, column: '2', wrapped: false });
-            // Measured: one boss + sidecar is a 176px + 220px group, centred
-            measure(one, 724);
-            expect(fightSidecarPlacement(one).wrapped).toBe(false);
-            expect(one.style.gridTemplateColumns).toBe('176px 220px');
-        });
-    });
-
-    test('one to four monsters each get a placement that fits the grid', () => {
-        for (const monsters of [1, 2, 3]) {
-            expect(fightSidecarPlacement(fightLayout(monsters).grid).wrapped).toBe(false);
-        }
-        expect(fightSidecarPlacement(fightLayout(4).grid).wrapped).toBe(true);
-    });
-
-    test('a wave of explicitly-centred bosses puts the sidecar to their right, never their left', () => {
-        // The live 2× Trial Badger wave: the game centres the two cards at
-        // columns 2 and 3 of its four-column grid, leaving column 1 free —
-        // auto-placement dropped the sidecar there, LEFT of the cards.
-        const { root, cards } = fightLayout(2);
-        cards[0].style.gridColumn = '2';
-        cards[1].style.gridColumn = '3';
-        const block = newBlock();
-
-        expect(placeTrialBlock(root, cards[0], block, 'Trial Badger')).toBe('fight-sidecar');
-        expect(block.style.gridColumn).toBe('4');
-        expect(block.style.gridRow).toBe('1');
-    });
-
-    test('fightSidecarColumn reads the wave shape, ignoring our own injected blocks', () => {
-        // A single auto-placed boss: the sidecar sits at column 2
-        expect(fightSidecarColumn(fightLayout(1).grid)).toBe(2);
-        // Four auto-placed monsters (Trial Swarm): column 5
-        expect(fightSidecarColumn(fightLayout(4).grid)).toBe(5);
-
-        // Two bosses spanning explicit columns: the sidecar follows the last line
-        const spanned = fightLayout(2);
-        spanned.cards[0].style.gridColumnStart = '2';
-        spanned.cards[0].style.gridColumnEnd = '3';
-        spanned.cards[1].style.gridColumnStart = '3';
-        spanned.cards[1].style.gridColumnEnd = '5';
-        expect(fightSidecarColumn(spanned.grid)).toBe(5);
-
-        // Our own blocks in the grid (the payout in old DOMs, the sidecar
-        // itself on a re-place) never push the column further right
-        const crowded = fightLayout(2);
-        const sidecar = newBlock();
-        crowded.grid.appendChild(sidecar);
-        expect(fightSidecarColumn(crowded.grid)).toBe(3);
-
-        expect(fightSidecarColumn(null)).toBe(1);
     });
 
     test('a composite wave anchored on the monsters area finds the grid beneath it', () => {
@@ -1549,7 +1409,7 @@ describe('placeTrialBlock', () => {
         const { root, monsters, grid, cards } = fightLayout(4);
         const block = newBlock();
 
-        expect(placeTrialBlock(root, monsters, block, 'Trial Swarm')).toBe('fight-sidecar');
+        expect(placeTrialBlock(root, monsters, block, 'Trial Swarm')).toBe('fight-below');
         expect(grid.lastElementChild).toBe(block);
         expect(block.previousElementSibling).toBe(cards[3]);
     });
