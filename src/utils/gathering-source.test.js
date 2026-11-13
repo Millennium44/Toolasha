@@ -21,6 +21,10 @@ describe('gatheringItemsPerSecond', () => {
         expect(gatheringItemsPerSecond(eternalCow, '/items/eternal_milk')).toBeCloseTo(0.1 / 45, 10);
     });
 
+    test('an action with no base time is incomparable (zero), not items per action', () => {
+        expect(gatheringItemsPerSecond({ dropTable: holyCow.dropTable }, '/items/holy_milk')).toBe(0);
+    });
+
     test('is zero for an item the table does not drop, and for no action', () => {
         expect(gatheringItemsPerSecond(holyCow, '/items/eternal_milk')).toBe(0);
         expect(gatheringItemsPerSecond(null, '/items/holy_milk')).toBe(0);

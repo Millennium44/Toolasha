@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     itemDetails: {},
     resolvedPrices: {},
     partialPrices: new Set(),
+    partialCrafts: new Set(),
     itemPrices: {},
     marketPrices: {},
     productionCosts: {},
@@ -58,6 +59,10 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
 }));
 vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => ({
     ...(await importOriginal()),
+    getProductionCostDetailed: (hrid, mode) => {
+        const cost = mocks.productionCosts[hrid];
+        return { cost: (typeof cost === 'object' ? cost[mode] : cost) ?? 0, partial: mocks.partialCrafts.has(hrid) };
+    },
     getProductionCost: (hrid, mode) => {
         const cost = mocks.productionCosts[hrid];
         return (typeof cost === 'object' ? cost[mode] : cost) ?? 0;
@@ -102,6 +107,7 @@ beforeEach(() => {
     mocks.itemDetails = {};
     mocks.resolvedPrices = {};
     mocks.partialPrices = new Set();
+    mocks.partialCrafts = new Set();
     mocks.itemPrices = {};
     mocks.marketPrices = {};
     mocks.productionCosts = {};
@@ -181,6 +187,34 @@ describe('calculateMaterialCosts', () => {
         );
         expect(costs[0].missingPrice).toBe(true);
         expect(costs[0].totalCost).toBe(20000);
+    });
+
+    test('a crafted upgrade item whose chain has an unpriced leaf is flagged, not costed as complete', () => {
+        mocks.settings.profitCalc_craftUpgradeItems = true;
+        mocks.itemDetails['/items/belt_base'] = { name: 'Belt Base' };
+        mocks.productionCosts['/items/belt_base'] = 400;
+        mocks.partialCrafts.add('/items/belt_base');
+        const costs = profitCalculator.calculateMaterialCosts({ upgradeItemHrid: '/items/belt_base' }, 0);
+        expect(costs[0].isCrafted).toBe(true);
+        expect(costs[0].missingPrice).toBe(true);
+    });
+
+    test('a recipe whose input is a lower-bound craft cost does not win on margin', () => {
+        mocks.resolvedPrices['/items/out'] = 1000;
+        mocks.resolvedPrices['/items/cheap'] = 1;
+        mocks.partialPrices.add('/items/cheap');
+        mocks.resolvedPrices['/items/fair'] = 300;
+        const a = {
+            actionHrid: 'a',
+            action: { inputItems: [{ itemHrid: '/items/cheap', count: 1 }] },
+            output: { itemHrid: '/items/out', count: 1 },
+        };
+        const b = {
+            actionHrid: 'b',
+            action: { inputItems: [{ itemHrid: '/items/fair', count: 1 }] },
+            output: { itemHrid: '/items/out', count: 1 },
+        };
+        expect(profitCalculator.bestMarginCandidate([a, b])).toBe(b);
     });
 
     test('an item with no known details is skipped entirely, not included at zero', () => {
