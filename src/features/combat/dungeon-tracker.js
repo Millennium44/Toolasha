@@ -808,6 +808,37 @@ class DungeonTracker {
     }
 
     /**
+     * The dungeon a "Battle started" party message names.
+     * @param {Object} message - A `partyBattleStarted` chat message
+     * @returns {string|null} Its `actionHrid`, or null when the metadata names none or is unreadable
+     */
+    battleStartedHrid(message) {
+        try {
+            const hrid = JSON.parse(message?.systemMetadata || '{}')?.actionHrid;
+            return typeof hrid === 'string' && hrid ? hrid : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * The action named by the newest "Battle started" before a message.
+     * A Key counts line belongs to that one: Battle started posts once per
+     * queued party action and Key counts at every run start after it.
+     * @param {Array<Object>} messages - Party chat messages in arrival order
+     * @param {number} index - Index of the message to pair
+     * @returns {string|null|undefined} The action HRID; null when that Battle started names none readable; undefined when none precedes
+     */
+    battleHridBefore(messages, index) {
+        for (let i = index - 1; i >= 0; i--) {
+            if (messages[i]?.m === 'systemChatMessage.partyBattleStarted') {
+                return this.battleStartedHrid(messages[i]);
+            }
+        }
+        return undefined;
+    }
+
+    /**
      * Scan existing chat messages for "Battle started" and "Key counts" (in case we joined mid-dungeon)
      */
     scanExistingChatMessages() {
@@ -827,16 +858,33 @@ class DungeonTracker {
             let latestTimestamp = null;
 
             // FIRST: Try to find messages in memory (most reliable)
+            //
+            // A "Key counts" line is adopted only when the newest "Battle started"
+            // before it names the dungeon being tracked: the game posts Battle
+            // started once per queued action and Key counts at every run start
+            // after it, so a Key counts line belongs to the Battle started before
+            // it. Another dungeon's line within the freshness window would
+            // otherwise become this run's roster. No Battle started before it,
+            // or one that names no readable dungeon, is not a pairing: leave the
+            // counts empty and the next live Key counts message fills them.
+            const trackedHrid = this.currentRun?.dungeonHrid || null;
             if (this.recentChatMessages.length > 0) {
-                for (const message of this.recentChatMessages) {
+                for (let index = 0; index < this.recentChatMessages.length; index++) {
+                    const message = this.recentChatMessages[index];
                     // Look for "Battle started" messages
                     if (message.m === 'systemChatMessage.partyBattleStarted') {
-                        const timestamp = new Date(message.t).getTime();
-                        this.battleStartedTimestamp = timestamp;
+                        // Only this dungeon's start is this run's: the queue's start of
+                        // another dungeon says nothing about when this one began
+                        if (trackedHrid && this.battleStartedHrid(message) === trackedHrid) {
+                            this.battleStartedTimestamp = new Date(message.t).getTime();
+                        }
                     }
 
                     // Look for "Key counts" messages
                     if (message.m === 'systemChatMessage.partyKeyCount') {
+                        if (!trackedHrid || this.battleHridBefore(this.recentChatMessages, index) !== trackedHrid) {
+                            continue;
+                        }
                         const timestamp = new Date(message.t).getTime();
 
                         // Parse key counts from systemMetadata
@@ -859,6 +907,12 @@ class DungeonTracker {
             // FALLBACK: If no messages in memory, scan DOM (for messages that arrived before script loaded)
             if (!latestKeyCountsMap) {
                 const messages = document.querySelectorAll('[class*="ChatMessage_chatMessage"]');
+
+                // The Battle started line carries the dungeon's display name, which a
+                // non-English client localizes. A name that does not equal the tracked
+                // dungeon's name pairs nothing; never guess across languages.
+                const trackedName = trackedHrid ? dataManager.getActionDetails(trackedHrid)?.name || null : null;
+                let domBattleName; // undefined until a Battle started line is seen
 
                 // Scan all messages to find Battle started and most recent key counts
                 for (const msg of messages) {
@@ -890,14 +944,18 @@ class DungeonTracker {
                             /\[(\d{1,2})([-/])(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/
                         );
 
+                        domBattleName = text.split(DUNGEON_BATTLE_STARTED)[1]?.split(']')[0]?.trim() || '';
                         const timestamp = timestampMatch && stampFromMatch(timestampMatch);
-                        if (timestamp) {
+                        if (timestamp && trackedName && domBattleName === trackedName) {
                             this.battleStartedTimestamp = timestamp.getTime();
                         }
                     }
 
                     // Look for "Key counts:" messages
                     if (text.includes(DUNGEON_KEY_COUNTS)) {
+                        if (!trackedName || domBattleName !== trackedName) {
+                            continue;
+                        }
                         // Parse the message
                         const keyCountsMap = this.parseKeyCountsFromMessage(text);
 
@@ -1601,6 +1659,20 @@ class DungeonTracker {
 
         // If not tracking, ignore (probably from someone else's dungeon)
         if (!this.isTracking) {
+            return;
+        }
+
+        // The party's newest Battle started names another dungeon: this is that
+        // dungeon's roster and start, not this run's. The post-start chat scan
+        // re-reads the pair once the tracker has caught up to the new dungeon.
+        // Only a positive mismatch refuses it: a Battle started that scrolled
+        // out of the buffer, or names nothing readable, leaves live behavior alone.
+        const pairedHrid = this.battleHridBefore(this.recentChatMessages, this.recentChatMessages.lastIndexOf(message));
+        if (
+            typeof pairedHrid === 'string' &&
+            this.currentRun?.dungeonHrid &&
+            pairedHrid !== this.currentRun.dungeonHrid
+        ) {
             return;
         }
 
