@@ -40,7 +40,7 @@ import {
     TARGET_LEVEL_SETTING,
     clearCraftEnhanceCache,
     craftEnhanceAvailable,
-    craftEnhancePriceStamp,
+    craftEnhanceStateKey,
     rankCraftEnhance,
 } from './craft-enhance.js';
 import {
@@ -189,11 +189,12 @@ class CraftEnhanceBoard {
     }
 
     /**
-     * What the held rows were costed for: the target, the owned-drops mode and the market data's age.
+     * What the held rows were costed for: the whole state a run depends on (target, owned-drops mode, market
+     * data age, skill levels, gear, drinks, pricing mode, enhancing bench), so a change to any of them is seen.
      * @returns {string}
      */
     currentKey() {
-        return `${this.targetLevel}|${this.ownedMode}|${craftEnhancePriceStamp()}`;
+        return craftEnhanceStateKey();
     }
 
     /** Feature-registry entry point */

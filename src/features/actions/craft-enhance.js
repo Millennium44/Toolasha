@@ -30,6 +30,7 @@ import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { getItemPriceInfo } from '../../utils/market-data.js';
 import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
+import { canStartAction } from '../../utils/efficiency.js';
 import { calculateDrinksPerHour, calculatePriceAfterTax, outputTaxRate } from '../../utils/profit-helpers.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
@@ -189,6 +190,27 @@ export function craftEnhanceFingerprint({ targetLevel, ownedMode, params, priceS
 }
 
 /**
+ * A digest of everything a held ranking depends on, for the window to compare on every draw: the full
+ * fingerprint of the run it would start now (market data age, character, skill levels, gear, every drink slot,
+ * pricing mode, target, owned mode, enhancing bench).
+ *
+ * @returns {string} Empty when it cannot be worked out (no skills loaded yet), which never matches a real key
+ */
+export function craftEnhanceStateKey() {
+    try {
+        return craftEnhanceFingerprint({
+            targetLevel: normalizeTargetLevel(config.getSettingValue(TARGET_LEVEL_SETTING, 5)),
+            ownedMode: normalizeOwnedMode(config.getSettingValue(OWNED_MODE_SETTING, 'market')),
+            params: getAutoDetectedParams(),
+            priceStamp: marketAPI.lastFetchTimestamp || 0,
+        });
+    } catch (error) {
+        console.error('[CraftEnhance] Reading the state key failed:', error);
+        return '';
+    }
+}
+
+/**
  * Every qualifying recipe, rated at +0 and at the target level.
  *
  * @param {Object} [options] - Options
@@ -336,7 +358,14 @@ export function rankCraftEnhance({
                     skillLabel: recipe.skill.label,
                     requiredLevel,
                     level,
-                    levelMet: level >= requiredLevel,
+                    // The game's own start check: a skill-level tea raises the level, Artisan's Action Level raises the
+                    // requirement
+                    levelMet: canStartAction({
+                        requiredLevel,
+                        skillLevel: level,
+                        teaSkillLevelBonus: Number(profit.teaSkillLevelBonus) || 0,
+                        actionLevelBonus: Number(profit.actionLevelBonus) || 0,
+                    }),
                 },
                 priced,
                 figures,
@@ -364,4 +393,5 @@ export default {
     clearCraftEnhanceCache,
     saleAfterTaxAt,
     craftEnhancePriceStamp,
+    craftEnhanceStateKey,
 };
