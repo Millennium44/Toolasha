@@ -123,6 +123,12 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
     },
 }));
 
+import {
+    buildPartyBattleStarted,
+    buildPartyKeyCount,
+    PARTY_CHAT_DOM_TEXT,
+} from '../../__fixtures__/wire/party-chat.js';
+
 const tracker = (await import('./dungeon-tracker.js')).default;
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
 
@@ -138,6 +144,17 @@ async function flush() {
 
 function stored(charId = game.characterId) {
     return mockStorage.storeFor('settings').get(`${IN_PROGRESS}_${charId}`);
+}
+
+/** A "Battle started" party message as the game posts it: the action is named by hrid, not by display name. */
+function battleStartedMsg(t = '2026-08-04T09:59:00.000Z', actionHrid = DEN) {
+    return {
+        chan: '/chat_channel_types/party',
+        isSystemMessage: true,
+        m: 'systemChatMessage.partyBattleStarted',
+        t,
+        systemMetadata: JSON.stringify({ actionHrid }),
+    };
 }
 
 function keyCountsData(isoTime, keyCountString) {
@@ -928,6 +945,137 @@ describe('reading key counts out of party chat', () => {
     });
 });
 
+describe('pairing key counts with the Battle started before them', () => {
+    const T = (m, sec = 0) => new Date(Date.parse('2026-08-04T09:50:00.000Z') + m * 60_000 + sec * 1000).toISOString();
+
+    async function scan(messages, opts = {}) {
+        vi.useFakeTimers();
+        vi.setSystemTime(Date.parse('2026-08-04T10:01:00.000Z'));
+        beTracking(opts);
+        tracker.recentChatMessages = messages;
+        tracker.scanExistingChatMessages();
+        await flush();
+    }
+
+    const two = [
+        buildPartyBattleStarted(DEN, T(0), 1),
+        buildPartyKeyCount('[Alice - 12] [Bob - 8]', T(0, 1), 2),
+        buildPartyBattleStarted(LAIR, T(5), 3),
+        buildPartyKeyCount('[Carol - 5] [Dave - 6]', T(5, 1), 4),
+    ];
+
+    test('tracking the second dungeon adopts only its own roster and start', async () => {
+        await scan(two, { dungeonHrid: LAIR });
+        expect(tracker.currentRun.keyCountsMap).toEqual({ Carol: 5, Dave: 6 });
+        expect(tracker.firstKeyCountTimestamp).toBe(Date.parse(T(5, 1)));
+        expect(tracker.battleStartedTimestamp).toBe(Date.parse(T(5)));
+    });
+
+    test('tracking the first dungeon does not adopt the newer dungeon roster', async () => {
+        await scan(two, { dungeonHrid: DEN });
+        expect(tracker.currentRun.keyCountsMap).toEqual({ Alice: 12, Bob: 8 });
+        expect(tracker.battleStartedTimestamp).toBe(Date.parse(T(0)));
+    });
+
+    test('tracking a third dungeon adopts nothing', async () => {
+        const OTHER = '/actions/combat/third';
+        game.actionDetails[OTHER] = { name: 'Third', combatZoneInfo: { isDungeon: true } };
+        await scan(two, { dungeonHrid: OTHER });
+        expect(tracker.currentRun.keyCountsMap).toEqual({});
+        expect(tracker.firstKeyCountTimestamp).toBeNull();
+        expect(tracker.battleStartedTimestamp).toBeNull();
+    });
+
+    test('several key counts after one Battle started: the newest is adopted', async () => {
+        await scan(
+            [
+                buildPartyBattleStarted(DEN, T(0), 1),
+                buildPartyKeyCount('[Alice - 12]', T(0, 1), 2),
+                buildPartyKeyCount('[Alice - 11]', T(4), 3),
+                buildPartyKeyCount('[Alice - 10]', T(8), 4),
+            ],
+            { dungeonHrid: DEN }
+        );
+        expect(tracker.currentRun.keyCountsMap).toEqual({ Alice: 10 });
+        expect(tracker.firstKeyCountTimestamp).toBe(Date.parse(T(8)));
+    });
+
+    test('key counts with no Battle started before them are skipped', async () => {
+        await scan([buildPartyKeyCount('[Alice - 12]', T(0, 1), 2)], { dungeonHrid: DEN });
+        expect(tracker.currentRun.keyCountsMap).toEqual({});
+        expect(tracker.firstKeyCountTimestamp).toBeNull();
+    });
+
+    test('a Battle started that names no readable action pairs nothing', async () => {
+        const unreadable = { ...buildPartyBattleStarted(DEN, T(0), 1), systemMetadata: '{"name":"Chimerical Den"}' };
+        await scan([unreadable, buildPartyKeyCount('[Alice - 12]', T(0, 1), 2)], { dungeonHrid: DEN });
+        expect(tracker.currentRun.keyCountsMap).toEqual({});
+    });
+
+    describe('the DOM fallback', () => {
+        function domLog(lines) {
+            document.body.innerHTML = '';
+            for (const text of lines) {
+                const node = document.createElement('div');
+                node.className = 'ChatMessage_chatMessage__abc';
+                node.textContent = text;
+                document.body.appendChild(node);
+            }
+        }
+
+        test('a Battle started line that names the tracked dungeon pairs its key counts', async () => {
+            game.actionDetails[DEN].name = 'Enchanted Fortress';
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date(2026, 10, 13, 12, 41, 0));
+            beTracking();
+            domLog(PARTY_CHAT_DOM_TEXT);
+            tracker.scanExistingChatMessages();
+            await flush();
+            expect(tracker.currentRun.keyCountsMap.PugsElite).toBe(98073);
+            expect(tracker.battleStartedTimestamp).toBe(new Date(2026, 10, 13, 12, 40, 24).getTime());
+        });
+
+        test('a name that is another dungeon or not the game name at all is skipped', async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date(2026, 10, 13, 12, 41, 0));
+            beTracking(); // tracking Chimerical Den; the log says Enchanted Fortress
+            domLog(PARTY_CHAT_DOM_TEXT);
+            tracker.scanExistingChatMessages();
+            await flush();
+            expect(tracker.currentRun.keyCountsMap).toEqual({});
+            expect(tracker.battleStartedTimestamp).toBeNull();
+
+            game.actionDetails[DEN].name = 'Enchanted Fortress';
+            domLog(['[11/13 12:40:24 PM] Battle started: 魔法要塞', PARTY_CHAT_DOM_TEXT[1]]);
+            tracker.scanExistingChatMessages();
+            await flush();
+            expect(tracker.currentRun.keyCountsMap).toEqual({});
+        });
+    });
+
+    describe('a live key count', () => {
+        test('after a Battle started for another dungeon is not this run', async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(Date.parse('2026-08-04T10:01:00.000Z'));
+            beTracking({ dungeonHrid: DEN });
+            tracker.onChatMessage({ message: buildPartyBattleStarted(LAIR, T(10), 1) });
+            tracker.onChatMessage({ message: buildPartyKeyCount('[Carol - 5]', T(10, 1), 2) });
+            await flush();
+            expect(tracker.firstKeyCountTimestamp).toBeNull();
+            expect(tracker.currentRun.keyCountsMap).toEqual({});
+        });
+
+        test('with no Battle started in the buffer still anchors the run', async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(Date.parse('2026-08-04T10:01:00.000Z'));
+            beTracking({ dungeonHrid: DEN, wavesCompleted: 0 });
+            tracker.onChatMessage({ message: buildPartyKeyCount('[Carol - 5]', T(10, 1), 2) });
+            await flush();
+            expect(tracker.firstKeyCountTimestamp).toBe(Date.parse(T(10, 1)));
+        });
+    });
+});
+
 describe('routing chat messages', () => {
     test('another channel is ignored entirely', () => {
         tracker.onChatMessage({
@@ -995,6 +1143,7 @@ describe('routing chat messages', () => {
         vi.setSystemTime(Date.parse('2026-08-04T10:01:00.000Z'));
         beTracking();
         tracker.recentChatMessages = [
+            battleStartedMsg('2026-08-04T09:59:59.990Z'),
             {
                 m: 'systemChatMessage.partyKeyCount',
                 t: '2026-08-04T10:00:00.000Z',
@@ -1735,6 +1884,7 @@ describe('a run the fight says was solo', () => {
         vi.setSystemTime(now);
         beTracking({ startTime: now - 60_000, partyNames: PARTY });
         tracker.recentChatMessages = [
+            battleStartedMsg('2026-08-04T09:57:00.000Z'),
             {
                 m: 'systemChatMessage.partyKeyCount',
                 t: '2026-08-04T09:58:00.000Z',
@@ -2119,10 +2269,7 @@ describe('scanning chat already on screen', () => {
         vi.setSystemTime(Date.parse('2026-08-04T10:01:00.000Z'));
         beTracking();
         tracker.recentChatMessages = [
-            {
-                m: 'systemChatMessage.partyBattleStarted',
-                t: '2026-08-04T09:59:00.000Z',
-            },
+            battleStartedMsg('2026-08-04T09:59:00.000Z'),
             {
                 m: 'systemChatMessage.partyKeyCount',
                 t: '2026-08-04T10:00:00.000Z',
@@ -2147,6 +2294,7 @@ describe('scanning chat already on screen', () => {
         tracker.firstKeyCountTimestamp = 1234;
         tracker.lastKeyCountTimestamp = 1234;
         tracker.recentChatMessages = [
+            battleStartedMsg('2026-08-04T09:59:59.990Z'),
             {
                 m: 'systemChatMessage.partyKeyCount',
                 t: '2026-08-04T10:00:00.000Z',
@@ -2179,7 +2327,7 @@ describe('scanning chat already on screen', () => {
         // and lose to every comparison after it, stranding the run unbanked.
         beTracking();
         tracker.recentChatMessages = [
-            { m: 'systemChatMessage.partyBattleStarted', t: '2026-08-04T09:59:00.000Z' },
+            battleStartedMsg('2026-08-04T09:59:00.000Z'),
             {
                 m: 'systemChatMessage.partyKeyCount',
                 t: 'the server sent nonsense',
@@ -2199,7 +2347,7 @@ describe('scanning chat already on screen', () => {
     test('a run left unanchored by an unreadable time still banks on the next key count', async () => {
         beTracking();
         tracker.recentChatMessages = [
-            { m: 'systemChatMessage.partyBattleStarted', t: '2026-08-04T09:59:00.000Z' },
+            battleStartedMsg('2026-08-04T09:59:00.000Z'),
             {
                 m: 'systemChatMessage.partyKeyCount',
                 t: 'the server sent nonsense',
@@ -2227,6 +2375,10 @@ describe('scanning chat already on screen', () => {
         const node = document.createElement('div');
         node.className = 'ChatMessage_chatMessage__abc';
         node.textContent = '[??] Key counts: [Alice - 12], [Bob - 8]';
+        const started = document.createElement('div');
+        started.className = 'ChatMessage_chatMessage__abc';
+        started.textContent = '[08/04 10:00:00 AM] Battle started: Chimerical Den';
+        document.body.appendChild(started);
         document.body.appendChild(node);
 
         tracker.scanExistingChatMessages();
@@ -3625,6 +3777,7 @@ describe('recovering a partial party run’s start from chat', () => {
             anchorAgoMs === null
                 ? []
                 : [
+                      battleStartedMsg(new Date(NOW - anchorAgoMs - 1000).toISOString()),
                       {
                           m: 'systemChatMessage.partyKeyCount',
                           t: new Date(NOW - anchorAgoMs).toISOString(),
@@ -3952,7 +4105,10 @@ describe('reading a DOM chat stamp on a day-first client', () => {
             vi.setSystemTime(new Date(2028, 2, 4, 23, 58, 0));
             beTracking();
             tracker.recentChatMessages = [];
-            chatLog(['[04/03 23:52:47] Key counts: [Alice - 12], [Bob - 8]']);
+            chatLog([
+                '[04/03 23:50:00] Battle started: Chimerical Den',
+                '[04/03 23:52:47] Key counts: [Alice - 12], [Bob - 8]',
+            ]);
 
             tracker.scanExistingChatMessages();
             await flush();
@@ -3976,7 +4132,7 @@ describe('reading a DOM chat stamp on a day-first client', () => {
             vi.setSystemTime(new Date(2028, 0, 1, 0, 30, 0));
             beTracking();
             tracker.recentChatMessages = [];
-            chatLog(['[31/12 23:58:00] Key counts: [Alice - 12]']);
+            chatLog(['[04/03 23:50:00] Battle started: Chimerical Den', '[31/12 23:58:00] Key counts: [Alice - 12]']);
 
             tracker.scanExistingChatMessages();
             await flush();
@@ -3989,7 +4145,10 @@ describe('reading a DOM chat stamp on a day-first client', () => {
             vi.setSystemTime(new Date(2028, 3, 3, 23, 58, 0));
             beTracking();
             tracker.recentChatMessages = [];
-            chatLog(['[04/03 23:52:47] Key counts: [Alice - 12], [Bob - 8]']);
+            chatLog([
+                '[04/03 23:50:00] Battle started: Chimerical Den',
+                '[04/03 23:52:47] Key counts: [Alice - 12], [Bob - 8]',
+            ]);
 
             tracker.scanExistingChatMessages();
             await flush();
@@ -4002,7 +4161,7 @@ describe('reading a DOM chat stamp on a day-first client', () => {
             vi.setSystemTime(new Date(2028, 2, 4, 23, 58, 0));
             beTracking();
             tracker.recentChatMessages = [];
-            chatLog(['[4.3. 23:52:47] Key counts: [Alice - 12]']);
+            chatLog(['[04/03 23:50:00] Battle started: Chimerical Den', '[4.3. 23:52:47] Key counts: [Alice - 12]']);
 
             tracker.scanExistingChatMessages();
             await flush();
@@ -4754,6 +4913,7 @@ describe('a start left over from another day', () => {
         tracker.onChatMessage(
             partyMessage('systemChatMessage.partyBattleStarted', '2026-09-27T12:58:10.000Z', {
                 name: 'Sinister Circus',
+                actionHrid: LAIR,
             })
         );
         vi.setSystemTime(runStart);
