@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
     panel: null,
     destroyed: 0,
     stamp: 1,
+    gear: 'a',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -96,7 +97,13 @@ vi.mock('./craft-enhance.js', () => ({
         state.cleared++;
     },
     craftEnhanceAvailable: () => !state.ironCow,
-    craftEnhancePriceStamp: () => state.stamp,
+    craftEnhanceStateKey: () =>
+        [
+            state.stamp,
+            state.gear,
+            state.settings.actions_craftEnhance_targetLevel,
+            state.settings.actions_craftEnhance_ownedDrops,
+        ].join('|'),
     rankCraftEnhance: async (options) => {
         state.rankCalls.push({ targetLevel: options.targetLevel, ownedMode: options.ownedMode });
         options.onProgress?.(state.rows.length, state.rows.length, state.rows);
@@ -175,6 +182,7 @@ beforeEach(() => {
     state.volumeCalls = [];
     state.destroyed = 0;
     state.stamp = 1;
+    state.gear = 'a';
     board.disable();
     // A panel remembers its selections between openings, which is right for a panel and wrong for a test
     Object.assign(board, {
@@ -522,5 +530,17 @@ describe('volume lookups that outlive their run', () => {
         await board.loadVolume('/items/x:5', '/items/x', 5, first, board.generation);
         expect(board.volumePending.get('/items/x:5')).toBe(second);
         expect(board.volumes.has('/items/x:5')).toBe(false);
+    });
+});
+
+describe('rows held while the character changes', () => {
+    test('changed gear, drinks, levels or pricing (anything in the state key) costs the rows again on the next draw', async () => {
+        openBoard();
+        await flush();
+        const before = state.rankCalls.length;
+        state.gear = 'b';
+        state.panel.render();
+        await flush();
+        expect(state.rankCalls.length).toBe(before + 1);
     });
 });

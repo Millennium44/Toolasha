@@ -21,6 +21,7 @@ const game = vi.hoisted(() => ({
     stamp: 1,
     drinks: [],
     drinkPrices: {},
+    fpExtra: '',
     detected: { enhancingLevel: 100, experienceBonus: 10, toolBonus: 5, speedBonus: 0, guzzlingBonus: 1, teas: {} },
     settings: {},
 }));
@@ -82,11 +83,17 @@ vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => g
 vi.mock('../../utils/background-work.js', () => ({ yieldToEventLoop: async () => {} }));
 vi.mock('./production-arbitrage.js', () => ({
     productionRecipes: () => game.recipes,
-    stateFingerprint: () => `fp${game.stamp}`,
+    stateFingerprint: () => `fp${game.stamp}${game.fpExtra}`,
 }));
 
-const { rankCraftEnhance, clearCraftEnhanceCache, craftEnhanceAvailable, saleAfterTaxAt, craftEnhancePriceStamp } =
-    await import('./craft-enhance.js');
+const {
+    rankCraftEnhance,
+    clearCraftEnhanceCache,
+    craftEnhanceAvailable,
+    saleAfterTaxAt,
+    craftEnhancePriceStamp,
+    craftEnhanceStateKey,
+} = await import('./craft-enhance.js');
 
 const skill = { skillHrid: '/skills/cheesesmithing', label: 'Cheesesmithing' };
 
@@ -166,6 +173,7 @@ beforeEach(() => {
     game.tokenValue = {};
     game.drinks = [];
     game.drinkPrices = {};
+    game.fpExtra = '';
 });
 
 describe('which recipes are walked', () => {
@@ -476,5 +484,52 @@ describe('buy mode, estimates, teas and the price stamp', () => {
     test('the price stamp is exposed for staleness checks', () => {
         game.stamp = 123;
         expect(craftEnhancePriceStamp()).toBe(123);
+    });
+});
+
+describe('the state key the window compares on every draw', () => {
+    test('it moves with anything the fingerprint covers (levels, gear, pricing mode), the drinks and the bench', () => {
+        const key = craftEnhanceStateKey();
+        expect(craftEnhanceStateKey()).toBe(key);
+        game.fpExtra = '|level61';
+        expect(craftEnhanceStateKey()).not.toBe(key);
+        game.fpExtra = '';
+        expect(craftEnhanceStateKey()).toBe(key);
+        game.drinks = [{ itemHrid: '/items/tea_a' }];
+        expect(craftEnhanceStateKey()).not.toBe(key);
+        game.drinks = [];
+        const bench = game.detected;
+        game.detected = { ...bench, toolBonus: 99 };
+        expect(craftEnhanceStateKey()).not.toBe(key);
+        game.detected = bench;
+    });
+
+    test('a held ranking is current exactly when its key matches the one a run would cache under', async () => {
+        const rows = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(await rankCraftEnhance()).toBe(rows);
+        expect(craftEnhanceStateKey()).toBeTruthy();
+    });
+});
+
+describe('Only craftable now', () => {
+    test('a skill-level tea lets a row start below its requirement', async () => {
+        game.profits['/actions/cheesesmithing/sword'].teaSkillLevelBonus = 5;
+        game.recipes[0].action.levelRequirement = { level: 63 };
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        // Level 60 plus 5 from the tea
+        expect(row.levelMet).toBe(true);
+    });
+
+    test("Artisan's Action Level raises the requirement past the level", async () => {
+        game.profits['/actions/cheesesmithing/sword'].actionLevelBonus = 5;
+        game.recipes[0].action.levelRequirement = { level: 58 };
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(row.levelMet).toBe(false);
+    });
+
+    test('with no bonus it is the plain comparison', async () => {
+        game.recipes[0].action.levelRequirement = { level: 61 };
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(row.levelMet).toBe(false);
     });
 });
