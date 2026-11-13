@@ -756,6 +756,9 @@ export class TalismanRankingSectionBase {
                     row.deathsRise
                         ? '<span title="Deaths/hr rose beyond its error bar with this line" style="color:#f87171;">⚠</span>'
                         : '',
+                    row.costUnpriced?.length
+                        ? `<span data-cost-unpriced title="${escapeHtml(`No price for ${row.costUnpriced.join(', ')}: this line spends more of it and the profit counts that as free, so its profit gain is a ceiling`)}" style="color:#ff9800;">⚠</span>`
+                        : '',
                     row.hasMissingPrices
                         ? '<span title="Some prices are missing: profit is a floor" style="color:#ff9800;">*</span>'
                         : '',
@@ -824,7 +827,10 @@ export class TalismanRankingSectionBase {
                             !this.exact && member && !member.significant
                                 ? ' <span style="color:#777;" title="Its gain was within noise">(noise)</span>'
                                 : '';
-                        return `${escapeHtml(nameOf(m.hrid))} G${m.grade}${flag}`;
+                        const unpriced = member?.costUnpriced?.length
+                            ? ` <span data-cost-unpriced style="color:#ff9800;" title="${escapeHtml(`No price for ${member.costUnpriced.join(', ')}: its profit gain is a ceiling`)}">(unpriced costs)</span>`
+                            : '';
+                        return `${escapeHtml(nameOf(m.hrid))} G${m.grade}${flag}${unpriced}`;
                     })
                     .join(', ');
                 const cost = t.cost

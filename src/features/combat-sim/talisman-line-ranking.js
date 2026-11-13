@@ -306,6 +306,30 @@ export function wornTalismans(talismans, slots) {
     );
 }
 
+/** A hair of difference between two sampled runs' per-hour spend of an unpriced item is not "more" of it */
+const UNPRICED_MORE_TOLERANCE = 0.02;
+
+/**
+ * The running costs (food, drinks, dungeon keys) a line's run counted at zero that the baseline's did not, or spends
+ * more of: profit built on them is a ceiling, not a figure (the real spend only lowers it).
+ * @param {Object} baseline - `computeMetrics` of the bare baseline
+ * @param {Object} measured - `computeMetrics` of the run with the line
+ * @returns {string[]} Names of the unpriced running costs the line adds to; empty when it adds none
+ */
+export function newlyUnpricedLineCosts(baseline, measured) {
+    const already = new Set(baseline?.unpricedCost || []);
+    const baseRates = baseline?.unpricedCostRates || {};
+    const rates = measured?.unpricedCostRates || {};
+    return (measured?.unpricedCost || []).filter((name) => {
+        if (!already.has(name)) return true;
+        const before = baseRates[name];
+        const after = rates[name];
+        // Unpriced in both runs but spent more of: the extra is free too. An unknown rate cannot clear it
+        if (!Number.isFinite(before) || !Number.isFinite(after)) return true;
+        return after > before * (1 + UNPRICED_MORE_TOLERANCE);
+    });
+}
+
 /** 95% error bar, in standard errors (the upgrade advisor's `SIGNIFICANCE_Z`) */
 const Z = 1.96;
 
@@ -582,6 +606,13 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
         for (const m of COMBAT_RANKING_METRICS) {
             change[m.key] = (m.rate(metrics) || 0) - (m.rate(against.metrics) || 0);
         }
+        // A profit gain (alone or inside Balanced) that rests on a running cost counted as free is a ceiling, so it is
+        // never "significant": the row says so, and the set marks it
+        const costUnpriced = newlyUnpricedLineCosts(against.metrics, metrics);
+        const profitDriven =
+            costUnpriced.length > 0 &&
+            (metric.balanced ? normalizeBalanceWeights(balanceWeights).profit > 0 : metric.key === 'profit');
+        const unpricedFields = costUnpriced.length ? { costUnpriced } : {};
         // A significant rise in deaths/hr flags the line whatever it is ranked by
         const deathsRise = Boolean(significantBy?.deaths) && Number(deltas?.deaths) > 0;
         if (metric.balanced) {
@@ -598,7 +629,8 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
                 value: score.valuePct,
                 valuePct: score.valuePct,
                 errPct: score.errPct,
-                significant: score.significant,
+                significant: score.significant && !profitDriven,
+                ...unpricedFields,
                 deathsRise,
                 noEffect: seed != null && COMBAT_RANKING_METRICS.every((m) => change[m.key] === 0),
             };
@@ -614,7 +646,8 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
             value: good,
             valuePct: goodPct,
             errPct: Z * (Number(noise?.[metric.key]) || 0),
-            significant: Boolean(significantBy?.[metric.key]),
+            significant: Boolean(significantBy?.[metric.key]) && !profitDriven,
+            ...unpricedFields,
             deathsRise,
             // Same seed and nothing moved: the line does nothing for this build here
             noEffect: seed != null && COMBAT_RANKING_METRICS.every((m) => change[m.key] === 0),

@@ -689,3 +689,82 @@ describe('whose build a combat ranking is for', () => {
         expect(result).toMatchObject({ isSelf: false, playerHrid: '/players/2' });
     });
 });
+
+describe('runCombatLineRanking: unpriced running costs', () => {
+    const worn = [];
+    const data = gameData();
+    const gains = {
+        '/talisman_modifiers/critical_damage': 40,
+        '/talisman_modifiers/smite': 30,
+        '/talisman_modifiers/ability_damage': 20,
+    };
+    // Profit rises with dps, but a line adding 30+ dps also eats an item nothing prices (counted as free)
+    const profitDeps = () => {
+        const { deps } = fakeDeps(data, { gains });
+        let baselineDps = null;
+        return {
+            ...deps,
+            computeMetrics: (r) => {
+                if (baselineDps === null) baselineDps = r.dps;
+                const extra = r.dps - baselineDps;
+                return {
+                    dps: r.dps,
+                    xpPerHour: 0,
+                    profitPerHour: r.dps * 100,
+                    encountersPerHour: 10,
+                    deathsPerHour: 0,
+                    unpricedCost: extra >= 30 ? ['/items/mystery_coffee'] : [],
+                    unpricedCostRates: extra >= 30 ? { '/items/mystery_coffee': 5 } : {},
+                };
+            },
+            computeDeltas: (b, u) => ({
+                dps: ((u.dps - b.dps) / (b.dps || 1)) * 100,
+                xp: 0,
+                profit: ((u.profitPerHour - b.profitPerHour) / (b.profitPerHour || 1)) * 100,
+                encounters: 0,
+                deaths: 0,
+            }),
+        };
+    };
+    const run = (metricKey, balanceWeights) =>
+        runCombatLineRanking(
+            {
+                playerDTOs: [{ hrid: '/players/1', equipment: { '/equipment_types/belt': LARGE_10 }, talismans: worn }],
+                playerIndex: 0,
+                selfHrid: '/players/1',
+                zoneHrid: '/actions/combat/golem_cave',
+                difficultyTier: 1,
+                hours: 10,
+                communityBuffs: {},
+                grade: 6,
+                metricKey,
+                ...(balanceWeights ? { balanceWeights } : {}),
+            },
+            null,
+            profitDeps()
+        );
+
+    test('a profit gain that rests on an unpriced extra cost is marked, not significant, and marked in the set', async () => {
+        const result = await run('profit');
+        const smite = result.rows.find((r) => r.hrid === '/talisman_modifiers/smite');
+        const ability = result.rows.find((r) => r.hrid === '/talisman_modifiers/ability_damage');
+        expect(smite.costUnpriced).toEqual(['/items/mystery_coffee']);
+        expect(smite.significant).toBe(false);
+        expect(ability.costUnpriced).toBeUndefined();
+        expect(ability.significant).toBe(true);
+        const member = result.set.members.find((m) => m.hrid === '/talisman_modifiers/smite');
+        expect(member?.costUnpriced).toEqual(['/items/mystery_coffee']);
+        expect(
+            result.set.members.find((m) => m.hrid === '/talisman_modifiers/ability_damage').costUnpriced
+        ).toBeUndefined();
+    });
+
+    test('Balanced with a profit weight marks it too; a DPS-only ranking does not', async () => {
+        const balanced = await run('balanced', { xp: 1, profit: 1, dps: 1 });
+        expect(balanced.rows.find((r) => r.hrid === '/talisman_modifiers/smite').significant).toBe(false);
+        const noProfit = await run('balanced', { xp: 0, profit: 0, dps: 1 });
+        expect(noProfit.rows.find((r) => r.hrid === '/talisman_modifiers/smite').costUnpriced).toBeDefined();
+        const dps = await run('dps');
+        expect(dps.rows.find((r) => r.hrid === '/talisman_modifiers/smite').significant).toBe(true);
+    });
+});
