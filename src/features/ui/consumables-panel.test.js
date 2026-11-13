@@ -1655,6 +1655,29 @@ describe('the labyrinth burn trend', () => {
         consumablesPanel._ledgerRuns = [];
     });
 
+    test('the lab restock queue is per-run need times the run target, less what the bag holds', async () => {
+        game.inventory = [{ itemHrid: '/items/basic_torch', count: 50, itemLocationHrid: '/item_locations/inventory' }];
+        await draw([ledgerRun({ key: 'a', torch: 60 }), ledgerRun({ key: 'b', torch: 80 })]);
+        const queue = () => consumablesPanel._buyQueues.find((q) => q.label === 'Labyrinth').queue;
+        // Measured: torches average 70 a run, shrouds 2, beacons 3; five runs, 50 torches held
+        expect(queue()).toEqual([
+            { itemHrid: '/items/basic_torch', count: 300 },
+            { itemHrid: '/items/basic_shroud', count: 10 },
+            { itemHrid: '/items/basic_beacon', count: 15 },
+        ]);
+
+        // Full capacity (100/4/5 a run) ignores the ledger
+        settings.values.consumables_labPerRunBasis = 'capacity';
+        consumablesPanel._buyQueues = [];
+        consumablesPanel._render();
+        expect(queue()).toEqual([
+            { itemHrid: '/items/basic_torch', count: 450 },
+            { itemHrid: '/items/basic_shroud', count: 20 },
+            { itemHrid: '/items/basic_beacon', count: 25 },
+        ]);
+        delete settings.values.consumables_labPerRunBasis;
+    });
+
     test('the burn line reads every trusted run, not just the five the plan uses', async () => {
         // Six runs: the plan slices five, the trend must not
         const text = await draw(Array.from({ length: 6 }, (_, i) => ledgerRun({ key: `r${i}`, torch: 60 })));

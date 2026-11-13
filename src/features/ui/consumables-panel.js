@@ -115,6 +115,7 @@ import {
     sparkText,
     measuredRuns,
 } from '../combat/labyrinth-run-ledger-math.js';
+import { labCapacity, labPerRunNeed, labShortfall, CRATE_SLOTS } from '../combat/labyrinth-stock-target.js';
 import { rushFloorVerdict } from '../combat/labyrinth-rush-floor-verdict.js';
 import storage from '../../core/storage.js';
 import { runInBackground } from '../../utils/background-work.js';
@@ -2999,39 +3000,23 @@ class ConsumablesPanel {
         // to configure. The base caps stand in only for the moment before the
         // payload arrives.
         const info = dataManager.characterData?.characterInfo;
-        const cap = (field, fallback) => (Number(info?.[field]) > 0 ? Number(info[field]) : fallback);
-        const capacity = {
-            torch: cap('labyrinthTorchCap', 100),
-            shroud: cap('labyrinthShroudCap', 4),
-            beacon: cap('labyrinthBeaconCap', 5),
-        };
+        const basis = config.getSettingValue('consumables_labPerRunBasis', 'measured') || 'measured';
         const needs = [];
-        // The last five measured runs, not the last five records: an excluded
-        // record would otherwise take a slot from a real run
-        const ledger = measuredRuns(this._ledgerRuns).slice(0, 5);
         for (const kind of SUPPLY_KINDS) {
-            if (!(capacity[kind] > 0)) continue;
+            const capacity = labCapacity(info, kind);
+            if (!(capacity > 0)) continue;
             // The tier the last run actually carried names the item; what is
             // held, then the basic tier, stand in before any run has said
             const hrid = lab?.[`${kind}ItemHrid`] || bestOwnedTier(counts, kind, hrids) || hrids[kind][0];
             // What recent runs actually spent beats the capacity, which is
             // only what a run *can* spend: a rushed run, a preserving torch
-            // tier, a run that stops short — all of it is in the record and
+            // tier, a run that stops short - all of it is in the record and
             // none of it is in the cap. The cap stands until a run has said
-            const basis = config.getSettingValue('consumables_labPerRunBasis', 'measured') || 'measured';
-            const used = basis === 'capacity' ? [] : observedUse(ledger, kind);
-            const perRun = used.length ? Math.ceil(used.reduce((sum, n) => sum + n, 0) / used.length) : capacity[kind];
-            needs.push({
-                itemHrid: hrid,
-                perRun,
-                kind,
-                basis,
-                observedRuns: used.length,
-                capacity: capacity[kind],
-            });
+            const { perRun, observedRuns } = labPerRunNeed(kind, capacity, this._ledgerRuns, basis);
+            needs.push({ itemHrid: hrid, perRun, kind, basis, observedRuns, capacity });
         }
-        // One crate per selected slot per run — the slots the run itself names
-        for (const slot of ['teaCrateItemHrid', 'coffeeCrateItemHrid', 'foodCrateItemHrid']) {
+        // One crate per selected slot per run - the slots the run itself names
+        for (const slot of CRATE_SLOTS) {
             if (lab?.[slot]) needs.push({ itemHrid: lab[slot], perRun: 1 });
         }
         return needs;
@@ -3102,7 +3087,7 @@ class ConsumablesPanel {
         const queue = needs
             .map(({ itemHrid, perRun }) => ({
                 itemHrid,
-                count: Math.max(0, Math.ceil(perRun * runs) - heldInInventory(inventory, itemHrid)),
+                count: labShortfall(perRun, runs, heldInInventory(inventory, itemHrid)),
             }))
             .filter((q) => q.count > 0);
         this._registerBuyQueue('Labyrinth', queue);
