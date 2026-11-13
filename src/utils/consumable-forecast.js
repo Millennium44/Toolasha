@@ -35,6 +35,8 @@
  * @property {number|null} costPerDay - What a day of it costs, or null with no price
  * @property {number|null} price - Price per item on the player's Buy side (the profit pricing mode, patient
  *   tick included), or null; an entry that carries no configured price falls back to its raw `pricePerItem`
+ * @property {boolean} priceEstimated - `price` is a stand-in from the game's value map, not a listing or a
+ *   custom price (so every cost built on it is an estimate)
  * @property {number|null} askPrice - The raw top ask per item, or null: what an instant buy pays, which the
  *   buy-now-or-order decision weighs against the queue (`price` can be a bid under a patient mode)
  * @property {{ask: number|null, bid: number|null}} costPerDaySides - A day's cost at each side
@@ -78,6 +80,7 @@ export function forecast(entry, prices = null) {
         perDay,
         secondsLeft,
         price,
+        priceEstimated: price !== null && configured && Boolean(entry.priceEstimated),
         askPrice,
         costPerDay: !rateKnown || price === null ? null : perDay * price,
         costPerDaySides: { ask: side(prices?.ask), bid: side(prices?.bid) },
@@ -138,12 +141,14 @@ export function firstToRunOut(forecasts) {
  * rather than silently making the total look smaller than it is.
  *
  * @param {Forecast[]} forecasts - Normalised consumables
- * @returns {{total: number, unpriced: number, unrated: number}}
+ * @returns {{total: number, unpriced: number, unrated: number, estimated: number}} `estimated` counts the
+ *   priced items whose price is a value-map stand-in
  */
 export function costPerDay(forecasts) {
     let total = 0;
     let unpriced = 0;
     let unrated = 0;
+    let estimated = 0;
 
     for (const entry of forecasts || []) {
         if (!entry.rateKnown) {
@@ -151,9 +156,12 @@ export function costPerDay(forecasts) {
             continue;
         }
         if (entry.costPerDay === null) unpriced++;
-        else total += entry.costPerDay;
+        else {
+            total += entry.costPerDay;
+            if (entry.priceEstimated) estimated++;
+        }
     }
-    return { total, unpriced, unrated };
+    return { total, unpriced, unrated, estimated };
 }
 
 /**
@@ -169,7 +177,8 @@ export function costPerDay(forecasts) {
  *
  * @param {Forecast} entry - Normalised consumable
  * @param {number} seconds - How long it should last
- * @returns {{count: number|null, cost: number|null, rateUnknown?: boolean}} Null count when the rate is unknown
+ * @returns {{count: number|null, cost: number|null, estimated?: boolean, rateUnknown?: boolean}} Null count when the
+ *   rate is unknown; `estimated` when the cost rests on a value-map stand-in price
  */
 export function refillFor(entry, seconds) {
     if (!entry?.rateKnown) return { count: null, cost: null, rateUnknown: true };
@@ -181,7 +190,11 @@ export function refillFor(entry, seconds) {
     const wanted = Math.max(0, Math.ceil((entry.perDay * (seconds - covered)) / 86400));
     const count = Math.max(0, wanted - Math.floor(entry.held));
 
-    return { count, cost: entry.price === null ? null : count * entry.price };
+    return {
+        count,
+        cost: entry.price === null ? null : count * entry.price,
+        estimated: entry.price !== null && count > 0 && Boolean(entry.priceEstimated),
+    };
 }
 
 /**
@@ -189,13 +202,15 @@ export function refillFor(entry, seconds) {
  *
  * @param {Forecast[]} forecasts - Normalised consumables
  * @param {number} seconds - Target duration
- * @returns {{items: number, cost: number, unpriced: number, unrated: number}}
+ * @returns {{items: number, cost: number, unpriced: number, unrated: number, estimated: number}} `estimated`
+ *   counts the items bought at a value-map stand-in price
  */
 export function refillAll(forecasts, seconds) {
     let items = 0;
     let cost = 0;
     let unpriced = 0;
     let unrated = 0;
+    let estimated = 0;
 
     for (const entry of forecasts || []) {
         const need = refillFor(entry, seconds);
@@ -207,9 +222,12 @@ export function refillAll(forecasts, seconds) {
 
         items += need.count;
         if (need.cost === null) unpriced++;
-        else cost += need.cost;
+        else {
+            cost += need.cost;
+            if (need.estimated) estimated++;
+        }
     }
-    return { items, cost, unpriced, unrated };
+    return { items, cost, unpriced, unrated, estimated };
 }
 
 /**
@@ -220,12 +238,13 @@ export function refillAll(forecasts, seconds) {
  *
  * @param {Forecast[]} forecasts - Normalised consumables
  * @returns {{ask: number|null, bid: number|null, askUnpriced: number, bidUnpriced: number,
- * askUnknown: number, bidUnknown: number}}
+ * askUnknown: number, bidUnknown: number, askEstimated: number, bidEstimated: number}} `askEstimated` and
+ * `bidEstimated` count the priced items whose figure at that side is a value-map stand-in, not a listing
  */
 export function costPerDaySides(forecasts) {
     const totals = {
-        ask: { amount: 0, unpriced: 0 },
-        bid: { amount: 0, unpriced: 0 },
+        ask: { amount: 0, unpriced: 0, estimated: 0 },
+        bid: { amount: 0, unpriced: 0, estimated: 0 },
         askUnknown: 0,
         bidUnknown: 0,
     };
@@ -245,6 +264,7 @@ export function costPerDaySides(forecasts) {
             const amount = entry.costPerDaySides?.[side];
             if (typeof amount === 'number' && Number.isFinite(amount) && amount >= 0) {
                 totals[side].amount += amount;
+                if (entry[`${side}Estimated`]) totals[side].estimated += 1;
             } else {
                 totals[side].unpriced += 1;
             }
@@ -258,6 +278,8 @@ export function costPerDaySides(forecasts) {
         bidUnpriced: totals.bid.unpriced,
         askUnknown: totals.askUnknown,
         bidUnknown: totals.bidUnknown,
+        askEstimated: totals.ask.estimated,
+        bidEstimated: totals.bid.estimated,
     };
 }
 

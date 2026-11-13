@@ -87,8 +87,9 @@ export function calculateDungeonTokenValue(
  * @param {string} pricingModeSetting - Config setting key for pricing mode
  * @param {string} respectModeSetting - Config setting key for respect pricing mode flag
  * @param {'ask'|'bid'|null} [forcedSide] - Quote exactly this side of the book, ignoring the pricing settings
- * @returns {{value: number, itemHrid: string, via: 'shop'|'essence'}|null} Coins per token and
- *   the item they come from, or null if no data
+ * @returns {{value: number, itemHrid: string, via: 'shop'|'essence', estimated: boolean}|null} Coins per token and
+ *   the item they come from, or null if no data. `estimated` is true when that item's price is a stand-in from the
+ *   official value map (no listing, no custom price), so the token's value is an estimate too
  */
 export function calculateDungeonTokenValueDetail(
     tokenHrid,
@@ -104,13 +105,38 @@ export function calculateDungeonTokenValueDetail(
     // Only single-currency lines price a token cleanly
     const tokenShop = indexFor(gameData.shopItemDetailMap).singleCurrency.get(tokenHrid) || NO_LINES;
 
+    const estimatedAt = (itemHrid) =>
+        tokenPriceIsEstimated(itemHrid, pricingModeSetting, respectModeSetting, forcedSide);
+
     const best = tokenValueDetailIn(tokenShop, priceOf, tokenHrid);
-    if (best) return { ...best, via: 'shop' };
+    if (best) return { ...best, via: 'shop', estimated: estimatedAt(best.itemHrid) };
 
     // Nothing in the shop is priced: fall back to the token's essence
     const essenceHrid = TOKEN_ESSENCE_MAP[tokenHrid];
     const essencePrice = priceOf(essenceHrid);
-    return essencePrice > 0 ? { value: essencePrice, itemHrid: essenceHrid, via: 'essence' } : null;
+    return essencePrice > 0
+        ? { value: essencePrice, itemHrid: essenceHrid, via: 'essence', estimated: estimatedAt(essenceHrid) }
+        : null;
+}
+
+/**
+ * Whether the price {@link tokenPriceOf} returns for an item is a value-map stand-in rather than a listing or a
+ * custom price. The pricers that read the raw book (an instant sale, the mode-book sell side) only ever answer
+ * with a real order, so they are never estimates.
+ * @param {string} itemHrid - The item that was priced
+ * @param {string} pricingModeSetting - Config setting key for pricing mode
+ * @param {string|false} respectModeSetting - As for {@link tokenPriceOf}
+ * @param {'ask'|'bid'|null} forcedSide - As for {@link tokenPriceOf}
+ * @returns {boolean}
+ */
+function tokenPriceIsEstimated(itemHrid, pricingModeSetting, respectModeSetting, forcedSide) {
+    if (!itemHrid) return false;
+    if (forcedSide === 'ask' || forcedSide === 'bid') {
+        return Boolean(getItemPriceInfo(itemHrid, { mode: forcedSide })?.estimated);
+    }
+    if (respectModeSetting === false || respectModeSetting === MODE_BOOK_SELL) return false;
+    const mode = tokenPricingSide(pricingModeSetting, respectModeSetting);
+    return Boolean(getItemPriceInfo(itemHrid, { mode })?.estimated);
 }
 
 /**

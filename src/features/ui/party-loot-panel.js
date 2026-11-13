@@ -511,8 +511,10 @@ function playerBreakdown(stats, banked) {
                     // shown rounded with "≈" while the cost beside it stays exact
                     Number.isInteger(item.count) ? formatCount(item.count) : `≈${formatCount(Math.round(item.count))}`,
                     // The configured Buy side, which is what the Summary subtracts
-                    item.priceValue !== null ? formatKMB(item.priceValue) : '—',
-                    item.priceValue !== null ? formatKMB(item.totalCostValue) : '—',
+                    item.priceValue !== null ? `${item.priceEstimated ? '~' : ''}${formatKMB(item.priceValue)}` : '—',
+                    item.priceValue !== null
+                        ? `${item.priceEstimated ? '~' : ''}${formatKMB(item.totalCostValue)}`
+                        : '—',
                     ROW_COLORS.bad
                 )
             );

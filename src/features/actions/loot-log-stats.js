@@ -57,6 +57,7 @@ const PROTECT_ASSUMED_NOTE =
 
 /** Costs are understated when a per-attempt material has no price at all. */
 const UNPRICED_NOTE = 'a material has no price; costs are understated';
+const MATERIAL_PARTIAL_NOTE = 'a material price is a floor (a recipe input has no price); costs are understated';
 const PROTECTION_UNPRICED_NOTE = 'the protection item has no price; its cost is left out';
 const PROTECTION_PARTIAL_NOTE = 'the protection price is a floor (a recipe input has no price); costs are understated';
 
@@ -527,13 +528,20 @@ class LootLogStats {
             // The protection quote is read once: a craft-priced protection with an unpriced input comes back
             // flagged partial, so the figure is a floor and the row says so instead of reading as firm
             const protectionQuote = getCheapestProtectionPrice(run.baseHrid);
+            // A material priced by crafting it, with an input nothing could price, is a floor: the cost is
+            // understated, not firm. (A material with no price at all is already flagged by the summary.)
+            let materialsPartial = false;
             const summary = computeEnhancingSummary(run, {
                 calculateEnhancement,
                 params,
                 // Same pricing the live Enhancement Tracker uses (the player's profit pricing mode on the
                 // buy side, with the production-cost/NPC fallbacks a raw market lookup lacks), so the
                 // loot-log figures line up with it.
-                materialPrice: (hrid) => priceMaterial(hrid).price || 0,
+                materialPrice: (hrid) => {
+                    const quote = priceMaterial(hrid);
+                    if (quote.partial) materialsPartial = true;
+                    return quote.price || 0;
+                },
                 protectionPrice: () => protectionQuote?.price || 0,
                 // What the piece sells for on the player's Sell side. A price filled in from the official
                 // value map (nobody lists on that side) is no sale price: unknown, not an estimate booked as profit.
@@ -546,6 +554,7 @@ class LootLogStats {
                 marketTax: isIronCowCharacter() ? 0 : MARKET_TAX,
             });
             if (!summary) return;
+            summary.materialsPartial = materialsPartial && summary.materialActual > 0;
             summary.protectionPartial =
                 Boolean(protectionQuote?.partial) && (summary.expectedProtects > 0 || summary.actualProtects > 0);
 
@@ -638,7 +647,10 @@ class LootLogStats {
                 `<span style="color:rgba(232,236,245,0.6);">(${picks.length} picked across ${items.size} items).</span>`;
         } else {
             const merged = mergeEnhancingSummaries(entries.map((e) => e.summary));
-            if (merged) merged.protectionPartial = entries.some((e) => e.summary.protectionPartial);
+            if (merged) {
+                merged.protectionPartial = entries.some((e) => e.summary.protectionPartial);
+                merged.materialsPartial = entries.some((e) => e.summary.materialsPartial);
+            }
             panel.innerHTML = this.buildMergedSummaryHtml(merged, entries[0].itemName);
         }
 
@@ -684,6 +696,9 @@ class LootLogStats {
         }
         if (m.protectionUnpriced) {
             html += ` · <span style="color:rgba(232,236,245,0.6);">${PROTECTION_UNPRICED_NOTE}</span>`;
+        }
+        if (m.materialsPartial) {
+            html += ` · <span style="color:rgba(232,236,245,0.6);">${MATERIAL_PARTIAL_NOTE}</span>`;
         }
         if (m.protectionPartial) {
             html += ` · <span style="color:rgba(232,236,245,0.6);">${PROTECTION_PARTIAL_NOTE}</span>`;
@@ -738,6 +753,7 @@ class LootLogStats {
         }
         if (s.materialsUnpriced) html += ` · <span style="color:${DIM};">${UNPRICED_NOTE}</span>`;
         if (s.protectionUnpriced) html += ` · <span style="color:${DIM};">${PROTECTION_UNPRICED_NOTE}</span>`;
+        if (s.materialsPartial) html += ` · <span style="color:${DIM};">${MATERIAL_PARTIAL_NOTE}</span>`;
         if (s.protectionPartial) html += ` · <span style="color:${DIM};">${PROTECTION_PARTIAL_NOTE}</span>`;
         return html;
     }
