@@ -36,11 +36,17 @@
  */
 
 import { combatZones, openableDrops, zoneDrops } from '../../utils/drop-sources.js';
-import { DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
+import { DUNGEON_TOKEN_HRIDS, shopCosts } from '../../utils/token-valuation.js';
 import { isTesterShopEntry } from '../../utils/shop-index.js';
 
-/** The two ways an owned dungeon input is valued */
-export const OWNED_MODES = Object.freeze({ MARKET: 'market', SUNK: 'sunk' });
+/**
+ * The three ways a dungeon input is valued:
+ * - `market`: owned, so what it would sell for after tax (the cost of using it).
+ * - `buy`: bought, so the buy side of the pricing mode, untaxed. A token-shop item takes the cheaper of that
+ *   and its token route.
+ * - `sunk`: already owned and counted at 0.
+ */
+export const OWNED_MODES = Object.freeze({ MARKET: 'market', BUY: 'buy', SUNK: 'sunk' });
 
 /** The level a row is rated at when the player has not chosen one */
 export const DEFAULT_TARGET_LEVEL = 5;
@@ -66,16 +72,25 @@ export function normalizeTargetLevel(value) {
  * @returns {string} A known mode; market for anything unknown
  */
 export function normalizeOwnedMode(value) {
-    return value === OWNED_MODES.SUNK ? OWNED_MODES.SUNK : OWNED_MODES.MARKET;
+    return value === OWNED_MODES.SUNK || value === OWNED_MODES.BUY ? value : OWNED_MODES.MARKET;
 }
 
 /**
  * Which items are dungeon inputs, read from the game's own data.
  *
  * A dungeon drop is anything in a dungeon's completion reward table and, for each of those that is a
- * chest, everything the chest can contain (the chest itself included). A token-shop item is a line of
- * the shop priced in a dungeon token alone: a line that also asks for coins or another item says nothing
- * clean about what a token buys and is left out, as `calculateDungeonTokenValue` leaves it out.
+ * chest (an entry of `openableLootDropMap`), everything the chest can contain, followed through chests
+ * inside chests. In the game the gear materials come out of the chest, not the reward table itself.
+ *
+ * **Generic materials are not dungeon inputs.** An item that an ordinary production or gathering action
+ * makes (cheese, lumber, a refined bar) can also turn up in a chest, but a player buys it like anything else:
+ * valuing it at its after-tax sale would price a recipe that has to buy it too cheaply. Only items with no
+ * such source count as drops.
+ *
+ * A token-shop item is a line of the shop priced in a dungeon token alone: a line that also asks for coins
+ * or another item says nothing clean about what a token buys and is left out, as
+ * `calculateDungeonTokenValue` leaves it out. Costs are read through the token valuation's own `shopCosts`,
+ * so both spellings (`costs` array, single `cost`) are understood.
  *
  * @param {Object} gameData - The game's `initClientData`
  * @returns {{drops: Map<string, {dungeons: string[]}>, tokenShop: Map<string, {tokenHrid: string,
@@ -85,7 +100,17 @@ export function buildDungeonInputIndex(gameData) {
     const drops = new Map();
     const tokenShop = new Map();
 
+    // Anything an ordinary (non-combat) action makes
+    const common = new Set();
+    for (const action of Object.values(gameData?.actionDetailMap || {})) {
+        if (action?.combatZoneInfo) continue;
+        for (const output of action?.outputItems || []) {
+            if (output?.itemHrid) common.add(output.itemHrid);
+        }
+    }
+
     const note = (itemHrid, dungeonName) => {
+        if (common.has(itemHrid)) return;
         const known = drops.get(itemHrid);
         if (known) {
             if (!known.dungeons.includes(dungeonName)) known.dungeons.push(dungeonName);
@@ -94,20 +119,23 @@ export function buildDungeonInputIndex(gameData) {
         }
     };
 
+    const walk = (itemHrid, dungeonName, seen) => {
+        note(itemHrid, dungeonName);
+        if (seen.has(itemHrid) || !gameData?.openableLootDropMap?.[itemHrid]) return;
+        seen.add(itemHrid);
+        for (const inner of openableDrops(itemHrid, gameData)) {
+            if (inner.hrid !== itemHrid) walk(inner.hrid, dungeonName, seen);
+        }
+    };
+
     for (const zone of combatZones(gameData?.actionDetailMap)) {
         if (!zone.isDungeon) continue;
-        for (const drop of zoneDrops(zone.hrid, gameData)) {
-            note(drop.hrid, zone.name);
-            // A chest is a drop whose contents are drops too
-            if (gameData?.openableLootDropMap?.[drop.hrid]) {
-                for (const inner of openableDrops(drop.hrid, gameData)) note(inner.hrid, zone.name);
-            }
-        }
+        for (const drop of zoneDrops(zone.hrid, gameData)) walk(drop.hrid, zone.name, new Set());
     }
 
     for (const [key, line] of Object.entries(gameData?.shopItemDetailMap || {})) {
         if (!line?.itemHrid || isTesterShopEntry(line, key)) continue;
-        const costs = Array.isArray(line.costs) ? line.costs : [];
+        const costs = shopCosts(line);
         if (costs.length !== 1 || !DUNGEON_TOKEN_HRIDS.has(costs[0]?.itemHrid) || !(costs[0]?.count > 0)) continue;
         if (tokenShop.has(line.itemHrid)) continue;
         tokenShop.set(line.itemHrid, {
@@ -154,6 +182,8 @@ export function hasDungeonInput(action, index) {
  *
  * - `market`: the drop's after-tax sale value from `valueDrop`, else for a token-shop item the token
  *   route from `valueToken`; neither answering makes the input **unpriced**, not free.
+ * - `buy`: the calculator's own buy-side price, untaxed. A token-shop item takes the cheaper of that and the
+ *   token route (an owned token is a cheaper way in than the market). Neither priced is **unpriced**.
  * - `sunk`: 0, flagged `sunk`.
  *
  * The same item may appear on more than one line; each is priced on its own.
@@ -168,12 +198,14 @@ export function hasDungeonInput(action, index) {
  * @param {(itemHrid: string) => number|null} args.valueToken - After-tax value of one unit bought with
  *   tokens, or null
  * @returns {{costPerAction: number, unpriced: Array<{itemHrid: string, reason: string}>,
- *   dungeonInputs: Array<Object>}} `costPerAction` is meaningful only when `unpriced` is empty
+ *   dungeonInputs: Array<Object>, estimated: string[]}} `costPerAction` is meaningful only when `unpriced` is empty
  */
 export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, valueToken }) {
     const mode = normalizeOwnedMode(ownedMode);
     const unpriced = [];
     const dungeonInputs = [];
+    // Inputs whose price is only the game's value-map estimate: usable, but the row says so
+    const estimated = [];
     let costPerAction = 0;
 
     for (const material of materials || []) {
@@ -186,11 +218,30 @@ export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, va
                 continue;
             }
             costPerAction += Number(material?.totalCost) || 0;
+            if (material?.estimatedPrice) estimated.push(material.itemHrid);
             continue;
         }
 
         if (mode === OWNED_MODES.SUNK) {
             dungeonInputs.push({ itemHrid: material.itemHrid, amount, unitValue: 0, sunk: true, via: null, kind });
+            continue;
+        }
+
+        if (mode === OWNED_MODES.BUY) {
+            const bought = material?.missingPrice ? null : Number(material?.askPrice);
+            const buyPrice = bought > 0 ? bought : null;
+            const tokenPrice = kind.token ? valueToken?.(material.itemHrid) : null;
+            const candidates = [];
+            if (buyPrice) candidates.push({ unitValue: buyPrice, via: 'buy' });
+            if (tokenPrice > 0) candidates.push({ unitValue: tokenPrice, via: 'token' });
+            if (candidates.length === 0) {
+                unpriced.push({ itemHrid: material.itemHrid, reason: 'dungeon-input' });
+                continue;
+            }
+            const best = candidates.reduce((low, next) => (next.unitValue < low.unitValue ? next : low));
+            costPerAction += best.unitValue * amount;
+            if (best.via === 'buy' && material?.estimatedPrice) estimated.push(material.itemHrid);
+            dungeonInputs.push({ itemHrid: material.itemHrid, amount, ...best, sunk: false, kind });
             continue;
         }
 
@@ -210,7 +261,7 @@ export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, va
         dungeonInputs.push({ itemHrid: material.itemHrid, amount, unitValue, sunk: false, via, kind });
     }
 
-    return { costPerAction, unpriced, dungeonInputs };
+    return { costPerAction, unpriced, dungeonInputs, estimated };
 }
 
 /**
@@ -284,9 +335,14 @@ export function evaluateLevel({
     saleAfterTax,
 }) {
     const reasons = [];
-    if (craftCostPerUnit === null || craftCostPerUnit === undefined || unpricedInputs.length > 0) {
+    // Each kind of gap keeps its own reason: an unpriced drink is not an unpriced input
+    for (const input of unpricedInputs) {
+        if (!reasons.includes(input.reason)) reasons.push(input.reason);
+    }
+    if ((craftCostPerUnit === null || craftCostPerUnit === undefined) && reasons.length === 0) {
         reasons.push('input');
     }
+    const craftUnpriced = reasons.length > 0;
     const enhancing = level > 0;
     if (enhancing && !enhance) reasons.push('enhance');
     if (!(saleAfterTax > 0)) reasons.push('sale');
@@ -300,7 +356,7 @@ export function evaluateLevel({
         unpricedInputs,
         enhanceCost,
         saleAfterTax: saleAfterTax > 0 ? saleAfterTax : null,
-        craftCostPerUnit: reasons.includes('input') || reasons.includes('rate') ? null : craftCostPerUnit,
+        craftCostPerUnit: craftUnpriced || reasons.includes('rate') ? null : craftCostPerUnit,
     };
 
     if (reasons.length > 0) {
@@ -379,6 +435,7 @@ export function buildCraftEnhanceRow({
         base,
         target,
         dungeonInputs: priced.dungeonInputs,
+        estimatedInputs: priced.estimated || [],
         sunkInputs: priced.dungeonInputs.filter((input) => input.sunk).map((input) => input.itemHrid),
         notes,
         // Filled in by the window for visible rows: {known, unitsPerDay}, null until asked
@@ -387,6 +444,14 @@ export function buildCraftEnhanceRow({
 }
 
 /** The sort keys the window offers, each reading the target level's figure; null sorts behind everything */
+export const SORT_LEVELS = Object.freeze({
+    hour: 'target',
+    unit: 'target',
+    craftXp: 'target',
+    enhanceXp: 'target',
+    base: 'base',
+});
+
 export const SORT_KEYS = Object.freeze({
     hour: (row) => row.target.profitPerHour,
     unit: (row) => row.target.profitPerUnit,
@@ -443,8 +508,11 @@ export function arrangeCraftEnhanceRows(
     const direction = descending ? 1 : -1;
     return kept.sort((a, b) => {
         // A row with no priced target level goes last whatever is sorted
-        const aFull = a.target.status === 'ok';
-        const bFull = b.target.status === 'ok';
+        // A sort reads one level; that level having a full figure is what places a row, so +0 rows sort by
+        // +0 even when their +N is unpriced
+        const level = SORT_LEVELS[SORT_KEYS[sort] ? sort : 'hour'];
+        const aFull = a[level].status === 'ok';
+        const bFull = b[level].status === 'ok';
         if (aFull !== bFull) return aFull ? -1 : 1;
         const av = key(a);
         const bv = key(b);

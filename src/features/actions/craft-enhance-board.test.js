@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
     volumeCalls: [],
     panel: null,
     destroyed: 0,
+    stamp: 1,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -95,6 +96,7 @@ vi.mock('./craft-enhance.js', () => ({
         state.cleared++;
     },
     craftEnhanceAvailable: () => !state.ironCow,
+    craftEnhancePriceStamp: () => state.stamp,
     rankCraftEnhance: async (options) => {
         state.rankCalls.push({ targetLevel: options.targetLevel, ownedMode: options.ownedMode });
         options.onProgress?.(state.rows.length, state.rows.length, state.rows);
@@ -172,6 +174,7 @@ beforeEach(() => {
     state.volume = {};
     state.volumeCalls = [];
     state.destroyed = 0;
+    state.stamp = 1;
     board.disable();
     // A panel remembers its selections between openings, which is right for a panel and wrong for a test
     Object.assign(board, {
@@ -382,6 +385,50 @@ describe('the controls', () => {
         expect(state.rankCalls.at(-1).targetLevel).toBe(3);
     });
 
+    test('three owned-drops modes, each stored and each costed again', async () => {
+        openBoard();
+        await flush();
+        const buttons = [...state.panel.panel.querySelectorAll('[data-ce-owned]')].map((b) =>
+            b.getAttribute('data-ce-owned')
+        );
+        expect(buttons).toEqual(['market', 'buy', 'sunk']);
+        state.panel.panel.querySelector('[data-ce-owned="buy"]').click();
+        await flush();
+        expect(state.setCalls).toContainEqual(['actions_craftEnhance_ownedDrops', 'buy']);
+        expect(state.rankCalls.at(-1).ownedMode).toBe('buy');
+        expect(text()).toContain('buy price');
+    });
+
+    test('rows built on older market data are costed again on the next draw', async () => {
+        openBoard();
+        await flush();
+        const before = state.rankCalls.length;
+        state.stamp = 2;
+        state.panel.render();
+        await flush();
+        expect(state.rankCalls.length).toBe(before + 1);
+        // and not again while the stamp stands
+        state.panel.render();
+        await flush();
+        expect(state.rankCalls.length).toBe(before + 1);
+    });
+
+    test('an input priced from an estimate is noted in the Data column without being a gap', async () => {
+        state.rows = [row('est', { estimatedInputs: ['/items/cheese'] })];
+        openBoard();
+        await flush();
+        const data = state.panel.panel.querySelector('[data-ce-data]');
+        expect(data.textContent).toContain('price estimated');
+        expect(data.getAttribute('data-ce-data')).toBe('estimated');
+    });
+
+    test('an unpriced drink reads as a drink, not an input', async () => {
+        state.rows = [row('tea', { target: unpricedLevel(['tea'], { craftCostPerUnit: null }) })];
+        openBoard();
+        await flush();
+        expect(state.panel.panel.querySelector('[data-ce-data]').textContent).toContain('drink unpriced');
+    });
+
     test('Profitable only hides the unpriced row', async () => {
         openBoard();
         await flush();
@@ -461,5 +508,19 @@ describe('volume', () => {
         state.panel.render();
         await flush();
         expect(state.volumeCalls.length).toBe(asked);
+    });
+});
+
+describe('volume lookups that outlive their run', () => {
+    test('a stale lookup cannot clear the marker of a newer one for the same key', async () => {
+        board.initialize();
+        const first = {};
+        const second = {};
+        board.volumePending.set('/items/x:5', second);
+        // The first lookup finished late: it does not own the marker, so it leaves it and stores nothing
+        board.volumes.clear();
+        await board.loadVolume('/items/x:5', '/items/x', 5, first, board.generation);
+        expect(board.volumePending.get('/items/x:5')).toBe(second);
+        expect(board.volumes.has('/items/x:5')).toBe(false);
     });
 });

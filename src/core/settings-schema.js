@@ -754,11 +754,12 @@ export const settingsGroups = {
                 type: 'select',
                 default: 'market',
                 options: [
-                    { value: 'market', label: 'Their sale value after tax' },
-                    { value: 'sunk', label: 'Nothing (already owned)' },
+                    { value: 'market', label: 'Sale value after tax (you own them)' },
+                    { value: 'buy', label: 'Buy price, untaxed (you buy them)' },
+                    { value: 'sunk', label: 'Nothing (already owned, sunk)' },
                 ],
                 requires: 'actions_craftEnhance',
-                help: 'How the window values dungeon drops and token-shop items in a recipe. Sale value after tax is what using them costs you (you could have sold them). Nothing counts them as free, and rows that use them are badged "sunk". An input with no price at all is shown as missing either way.',
+                help: 'How the window values dungeon drops and token-shop items in a recipe. Sale value after tax is what using something you own costs you (you could have sold it). Buy price is what buying it costs on the buy side of your pricing mode, with no tax; a token-shop item takes the cheaper of that and its token value. Nothing counts it as free, and rows that use it are badged "sunk". An input with no price at all is shown as missing in every mode.',
             },
             actionPanel_bestCraftingPlan: {
                 id: 'actionPanel_bestCraftingPlan',

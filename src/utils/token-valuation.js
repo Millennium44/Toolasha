@@ -261,7 +261,7 @@ function firstLineSelling(shopMap, itemHrid) {
  * @param {Object} line - A shop line
  * @returns {Array<{itemHrid: string, count: number}>}
  */
-function shopCosts(line) {
+export function shopCosts(line) {
     if (Array.isArray(line?.costs)) return line.costs;
     if (line?.cost) return [line.cost];
     return [];
