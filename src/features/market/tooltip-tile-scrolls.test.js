@@ -184,6 +184,26 @@ describe('tooltip craft profit follows the tiles', () => {
         });
     }
 
+    test.each([[[]], [[GOURMET]]])(
+        'the personal-use sell-tax toggle moves tile and tooltip together, with scrolls %j',
+        async (scrolls) => {
+            mocks.chosen = new Set(scrolls);
+            mocks.settings.profitCalc_excludeSellTax = false;
+            const taxedTile = await tileFigures();
+            const taxedTip = await calculateTooltipCraftProfit('/items/crate');
+            mocks.settings.profitCalc_excludeSellTax = true;
+            const untaxedTile = await tileFigures();
+            const untaxedTip = await calculateTooltipCraftProfit('/items/crate');
+
+            expect(taxedTip.profitData.profitPerHour).toBeCloseTo(taxedTile.data.profitPerHour, 6);
+            expect(untaxedTip.profitData.profitPerHour).toBeCloseTo(untaxedTile.data.profitPerHour, 6);
+            expect(untaxedTip.profitData.excludeSellTax).toBe(true);
+            expect(taxedTip.profitData.excludeSellTax).toBe(false);
+            // The exclusion really changes the figure, so the agreement above is not two equal constants
+            expect(untaxedTip.profitData.profitPerHour).toBeGreaterThan(taxedTip.profitData.profitPerHour);
+        }
+    );
+
     test('toggle off or simulation switch off: exactly the real figures, nothing armed', async () => {
         mocks.chosen = new Set([GOURMET, EFFICIENCY]);
         const baseline = (await calculateTooltipCraftProfit('/items/crate')).profitData.profitPerHour;

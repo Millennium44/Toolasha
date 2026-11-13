@@ -57,6 +57,7 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_detailedProfitFlat') return settings.flat;
             if (id === 'actionPanel_craftingPlanBuyIntermediates') return false;
             if (id === 'actionPanel_craftingPlanNoProcessing') return false;
+            if (id === 'profitCalc_excludeSellTax') return settings.excludeSellTax ?? true;
             return true;
         },
         getSettingValue: (id, fallback) => {
@@ -439,6 +440,21 @@ describe('routing by classification', () => {
         observerState.handler(el);
         await settle();
         expect(el.querySelectorAll('.market-price-injected')).toHaveLength(1);
+    });
+
+    test('the same popper is processed again after the sell-tax toggle changes', async () => {
+        const el = itemTooltip('Cheese');
+        observerState.handler(el);
+        await settle();
+        const before = el.dataset.pricesProcessedScrolls;
+        settings.excludeSellTax = false;
+        try {
+            await tooltipPrices.handleTooltip(el);
+            expect(el.dataset.pricesProcessedScrolls).not.toBe(before);
+            expect(el.querySelectorAll('.market-price-injected')).toHaveLength(1);
+        } finally {
+            delete settings.excludeSellTax;
+        }
     });
 
     test('an enhanced item is priced at its enhancement level, not as the base item', async () => {
@@ -1333,6 +1349,30 @@ describe('self-use alchemy lines', () => {
         // Per twin sword: 5 cheese (50) + one sword decomposed on prime: 18 x 0.75 cheese (135)
         // less 2,000/100 = 20 of catalyst; cost 100. The seller's sword setup would give 58.
         expect(block.textContent).toContain('Full decompose chain (self-use, sell outputs): 65/item');
+    });
+
+    test('the chain /hr picks every step setup for gold per hour, and the /item figure is that same setup', async () => {
+        settings.selfUseAlchemy = true;
+        const twin = {
+            ...cheeseSwordDecompose(),
+            itemHrid: '/items/twin_sword',
+            successRate: 1,
+            requirementCosts: [{ itemHrid: '/items/twin_sword', count: 1, price: 100 }],
+        };
+        // Quick: 108 of cheese per sword in 36 s. Slow: 180 per sword (more per item) but 180 s.
+        const quick = cheeseSwordDecompose();
+        const slow = { ...cheeseSwordDecompose(), successRate: 1, actionsPerHour: 20 };
+        alchemyState.profits = { decompose: twin };
+        alchemyState.decompose = { '/items/cheese_sword': quick };
+        alchemyState.candidates = { 'decompose|/items/cheese_sword': [quick, slow] };
+        const text = (await blockFor('/items/twin_sword')).textContent;
+        // Per twin: 50 + 108 - 100 = 58 in 72 s = 2.9K/hr. The slow sword step would give 130 per item
+        // but 2.2K/hr, which is what a per-item pick would have printed.
+        expect(text).toContain('Full decompose chain (self-use, sell outputs): 58/item');
+        expect(text).toContain('2.9K/hr');
+        const chain = await tooltipPrices.selfUseChainFor('/items/twin_sword');
+        expect(chain.net).toBeCloseTo(58, 5);
+        expect(chain.netPerHour).toBeCloseTo(2900, 5);
     });
 
     test('the Best Items own-stock figure is the tooltip chain line, to the digit', async () => {
@@ -2529,6 +2569,43 @@ describe('a reused popper that moved to another item during an await', () => {
         await pending;
 
         expect(el.querySelector('.market-profit-injected')).toBeNull();
+    });
+});
+
+describe('the craft profit follows the personal-use sell-tax toggle, like the tile', () => {
+    const profitFor = (excludeSellTax) => ({
+        itemPrice: { ask: 10, bid: 9 },
+        totalMaterialCost: 5,
+        materialCosts: [],
+        profitPerHour: 1000,
+        profitPerDay: 24000,
+        excludeSellTax,
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    test('asks the calculator with no keepSellTax, as the tile does', async () => {
+        const spy = vi.spyOn(profitCalculator, 'calculateProfit').mockResolvedValue(profitFor(false));
+        await tooltipPrices.handleTooltip(itemTooltip('Cheese'));
+
+        expect(spy).toHaveBeenCalled();
+        expect(spy.mock.calls.every(([, options]) => options?.keepSellTax !== true)).toBe(true);
+    });
+
+    test('marks the Net line with the tile warning marker while the exclusion is on, and only then', async () => {
+        const spy = vi.spyOn(profitCalculator, 'calculateProfit');
+        spy.mockResolvedValue(profitFor(true));
+        const marked = itemTooltip('Cheese');
+        await tooltipPrices.handleTooltip(marked);
+        expect(marked.querySelector('.market-profit-injected').textContent).toContain('/day) ⚠');
+
+        spy.mockResolvedValue(profitFor(false));
+        const plain = itemTooltip('Cheese');
+        await tooltipPrices.handleTooltip(plain);
+        expect(plain.querySelector('.market-profit-injected').textContent).toContain('Net: ');
+        expect(plain.querySelector('.market-profit-injected').textContent).not.toContain('⚠');
     });
 });
 

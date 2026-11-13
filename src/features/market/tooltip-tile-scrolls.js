@@ -44,7 +44,8 @@ export function tooltipScrollSignature(itemHrid) {
  *   `simulated` is the short names of the scrolls assumed (empty: the figures are the real ones)
  */
 export async function calculateTooltipCraftProfit(itemHrid) {
-    const options = { keepSellTax: true };
+    // No keepSellTax: the tile follows the personal-use sell-tax toggle, so the tooltip does too
+    const options = {};
     const producing = producingAction(itemHrid);
     if (!producing || getTileScrolls(producing.actionType).size === 0) {
         const profitData = await profitCalculator.calculateProfit(itemHrid, options);
