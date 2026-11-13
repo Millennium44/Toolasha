@@ -195,6 +195,8 @@ export async function runCombatBeltAdvisor(params, onProgress, deps, options = {
         measured: rows.length,
         cancelledElsewhere,
         sims: current,
+        hours,
+        paired: seed != null,
     });
 
     report('Belts: baseline with the belt worn now');
@@ -232,6 +234,9 @@ export async function runCombatBeltAdvisor(params, onProgress, deps, options = {
         },
         Math.max(1, deps.concurrency())
     );
+    // The sale of your own belt is taxed at this build's rate (null: the live character's own)
+    const costDeps =
+        saleTaxRate != null ? { ...deps.costDeps, afterTax: (price) => price * (1 - saleTaxRate) } : deps.costDeps;
     const profitMatters = metric.balanced
         ? normalizeBalanceWeights(balanceWeights).profit > 0
         : metric.key === 'profit';
@@ -240,7 +245,7 @@ export async function runCombatBeltAdvisor(params, onProgress, deps, options = {
         ...measure,
         // A profit gain resting on a running cost counted as free is a ceiling, said apart from noise
         gainUnreal: profitMatters && Boolean(measure.costUnpriced?.length),
-        costs: beltCosts(candidate, currentBelt, gameData, deps.costDeps),
+        costs: beltCosts(candidate, currentBelt, gameData, costDeps),
     }));
     if (stopped() || rows.length < candidates.length) return stoppedResult(rows);
     return { status: 'done', ...base, rows, measured: rows.length, sims: current, hours, paired: seed != null };

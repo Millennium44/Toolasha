@@ -311,3 +311,31 @@ describe('hasCombatLines', () => {
         expect(hasCombatLines([], FULL_MODIFIER_DETAILS)).toBe(false);
     });
 });
+
+describe('stopped runs and the build sale tax', () => {
+    const medium4 = { hrid: MEDIUM, enhancementLevel: 4 };
+    const talismans = [{ slotIndex: 1, modifiers: [crit(6)] }];
+
+    test('a stopped run still says whether it was paired, and its hours', async () => {
+        let n = 0;
+        const result = await runCombatBeltAdvisor(params([dtoWith(medium4, talismans)]), vi.fn(), makeDeps([]), {
+            abortSignal: () => ++n > 6,
+        });
+        expect(result.status).toBe('stopped');
+        expect(result.paired).toBe(true);
+        expect(result.hours).toBe(1);
+    });
+
+    test('the sale of your belt is taxed at the rate of the build when it is not the live character', async () => {
+        const priceInfo = (hrid, o) => ({ price: o.side === 'sell' ? 1000 : 5000, source: 'book' });
+        const result = await runCombatBeltAdvisor(
+            params([dtoWith(medium4, talismans)]),
+            vi.fn(),
+            makeDeps([], {
+                saleTaxRateOf: () => 0.5,
+                costDeps: { priceInfo, testerOn: () => false, enhanceCost: () => null },
+            })
+        );
+        expect(result.rows[0].costs.net.price).toBe(5000 - 500);
+    });
+});
