@@ -735,7 +735,7 @@ class ActionFilter {
     }
 
     /**
-     * Shrink the filter input and the row gap, but only while the title row actually overflows.
+     * Let the filter input fill the row's free width, but only while the title row actually overflows.
      * Measured rather than keyed to mobile mode, so a narrow desktop window is fixed too and a row that
      * fits (any desktop) is never touched. The inline styles it replaces are kept and put back by
      * _restoreHeaderRow (on a re-measure, clearFilter and cleanup).
@@ -745,17 +745,28 @@ class ActionFilter {
     _fitHeaderRow(titleElement, input) {
         this._restoreHeaderRow();
         if (!titleElement.isConnected || titleElement.scrollWidth <= titleElement.clientWidth) return;
+        const row = titleElement.style;
         this._headerFit = {
             titleElement,
             input,
-            gap: titleElement.style.gap,
-            flex: input.style.flex,
-            width: input.style.width,
-            minWidth: input.style.minWidth,
+            row: {
+                gap: row.gap,
+                width: row.width,
+                marginLeft: row.marginLeft,
+                marginRight: row.marginRight,
+                alignSelf: row.alignSelf,
+            },
+            input_: { flex: input.style.flex, width: input.style.width, minWidth: input.style.minWidth },
         };
-        titleElement.style.gap = '10px';
-        input.style.flex = '0 1 auto';
-        input.style.width = '130px';
+        // The input takes whatever the row has left. The row stops 26px short of the page because the
+        // game's guide "?" is absolutely positioned at the row's width, just outside its right edge
+        row.gap = '10px';
+        row.width = 'calc(100% - 26px)';
+        row.marginLeft = '0';
+        row.marginRight = 'auto';
+        row.alignSelf = 'flex-start';
+        input.style.flex = '1 1 0';
+        input.style.width = '0';
         input.style.minWidth = '0';
     }
 
@@ -763,10 +774,8 @@ class ActionFilter {
     _restoreHeaderRow() {
         const fit = this._headerFit;
         if (!fit) return;
-        fit.titleElement.style.gap = fit.gap;
-        fit.input.style.flex = fit.flex;
-        fit.input.style.width = fit.width;
-        fit.input.style.minWidth = fit.minWidth;
+        Object.assign(fit.titleElement.style, fit.row);
+        Object.assign(fit.input.style, fit.input_);
         this._headerFit = null;
     }
 

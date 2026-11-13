@@ -169,10 +169,13 @@ describe('header row fit on narrow screens', () => {
         const title = sized(376, 356);
         actionFilter.injectFilterInput(title);
         const input = document.querySelector('#mwi-action-filter');
-        expect(input.style.width).toBe('130px');
-        expect(input.style.flex).toBe('0 1 auto');
+        expect(parseFloat(input.style.width)).toBe(0);
+        expect(input.style.flex).toMatch(/^1 1 0(px)?$/);
         expect(input.style.minWidth).toBe('0');
         expect(title.style.gap).toBe('10px');
+        expect(title.style.width).toBe('calc(100% - 26px)');
+        expect(title.style.marginRight).toBe('auto');
+        expect(title.style.alignSelf).toBe('flex-start');
     });
 
     it('leaves a row that fits untouched', () => {
@@ -181,6 +184,7 @@ describe('header row fit on narrow screens', () => {
         const input = document.querySelector('#mwi-action-filter');
         expect(input.style.width).toBe('200px');
         expect(title.style.gap).toBe('15px');
+        expect(title.style.width).toBe('');
     });
 
     it('cleanup restores the original inline styles', () => {
@@ -188,6 +192,10 @@ describe('header row fit on narrow screens', () => {
         actionFilter.injectFilterInput(title);
         actionFilter.cleanup();
         expect(title.style.gap).toBe('15px');
+        expect(title.style.width).toBe('');
+        expect(title.style.marginLeft).toBe('');
+        expect(title.style.alignSelf).toBe('');
+        expect(document.querySelector('#mwi-action-filter')).toBeNull();
         expect(actionFilter._headerFit).toBeNull();
     });
 });
