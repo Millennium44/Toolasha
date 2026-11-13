@@ -2100,15 +2100,18 @@ class TooltipPrices {
         }
 
         // Calculate profit for solo actions
+        // Follows the personal-use sell-tax toggle like the skill-page tile does
         for (const action of soloActions) {
-            const profitData = await calculateGatheringProfit(action.actionHrid, { keepSellTax: true });
+            const profitData = await calculateGatheringProfit(action.actionHrid);
             if (profitData) {
+                action.excludeSellTax = Boolean(profitData.excludeSellTax);
                 action.itemsPerHour = profitData.baseOutputs?.[0]?.itemsPerHour || 0;
                 action.hasMissingPrices = Boolean(profitData.hasMissingPrices);
                 action.profitPerHour = action.hasMissingPrices ? null : profitData.profitPerHour || 0;
             }
         }
 
+        // Zone rows show items only, which the sell-tax toggle does not change
         // Calculate items/hr for zone actions using calculateGatheringProfit for accuracy
         // (accounts for speed bonuses, gathering quantity bonus, efficiency multiplier, and avg drop amount)
         for (const action of zoneActions) {
@@ -2195,7 +2198,9 @@ class TooltipPrices {
                       ? formatKMB(Math.round(action.profitPerHour * 24))
                       : '?';
 
-                html += `<div style="margin-left: 8px;">• ${action.actionName}: ${itemsPerHourStr} items/hr | ${profitStr}/hr (${profitDayStr}/day)</div>`;
+                const taxMark = sellTaxMarker(action.excludeSellTax && !action.hasMissingPrices);
+                const taxTitle = action.excludeSellTax ? ` title="${escapeAttribute(SELL_TAX_EXCLUDED_TOOLTIP)}"` : '';
+                html += `<div style="margin-left: 8px;"${taxTitle}>• ${action.actionName}: ${itemsPerHourStr} items/hr | ${profitStr}/hr (${profitDayStr}/day)${taxMark}</div>`;
             }
 
             html += '</div>';

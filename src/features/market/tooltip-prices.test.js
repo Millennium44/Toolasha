@@ -642,7 +642,7 @@ describe('gathering tooltip for a solo item that also has a rare roll', () => {
 });
 
 describe('gathering tooltip and the sell-tax exclusion', () => {
-    test('values every gathering source as a sale, whatever the personal-use toggle says', async () => {
+    const setup = (profit) => {
         gatheringState.options = [];
         gatheringState.actionDetailMap = {
             '/actions/foraging/apple': {
@@ -663,12 +663,39 @@ describe('gathering tooltip and the sell-tax exclusion', () => {
             profitPerHour: 800,
             hasMissingPrices: false,
             baseOutputs: [{ itemHrid: '/items/apple', itemsPerHour: 1125 }],
+            ...profit,
         };
+    };
 
+    test('solo rows leave the sell-tax choice to the personal-use toggle', async () => {
+        setup({ excludeSellTax: true });
         await tooltipPrices.findGatheringSources('/items/apple');
-
         expect(gatheringState.options.length).toBeGreaterThan(0);
-        expect(gatheringState.options.every((o) => o?.keepSellTax === true)).toBe(true);
+        expect(gatheringState.options.some((o) => o?.keepSellTax === true)).toBe(false);
+    });
+
+    test('a solo row carries the warning marker when the tax was excluded', async () => {
+        setup({ excludeSellTax: true });
+        const el = itemTooltip('Apple');
+        tooltipPrices.injectGatheringDisplay(el, await tooltipPrices.findGatheringSources('/items/apple'));
+        expect(el.textContent).toContain('800/hr');
+        expect(el.textContent).toContain('/day) ⚠');
+        expect(el.innerHTML).toContain('title=');
+    });
+
+    test('a solo row has no marker when the tax was applied', async () => {
+        setup({ excludeSellTax: false });
+        const el = itemTooltip('Apple');
+        tooltipPrices.injectGatheringDisplay(el, await tooltipPrices.findGatheringSources('/items/apple'));
+        expect(el.textContent).toContain('800/hr');
+        expect(el.textContent).not.toContain('⚠');
+    });
+
+    test('an unpriced solo row shows one warning, not two', async () => {
+        setup({ excludeSellTax: true, hasMissingPrices: true });
+        const el = itemTooltip('Apple');
+        tooltipPrices.injectGatheringDisplay(el, await tooltipPrices.findGatheringSources('/items/apple'));
+        expect(el.textContent.match(/⚠/g)).toHaveLength(2);
     });
 });
 
