@@ -37,6 +37,15 @@ import {
     talismanLimits,
     talismanLines,
 } from '../../utils/talisman-line-sets.js';
+import {
+    COST_BASES,
+    COST_UNIT,
+    DEFAULT_COST_BASIS,
+    candidateLabel,
+    emptySlotNote,
+    rateRow,
+    sortBeltRows,
+} from './talisman-belt-advisor.js';
 
 export const ACCENT = '#4a9eff';
 export const CHIP_BUTTON_STYLE =
@@ -82,6 +91,20 @@ const TIP_SORT_PER_ORB = 'Most gain per expected orb first: the cheapest lines t
 const TIP_COPY = 'Copies the set as reroll targets: per talisman, each line with its lowest acceptable grade.';
 const TIP_IMPROVE = 'From the talismans you own of this type, the next targets with the most value per orb.';
 const TIP_AIM = 'Hands this target to the reroll advisor in the talisman window and opens the talisman there.';
+const TIP_BELT_HEAD =
+    'Which belt upgrade is worth buying: every candidate belt is valued with the talismans slotted now, then set against its cost.';
+const TIP_BELT_COST =
+    'What a belt costs: buy it, buy it and sell your current one, or an estimate of enhancing it yourself. Hover an option for what it counts. Changing it re-reads the figures without a new check.';
+const TIP_BELT_RUN =
+    'Value your current belt at higher levels and each larger belt, with the talismans slotted now, and price each from the market.';
+const TIP_BELT_ESTIMATE = 'What a Check belts press will do with the build and gear as they stand.';
+const TIP_BELT_CANDIDATE = 'The belt and enhancement level. Larger belts are compared with the one worn now.';
+const TIP_BELT_GAIN =
+    'What the belt adds, in the chosen Rank by metric, over the belt worn now with the same talismans slotted.';
+const TIP_BELT_COST_COL =
+    'The cost on the chosen basis, from live market prices when the check ran. "No price" means no listing.';
+const TIP_BELT_RATIO = `Gain per ${COST_UNIT / 1e6}m coins of cost. Only for a priced upgrade with a real, positive gain.`;
+const TIP_BELT_NOTE = 'What to know about the row.';
 const TIP_HASH = 'Rank: the line with the biggest gain is 1.';
 const TIP_LINE = 'The talisman line. Hover the name for its value at the measured grade.';
 
@@ -424,6 +447,8 @@ export class TalismanRankingSectionBase {
         this._result = null;
         this._orbs = null;
         this._improve = null;
+        /** The belt advisor's last result (`{status, rows, inputs, ...}`), or null */
+        this._belt = null;
         this._sortBy = 'gain';
         this._listeners = [];
         /** The player has typed in the budget field: the default is no longer refilled */
@@ -490,11 +515,22 @@ export class TalismanRankingSectionBase {
                     <button data-role="stop" style="${CHIP_BUTTON_STYLE} display:none; color:#f44336; border-color:rgba(244,67,54,0.4);" title="${escapeHtml(TIP_STOP)}">Stop</button>
                     <span data-role="estimate" style="color:${GAME_COLORS.textDim}; font-size:11px;"></span>
                 </div>
+                <div data-role="belt-controls" style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin-top:6px;">
+                    <span style="color:${ACCENT}; font-weight:700; font-size:12px;" title="${escapeHtml(TIP_BELT_HEAD)}">Belt advisor</span>
+                    <label style="color:#888; font-size:11px;" title="${escapeHtml(TIP_BELT_COST)}">Cost</label>
+                    <select data-role="belt-cost" class="toolasha-select" style="${SELECT_STYLE}" title="${escapeHtml(TIP_BELT_COST)}">
+                        ${COST_BASES.map((b) => `<option value="${b.key}" title="${escapeHtml(b.help)}"${b.key === DEFAULT_COST_BASIS ? ' selected' : ''}>${escapeHtml(b.label)}</option>`).join('')}
+                    </select>
+                    <button data-role="belt-run" style="${CHIP_BUTTON_STYLE}" title="${escapeHtml(TIP_BELT_RUN)}">Check belts</button>
+                    <span data-role="belt-estimate" style="color:${GAME_COLORS.textDim}; font-size:11px;" title="${escapeHtml(TIP_BELT_ESTIMATE)}"></span>
+                </div>
                 <div data-role="progress" style="display:none; color:${GAME_COLORS.textDim}; font-size:11px; margin-top:4px;"></div>
                 <div data-role="notice" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
                 <div data-role="stale" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
                 <div data-role="results" style="margin-top:4px;"></div>
                 <div data-role="improve" style="margin-top:4px;"></div>
+                <div data-role="belt-stale" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
+                <div data-role="belt-results" style="margin-top:4px;"></div>
             </div>`;
         container.appendChild(root);
         this.root = root;
@@ -519,7 +555,10 @@ export class TalismanRankingSectionBase {
         this._on(this._q('metric'), 'change', () => {
             this._syncMetricControls();
             this._updateEstimate();
+            this._refreshBeltStale();
         });
+        this._on(this._q('belt-run'), 'click', () => this._onBelts());
+        this._on(this._q('belt-cost'), 'change', () => this._renderBelts());
         this._on(this._q('results'), 'click', (e) => {
             if (e.target.closest?.('[data-role="copy-targets"]')) this._copyTargets(e.target);
             if (e.target.closest?.('[data-role="improve-run"]')) this._onImprove();
@@ -539,6 +578,7 @@ export class TalismanRankingSectionBase {
         this._syncBudget();
         this._afterMount();
         this._updateEstimate();
+        this._updateBeltEstimate();
     }
 
     /** Stop the run in flight; what was measured is kept */
@@ -563,6 +603,7 @@ export class TalismanRankingSectionBase {
         this._result = null;
         this._orbs = null;
         this._improve = null;
+        this._belt = null;
         this._budgetTouched = false;
         this._budgetDefaultText = '';
     }
@@ -671,15 +712,20 @@ export class TalismanRankingSectionBase {
     _setRunning(running) {
         this._running = running;
         const run = this._q('run');
+        const beltRun = this._q('belt-run');
         const stop = this._q('stop');
         const progress = this._q('progress');
         if (run) run.style.display = running ? 'none' : '';
+        if (beltRun) beltRun.style.display = running ? 'none' : '';
         if (stop) stop.style.display = running ? '' : 'none';
         if (progress) progress.style.display = running ? 'block' : 'none';
         // However a run ends, its last progress text goes with it
         if (progress && !running) progress.textContent = '';
         if (running) this._notice('');
-        if (!running) this._updateEstimate();
+        if (!running) {
+            this._updateEstimate();
+            this._updateBeltEstimate();
+        }
     }
 
     /** A one-line note that leaves the drawn results alone (a refused press) */
@@ -706,11 +752,13 @@ export class TalismanRankingSectionBase {
     /**
      * Start a run: the ranking (`_runRanking`) or Improve mine. One at a time, refused while the host runs something.
      * @param {Function} body - `(current) => Promise`
+     * @param {Object} [options]
+     * @param {Function} [options.refuse] - `(text)`: where a refused press or a failure says why (default: the ranking's)
      */
-    async _guardedRun(body) {
+    async _guardedRun(body, options = {}) {
         if (this._running) return;
         // A refused press says why without wiping a ranking already drawn
-        const refuse = (text) => (this._result ? this._notice(text) : this._renderMessage(text));
+        const refuse = options.refuse || ((text) => (this._result ? this._notice(text) : this._renderMessage(text)));
         const blocked = this._blocked();
         if (blocked) {
             refuse(blocked);
@@ -729,7 +777,10 @@ export class TalismanRankingSectionBase {
             await body(current);
         } catch (error) {
             console.error('[TalismanRanking] Run failed:', error);
-            if (current()) this._renderMessage(`Ranking failed: ${error.message || error}`);
+            if (current()) {
+                if (options.refuse) options.refuse(`Failed: ${error.message || error}`);
+                else this._renderMessage(`Ranking failed: ${error.message || error}`);
+            }
         } finally {
             if (token === this._token) {
                 this._setRunning(false);
@@ -1188,6 +1239,246 @@ export class TalismanRankingSectionBase {
             );
         }
         box.innerHTML = parts.join('');
+    }
+
+    // -----------------------------------------------------------------------------------------------------------
+    // Belt advisor: which belt upgrade is worth buying. A third guarded run beside Rank and Improve mine, with its
+    // own result (`_belt`), stamped with the inputs it was run for. A subclass supplies `_runBelts`, `_beltInputs`
+    // and `_beltEstimateText`.
+    // -----------------------------------------------------------------------------------------------------------
+
+    /**
+     * The belt run; a subclass returns its result (`{status, rows, ...}`), or null when it was cancelled.
+     * @param {Function} _current - `() => boolean`: this run is still the live one
+     * @param {string} _metricKey
+     * @returns {Promise<Object|null>}
+     */
+    async _runBelts(_current, _metricKey) {
+        return null;
+    }
+
+    /** @returns {Object} What a belt result was valued for, by the words a stale note uses (a subclass adds its own) */
+    _beltInputs() {
+        return {};
+    }
+
+    /** @returns {string} The pre-run line for the belt advisor (a subclass says what a run will do) */
+    _beltEstimateText() {
+        return '';
+    }
+
+    /** @returns {Object} The inputs a belt result is valued for, as they stand now */
+    _beltInputsNow() {
+        let inputs = {};
+        try {
+            inputs = this._beltInputs();
+        } catch (error) {
+            console.error('[TalismanRanking] Reading the belt inputs failed:', error);
+        }
+        return { 'Rank by': this._q('metric')?.value || '', ...inputs };
+    }
+
+    _updateBeltEstimate() {
+        const estimate = this._q('belt-estimate');
+        if (!estimate || this._running) return;
+        try {
+            estimate.textContent = this._beltEstimateText();
+        } catch (error) {
+            console.error('[TalismanRanking] Belt estimate failed:', error);
+            estimate.textContent = '';
+        }
+    }
+
+    /** Say when the drawn belt figures were valued for other inputs than the controls now hold */
+    _refreshBeltStale() {
+        const note = this._q('belt-stale');
+        if (!note) return;
+        const result = this._belt;
+        let changed = [];
+        if (result && result.status !== 'refused' && result.inputs && !this._running) {
+            const now = this._beltInputsNow();
+            changed = Object.keys({ ...result.inputs, ...now }).filter(
+                (key) => JSON.stringify(result.inputs[key]) !== JSON.stringify(now[key])
+            );
+        }
+        note.style.display = changed.length ? 'block' : 'none';
+        note.textContent = changed.length
+            ? `The belt figures are out of date: the ${changed.join(', ')} changed since the check ran. Check belts again.`
+            : '';
+    }
+
+    /** Put a line where the belt results go */
+    _beltMessage(text) {
+        const box = this._q('belt-results');
+        if (box) {
+            box.innerHTML = text
+                ? `<div style="color:#ff9800; font-size:12px; padding:4px 0;">${escapeHtml(text)}</div>`
+                : '';
+        }
+    }
+
+    /** Check the belts: never a second run beside one in flight */
+    _onBelts() {
+        if (this._running) return;
+        return this._guardedRun(
+            async (current) => {
+                this._belt = null;
+                this._beltMessage('');
+                this._refreshBeltStale();
+                // Read now, before the first await: a later edit must not relabel the run
+                const inputs = this._beltInputsNow();
+                const result = await this._runBelts(current, this._q('metric')?.value);
+                if (!current() || !result) return;
+                result.inputs = inputs;
+                this._belt = result;
+                this._renderBelts();
+            },
+            { refuse: (text) => (this._belt ? this._notice(text) : this._beltMessage(text)) }
+        );
+    }
+
+    /** A gain per cost in the metric's units */
+    _ratioText(value, metric) {
+        if (metric.balanced) return signedPct(value);
+        return metric.key === 'deaths' ? signed(-value, 3) : signed(value, Math.abs(value) >= 10 ? 1 : 2);
+    }
+
+    /** Draw the belt result on the cost basis the select holds */
+    _renderBelts() {
+        const box = this._q('belt-results');
+        if (!box) return;
+        const result = this._belt;
+        if (!result) {
+            box.innerHTML = '';
+            this._refreshBeltStale();
+            return;
+        }
+        if (result.status === 'refused') {
+            this._beltMessage(result.message || 'Nothing to check.');
+            this._refreshBeltStale();
+            return;
+        }
+        const gameData = dataManager.getInitClientData?.() || {};
+        const metric = rankingMetric(result.metricKey, this.metrics);
+        const basis = this._q('belt-cost')?.value || DEFAULT_COST_BASIS;
+        const basisInfo = COST_BASES.find((b) => b.key === basis) || COST_BASES[0];
+        const beltName = `${gameData.itemDetailMap?.[result.belt.hrid]?.name || 'Talisman Belt'} +${result.belt.enhancementLevel || 0}`;
+        const parts = [
+            `<div style="color:#bbb; font-size:11px; margin:2px 0 6px;">${escapeHtml(
+                `${result.context || result.actionName ? `${result.context || result.actionName} · ` : ''}Belts against ${beltName} (Talisman Power ${(result.power * 100).toFixed(1)}%, ${result.slots} slot${result.slots === 1 ? '' : 's'}), ` +
+                    `valued with the talismans slotted now, by ${metric.label}. ` +
+                    (this.exact
+                        ? 'Exact: the same skilling math as the ranking, once per belt.'
+                        : `One sim per belt, ${result.paired ? 'one shared seed' : 'independent samples (shared seed off: wider error bars)'}${result.hours ? `, ${result.hours} h each` : ''}.`) +
+                    ' Prices were read when the check ran.'
+            )}</div>`,
+        ];
+        const warn = (text) =>
+            parts.push(`<div style="color:#ff9800; font-size:11px; margin-bottom:4px;">${escapeHtml(text)}</div>`);
+        if (result.status === 'stopped') {
+            const measured = result.rows?.length || 0;
+            const why = result.cancelledElsewhere ? ' (another simulation cancelled this run)' : '';
+            warn(
+                result.reason === 'no_figures'
+                    ? `The action's figures could not be worked out for every belt: ${measured} of ${result.of} shown.`
+                    : `Stopped early${why}: ${measured} of ${result.of} belts valued. The rows shown are complete.`
+            );
+        }
+        if (result.unmodeled?.length) {
+            warn(
+                `The sim does not model ${result.unmodeled.join(', ')}: ${result.unmodeled.length === 1 ? 'that line counts' : 'those lines count'} for nothing on every belt, so gains are understated.`
+            );
+        }
+        if ((metric.key === 'profit' || metric.balanced) && (result.unpriced?.length || result.hasMissingPrices)) {
+            warn('Some prices are missing and are left out: profit figures are floors.');
+        }
+        if (metric.key === 'profit' && result.hasUnpricedInputs) warn(`${UNPRICED_INPUTS_NOTE}.`);
+        const rows = sortBeltRows(result.rows || [], basis);
+        if (!rows.length) {
+            parts.push(
+                `<div style="color:${GAME_COLORS.textDim}; font-size:12px;">${
+                    result.status === 'done'
+                        ? 'Nothing to compare: no larger belt and no higher level is on offer for this belt.'
+                        : 'No belt was valued.'
+                }</div>`
+            );
+            box.innerHTML = parts.join('');
+            this._refreshBeltStale();
+            return;
+        }
+        if (rows.every((row) => rateRow(row, basis).kind === 'unpriced')) {
+            warn(
+                `No belt has a price on the "${basisInfo.label}" basis: the gains are shown, but none can be set against a cost.`
+            );
+        }
+        const th = (text, title, align = 'right') =>
+            `<th style="text-align:${align}; padding:2px 6px; color:#888; font-weight:600;" title="${escapeHtml(title)}">${text}</th>`;
+        const head =
+            `<tr>${th('#', TIP_HASH, 'left')}${th('Belt', TIP_BELT_CANDIDATE, 'left')}` +
+            th(escapeHtml(metric.label), TIP_BELT_GAIN) +
+            (this.exact ? '' : th('%', 'Change against the belt worn now, with its 95% error bar')) +
+            th('Cost', `${TIP_BELT_COST_COL} Basis: ${basisInfo.label}. ${basisInfo.help}`) +
+            th(`per ${COST_UNIT / 1e6}m`, TIP_BELT_RATIO) +
+            th('Note', TIP_BELT_NOTE, 'left') +
+            '</tr>';
+        const body = rows
+            .map((row, index) => {
+                const rate = rateRow(row, basis);
+                const dim = row.significant === false || row.gainUnreal;
+                const color = dim
+                    ? '#777'
+                    : row.value > 0
+                      ? GAME_COLORS.good
+                      : row.value < 0
+                        ? GAME_COLORS.bad
+                        : '#aaa';
+                const cost = row.costs?.[basis];
+                const costCell =
+                    rate.cost === null
+                        ? `<span style="color:#ff9800;" title="${escapeHtml(rate.why)}">No price</span>`
+                        : `<span title="${escapeHtml(
+                              cost?.resale != null
+                                  ? `${formatKMB(row.costs.market.price)} to buy, less ${formatKMB(cost.resale)} for your belt after tax`
+                                  : `${Math.round(rate.cost).toLocaleString('en-US')} coins`
+                          )}">${rate.cost < 0 ? '−' : ''}${formatKMB(Math.abs(rate.cost))}</span>`;
+                const ratioCell =
+                    rate.kind === 'ratio'
+                        ? this._ratioText(rate.per100m, metric)
+                        : rate.kind === 'free'
+                          ? `<span title="Your current belt's sale pays for this one: no cost to divide by">free</span>`
+                          : `<span style="color:#777;" title="${escapeHtml(rate.why || '')}">—</span>`;
+                const notes = [
+                    emptySlotNote(row.emptySlots),
+                    rate.kind === 'none' ? rate.why : '',
+                    row.noEffect ? 'No effect for these talismans here.' : '',
+                    row.deathsRise ? 'Deaths/hr rose beyond its error bar.' : '',
+                    row.hasMissingPrices ? 'Some prices are missing: profit is a floor.' : '',
+                    rate.kind === 'free' ? 'Free: selling your belt covers it.' : '',
+                ].filter(Boolean);
+                const pct = this.exact
+                    ? ''
+                    : `<td style="text-align:right; padding:2px 6px; color:${color};">${signedPct(row.valuePct)}${Number.isFinite(row.errPct) ? ` <span style="color:#777;">±${row.errPct.toFixed(2)}</span>` : ''}</td>`;
+                return (
+                    `<tr><td style="padding:2px 6px; color:#888;">${index + 1}</td>` +
+                    `<td style="padding:2px 6px; color:${dim ? '#999' : '#ddd'}; white-space:nowrap;" title="${escapeHtml(`Talisman Power ${(row.power * 100).toFixed(1)}%, ${row.slots} slot${row.slots === 1 ? '' : 's'}`)}">${escapeHtml(candidateLabel(row))}</td>` +
+                    `<td style="text-align:right; padding:2px 6px; color:${color};" title="${escapeHtml(TIP_BELT_GAIN)}">${this._formatValue(row.value, metric)}</td>` +
+                    pct +
+                    `<td style="text-align:right; padding:2px 6px; color:#ccc;">${costCell}</td>` +
+                    `<td style="text-align:right; padding:2px 6px; color:#ccc;">${ratioCell}</td>` +
+                    `<td style="padding:2px 6px; color:#999;">${escapeHtml(notes.join(' '))}</td></tr>`
+                );
+            })
+            .join('');
+        parts.push(
+            `<div style="overflow-x:auto;"><table style="border-collapse:collapse; font-size:11px; width:100%;">${head}${body}</table></div>`
+        );
+        parts.push(
+            `<div style="font-size:11px; color:#888; margin-top:4px;">${escapeHtml(
+                `Cost basis: ${basisInfo.label}. ${basisInfo.help} A larger belt's extra slots hold nothing yet, so they add nothing here.`
+            )}</div>`
+        );
+        box.innerHTML = parts.join('');
+        this._refreshBeltStale();
     }
 
     async _copyTargets(button) {
