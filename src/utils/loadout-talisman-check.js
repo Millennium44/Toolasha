@@ -88,5 +88,9 @@ export function checkLoadoutTalismans({ loadout, ownedTalismans, itemDetailMap }
 export function commonWarnings(lists) {
     if (lists.length === 0) return [];
     const [first, ...rest] = lists;
-    return first.filter((w) => rest.every((l) => l.some((x) => x.code === w.code && x.slot === w.slot)));
+    // The whole warning must match, reason text included: two namesakes can share a code and slot for different
+    // causes (a Small and a Medium belt both lack slot 3), and the shown text must hold for the selected one
+    return first.filter((w) =>
+        rest.every((l) => l.some((x) => x.code === w.code && x.slot === w.slot && x.text === w.text))
+    );
 }

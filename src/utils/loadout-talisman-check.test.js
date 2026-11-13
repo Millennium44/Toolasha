@@ -89,4 +89,15 @@ describe('checkLoadoutTalismans', () => {
         expect(commonWarnings([a, a]).map((w) => w.code)).toEqual(['deleted']);
         expect(commonWarnings([])).toEqual([]);
     });
+
+    test('commonWarnings drops a shared code and slot whose reasons differ (Small vs Medium belt)', () => {
+        const small = [
+            { code: 'slot', slot: 3, text: "Slot 3: this loadout's belt has 1 slot, so this talisman does nothing." },
+        ];
+        const medium = [
+            { code: 'slot', slot: 3, text: "Slot 3: this loadout's belt has 2 slots, so this talisman does nothing." },
+        ];
+        expect(commonWarnings([small, medium])).toEqual([]);
+        expect(commonWarnings([medium, medium])).toEqual(medium);
+    });
 });
