@@ -12,7 +12,7 @@
  * Items of one kind an action's regular drop table yields per second of base action time.
  * @param {Object} action - An `actionDetailMap` entry
  * @param {string} itemHrid - The item
- * @returns {number} 0 when the action's regular table does not drop it
+ * @returns {number} 0 when the action's regular table does not drop it, or the action has no base time
  */
 export function gatheringItemsPerSecond(action, itemHrid) {
     let perAction = 0;
@@ -23,7 +23,8 @@ export function gatheringItemsPerSecond(action, itemHrid) {
         perAction += (drop.dropRate ?? 1) * ((min + max) / 2);
     }
     const seconds = (Number(action?.baseTimeCost) || 0) / 1e9;
-    return seconds > 0 ? perAction / seconds : perAction;
+    // No base time: items per action would be compared against items per second, so it is incomparable
+    return seconds > 0 ? perAction / seconds : 0;
 }
 
 /**

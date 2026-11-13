@@ -2017,7 +2017,7 @@ class TooltipPrices {
                         regularRate += drop.dropRate || 0;
                         // Solo gathering has 100% drop rate (dropRate === 1)
                         // Zone gathering has < 100% drop rate
-                        isSolo = regularRate === 1;
+                        isSolo = regularRate >= 1;
                     }
                 }
             }
@@ -2031,8 +2031,7 @@ class TooltipPrices {
                     }
                 }
             }
-            // Rare drops are never solo
-            if (rareRate > 0) isSolo = false;
+            // Solo is decided by the regular table alone; a rare roll only adds to the chance shown
             const dropRate = regularRate + rareRate;
 
             if (foundInDrop || isSolo) {

@@ -594,6 +594,37 @@ describe('gathering tooltip for an item in both drop tables', () => {
     });
 });
 
+describe('gathering tooltip for a solo item that also has a rare roll', () => {
+    test('stays under Solo when the regular rate is 1', async () => {
+        gatheringState.options = [];
+        gatheringState.actionDetailMap = {
+            '/actions/milking/odd_cow': {
+                hrid: '/actions/milking/odd_cow',
+                name: 'Odd Cow',
+                type: '/action_types/milking',
+                category: '/action_categories/milking/cows',
+                baseTimeCost: 10_000_000_000,
+                experienceGain: { skillHrid: '/skills/milking', value: 1 },
+                dropTable: [{ itemHrid: '/items/odd_milk', dropRate: 1, minCount: 1, maxCount: 1 }],
+                essenceDropTable: [],
+                rareDropTable: [{ itemHrid: '/items/odd_milk', dropRate: 0.05, minCount: 1, maxCount: 1 }],
+                inputItems: null,
+                outputItems: null,
+            },
+        };
+        gatheringState.profitData = {
+            profitPerHour: 800,
+            hasMissingPrices: false,
+            baseOutputs: [{ itemHrid: '/items/odd_milk', itemsPerHour: 100 }],
+        };
+
+        const sources = await tooltipPrices.findGatheringSources('/items/odd_milk');
+
+        expect(sources.soloActions).toHaveLength(1);
+        expect(sources.zoneActions).toHaveLength(0);
+    });
+});
+
 describe('gathering tooltip and the sell-tax exclusion', () => {
     test('values every gathering source as a sale, whatever the personal-use toggle says', async () => {
         gatheringState.options = [];

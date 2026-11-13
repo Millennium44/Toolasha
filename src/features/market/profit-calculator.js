@@ -8,7 +8,8 @@ import dataManager from '../../core/data-manager.js';
 import { getCommunityProductionEfficiency } from '../../utils/community-buffs.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
-import { getProductionCost, getProductionChainTime } from '../enhancement/tooltip-enhancement.js';
+import { getProductionChainTime } from '../enhancement/tooltip-enhancement.js';
+import { getProductionCostDetailed } from '../../utils/enhancement-pricing.js';
 import { getItemPrice, getItemPrices, getPricingMode } from '../../utils/market-data.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
@@ -176,7 +177,10 @@ class ProfitCalculator {
                 const resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
                 // Same craft-vs-buy decision as calculateMaterialCosts, so the chain time is
                 // charged exactly when the upgrade item is costed as crafted
-                const craftCost = getProductionCost(actionDetails.upgradeItemHrid, getPricingMode('profit', 'buy'));
+                const craftCost = getProductionCostDetailed(
+                    actionDetails.upgradeItemHrid,
+                    getPricingMode('profit', 'buy')
+                ).cost;
                 if (craftCost > 0 && (!(resolved.price > 0) || craftCost < resolved.price)) {
                     const chainTimeWithSpeed =
                         upgradeChainTime / (1 + equipmentSpeedBonus + personalSpeedBonus + guildSpeedBonus);
@@ -495,7 +499,8 @@ class ProfitCalculator {
         const priceOf = (hrid) => {
             if (hrid === '/items/coin') return { price: 1, missing: false };
             const resolved = resolveItemPrice(hrid, { context: 'profit', side: 'buy' });
-            return { price: resolved?.price || 0, missing: Boolean(resolved?.missing) };
+            // A lower-bound craft cost would inflate the margin, so it ranks like an unpriced input
+            return { price: resolved?.price || 0, missing: Boolean(resolved?.missing) || Boolean(resolved?.partial) };
         };
 
         let best = candidates[0];
@@ -566,12 +571,19 @@ class ProfitCalculator {
                         !config.getSetting('itemTooltip_detailedProfitFlat');
                     // Inputs of the craft are bought on the same side the market price above is
                     // quoted on, or a bid-side mode compares a bid purchase with an ask craft
-                    const craftCost = craftEnabled
-                        ? getProductionCost(actionDetails.upgradeItemHrid, getPricingMode('profit', 'buy'))
-                        : 0;
+                    const crafted = craftEnabled
+                        ? getProductionCostDetailed(actionDetails.upgradeItemHrid, getPricingMode('profit', 'buy'))
+                        : { cost: 0, partial: false };
+                    const craftCost = crafted.cost;
                     isCrafted = craftCost > 0 && (!(resolved.price > 0) || craftCost < resolved.price);
                     if (isCrafted) {
-                        resolved = { price: craftCost, custom: false, missing: false, estimated: true };
+                        resolved = {
+                            price: craftCost,
+                            custom: false,
+                            missing: false,
+                            estimated: true,
+                            ...(crafted.partial ? { partial: true } : {}),
+                        };
                     }
                 }
 
