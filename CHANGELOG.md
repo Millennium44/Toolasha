@@ -10,7 +10,6 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Building a Budget set in the Combat Sim's Talisman lines locked the game tab for most of a minute while it priced talismans in orbs. That work now runs in short slices, so the game stays responsive; the recommended sets and costs are unchanged.
 
-### Labyrinth "Buy missing supplies" no longer makes the row taller
 ### Compact talisman editing in the Combat Sim
 
 The editor's talismans now sit side by side as small cards, one per belt slot, instead of a tall list of full-width rows; on a phone they stack. The Belt row is hidden where the game has no belts.
