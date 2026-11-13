@@ -128,7 +128,7 @@ describe('labyrinth missing supplies', () => {
         injectButton(grid);
         const buttons = wrapper.querySelectorAll('button');
         expect(buttons).toHaveLength(1);
-        expect(buttons[0].parentElement).toBe(label);
+        expect(label.contains(buttons[0])).toBe(true);
         expect(label.nextElementSibling).toBe(grid);
     });
 

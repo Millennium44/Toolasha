@@ -123,7 +123,8 @@ function createButton() {
 
 /**
  * Inject the button inline at the end of the "Supplies" label, once per rendered panel instance. On a line of its
- * own it made the supplies column taller than the floor column beside it, and the whole bottom row grew.
+ * own it made the supplies column taller than the floor column beside it, and the whole bottom row grew. It hangs
+ * from a zero-width holder, so the centered label text stays centered over the supplies.
  * @param {Element} grid - The LabyrinthPanel_suppliesGrid element
  */
 export function injectButton(grid) {
@@ -131,7 +132,10 @@ export function injectButton(grid) {
     if (!wrapper || wrapper.querySelector(`.${BUTTON_CLASS}`)) return;
     const label = wrapper.querySelector('[class*="LabyrinthPanel_label"]');
     if (!label) return;
-    label.appendChild(createButton());
+    const holder = document.createElement('span');
+    holder.style.cssText = 'display: inline-block; width: 0; white-space: nowrap; vertical-align: top;';
+    holder.appendChild(createButton());
+    label.appendChild(holder);
 }
 
 let unregister = null;
