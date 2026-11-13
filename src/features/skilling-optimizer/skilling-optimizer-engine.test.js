@@ -65,7 +65,7 @@ vi.mock('../../utils/tea-optimizer.js', () => ({
 // `entries` are quotes at an exact level. `craftCost` is what the real resolveItemPrice falls back
 // to when a level has no quote: the item's production cost, which is the +0 craft whatever level
 // was asked for.
-const priceBook = vi.hoisted(() => ({ entries: {}, craftCost: {}, calls: [] }));
+const priceBook = vi.hoisted(() => ({ entries: {}, craftCost: {}, partialCraft: new Set(), calls: [] }));
 const enhancementPricing = vi.hoisted(() => ({ cost: null, calls: [] }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     resolveItemPrice: (itemHrid, options = {}) => {
@@ -74,7 +74,14 @@ vi.mock('../../utils/profit-helpers.js', () => ({
         const price = priceBook.entries[`${side}:${itemHrid}@${enhancementLevel}`];
         if (typeof price === 'number') return { price, missing: false, estimated: false, custom: false };
         const craft = priceBook.craftCost[itemHrid];
-        if (typeof craft === 'number') return { price: craft, missing: false, estimated: true, custom: false };
+        if (typeof craft === 'number')
+            return {
+                price: craft,
+                missing: false,
+                estimated: true,
+                custom: false,
+                ...(priceBook.partialCraft.has(itemHrid) ? { partial: true } : {}),
+            };
         return { price: null, missing: true, estimated: false, custom: false };
     },
 }));
@@ -628,6 +635,19 @@ describe('calculateSlotUpgradeCost', () => {
         priceBook.entries[`sell:${CHEESE_TOOL}@0`] = 900;
         const cost = calculateSlotUpgradeCost(VERDANT_TOOL, 0, { itemHrid: CHEESE_TOOL, enhancementLevel: 0 });
         expect(cost).toBe(0);
+    });
+
+    test('a partial craft cost (an input counted as 0) is unpriced, never a cheap buy', () => {
+        priceBook.craftCost[VERDANT_TOOL] = 40;
+        priceBook.partialCraft.add(VERDANT_TOOL);
+        expect(calculateSlotUpgradeCost(VERDANT_TOOL, 0, null)).toBeNull();
+        // Sell side of the worn piece: a lower bound is not what it fetches, so the net is unpriced too
+        priceBook.partialCraft.clear();
+        priceBook.entries[`buy:${VERDANT_TOOL}@0`] = 500;
+        priceBook.craftCost[CHEESE_TOOL] = 10;
+        priceBook.partialCraft.add(CHEESE_TOOL);
+        expect(calculateSlotUpgradeCost(VERDANT_TOOL, 0, { itemHrid: CHEESE_TOOL, enhancementLevel: 0 })).toBeNull();
+        priceBook.partialCraft.clear();
     });
 
     test('an unpriceable upgrade is null, not free', () => {

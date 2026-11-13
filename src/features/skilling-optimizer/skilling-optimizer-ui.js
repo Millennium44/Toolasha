@@ -696,6 +696,7 @@ class SkillingSimulatorUI {
             this.selectedActionHrids = null;
             actionBtn.textContent = getActionLabel();
             this._closePicker();
+            this._talismanSection?.refreshActions();
         };
 
         skillSelect.addEventListener('change', () => {
@@ -1257,6 +1258,7 @@ class SkillingSimulatorUI {
                 });
             }
             anchorBtn.textContent = getBtnLabel();
+            this._talismanSection?.refreshActions();
         });
         allRow.style.cssText += ' font-weight: 600; border-bottom: 1px solid rgba(255,255,255,0.1);';
         popup.appendChild(allRow);
@@ -1305,6 +1307,7 @@ class SkillingSimulatorUI {
                     allCb.checked = false;
                 }
                 anchorBtn.textContent = getBtnLabel();
+                this._talismanSection?.refreshActions();
             });
             itemRows.push({ cb, hrid: action.hrid, row, name: action.name });
             popup.appendChild(row);

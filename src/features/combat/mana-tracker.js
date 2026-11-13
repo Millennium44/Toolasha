@@ -251,7 +251,11 @@ export function manaPerMinuteMeasured() {
 export function mpSupplyPlan(targetMpPerMinute) {
     const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
     const candidates = buildMpCandidates(itemDetailMap, {
-        priceOf: (hrid) => resolveItemPrice(hrid, { context: 'profit', side: 'buy' }).price,
+        priceOf: (hrid) => {
+            const resolved = resolveItemPrice(hrid, { context: 'profit', side: 'buy' });
+            // A partial craft cost counted an unpriced input as 0: unpriced, not cheap
+            return resolved.partial ? null : resolved.price;
+        },
         ...haste,
         maxMana,
     });

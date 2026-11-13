@@ -74,7 +74,7 @@ function defaultItemName(itemHrid) {
  */
 function defaultPriceMaterial(itemHrid) {
     const resolved = resolveItemPrice(itemHrid, { side: 'buy', context: 'profit' });
-    return resolved.missing || !(resolved.price > 0) ? null : resolved.price;
+    return resolved.missing || resolved.partial || !(resolved.price > 0) ? null : resolved.price;
 }
 
 /**
@@ -85,7 +85,7 @@ function defaultPriceMaterial(itemHrid) {
  */
 function defaultPriceBase(itemHrid) {
     const resolved = resolveItemPrice(itemHrid, { side: 'buy', context: 'profit' });
-    return resolved.missing || !(resolved.price > 0) ? null : resolved.price;
+    return resolved.missing || resolved.partial || !(resolved.price > 0) ? null : resolved.price;
 }
 
 /**

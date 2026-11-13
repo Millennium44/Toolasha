@@ -247,6 +247,24 @@ describe('the chain picks setups jointly', () => {
         expect(chain.topStep).toBe(engine.candidates['/items/item_a'][0]);
     });
 
+    test('the market chain per hour is never below the tooltip-style pick (best setup per item), and can beat it', () => {
+        // The item tooltip picks each step for gold per item; Best Items picks every step for gold per hour.
+        // mid_b: slow nets 1920 over 10 s, fast nets 1820 over 1 s; the top step takes 1 s
+        const { fast } = slowChildWins();
+        const slow = engine.candidates['/items/mid_b'][1];
+        engine.candidates['/items/item_a'] = [setup(1000, 3600)];
+        const top = engine.candidates['/items/item_a'][0];
+        const perItem = (child) => chainWith('/items/item_a', { '/items/item_a': top, '/items/mid_b': child }, 1000);
+        // Per item the slow setup wins, so the tooltip would take it
+        expect(perItem(slow).net).toBeGreaterThan(perItem(fast).net);
+        const tooltipStyle = perItem(slow).netPerHour;
+
+        const chain = decomposeChain('/items/item_a');
+        expect(chain.netPerHour).toBeGreaterThanOrEqual(tooltipStyle);
+        expect(chain.netPerHour).toBeGreaterThan(tooltipStyle);
+        expect(chain.netPerHour).toBeCloseTo(perItem(fast).netPerHour);
+    });
+
     test('the top step setup is chosen on the whole chain too, and reported as topStep', () => {
         slowChildWins();
         // A second top setup: twice as fast, 30 gold of tea a unit

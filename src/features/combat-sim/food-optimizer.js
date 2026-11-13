@@ -84,8 +84,9 @@ export function buildConsumablePools(gameData) {
         const signature = restoreSignature(detail);
         if (!signature) continue;
 
-        const { price, custom } = resolveItemPrice(hrid, { side: 'buy', context: 'profit' });
-        if (!isKnownPrice(price, custom)) continue;
+        const { price, custom, partial } = resolveItemPrice(hrid, { side: 'buy', context: 'profit' });
+        // A partial craft cost counted an unpriced input as 0: not a price the search may rank on
+        if (partial || !isKnownPrice(price, custom)) continue;
 
         const hpRestore = Number(detail.hitpointRestore) || 0;
         const mpRestore = Number(detail.manapointRestore) || 0;
@@ -151,7 +152,7 @@ export function buildBuffDrinkPools(gameData) {
         const family = buffs[0].uniqueHrid;
         if (!family) continue;
 
-        const { price, custom } = resolveItemPrice(hrid, { side: 'buy', context: 'profit' });
+        const { price, custom, partial } = resolveItemPrice(hrid, { side: 'buy', context: 'profit' });
 
         if (!pools.has(family)) pools.set(family, []);
         pools.get(family).push({
@@ -160,7 +161,7 @@ export function buildBuffDrinkPools(gameData) {
             family,
             itemLevel: item.itemLevel || 0,
             buffTypes: buffs.map((buff) => buff.typeHrid).filter(Boolean),
-            price: isKnownPrice(price, custom) ? price : null,
+            price: !partial && isKnownPrice(price, custom) ? price : null,
             triggers: detail.defaultCombatTriggers || null,
         });
     }
@@ -371,8 +372,8 @@ function consumableCostPerHour(simResult, playerHrid, priceCache) {
     for (const [hrid, count] of Object.entries(used)) {
         if (!(count > 0)) continue;
         if (priceCache[hrid] === undefined) {
-            const price = resolveItemPrice(hrid, { side: 'buy', context: 'profit' }).price;
-            priceCache[hrid] = Number.isFinite(price) ? price : null;
+            const resolved = resolveItemPrice(hrid, { side: 'buy', context: 'profit' });
+            priceCache[hrid] = !resolved.partial && Number.isFinite(resolved.price) ? resolved.price : null;
         }
         if (priceCache[hrid] === null) return null;
         total += (count / simHours) * priceCache[hrid];
@@ -442,8 +443,8 @@ export async function runFoodOptimization(params, onProgress, options = {}) {
         ...[...pools.values()].flatMap((pool) => pool.map((entry) => entry.hrid)),
     ]) {
         if (!hrid || priceCache[hrid] !== undefined) continue;
-        const price = resolveItemPrice(hrid, { side: 'buy', context: 'profit' }).price;
-        priceCache[hrid] = Number.isFinite(price) ? price : null;
+        const resolved = resolveItemPrice(hrid, { side: 'buy', context: 'profit' });
+        priceCache[hrid] = !resolved.partial && Number.isFinite(resolved.price) ? resolved.price : null;
     }
     let simCount = 0;
 

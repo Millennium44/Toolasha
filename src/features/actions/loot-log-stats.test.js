@@ -83,6 +83,8 @@ vi.mock('./loot-log-history.js', () => ({
 // the test does not pull the whole enhancement bundle's transitive imports.
 const enhancing = vi.hoisted(() => ({
     material: vi.fn(() => 0),
+    // Whether every material quote comes back flagged partial (a craft-priced input with an unpriced recipe input)
+    materialPartial: false,
     protection: vi.fn(() => ({ price: 0 })),
     calculateEnhancement: null,
 }));
@@ -95,7 +97,7 @@ vi.mock('../../utils/patient-tick.js', () => ({
     PATIENT_TICK_SETTING_KEYS: ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'],
 }));
 vi.mock('../../utils/enhancement-input-pricing.js', () => ({
-    priceMaterial: (...args) => ({ price: enhancing.material(...args) }),
+    priceMaterial: (...args) => ({ price: enhancing.material(...args), partial: enhancing.materialPartial }),
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
@@ -186,6 +188,54 @@ describe('a partial protection price is shown as a floor', () => {
         expect(summaryText({ price: 5000, partial: true })).toContain('protection price is a floor');
         expect(summaryText({ price: 5000, partial: false })).not.toContain('protection price is a floor');
         expect(summaryText({ price: 5000 })).not.toContain('protection price is a floor');
+    });
+});
+
+describe('a partial or unpriced material is shown as a floor, not a firm cost', () => {
+    const run = (materialPrice, partial, drops = { '/items/sword::0': 5, '/items/sword::1': 1 }) => {
+        enhancing.calculateEnhancement = () => ({ attempts: 6, protectionCount: 0 });
+        enhancing.protection.mockReturnValue({ price: 0 });
+        enhancing.material.mockReturnValue(materialPrice);
+        enhancing.materialPartial = partial;
+        dataManager.getInitClientData.mockReturnValue({
+            itemDetailMap: {
+                '/items/sword': { itemLevel: 10, enhancementCosts: [{ itemHrid: '/items/shard', count: 1 }] },
+            },
+        });
+        try {
+            const div = document.createElement('div');
+            const stats = new LootLogStats();
+            stats.injectEnhancingSummary(div, { drops, actionCount: 6, characterActionId: 7 });
+            return { text: div.textContent, stats };
+        } finally {
+            enhancing.calculateEnhancement = null;
+            enhancing.material.mockReturnValue(0);
+            enhancing.materialPartial = false;
+        }
+    };
+
+    test('a partial material quote says the material price is a floor', () => {
+        expect(run(10, true).text).toContain('material price is a floor');
+    });
+
+    test('a whole material quote does not', () => {
+        expect(run(10, false).text).not.toContain('material price is a floor');
+    });
+
+    test('an unpriced material is flagged as unpriced', () => {
+        expect(run(0, false).text).toContain('a material has no price');
+    });
+
+    test('the merged panel carries the floor note from any run', () => {
+        const { stats } = run(10, true);
+        const entry = stats.enhSummaries.get('7');
+        stats.enhSummaries.set('8', entry);
+        stats.enhSelected = new Set(['7', '8']);
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const merged = { ...entry.summary, runs: 2, successes: 1, materialsPartial: true };
+        expect(stats.buildMergedSummaryHtml(merged, 'Sword')).toContain('material price is a floor');
+        container.remove();
     });
 });
 

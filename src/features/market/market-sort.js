@@ -32,6 +32,9 @@ import { resolveActionContext } from '../../utils/action-context.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose-chain-value.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { CAPE_BASE_VALUE_SETTING } from '../../utils/untradable-cape.js';
+import { getCustomPriceVersion } from '../settings/custom-price-overrides.js';
 import { isBetterGatheringSource } from '../../utils/gathering-source.js';
 
 /**
@@ -174,6 +177,9 @@ class MarketSort {
         // invalidates it, because every figure in it is a price.
         this.alchemyCacheStamp = null;
 
+        // The custom-price version the caches were filled under (null before the first sort)
+        this.customPriceVersion = null;
+
         // Original order storage (item HRIDs in original order)
         this.originalOrder = [];
 
@@ -245,7 +251,14 @@ class MarketSort {
         const unsubscribeCowbells = config.onSettingChange?.('expectedValue_includeCowbells', onMarketPriceUpdate);
         if (typeof unsubscribeCowbells === 'function') this.unregisterHandlers.push(unsubscribeCowbells);
         // The chain follows the Buy/Sell pricing dropdowns, so a change to either side re-prices it
-        for (const key of ['profitCalc_pricingMode', ...PATIENT_TICK_SETTING_KEYS]) {
+        // An Iron Cow valuation or an untradable cape's base value moves the figures the same way. A custom price
+        // has no change event: invalidateOnPriceRefresh notices its version counter on the next sort.
+        for (const key of [
+            'profitCalc_pricingMode',
+            ...PATIENT_TICK_SETTING_KEYS,
+            IRONCOW_VALUATION_SETTING,
+            CAPE_BASE_VALUE_SETTING,
+        ]) {
             const unsubscribe = config.onSettingChange?.(key, () => this.handlePricingChange());
             if (typeof unsubscribe === 'function') this.unregisterHandlers.push(unsubscribe);
         }
@@ -678,6 +691,13 @@ class MarketSort {
             this.clearCaches();
         }
         this.alchemyCacheStamp = stamp;
+        // A custom price emits no event, only a version: an edit since the last sort re-prices everything
+        const customVersion = getCustomPriceVersion();
+        if (this.customPriceVersion !== null && this.customPriceVersion !== customVersion) {
+            this.clearCaches();
+            this.alchemyCacheStamp = stamp;
+        }
+        this.customPriceVersion = customVersion;
     }
 
     /**

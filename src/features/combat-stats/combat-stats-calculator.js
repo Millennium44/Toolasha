@@ -12,7 +12,7 @@ import { describeKeyCost, resolveKeyPricing } from '../../utils/key-cost.js';
 import { treasureTracker } from '../../utils/bundle-bridge.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { ironCowBook, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
-import { getItemPrice } from '../../utils/market-data.js';
+import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { salesTaxNetted } from './sales-tax-view.js';
 
 /**
@@ -388,8 +388,11 @@ export function calculateConsumableCosts(consumables, durationSeconds) {
 
         // Same null-means-unpriced rule as above, at whichever side the Buy
         // setting resolves to (Instant/Patient/Patient +1)
-        const configuredPrice = getItemPrice(consumable.itemHrid, { context: 'profit', side: 'buy' });
-        const priceValue = typeof configuredPrice === 'number' && configuredPrice > 0 ? configuredPrice : null;
+        const configured = getItemPriceInfo(consumable.itemHrid, { context: 'profit', side: 'buy' });
+        const priceValue = typeof configured?.price === 'number' && configured.price > 0 ? configured.price : null;
+        // A price filled in from the official value map is a stand-in for a listing, so the figures built on it
+        // (the cost, the refill bill) are estimates; a custom or Iron Cow figure is not
+        const priceEstimated = priceValue !== null && Boolean(configured?.estimated);
         const itemCostValue = priceValue === null ? 0 : priceValue * consumed;
 
         totalCostValue += itemCostValue;
@@ -406,6 +409,7 @@ export function calculateConsumableCosts(consumables, durationSeconds) {
             pricePerItem: itemPrice,
             totalCost: itemCost,
             priceValue,
+            priceEstimated,
             totalCostValue: itemCostValue,
             startingCount: consumable.startingCount,
             currentCount: consumable.currentCount,

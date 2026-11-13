@@ -176,13 +176,16 @@ function burnStamp(forecasts) {
  * @param {number|null} amount - Cost at one side of the market
  * @param {number} [unpriced] - Consumed items with no quote at this side
  * @param {number} [unknownRate] - Items without a usable consumption estimate
+ * @param {number} [estimated] - Items priced from the game's value map, not a listing
  * @returns {string}
  */
-function formatConsumableCostSide(amount, unpriced = 0, unknownRate = 0) {
+function formatConsumableCostSide(amount, unpriced = 0, unknownRate = 0, estimated = 0) {
     const total = amount === null ? '—' : formatLargeNumber(Math.round(amount));
-    const notes = [unpriced ? `${unpriced} unpriced` : '', unknownRate ? `${unknownRate} rate unknown` : ''].filter(
-        Boolean
-    );
+    const notes = [
+        unpriced ? `${unpriced} unpriced` : '',
+        unknownRate ? `${unknownRate} rate unknown` : '',
+        estimated ? `${estimated} estimated` : '',
+    ].filter(Boolean);
     return notes.length ? `${total} (${notes.join(', ')})` : total;
 }
 
@@ -3703,8 +3706,8 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             cost.textContent = '—';
             cost.style.color = COLORS.textDim;
         } else {
-            cost.appendChild(this._side('Ask', sides.ask));
-            cost.appendChild(this._side('Bid', sides.bid));
+            cost.appendChild(this._side('Ask', sides.ask, entry.askEstimated));
+            cost.appendChild(this._side('Bid', sides.bid, entry.bidEstimated));
             if (entry.route === 'craft') {
                 cost.title = "Priced at the key's craft cost, because the key pricing setting is craft cost.";
             }
@@ -3854,11 +3857,15 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
      * One side of the book, on its own line.
      * @param {string} label - `Ask` or `Bid`
      * @param {number|null} value - Coins per day
+     * @param {boolean} [estimated] - The figure comes from the game's value map, not a listing
      * @returns {HTMLElement}
      */
-    _side(label, value) {
+    _side(label, value, estimated = false) {
         const line = document.createElement('div');
-        line.textContent = `${label}: ${value === null ? '—' : formatLargeNumber(Math.round(value))}`;
+        // "~" is the estimate mark the market tooltips use: a price from the game's value map, not a listing
+        const mark = estimated && value !== null ? '~' : '';
+        line.textContent = `${label}: ${mark}${value === null ? '—' : formatLargeNumber(Math.round(value))}`;
+        if (mark) line.title = `${label} is estimated from the game's market value; nobody has listed it on this side.`;
         line.style.color = COLORS.textDim;
         line.style.whiteSpace = 'nowrap';
         return line;
@@ -3889,8 +3896,8 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
 
         const value = document.createElement('span');
         value.textContent =
-            `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced, sides.askUnknown)} / ` +
-            `Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced, sides.bidUnknown)}`;
+            `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced, sides.askUnknown, sides.askEstimated)} / ` +
+            `Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced, sides.bidUnknown, sides.bidEstimated)}`;
         value.style.whiteSpace = 'nowrap';
 
         // The restock text can be a whole clause; it wraps inside the panel
@@ -3903,11 +3910,14 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
                 buy.textContent =
                     `Short ${formatLargeNumber(need.items)}` +
                     (need.unrated ? ` known · ${need.unrated} rate unknown` : '') +
-                    ` · ${formatLargeNumber(Math.round(need.cost))}`;
+                    ` · ${need.estimated ? '~' : ''}${formatLargeNumber(Math.round(need.cost))}`;
                 buy.style.color = COLORS.textDim;
                 buy.title =
                     'What they are short of for this duration and what it would cost. Only they can buy it.' +
-                    (need.unpriced ? `\n${need.unpriced} item(s) could not be priced and are not in this total.` : '');
+                    (need.unpriced ? `\n${need.unpriced} item(s) could not be priced and are not in this total.` : '') +
+                    (need.estimated
+                        ? `\n~ ${need.estimated} item(s) are priced from the game's market value, not a listing.`
+                        : '');
             } else if (need.unrated) {
                 buy.textContent = `Rate unknown for ${need.unrated} item${need.unrated === 1 ? '' : 's'}`;
                 buy.style.color = COLORS.textDim;
@@ -3922,7 +3932,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             const buyText = need.items
                 ? `Buy all ${formatLargeNumber(need.items)}` +
                   (need.unrated ? ` known · ${need.unrated} rate unknown` : '') +
-                  ` · ${formatLargeNumber(Math.round(need.cost))}`
+                  ` · ${need.estimated ? '~' : ''}${formatLargeNumber(Math.round(need.cost))}`
                 : '';
             // Keys on the craft route are not part of the count above: they are shopped as materials
             const craftText = craftCount ? `${buyText ? ' + ' : 'Craft '}${formatLargeNumber(craftCount)} keys ⚒` : '';
@@ -3933,6 +3943,9 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             buy.title =
                 'Open the marketplace with a tab per item, each showing what is missing.' +
                 (need.unpriced ? `\n${need.unpriced} item(s) could not be priced and are not in this total.` : '') +
+                (need.estimated
+                    ? `\n~ ${need.estimated} item(s) are priced from the game's market value, not a listing.`
+                    : '') +
                 (need.unrated ? `\n${need.unrated} item(s) have unknown consumption rates.` : '');
             buy.addEventListener('click', (event) => {
                 event.stopPropagation();

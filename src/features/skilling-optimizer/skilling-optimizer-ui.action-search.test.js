@@ -214,3 +214,20 @@ test('a tea-unlocked recipe is selectable and says it requires a skill tea', () 
         engine.actions.pop();
     }
 });
+
+describe('the Talismans section follows the action selection', () => {
+    test('ticking or unticking an action, or All, refreshes its action list', () => {
+        const refreshActions = vi.fn();
+        ui._talismanSection = { refreshActions, detach() {} };
+        try {
+            const { rows } = openPicker();
+            const [all, tree] = rows;
+            tree.querySelector('input').click();
+            expect(refreshActions).toHaveBeenCalledTimes(1);
+            all.querySelector('input').click();
+            expect(refreshActions).toHaveBeenCalledTimes(2);
+        } finally {
+            ui._talismanSection = null;
+        }
+    });
+});

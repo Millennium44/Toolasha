@@ -49,9 +49,13 @@ vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: (hrid) => mark
 // band clamp and the patient tick, none of which this file is about.
 // `configured.price(itemHrid, side)` lets a test hand back whatever the
 // pricing setting under test would resolve to.
-const configured = vi.hoisted(() => ({ price: () => null }));
+const configured = vi.hoisted(() => ({ price: () => null, estimated: new Set() }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (itemHrid, options) => configured.price(itemHrid, options?.side),
+    getItemPriceInfo: (itemHrid, options) => ({
+        price: configured.price(itemHrid, options?.side),
+        estimated: configured.estimated.has(itemHrid),
+    }),
 }));
 
 // The sale-tax netting is a shared flag; default it off so the existing income
@@ -292,6 +296,25 @@ describe('calculateConsumableCosts', () => {
 
         expect(result.breakdown[0].pricePerItem).toBe(120);
         expect(result.total).toBe(1200);
+    });
+
+    test('a Buy-side price from the value map is flagged estimated; a listed or missing one is not', () => {
+        market.prices['/items/estimated_food'] = { ask: 120, bid: 100 };
+        market.prices['/items/listed_food'] = { ask: 120, bid: 100 };
+        configured.estimated.add('/items/estimated_food');
+        try {
+            const { breakdown } = calculateConsumableCosts(
+                [
+                    { itemHrid: '/items/estimated_food', consumed: 10, consumedPerDay: 240 },
+                    { itemHrid: '/items/listed_food', consumed: 10, consumedPerDay: 240 },
+                    { itemHrid: '/items/unpriced_food', consumed: 10, consumedPerDay: 240 },
+                ],
+                3600
+            );
+            expect(breakdown.map((item) => item.priceEstimated)).toEqual([true, false, false]);
+        } finally {
+            configured.estimated.clear();
+        }
     });
 });
 

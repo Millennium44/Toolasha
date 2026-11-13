@@ -18,6 +18,46 @@ A pull that another sync or a character switch overtook while it was combining t
 
 When this device's storage stays too slow to read in full, automatic sync says so once instead of showing an error every interval, and syncs nothing until the store can be read.
 
+### Show hidden brings hidden Best Items rows back
+
+Hidden rows now reappear where they rank, dimmed, with a ↺ to unhide each one, instead of landing below the 100-row cap where they could not be seen. The button also says how many hidden items match your current filters.
+
+### Item tooltip profit follows the tiles' scrolls
+
+When the Scrolls toggle makes a skill tile assume simulated scrolls, the item tooltip's Net, Profit and Own use figures assume the same ones and are marked 📜, so the tile and its tooltip no longer disagree about whether a craft pays.
+
+### Action panels use only scrolls the skill can use
+
+A scroll you chose that this skill cannot use is no longer assumed by the action panel's speed, XP and profit figures, so the panel matches the tile.
+
+### Decompose chain/hr explains how it differs from the tooltip
+
+The Best Items sort help and the Chain/hr hover now say that it buys at market and picks each step for gold per hour, so it can read higher than the item tooltip's chain line; Chain/hr (own stock) matches the tooltip.
+
+### Partial craft costs no longer look cheap
+
+An item whose craft cost skipped an input with no market price is now treated as unpriced in the food, drink and mana planners, the upgrade advisor, refinement and skilling upgrade costs, the Philosopher's Stone table and item tooltips, instead of counting the missing input as free.
+
+### Estimated prices are marked in Consumables and Craft & Enhance
+
+Drink, food and key costs priced from the game's market value instead of a listing show a "~" and an "N estimated" note in the Consumables panel, the combat tile and Party Loot. A Craft & Enhance input valued through estimated dungeon tokens says "price estimated".
+
+### Loot Log enhancing cost says when it is a floor
+
+The enhancing summary now notes when a material was priced by crafting it from an input with no price, so its cost reads as a minimum rather than a firm figure.
+
+### Dungeon key counts come from the right dungeon
+
+Joining or reloading mid-run no longer picks up another dungeon's key counts from party chat, so the Consumables panel's party key rows and "stops in" only use this dungeon's counts.
+
+### Marketplace chain sort follows more price settings
+
+The Marketplace decompose-chain sort now re-prices when you change the Iron Cow valuation, the untradable cape base value or a custom price.
+
+### Talisman rankings: chain XP and the action list
+
+On the test server, talisman EXP/hr includes the XP of crafting the upgrade item when "craft upgrade items" charges its time, and the Skilling Optimizer's Talismans action list now follows the actions you tick.
+
 <!-- shipped in 3.86.0 -->
 
 ### Skill page tiles can show your simulated scrolls

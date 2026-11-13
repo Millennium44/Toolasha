@@ -30,7 +30,7 @@ import { getProductionChainActions } from '../../utils/enhancement-pricing.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { getItemPriceInfo } from '../../utils/market-data.js';
-import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
+import { calculateDungeonTokenValueDetail } from '../../utils/token-valuation.js';
 import { canStartAction } from '../../utils/efficiency.js';
 import { calculateDrinksPerHour, calculatePriceAfterTax, outputTaxRate } from '../../utils/profit-helpers.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
@@ -95,14 +95,17 @@ export function saleAfterTaxAt(itemHrid, level) {
  * What one unit of a token-shop item is worth through the tokens it costs, after tax.
  * @param {{drops: Map, tokenShop: Map}} index - Dungeon input index
  * @param {string} itemHrid - The shop item
- * @returns {number|null}
+ * @returns {{value: number, estimated: boolean}|null} `estimated` when the token's value rests on a value-map price
  */
-function tokenRouteValue(index, itemHrid) {
+function tokenRouteDetail(index, itemHrid) {
     const line = index.tokenShop.get(itemHrid);
     if (!line) return null;
-    const perToken = calculateDungeonTokenValue(line.tokenHrid);
-    if (!(perToken > 0)) return null;
-    return calculatePriceAfterTax((perToken * line.tokenCount) / line.outputCount);
+    const detail = calculateDungeonTokenValueDetail(line.tokenHrid);
+    if (!(detail?.value > 0)) return null;
+    return {
+        value: calculatePriceAfterTax((detail.value * line.tokenCount) / line.outputCount),
+        estimated: Boolean(detail.estimated),
+    };
 }
 
 /**
@@ -307,7 +310,8 @@ export function rankCraftEnhance({
                 index,
                 ownedMode,
                 valueDrop: (hrid) => saleAfterTaxAt(hrid, 0),
-                valueToken: (hrid) => tokenRouteValue(index, hrid),
+                valueToken: (hrid) => tokenRouteDetail(index, hrid)?.value ?? null,
+                tokenEstimated: (hrid) => Boolean(tokenRouteDetail(index, hrid)?.estimated),
             });
             const figures = craftUnitFigures({
                 materialCostPerAction: priced.costPerAction,

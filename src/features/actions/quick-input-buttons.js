@@ -36,8 +36,7 @@ import { onDetailPanel, resolveDetailPanel } from '../../utils/action-panel-help
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
-import bundledScrollSimulator from '../combat/scroll-simulator.js';
-import { scrollSimulator } from '../../utils/bundle-bridge.js';
+import { getChosenScrolls } from './tile-scrolls.js';
 import { maxLevel } from '../../utils/game-maximums.js';
 import { SCROLL_BUFF_ITEMS, SELECTION_CHANGED_EVENT } from '../../utils/scroll-buff-values.js';
 import {
@@ -549,10 +548,7 @@ class QuickInputButtons {
             const hasNormalXP = experienceGain && experienceGain.skillHrid && experienceGain.value > 0;
 
             // Arm scroll simulation for this action type
-            dataManager.setScrollSimulation(
-                actionDetails.type,
-                (scrollSimulator() || bundledScrollSimulator).getScrollSetForActionType(actionDetails.type)
-            );
+            dataManager.setScrollSimulation(actionDetails.type, getChosenScrolls(actionDetails.type));
 
             // Calculate action duration and efficiency
             // One atomic equipment+drinks context for the whole panel, so speed, efficiency and the
