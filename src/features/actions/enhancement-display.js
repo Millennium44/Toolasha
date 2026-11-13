@@ -923,7 +923,9 @@ function protectionUnitPrice(itemHrid) {
  */
 function sweepSellPrice(itemHrid) {
     try {
-        const quote = resolveItemPrice(itemHrid, { context: 'profit', side: 'sell' })?.price || 0;
+        const resolved = resolveItemPrice(itemHrid, { context: 'profit', side: 'sell' });
+        // A partial craft cost is a lower bound, not what a copy sells for: unpriced, as the sibling above reads it
+        const quote = resolved?.partial ? 0 : resolved?.price || 0;
         return calculatePriceAfterTax(quote);
     } catch {
         return 0;

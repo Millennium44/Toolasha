@@ -1629,8 +1629,11 @@ class TooltipPrices {
         const upgradeDetails = dataManager.getItemDetails(upgradeHrid);
         if (!upgradeDetails) return [];
 
-        let askPrice = resolveItemPrice(upgradeHrid, { mode: 'ask', side: 'buy' }).price ?? 0;
-        let bidPrice = resolveItemPrice(upgradeHrid, { mode: 'bid', side: 'buy' }).price ?? 0;
+        // A partial craft cost (an input nothing prices was counted as 0) is no quote: it reads as unpriced,
+        // so the row is a "-" and the Total a floor, not a cheap figure
+        const quotedPrice = (resolved) => (resolved.partial ? 0 : (resolved.price ?? 0));
+        let askPrice = quotedPrice(resolveItemPrice(upgradeHrid, { mode: 'ask', side: 'buy' }));
+        let bidPrice = quotedPrice(resolveItemPrice(upgradeHrid, { mode: 'bid', side: 'buy' }));
 
         const craftAsk = getProductionCost(upgradeHrid, 'ask');
         const craftBid = getProductionCost(upgradeHrid, 'bid');
@@ -1719,8 +1722,9 @@ class TooltipPrices {
                 // and the Total becomes a floor, instead of a 0 that reads like a free input
                 const askResolved = resolveItemPrice(material.itemHrid, { mode: 'ask', side: 'buy' });
                 const bidResolved = resolveItemPrice(material.itemHrid, { mode: 'bid', side: 'buy' });
-                const askQuote = askResolved.price;
-                const bidQuote = bidResolved.price;
+                // A partial craft cost is not a quote: unpriced, like a side with no listing
+                const askQuote = askResolved.partial ? null : askResolved.price;
+                const bidQuote = bidResolved.partial ? null : bidResolved.price;
                 let askPrice = askQuote ?? 0;
                 let bidPrice = bidQuote ?? 0;
 
