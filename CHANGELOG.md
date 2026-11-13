@@ -12,7 +12,7 @@ The editor's talismans now sit side by side as small cards, one per belt slot, i
 
 ### Best Items remembers where you were
 
-Alchemy Best Items now reopens on the last Coinify, Decompose or Transmute tab you picked. After clicking an item to go to the market, a "Best Items" return tab there takes you straight back to the same tab and scroll spot.
+Alchemy Best Items now reopens on the last Coinify, Decompose or Transmute tab you picked. Clicking an item now closes the window and opens its market page, where a "Best Items" return tab takes you straight back to the same tab and scroll spot.
 
 ### Hide rows in Best Items
 

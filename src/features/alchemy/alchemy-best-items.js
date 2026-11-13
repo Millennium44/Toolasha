@@ -892,7 +892,10 @@ class AlchemyBestItems {
         // Read before leaving: the scroll spot of the table the player was looking at
         const content = this.modal?.firstElementChild;
         const ctx = { type: this.currentType, scrollTop: content?.scrollTop || 0 };
-        if (navigateToMarketplace(itemHrid)) this.armReturnControl(ctx);
+        if (!navigateToMarketplace(itemHrid)) return;
+        // Out of the way so the market page is in view; the return tab brings it back where it was
+        this.closeModal();
+        this.armReturnControl(ctx);
     }
 
     /**
