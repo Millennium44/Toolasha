@@ -769,7 +769,8 @@ class CombatUnit {
 
     reset(currentTime = 0) {
         this.clearCCs();
-        this.overkillStore = 0;
+        // Overkill store and Fortify stacks; a wipe restart keeps other buffs, but never these
+        this.clearTalismanFightState();
 
         if (currentTime === 0 || !this.isPlayer) {
             // First combat start or enemy reset: full reset
