@@ -727,9 +727,15 @@ class AlchemyBestItems {
             })
             .catch((error) => {
                 // withLiquidityCaps already catches every row's own failure;
-                // this is a second net so a rejection cannot leave the type
-                // stuck showing "checking…" forever.
+                // this is a second net (the volume module failing to load, say)
+                // so a rejection cannot leave the type stuck showing
+                // "checking…" forever: the raw rows settle unbounded.
                 console.error('[AlchemyBestItems] Bounding rankings by market volume failed:', error);
+                if (this.cachedRankings[alchemyType] !== pending) return;
+                this.cachedRankings[alchemyType] = raw;
+                if (this.modal && this.modal.style.display !== 'none' && this.currentType === alchemyType) {
+                    this.renderTable();
+                }
             });
     }
 

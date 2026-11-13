@@ -1054,6 +1054,23 @@ describe('loadRankings — painting early, resolving the caps in the background'
         vi.restoreAllMocks();
     });
 
+    test('a sweep that rejects outright settles the rows unbounded instead of leaving them checking', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        openOn('coinify');
+        const withCapsSpy = vi.spyOn(bestItems, 'withLiquidityCaps').mockRejectedValueOnce(new Error('no volume'));
+
+        await bestItems.loadRankings('coinify');
+
+        const rows = bestItems.cachedRankings.coinify;
+        expect(rows).toHaveLength(2);
+        expect(rows.some((row) => row.capPending)).toBe(false);
+        expect(rows.find((row) => row.itemHrid === '/items/charm').profitPerHour).toBe(1_000_000_000);
+        expect(bestItems.modal.querySelector('[data-mwi-best-table]').textContent).not.toContain('checking…');
+
+        withCapsSpy.mockRestore();
+        vi.restoreAllMocks();
+    });
+
     test('a stale sweep for the same type settling late does not clobber a newer one', async () => {
         openOn('coinify');
 
