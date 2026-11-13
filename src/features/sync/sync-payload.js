@@ -1286,7 +1286,7 @@ export async function applyPayload(
     // preserved below. Both getAll and tryGet read IndexedDB, so preserving a
     // token or a recent setting before this flush would write its old value
     // back over the queued edit, just like merging a history from a stale base.
-    /** This device's key-migration records, as they were before the pull forgot any */
+    /** This device's key-migration records before the pull forgot any, with the maps they describe as read then */
     let migrationRecords = null;
     /** What the pull wrote and deleted, told to the pull listeners once the restore hold has ended */
     let announcement = null;
@@ -1334,9 +1334,15 @@ export async function applyPayload(
             // for exactly the maps that did not bring their own (see
             // reconcileKeyMigrationState), so the next load reconciles what this
             // pull actually landed.
-            migrationRecords = Object.fromEntries(
+            const records = Object.fromEntries(
                 Object.entries(local || {}).filter(([key]) => key.startsWith(MIGRATION_RECORD_PREFIX))
             );
+            const maps = {};
+            for (const key of Object.keys(records)) {
+                const mapKey = mapKeyOfRecord(key);
+                if (mapKey) maps[mapKey] = local[mapKey];
+            }
+            migrationRecords = { records, maps };
             // A map that comes down exactly as this device holds it does not
             // land (see `dropUnchangedKeys`), so its record still matches it
             const landing = Object.keys(settingsStore).filter(
@@ -1596,40 +1602,53 @@ async function settlePendingWrites() {
 const MIGRATION_RECORD_PREFIX = 'settings_key_migrations_';
 
 /**
+ * The settings map a key-migration record describes: `settings_key_migrations_applied_<map>` and the legacy
+ * `settings_key_migrations_v1_<map>` / `_v2_<map>` flags (see `_clearKeyMigrationState`).
+ * @param {string} recordKey - A key under {@link MIGRATION_RECORD_PREFIX}
+ * @returns {string|null} The map's storage key, or null for a record tied to no map
+ */
+function mapKeyOfRecord(recordKey) {
+    const at = recordKey.indexOf('script_settingsMap', MIGRATION_RECORD_PREFIX.length);
+    return at === -1 ? null : recordKey.slice(at);
+}
+
+/**
  * Put back the key-migration records a pull forgot, when the settings maps
  * they were forgotten for did not land.
  *
- * Written down the bulk path with `bypassRestoreLatch`, because a restore may
- * already have latched the settings store. A failure here is logged, not
- * thrown: the pull has already failed, and its own error is the one to report.
+ * A record goes back only when it is absent and its map is exactly as this pull read it before forgetting it,
+ * checked and written in one transaction. A record still stored is unchanged or newer (a session that took
+ * over, another tab). A map that changed since was landed by something else — the pull that replaced this one,
+ * which forgot the same record on purpose so the next load reconciles that map — and its record stays forgotten:
+ * a migration that runs again on a map already in the new shape mostly finds nothing to do, while one skipped
+ * leaves a map in an older build's shape read as if it were current. A record tied to no map goes back when absent.
  *
- * @param {Record<string, *>|null} records - The records as they were, or null when none were touched
- * @returns {Promise<boolean>} Whether every record is back
+ * Written with `bypassRestoreLatch`, because a restore may already have latched the settings store. A failure
+ * here is logged, not thrown: the pull has already failed, and its own error is the one to report.
+ *
+ * @param {{records: Record<string, *>, maps: Record<string, *>}|null} snapshot - The records as they were and
+ *   their maps as read then, or null when none were touched
+ * @returns {Promise<boolean>} Whether the check-and-restore committed
  */
-async function restoreMigrationRecords(records) {
+async function restoreMigrationRecords(snapshot) {
+    const records = snapshot?.records;
     if (!records || Object.keys(records).length === 0) return true;
-    // Only the records that are gone now: the pull's own reconcile cleared those. One still stored is either
-    // unchanged or newer — a session that took over, or another tab, wrote it since it was read — and putting the
-    // copy read before the pull back over it would undo that. A batch read that fails puts all of them back,
-    // as before: a record restored over its own value is a no-op, one left forgotten re-runs migrations
-    let current = null;
-    try {
-        current = await storage.tryGetMany(Object.keys(records), SETTINGS_STORE);
-    } catch (error) {
-        console.warn('[Sync] Could not read the settings migration records back before restoring them:', error);
-    }
-    const missing = current
-        ? Object.fromEntries(Object.entries(records).filter(([key]) => !current.get(key)?.found))
-        : records;
-    const wanted = Object.keys(missing).length;
-    if (wanted === 0) return true;
-    // putAll reports a failed transaction as a short count, not a throw; one retry covers a
-    // transient abort, and a second short write is said plainly because the next load would
-    // re-run those migrations over the player's settings
+    const pairs = Object.keys(records).map((key) => [key, mapKeyOfRecord(key)]);
+    const keys = [...new Set(pairs.flat().filter(Boolean))];
+    const restore = (values) => {
+        const back = {};
+        for (const [record, mapKey] of pairs) {
+            if (values[record] != null) continue;
+            if (mapKey && stableStringify(values[mapKey]) !== stableStringify(snapshot.maps[mapKey])) continue;
+            back[record] = records[record];
+        }
+        return Object.keys(back).length > 0 ? back : undefined;
+    };
+    // An aborted transaction answers null; one retry covers a transient abort, and a second failure is said
+    // plainly because the next load would re-run those migrations over the player's settings
     for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-            const written = await storage.putAll(SETTINGS_STORE, missing, { bypassRestoreLatch: true });
-            if (written === wanted) return true;
+            if (await storage.updateMany(SETTINGS_STORE, keys, restore, { bypassRestoreLatch: true })) return true;
         } catch (error) {
             console.error('[Sync] Could not put the settings migration records back after a failed pull:', error);
         }
@@ -1637,7 +1656,7 @@ async function restoreMigrationRecords(records) {
     console.error(
         '[Sync] The settings migration records could not be restored after a failed pull; the next load may ' +
             're-run settings migrations. Keys:',
-        Object.keys(missing)
+        Object.keys(records)
     );
     return false;
 }

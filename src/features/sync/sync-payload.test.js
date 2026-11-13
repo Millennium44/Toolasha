@@ -75,6 +75,20 @@ vi.mock('../../core/storage.js', () => ({
             delete (storeState.stores[name] || {})[key];
             return true;
         },
+        // One transaction, as the real one: the callback sees the committed values and returns what to write
+        updateMany: async (name, keys, mutate, options) => {
+            storeState.updateManyCalls.push({ name, keys, options });
+            // An aborted transaction answers null
+            if (storeState.shortWrites > 0) {
+                storeState.shortWrites -= 1;
+                return null;
+            }
+            const store = (storeState.stores[name] ||= {});
+            const values = Object.fromEntries(keys.map((key) => [key, store[key]]));
+            const entries = mutate({ ...values }) || {};
+            Object.assign(store, entries);
+            return { values: { ...values, ...entries }, written: Object.keys(entries) };
+        },
         putAll: async (name, entries, options) => {
             storeState.putAllCalls.push({ name, entries, options });
             // An aborted transaction: putAll says so with a short count, not a throw
@@ -197,6 +211,7 @@ beforeEach(() => {
     storeState.pending = {};
     storeState.flushError = null;
     storeState.putAllCalls = [];
+    storeState.updateManyCalls = [];
     storeState.shortWrites = 0;
     storeState.shortRead = null;
     flushLog.length = 0;
@@ -834,7 +849,7 @@ describe('applyPayload and the key-migration carry', () => {
 
             expect(storeState.stores.settings[RECORD]).toEqual(['actionBarTimeDisplay']);
             expect(storeState.stores.settings.settings_key_migrations_v2).toBe(true);
-            expect(storeState.putAllCalls[0].options).toEqual({ bypassRestoreLatch: true });
+            expect(storeState.updateManyCalls[0].options).toEqual({ bypassRestoreLatch: true });
         });
 
         test('when the settings store did not write', async () => {
@@ -850,7 +865,7 @@ describe('applyPayload and the key-migration carry', () => {
             storeState.shortWrites = 1;
             await expect(applyPayload(body)).rejects.toThrow('listStores failed');
 
-            expect(storeState.putAllCalls).toHaveLength(2);
+            expect(storeState.updateManyCalls).toHaveLength(2);
             expect(storeState.stores.settings[RECORD]).toEqual(['actionBarTimeDisplay']);
         });
 
@@ -858,7 +873,7 @@ describe('applyPayload and the key-migration carry', () => {
             await applyPayload(body);
 
             expect(storeState.stores.settings[RECORD]).toBeUndefined();
-            expect(storeState.putAllCalls).toHaveLength(0);
+            expect(storeState.updateManyCalls).toHaveLength(0);
         });
     });
 
@@ -3664,6 +3679,44 @@ describe('only the key-migration records the pull cleared are put back', () => {
 
         expect(storeState.stores.settings[CLEARED]).toEqual(['old-a']);
         expect(storeState.stores.settings[REWRITTEN]).toEqual(['old-d', 'new-d']);
+    });
+
+    test("a record is not put back over a map the replacing pull landed, so that map's migrations still run", async () => {
+        storeState.stores.settings[CLEARED] = ['actionBarTimeDisplay'];
+        storeState.stores.settings.script_settingsMap_abc = { actionBar_showTimeRemaining: { isTrue: false } };
+        reconcileKeyMigrationState.mockImplementationOnce(async () => {
+            delete storeState.stores.settings[CLEARED];
+        });
+        let owned = true;
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: (local, incoming) => {
+                // The replacing pull imports an older build's map (the boolean form) and, as every pull does,
+                // leaves its record absent so the next load reconciles it
+                storeState.stores.settings.script_settingsMap_abc = { actionBar_showTimeRemaining: { isTrue: true } };
+                delete storeState.stores.settings[CLEARED];
+                owned = false;
+                return [...local, ...incoming];
+            },
+            label: 'fake',
+        });
+        storeState.stores.dungeonRuns = { run_char: ['local'] };
+
+        try {
+            const result = await applyPayload(
+                payloadOf({
+                    settings: { script_settingsMap_abc: { chatCommands: { isTrue: false } } },
+                    dungeonRuns: { run_char: ['remote'] },
+                }),
+                { mode: 'merge', canContinue: () => owned }
+            );
+            expect(result).toEqual({ superseded: true });
+        } finally {
+            off();
+        }
+
+        expect(Object.hasOwn(storeState.stores.settings, CLEARED)).toBe(false);
     });
 
     test('the same holds when the import throws', async () => {
