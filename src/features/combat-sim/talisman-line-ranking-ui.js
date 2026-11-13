@@ -16,6 +16,7 @@ import {
     SELECT_STYLE,
     TalismanRankingSectionBase,
     signedPct,
+    solverOrbReference,
     talismanRankingAvailableFor,
 } from '../talismans/talisman-ranking-view.js';
 import {
@@ -52,6 +53,14 @@ export const BALANCE_WEIGHT_SETTINGS = {
     xp: 'combatSim_talismanBalanceXp',
     profit: 'combatSim_talismanBalanceProfit',
     dps: 'combatSim_talismanBalanceDps',
+};
+
+const WEIGHTS_TIP =
+    'Balanced weights: how much each % gain counts in the Balanced score (kept in Settings). A higher weight makes that metric matter more.';
+const WEIGHT_TIPS = {
+    xp: 'Weight of the EXP/hr % gain in the Balanced score.',
+    profit: 'Weight of the Profit/hr % gain in the Balanced score.',
+    dps: 'Weight of the DPS % gain in the Balanced score.',
 };
 
 const SECTION_HELP =
@@ -103,8 +112,8 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
     _extraControlsHtml() {
         const weights = storedBalanceWeights();
         const input = (key, label) =>
-            `<label style="color:#888; font-size:11px;">${label}</label><input data-role="weight-${key}" type="number" min="0" step="0.5" value="${weights[key]}" style="${SELECT_STYLE} width:44px;">`;
-        return `<span data-role="weights" style="display:none; align-items:center; gap:4px;" title="Balanced weights: how much each % gain counts (kept in Settings)">
+            `<label style="color:#888; font-size:11px;" title="${escapeHtml(WEIGHT_TIPS[key])}">${label}</label><input data-role="weight-${key}" type="number" min="0" step="0.5" value="${weights[key]}" style="${SELECT_STYLE} width:44px;" title="${escapeHtml(WEIGHT_TIPS[key])}">`;
+        return `<span data-role="weights" style="display:none; align-items:center; gap:4px;" title="${escapeHtml(WEIGHTS_TIP)}">
                 ${input('xp', 'XP')} ${input('profit', 'Profit')} ${input('dps', 'DPS')}
             </span>`;
     }
@@ -216,6 +225,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         const note = this._q('stale');
         if (!note) return;
         const changed = this._running ? [] : this._staleInputs(this._result);
+        if (!this._running && this._budgetStale()) changed.push('budget');
         note.style.display = changed.length ? 'block' : 'none';
         note.textContent = changed.length
             ? `These figures are out of date: the ${changed.join(', ')} changed since the ranking ran. Rank again.`
@@ -277,7 +287,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
     async _runRanking(current, orbs) {
         const { zoneHrid, difficultyTier, hours } = this.host._readUpgradeInputs();
         const playerIndex = this.host._upgradePlayerIndex();
-        const { metricKey, grade, setMode, capGrade, budget } = this._readControls();
+        const { metricKey, grade, setMode, capGrade, budget } = this._readControls(solverOrbReference(orbs));
         const inputs = this._currentInputs();
         const resimCloseCalls = this._resimChecked();
         const { playerDTOs, selfHrid } = await this._loadRoster();

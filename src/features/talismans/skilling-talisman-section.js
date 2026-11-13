@@ -22,8 +22,12 @@ import {
     TalismanRankingSectionBase,
     UNPRICED_INPUTS_NOTE,
     evaluateSkillingAction,
+    solverOrbReference,
     talismanRankingAvailableFor,
 } from './talisman-ranking-view.js';
+
+const ACTION_TIP =
+    'The action the lines are ranked for: the actions chosen in the Optimizer, with the gear it runs with.';
 
 const SECTION_HELP =
     'Test server only. Ranks every skilling talisman line by what it adds to the chosen action, with the gear that ' +
@@ -79,8 +83,8 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
     }
 
     _extraControlsHtml() {
-        return `<label style="color:#888; font-size:11px;">Action</label>
-            <select data-role="action" class="toolasha-select" style="${SELECT_STYLE} max-width:180px;"></select>`;
+        return `<label style="color:#888; font-size:11px;" title="${escapeHtml(ACTION_TIP)}">Action</label>
+            <select data-role="action" class="toolasha-select" style="${SELECT_STYLE} max-width:180px;" title="${escapeHtml(ACTION_TIP)}"></select>`;
     }
 
     _afterMount() {
@@ -128,13 +132,19 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         const note = this._q('stale');
         if (!note) return;
         const was = this._result?.actionHrid;
-        const stale = !this._running && was && this._actionHrid && was !== this._actionHrid;
+        const otherAction = !this._running && was && this._actionHrid && was !== this._actionHrid;
+        const otherBudget = !this._running && this._budgetStale();
+        const stale = otherAction || otherBudget;
         note.style.display = stale ? 'block' : 'none';
-        note.textContent = stale ? 'These figures are for another action. Rank again.' : '';
+        note.textContent = otherAction
+            ? 'These figures are for another action. Rank again.'
+            : otherBudget
+              ? 'These figures are for another budget. Rank again.'
+              : '';
     }
 
     async _runRanking(current, orbs) {
-        const { metricKey, grade, setMode, capGrade, budget } = this._readControls();
+        const { metricKey, grade, setMode, capGrade, budget } = this._readControls(solverOrbReference(orbs));
         const actionHrid = this._q('action')?.value || this._actionHrid;
         if (!actionHrid) {
             this._renderMessage('No action selected: pick one in the Optimizer first.');

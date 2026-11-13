@@ -166,9 +166,9 @@ describe('the Optimizer Talismans section', () => {
     test('Budget: a set within the orb budget', async () => {
         q('set-mode').value = 'budget';
         q('set-mode').dispatchEvent(new Event('change'));
-        q('budget').value = '50';
+        q('budget').value = '15m';
         await run();
-        expect(text()).toContain('Budget: 50 orbs per talisman');
+        expect(text()).toContain('Budget: 15m coins (≈50 orbs) per talisman');
         expect(text()).toMatch(/~[\d.]+ orbs/);
     });
 

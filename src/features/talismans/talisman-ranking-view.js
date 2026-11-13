@@ -26,7 +26,8 @@ import { calculateExperienceMultiplier } from '../../utils/experience-parser.js'
 import { gatheringProfit, productionProfit } from '../../utils/bundle-bridge.js';
 import { fiberFor } from '../../utils/react-click.js';
 import { orbWeights } from '../../utils/talisman-orb-weights.js';
-import { OrbCostSolver, freshCores } from '../../utils/talisman-orb-costs.js';
+import { OrbCostSolver, freshCores, referenceOrb } from '../../utils/talisman-orb-costs.js';
+import { parseShorthandAmount } from '../../utils/number-parser.js';
 import {
     DEFAULT_CAP_GRADE,
     DEFAULT_SET_MODE,
@@ -46,8 +47,109 @@ export const SELECT_STYLE = `background:${GAME_COLORS.inputBackground}; color:#e
 /** The banner for a profit figure built with an input that has no price */
 export const UNPRICED_INPUTS_NOTE = 'Materials without a price are counted as free, so profit may be overstated';
 
-/** Budget per talisman when the player has not typed one, in Reforging Orb equivalents */
+/** Budget per talisman when the player has not typed one, in Reforging Orb equivalents (shown as coins) */
 export const DEFAULT_BUDGET = 20;
+
+/** What a Rank-by choice means, by metric key (hover text) */
+export const METRIC_HELP = {
+    dps: 'Damage per second the build deals in the simulated fights.',
+    xp: 'Experience per hour: from the combat sim, or from the skilling math for an action.',
+    profit: 'Profit per hour at live market prices (income less running costs, after the market fee).',
+    encounters: 'Monsters fought per hour.',
+    deaths: 'Deaths per hour. Lower is better, so a line that cuts deaths shows as a gain.',
+    balanced:
+        'One score: the weighted average of the % gains in EXP/hr, Profit/hr and DPS (weights set beside it), less a share of any clear rise in deaths.',
+};
+
+const TIP_RANK_BY = 'The figure each talisman line is ranked by. Hover an option for what it measures.';
+const TIP_GRADE = 'The grade each line is measured at. Other grades are shown from it.';
+const SET_MODE_HELP = {
+    practical:
+        'At most one Special line (Echo, Fortify, Overkill, Shatter, Smite) per talisman, and grades no higher than Cap.',
+    ideal: 'The measured grade for every line, with no limit on Special lines. Shows what the best case is worth, not what is cheap to roll.',
+    budget: 'The most valuable set whose expected orb cost per talisman fits your budget (grades no higher than Cap, at most one Special per talisman).',
+};
+const TIP_SET = 'Which kind of set to recommend. Hover an option for what it does.';
+const TIP_CAP = 'Practical and Budget sets aim no higher than this grade.';
+const TIP_BUDGET =
+    'The most a single talisman may cost to roll, as expected orb spend from a fresh talisman (cores are not counted). ' +
+    'Type coins: 200m, 1.5b, 500k or 6,000,000. Coins are converted to orbs at the same values the costs use: your own price or the listing when every orb has one, else the orb item value.';
+const TIP_RUN = 'Measure every line and build the recommended set with these settings.';
+const TIP_STOP = 'Stop the run. What was already measured is kept, but no set is built from a partial ranking.';
+const TIP_SORT = 'Order the lines by their gain, or by gain per expected orb spent on them.';
+const TIP_SORT_GAIN = 'Biggest gain first.';
+const TIP_SORT_PER_ORB = 'Most gain per expected orb first: the cheapest lines to get.';
+const TIP_COPY = 'Copies the set as reroll targets: per talisman, each line with its lowest acceptable grade.';
+const TIP_IMPROVE = 'From the talismans you own of this type, the next targets with the most value per orb.';
+const TIP_AIM = 'Hands this target to the reroll advisor in the talisman window and opens the talisman there.';
+const TIP_HASH = 'Rank: the line with the biggest gain is 1.';
+const TIP_LINE = 'The talisman line. Hover the name for its value at the measured grade.';
+
+/**
+ * A coin amount as the shorthand the field accepts: 6m, 1.5b, 500k, else grouped digits.
+ * @param {number} coins
+ * @returns {string}
+ */
+export function budgetCoinsText(coins) {
+    const n = Math.round(Number(coins));
+    if (!Number.isFinite(n) || n < 0) return '';
+    for (const [unit, letter] of [
+        [1e9, 'b'],
+        [1e6, 'm'],
+        [1e3, 'k'],
+    ]) {
+        const scaled = (n / unit) * 100;
+        if (n >= unit && Math.abs(scaled - Math.round(scaled)) < 1e-6) return `${Math.round(scaled) / 100}${letter}`;
+    }
+    return n.toLocaleString('en-US');
+}
+
+/**
+ * Read the budget field's text as coins.
+ * @param {string} text
+ * @returns {{ok: true, coins: number}|{ok: false, error: string}}
+ */
+export function parseBudgetCoins(text) {
+    if (String(text ?? '').trim() === '') return { ok: false, error: 'Type a budget in coins, e.g. 200m.' };
+    const coins = parseShorthandAmount(text);
+    if (coins === null || !Number.isFinite(coins)) {
+        return { ok: false, error: `"${String(text).trim()}" is not an amount. Use 200m, 1.5b, 500k or 6,000,000.` };
+    }
+    return { ok: true, coins };
+}
+
+/**
+ * A reference orb a coin budget can be converted with: its weight must come from a market price, the player's own
+ * override or the item's value (not a bare count).
+ * @param {string} hrid
+ * @param {number} weight
+ * @param {string} scaleName - 'market', 'itemValue' or 'count'
+ * @returns {{hrid: string, name: string, weight: number}|null}
+ */
+function usableReference(hrid, weight, scaleName) {
+    if (!(weight > 0) || scaleName === 'count') return null;
+    const name = dataManager.getInitClientData?.()?.itemDetailMap?.[hrid]?.name || 'Reforging Orb';
+    return { hrid, name, weight };
+}
+
+/** @returns {{hrid: string, name: string, weight: number}|null} The reference orb on today's weights */
+export function liveOrbReference() {
+    const init = dataManager.getInitClientData?.();
+    if (!init?.talismanInfo) return null;
+    const scale = orbWeights(init.talismanInfo, init.itemDetailMap);
+    const ref = referenceOrb(init.talismanInfo, scale.weights);
+    return ref ? usableReference(ref.hrid, ref.weight, scale.scale) : null;
+}
+
+/**
+ * @param {Object|null} solver - OrbCostSolver
+ * @returns {{hrid: string, name: string, weight: number}|null} The reference orb that run's costs are weighed on
+ */
+export function solverOrbReference(solver) {
+    return solver?.reference
+        ? usableReference(solver.reference.hrid, solver.reference.weight, solver.scale?.scale)
+        : null;
+}
 
 /**
  * The figures one skilling action gives with this gear and these drinks: profit/hr from the action's own profit
@@ -239,6 +341,17 @@ export function costLimitNote(limits) {
     return parts.length ? `upper bound: ${parts.join('; ')}` : '';
 }
 
+/**
+ * A Budget run's budget as the player typed it, with the orbs it came to.
+ * @param {{budget: number, budgetCoins?: number}} result
+ * @returns {string} e.g. "6m coins (≈20 orbs)"
+ */
+export function budgetText(result) {
+    const orbs = `${orbsText(result.budget)} orbs`;
+    if (!Number.isFinite(result.budgetCoins)) return orbs;
+    return `${budgetCoinsText(result.budgetCoins)} coins (≈${orbs})`;
+}
+
 /** Orbs, two significant figures */
 export function orbsText(value) {
     if (!Number.isFinite(value)) return '—';
@@ -313,6 +426,9 @@ export class TalismanRankingSectionBase {
         this._improve = null;
         this._sortBy = 'gain';
         this._listeners = [];
+        /** The player has typed in the budget field: the default is no longer refilled */
+        this._budgetTouched = false;
+        this._budgetDefaultText = '';
     }
 
     /** @returns {boolean} A run (ranking or Improve mine) is in flight */
@@ -351,26 +467,27 @@ export class TalismanRankingSectionBase {
             <div data-role="body" style="display:none; margin-top:4px;">
                 <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px;">
                     ${this._extraControlsHtml()}
-                    <label style="color:#888; font-size:11px;">Rank by</label>
-                    <select data-role="metric" class="toolasha-select" style="${SELECT_STYLE}">
-                        ${this.metrics.map((m) => `<option value="${m.key}">${escapeHtml(m.label)}</option>`).join('')}
+                    <label style="color:#888; font-size:11px;" title="${escapeHtml(TIP_RANK_BY)}">Rank by</label>
+                    <select data-role="metric" class="toolasha-select" style="${SELECT_STYLE}" title="${escapeHtml(TIP_RANK_BY)}">
+                        ${this.metrics.map((m) => `<option value="${m.key}" title="${escapeHtml(METRIC_HELP[m.key] || m.label)}">${escapeHtml(m.label)}</option>`).join('')}
                     </select>
-                    <label style="color:#888; font-size:11px;" title="The grade each line is measured at. Other grades are shown from it.">Grade</label>
-                    <select data-role="grade" class="toolasha-select" style="${SELECT_STYLE}">${gradeOptions(maxGrade)}</select>
-                    <label style="color:#888; font-size:11px;" title="Practical: at most one Special line (Echo, Fortify, Overkill, Shatter, Smite) per talisman, grades capped. Ideal: the measured grade, no limit. Budget: the most value whose expected orbs per talisman fit the budget.">Set</label>
-                    <select data-role="set-mode" class="toolasha-select" style="${SELECT_STYLE}">
-                        ${SET_MODES.map((m) => `<option value="${m.key}"${m.key === DEFAULT_SET_MODE ? ' selected' : ''}>${m.label}</option>`).join('')}
+                    <label style="color:#888; font-size:11px;" title="${escapeHtml(TIP_GRADE)}">Grade</label>
+                    <select data-role="grade" class="toolasha-select" style="${SELECT_STYLE}" title="${escapeHtml(TIP_GRADE)}">${gradeOptions(maxGrade)}</select>
+                    <label style="color:#888; font-size:11px;" title="${escapeHtml(TIP_SET)}">Set</label>
+                    <select data-role="set-mode" class="toolasha-select" style="${SELECT_STYLE}" title="${escapeHtml(TIP_SET)}">
+                        ${SET_MODES.map((m) => `<option value="${m.key}" title="${escapeHtml(SET_MODE_HELP[m.key] || m.label)}"${m.key === DEFAULT_SET_MODE ? ' selected' : ''}>${m.label}</option>`).join('')}
                     </select>
                     <span data-role="cap-box" style="display:inline-flex; align-items:center; gap:4px;">
-                        <label style="color:#888; font-size:11px;" title="Practical and Budget sets aim no higher than this grade">Cap</label>
-                        <select data-role="cap" class="toolasha-select" style="${SELECT_STYLE}">${gradeOptions(Math.min(maxGrade, DEFAULT_CAP_GRADE))}</select>
+                        <label style="color:#888; font-size:11px;" title="${escapeHtml(TIP_CAP)}">Cap</label>
+                        <select data-role="cap" class="toolasha-select" style="${SELECT_STYLE}" title="${escapeHtml(TIP_CAP)}">${gradeOptions(Math.min(maxGrade, DEFAULT_CAP_GRADE))}</select>
                     </span>
                     <span data-role="budget-box" style="display:none; align-items:center; gap:4px;">
-                        <label style="color:#888; font-size:11px;" title="Expected orbs one talisman may take, from a fresh talisman, in Reforging Orb equivalents (cores not counted)">Budget / talisman</label>
-                        <input data-role="budget" type="number" min="0" step="1" value="${DEFAULT_BUDGET}" style="${SELECT_STYLE} width:56px;">
+                        <label style="color:#888; font-size:11px;" title="${escapeHtml(TIP_BUDGET)}">Budget / talisman</label>
+                        <input data-role="budget" type="text" spellcheck="false" autocomplete="off" value="" placeholder="e.g. 200m" style="${SELECT_STYLE} width:80px;" title="${escapeHtml(TIP_BUDGET)}">
+                        <span data-role="budget-note" style="color:${GAME_COLORS.textDim}; font-size:11px;" title="${escapeHtml(TIP_BUDGET)}"></span>
                     </span>
-                    <button data-role="run" style="${CHIP_BUTTON_STYLE}">Rank</button>
-                    <button data-role="stop" style="${CHIP_BUTTON_STYLE} display:none; color:#f44336; border-color:rgba(244,67,54,0.4);">Stop</button>
+                    <button data-role="run" style="${CHIP_BUTTON_STYLE}" title="${escapeHtml(TIP_RUN)}">Rank</button>
+                    <button data-role="stop" style="${CHIP_BUTTON_STYLE} display:none; color:#f44336; border-color:rgba(244,67,54,0.4);" title="${escapeHtml(TIP_STOP)}">Stop</button>
                     <span data-role="estimate" style="color:${GAME_COLORS.textDim}; font-size:11px;"></span>
                 </div>
                 <div data-role="progress" style="display:none; color:${GAME_COLORS.textDim}; font-size:11px; margin-top:4px;"></div>
@@ -393,6 +510,11 @@ export class TalismanRankingSectionBase {
             this._syncSetControls();
             this._updateEstimate();
         });
+        this._on(this._q('budget'), 'input', () => {
+            this._budgetTouched = true;
+            this._syncBudget();
+            this._refreshStale?.();
+        });
         this._on(this._q('grade'), 'change', () => this._updateEstimate());
         this._on(this._q('metric'), 'change', () => {
             this._syncMetricControls();
@@ -414,6 +536,7 @@ export class TalismanRankingSectionBase {
         });
         this._syncSetControls();
         this._syncMetricControls();
+        this._syncBudget();
         this._afterMount();
         this._updateEstimate();
     }
@@ -440,6 +563,8 @@ export class TalismanRankingSectionBase {
         this._result = null;
         this._orbs = null;
         this._improve = null;
+        this._budgetTouched = false;
+        this._budgetDefaultText = '';
     }
 
     _on(node, type, handler) {
@@ -458,7 +583,56 @@ export class TalismanRankingSectionBase {
         const toggle = this._q('toggle');
         if (body) body.style.display = open ? 'block' : 'none';
         if (toggle) toggle.textContent = open ? '▼' : '▶';
-        if (open) this._updateEstimate();
+        if (open) {
+            this._syncBudget();
+            this._updateEstimate();
+        }
+    }
+
+    /**
+     * The budget field as typed, against the reference orb it converts with.
+     * @param {{hrid: string, name: string, weight: number}|null} [reference] - A run's own; today's weights if omitted
+     * @returns {{ok: boolean, error?: string, coins?: number, orbs?: number, reference: Object|null}}
+     */
+    _budgetState(reference = liveOrbReference()) {
+        if (!reference) {
+            return {
+                ok: false,
+                reference: null,
+                error: "A coin budget needs the orbs' values (a market price or an item value), which are not available yet.",
+            };
+        }
+        const parsed = parseBudgetCoins(this._q('budget')?.value);
+        if (!parsed.ok) return { ...parsed, reference };
+        return { ok: true, coins: parsed.coins, orbs: parsed.coins / reference.weight, reference };
+    }
+
+    /** Refill the default while untouched, then show the conversion or what is wrong with the text */
+    _syncBudget() {
+        const input = this._q('budget');
+        if (!input) return;
+        // The default follows the weights until the player types; text set any other way is left alone
+        if (!this._budgetTouched && (input.value === '' || input.value === this._budgetDefaultText)) {
+            const reference = liveOrbReference();
+            this._budgetDefaultText = reference ? budgetCoinsText(DEFAULT_BUDGET * reference.weight) : '';
+            input.value = this._budgetDefaultText;
+        }
+        const state = this._budgetState();
+        const note = this._q('budget-note');
+        input.style.borderColor = state.ok ? '' : '#f44336';
+        input.title = state.ok ? TIP_BUDGET : state.error;
+        if (note) {
+            note.textContent = state.ok ? `≈ ${orbsText(state.orbs)} ${state.reference.name}s` : state.error;
+            note.style.color = state.ok ? GAME_COLORS.textDim : '#f44336';
+        }
+    }
+
+    /** @returns {boolean} The Budget set was drawn for another budget than the field now holds */
+    _budgetStale() {
+        const result = this._result;
+        if (!result || result.setMode !== 'budget' || !Number.isFinite(result.budgetCoins)) return false;
+        const parsed = parseBudgetCoins(this._q('budget')?.value);
+        return parsed.ok && parsed.coins !== result.budgetCoins;
     }
 
     _syncSetControls() {
@@ -475,14 +649,22 @@ export class TalismanRankingSectionBase {
     /** The pre-run line; a subclass says what a run will cost */
     _updateEstimate() {}
 
-    _readControls() {
-        const budget = Number(this._q('budget')?.value);
+    /**
+     * The controls as they stand. The budget is read in coins and converted to the solver's reference orbs with the
+     * reference orb of the run in hand, so the budget and the costs share one scale.
+     * @param {{hrid: string, name: string, weight: number}|null} [reference] - The run's own reference orb
+     */
+    _readControls(reference = liveOrbReference()) {
+        const state = this._budgetState(reference);
         return {
             metricKey: this._q('metric')?.value,
             grade: parseInt(this._q('grade')?.value) || 0,
             setMode: this._q('set-mode')?.value || DEFAULT_SET_MODE,
             capGrade: parseInt(this._q('cap')?.value) || DEFAULT_CAP_GRADE,
-            budget: Number.isFinite(budget) && budget >= 0 ? budget : DEFAULT_BUDGET,
+            // Without a valid budget the run is refused before it starts (see _onRun); 0 only fills the slot
+            budget: state.ok ? state.orbs : 0,
+            budgetCoins: state.ok ? state.coins : null,
+            budgetError: state.ok ? null : state.error,
         };
     }
 
@@ -558,6 +740,14 @@ export class TalismanRankingSectionBase {
     }
 
     _onRun() {
+        // A Budget set needs a readable budget: refused here, with the reason, rather than run on a guess
+        const typed = this._readControls();
+        if (typed.setMode === 'budget' && typed.budgetError) {
+            this._syncBudget();
+            if (this._result) this._notice(typed.budgetError);
+            else this._renderMessage(typed.budgetError);
+            return;
+        }
         return this._guardedRun(async (current) => {
             this._renderMessage('');
             this._improve = null;
@@ -565,6 +755,13 @@ export class TalismanRankingSectionBase {
             this._orbs = makeOrbSolver(() => this._aborted || !current());
             const result = await this._runRanking(current, this._orbs);
             if (!current() || !result) return;
+            if (result.setMode === 'budget') {
+                // What the field held, and the orb it was converted with (the run's own weights)
+                const ref = solverOrbReference(this._orbs);
+                const state = this._budgetState(ref);
+                result.budgetCoins = state.ok ? state.coins : typed.budgetCoins;
+                result.budgetOrbName = ref?.name || 'Reforging Orb';
+            }
             this._result = result;
             this._render(result);
         });
@@ -740,14 +937,19 @@ export class TalismanRankingSectionBase {
         const th = (text, title = '') =>
             `<th style="text-align:right; padding:2px 6px; color:#888; font-weight:600;"${title ? ` title="${escapeHtml(title)}"` : ''}>${text}</th>`;
         const sort = hasPerOrb
-            ? `<div style="font-size:11px; color:#888; margin-bottom:2px;">Sort <select data-role="sort" class="toolasha-select" style="${SELECT_STYLE}">
-                    <option value="gain"${this._sortBy === 'gain' ? ' selected' : ''}>Gain</option>
-                    <option value="perOrb"${this._sortBy === 'perOrb' ? ' selected' : ''}>Value per orb</option>
+            ? `<div style="font-size:11px; color:#888; margin-bottom:2px;" title="${escapeHtml(TIP_SORT)}">Sort <select data-role="sort" class="toolasha-select" style="${SELECT_STYLE}" title="${escapeHtml(TIP_SORT)}">
+                    <option value="gain" title="${escapeHtml(TIP_SORT_GAIN)}"${this._sortBy === 'gain' ? ' selected' : ''}>Gain</option>
+                    <option value="perOrb" title="${escapeHtml(TIP_SORT_PER_ORB)}"${this._sortBy === 'perOrb' ? ' selected' : ''}>Value per orb</option>
                </select></div>`
             : '';
         const head =
-            `<tr><th style="text-align:left; padding:2px 6px; color:#888;">#</th><th style="text-align:left; padding:2px 6px; color:#888;">Line</th>` +
-            th(`${escapeHtml(metric.label)} at G${result.grade}`, exact ? 'Exact change' : 'Measured by sim') +
+            `<tr><th style="text-align:left; padding:2px 6px; color:#888;" title="${escapeHtml(TIP_HASH)}">#</th><th style="text-align:left; padding:2px 6px; color:#888;" title="${escapeHtml(TIP_LINE)}">Line</th>` +
+            th(
+                `${escapeHtml(metric.label)} at G${result.grade}`,
+                exact
+                    ? `Exact change in ${metric.label} from this line alone at G${result.grade}, from the skilling math`
+                    : `Change in ${metric.label} from this line alone at G${result.grade}, measured by sim`
+            ) +
             (exact ? '' : th('%', 'Change against the build without talismans, with its 95% error bar')) +
             (hasPerOrb
                 ? th(
@@ -830,11 +1032,11 @@ export class TalismanRankingSectionBase {
         const improveButton =
             result.isSelf === false
                 ? `<div style="color:${GAME_COLORS.textDim}; font-size:11px; margin-top:4px;">Improve mine is for your own talismans: this ranking is for ${escapeHtml(result.playerName || 'another player')}.</div>`
-                : `<button data-role="improve-run" style="${CHIP_BUTTON_STYLE} margin-top:4px;" title="From the talismans you own of this type, the next targets with the most value per orb">Improve mine</button>`;
+                : `<button data-role="improve-run" style="${CHIP_BUTTON_STYLE} margin-top:4px;" title="${escapeHtml(TIP_IMPROVE)}">Improve mine</button>`;
         if (!set) {
             let why = `No line adds to ${metric.label} here, so there is no set to recommend.`;
             if (result.setReason === 'budget') {
-                why = `No talisman target fits a budget of ${orbsText(result.budget)} orbs; the cheapest one measured needs ~${result.cheapestIsUpperBound ? 'at most ' : ''}${orbsText(result.cheapest)}.`;
+                why = `No talisman target fits a budget of ${budgetText(result)}; the cheapest one measured needs ~${result.cheapestIsUpperBound ? 'at most ' : ''}${orbsText(result.cheapest)}.`;
                 if (result.overUpperBound > 0) {
                     why += ` ${result.overUpperBound} targets over the budget were costed only as an upper bound (the solver's grade clamp or Mutation left out), so they may fit.`;
                 }
@@ -907,7 +1109,7 @@ export class TalismanRankingSectionBase {
         }
         const modeText =
             result.setMode === 'budget'
-                ? `Budget: ${orbsText(result.budget)} orbs per talisman, grades up to G${result.setGrade}, at most one Special per talisman`
+                ? `Budget: ${budgetText(result)} per talisman, grades up to G${result.setGrade}, at most one Special per talisman`
                 : result.setMode === 'ideal'
                   ? `Ideal: G${result.grade}, no limit on Special lines`
                   : `Practical: grades capped at G${result.setGrade}, at most one Special per talisman`;
@@ -920,7 +1122,7 @@ export class TalismanRankingSectionBase {
             (orbNotes.filter(Boolean).length
                 ? `<div style="font-size:11px; color:#888; margin-top:4px;">${escapeHtml(orbNotes.filter(Boolean).join(' '))}</div>`
                 : '') +
-            `<button data-role="copy-targets" style="${CHIP_BUTTON_STYLE} margin-top:4px;" title="Copies the set as reroll targets: per talisman, each line with its lowest acceptable grade">Copy targets</button> ` +
+            `<button data-role="copy-targets" style="${CHIP_BUTTON_STYLE} margin-top:4px;" title="${escapeHtml(TIP_COPY)}">Copy targets</button> ` +
             improveButton +
             `</div>`
         );
@@ -970,7 +1172,7 @@ export class TalismanRankingSectionBase {
                         ? ` <span style="color:#888;">(${escapeHtml(costLimitNote(option.cost.limits))})</span>`
                         : '') +
                     `</div>` +
-                    `<button data-role="aim" data-index="${index}" style="${CHIP_BUTTON_STYLE} margin-top:2px;">Aim for this</button> ` +
+                    `<button data-role="aim" data-index="${index}" style="${CHIP_BUTTON_STYLE} margin-top:2px;" title="${escapeHtml(TIP_AIM)}">Aim for this</button> ` +
                     `<span data-role="aim-note" data-index="${index}" style="color:#888;"></span>` +
                     `</div>`
             );

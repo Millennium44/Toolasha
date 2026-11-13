@@ -398,20 +398,54 @@ describe('set modes and orbs', () => {
     test('Budget: the set fits the budget per talisman', async () => {
         pick('set-mode', 'budget');
         expect(q('budget-box').style.display).toBe('inline-flex');
-        q('budget').value = '50';
+        q('budget').value = '15m';
         await run();
-        expect(text()).toContain('Budget: 50 orbs per talisman');
+        expect(text()).toContain('Budget: 15m coins (≈50 orbs) per talisman');
         expect(text()).toContain('Recommended set');
     });
 
     test('Budget too small for any target: says what the cheapest needs', async () => {
         pick('set-mode', 'budget');
-        q('budget').value = '0.01';
+        q('budget').value = '3000';
         await run();
         expect(text()).toMatch(
-            /No talisman target fits a budget of 0.01 orbs; the cheapest one measured needs ~[\d.]+/
+            /No talisman target fits a budget of 3k coins \(≈0\.01 orbs\); the cheapest one measured needs ~[\d.]+/
         );
         expect(text()).not.toContain('Recommended set (');
+    });
+
+    test('Budget in coins: shorthand converts at the item value, a bad value blocks the run, a change marks it stale', async () => {
+        pick('set-mode', 'budget');
+        expect(q('budget').value).toBe('6m');
+        q('budget').value = '200m';
+        q('budget').dispatchEvent(new Event('input'));
+        expect(q('budget-note').textContent).toBe('≈ 667 Reforging Orbs');
+        q('budget').value = '15m';
+        q('budget').dispatchEvent(new Event('input'));
+        await run();
+        expect(text()).toContain('Budget: 15m coins (≈50 orbs) per talisman');
+        expect(q('stale').style.display).toBe('none');
+        q('budget').value = '20m';
+        q('budget').dispatchEvent(new Event('input'));
+        expect(q('stale').textContent).toContain('budget changed');
+        const sims = mocks.simCalls;
+        q('budget').value = 'junk';
+        q('budget').dispatchEvent(new Event('input'));
+        await run();
+        expect(mocks.simCalls).toBe(sims);
+        expect(q('notice').textContent).toContain('"junk" is not an amount');
+    });
+
+    test('every control and label carries a hover, Balanced weights included', async () => {
+        pick('metric', 'balanced');
+        pick('set-mode', 'budget');
+        const titled = (node) => (node.getAttribute('title') || '').trim().length > 0;
+        for (const node of container.querySelectorAll('label, select, input, button')) {
+            expect(titled(node), node.outerHTML.slice(0, 80)).toBe(true);
+        }
+        for (const option of [...q('metric').options, ...q('set-mode').options]) expect(titled(option)).toBe(true);
+        await run();
+        for (const th of container.querySelectorAll('th')) expect(titled(th), th.textContent).toBe(true);
     });
 
     test('Ideal keeps the simulated grade', async () => {
@@ -695,7 +729,7 @@ describe('review round', () => {
     test('a Budget set cut short says how many slots it filled', async () => {
         q('set-mode').value = 'budget';
         q('set-mode').dispatchEvent(new Event('change'));
-        q('budget').value = '1000';
+        q('budget').value = '300m';
         await run();
         const result = section._result;
         const one = result.set.talismans[0];
