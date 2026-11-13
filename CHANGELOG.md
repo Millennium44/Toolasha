@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Talisman ranking no longer freezes the game
+
+Building a Budget set in the Combat Sim's Talisman lines locked the game tab for most of a minute while it priced talismans in orbs. That work now runs in short slices, so the game stays responsive; the recommended sets and costs are unchanged.
+
 ### Labyrinth "Buy missing supplies" no longer makes the row taller
 
 The button now sits beside the Supplies label instead of on a line of its own, so the Labyrinth's bottom row keeps its normal height.
