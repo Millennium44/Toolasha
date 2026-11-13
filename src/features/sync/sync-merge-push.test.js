@@ -71,10 +71,13 @@ vi.mock('../../core/storage.js', () => {
                 const kept = Object.keys(rows).sort().slice(0, world.shortRead.keep);
                 return Object.fromEntries(kept.map((key) => [key, rows[key]]));
             },
-            tryGet: async (key, name) =>
-                Object.hasOwn(store(name), key)
+            tryGet: async (key, name) => {
+                // Something that happens while one key is read, such as a takeover while a pull folds it
+                world.onRead?.(key);
+                return Object.hasOwn(store(name), key)
                     ? { found: true, value: structuredClone(store(name)[key]) }
-                    : { found: false, value: null },
+                    : { found: false, value: null };
+            },
             putAll: async (name, entries) => {
                 // The other script's registry record failing to save, and only that
                 if (world.failRegistryWrites && Object.hasOwn(entries, 'toolasha_sync_externalKeys')) return 0;
@@ -413,6 +416,7 @@ beforeEach(() => {
     world.gzip = false;
     world.shortRead = null;
     world.onRestore = null;
+    world.onRead = null;
     vi.useFakeTimers();
     gist.state = null;
     gist.etag = 0;
@@ -2110,5 +2114,44 @@ describe('a store read that aborts part way is never uploaded or recorded (#962)
         expect(a.db.settings.toolasha_sync_lastSyncedAt).not.toBe(before.at);
         expect(a.db.settings[MAP].X.isTrue).toBe(true);
         expect(gistStores().settings[MAP].X.isTrue).toBe(true);
+    });
+});
+
+describe('a takeover while a pull folds its histories imports nothing (#960)', () => {
+    test('the pull stands down before the import: nothing lands, nothing latches, the stamp stays', async () => {
+        const { a, b } = await syncedPair();
+        a.db.xpHistory.flakyLog_c1 = ['a'];
+        await as(b, async () => {
+            b.db.xpHistory.flakyLog_c1 = ['b'];
+            changeSetting(b, 'X', true);
+            expect((await auto.push()).ok).toBe(true);
+        });
+        const before = { hash: a.db.settings.toolasha_sync_lastHash, at: a.db.settings.toolasha_sync_lastSyncedAt };
+        a.latches = 0;
+        toasts.length = 0;
+        let tookOver = false;
+        world.onRead = (key) => {
+            if (key !== 'flakyLog_c1' || tookOver) return;
+            tookOver = true;
+            // Another operation takes the lock while this pull reads the history it is about to fold
+            syncManager.busy = syncManager._busySeq += 1;
+        };
+
+        const result = await as(a, auto.startup);
+
+        expect(tookOver).toBe(true);
+        expect(result).toMatchObject({ skipped: true, reason: 'superseded' });
+        expect(a.db.settings[MAP].X.isTrue).toBe(false);
+        expect(a.db.xpHistory.flakyLog_c1).toEqual(['a']);
+        expect(a.latches).toBe(0);
+        expect(a.db.settings.toolasha_sync_lastHash).toBe(before.hash);
+        expect(a.db.settings.toolasha_sync_lastSyncedAt).toBe(before.at);
+        expect(toasts.filter((toast) => /Reload/.test(toast.message))).toHaveLength(0);
+
+        // The next startup pull, owning its operation throughout, takes the download
+        world.onRead = null;
+        expect((await as(a, auto.startup)).ok).toBe(true);
+        expect(a.db.settings[MAP].X.isTrue).toBe(true);
+        expect(new Set(a.db.xpHistory.flakyLog_c1)).toEqual(new Set(['a', 'b']));
     });
 });

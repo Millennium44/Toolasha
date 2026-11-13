@@ -1888,6 +1888,18 @@ class SyncManager {
         // The baseline read can wait for storage to recover too. A character switch or takeover during
         // it must stand down before importing the old download and latching the new session's writes.
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
+        const appliedResult = await applyPayload(payload, {
+            mode: silent ? 'merge' : 'pull',
+            baseline,
+            retryHeld,
+            // Which records the marker says were held, when it says
+            heldKeys: retryHeld && Array.isArray(held?.keys) ? held.keys : null,
+            // The apply reads and folds for a while before it writes; a takeover or character switch in that
+            // window stands it down before the import, as the checks above do before it starts
+            canContinue: () => this._stillOwns(opToken),
+        });
+        // Nothing was imported, so there is nothing to reload for and the stamp stays for a retry
+        if (appliedResult?.superseded) return this._supersededResult(silent, 'pull', opToken);
         const {
             merged,
             mergeFailed,
@@ -1900,13 +1912,7 @@ class SyncManager {
             writtenWholeKeys,
             latched,
             latchedKeys,
-        } = await applyPayload(payload, {
-            mode: silent ? 'merge' : 'pull',
-            baseline,
-            retryHeld,
-            // Which records the marker says were held, when it says
-            heldKeys: retryHeld && Array.isArray(held?.keys) ? held.keys : null,
-        });
+        } = appliedResult;
         const pendingHeld = mergeHeld?.length
             ? {
                   exportedAt: remoteAt,

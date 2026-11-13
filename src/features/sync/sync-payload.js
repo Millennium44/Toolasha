@@ -1230,10 +1230,13 @@ function refoldIfAppeared(fold) {
  *
  * @param {string} json - Payload text as produced by `buildPayloadJSON()`
  * @param {{mode?: 'pull'|'merge', baseline?: Record<string, string>|null, retryHeld?: boolean,
- *   heldKeys?: Array<{store: string, key: string}>|null}} [options] - How settings both sides set are decided,
- *   this device's per-key hashes of the last exchange, whether this pull retries records an earlier one held
- *   back, and which ones: their folds ignore the baseline (every fold does when a retry cannot say which)
- * @returns {Promise<{restored: Record<string, number>, expected: Record<string, number>,
+ *   heldKeys?: Array<{store: string, key: string}>|null, canContinue?: () => boolean}} [options] - How settings
+ *   both sides set are decided, this device's per-key hashes of the last exchange, whether this pull retries
+ *   records an earlier one held back, and which ones: their folds ignore the baseline (every fold does when a
+ *   retry cannot say which); and whether the caller still owns the operation, asked before the restore hold is
+ *   taken and again right before the import writes — false at either returns `{superseded: true}` with nothing
+ *   written
+ * @returns {Promise<{superseded: true}|{restored: Record<string, number>, expected: Record<string, number>,
  *   failed: Array<Object>, complete: boolean, merged: Array<Object>, mergeFailed: Array<Object>,
  *   mergeHeld: Array<Object>, exportedAt: string|null, applied: string}>}
  *   What landed, how many keys each store was asked for (the figure the pull summary
@@ -1241,7 +1244,10 @@ function refoldIfAppeared(fold) {
  *   combined, which were held back because this device's copy could not be read, and
  *   the payload text as actually applied
  */
-export async function applyPayload(json, { mode = 'pull', baseline = null, retryHeld = false, heldKeys = null } = {}) {
+export async function applyPayload(
+    json,
+    { mode = 'pull', baseline = null, retryHeld = false, heldKeys = null, canContinue = () => true } = {}
+) {
     // Each phase is named for the PFormance stall ledger; observation only
     const phase = (name, fn) => syncPhase('pull', name, fn);
     const payload = await phase('parse', () => parsePayloadSliced(json));
@@ -1258,6 +1264,10 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
     const droppedUnowned = dropUnownedFromPayload(payload);
     assertApplicable(payload);
     const settingsStore = payload?.stores?.[SETTINGS_STORE];
+
+    // A takeover or character switch during the waits above leaves this download to the operation that
+    // replaced it. Outside the `try`, so this call never ends a restore hold it did not take
+    if (!canContinue()) return { superseded: true };
 
     // Land the debounce queue before ANY local reads, including the settings
     // preserved below. Both getAll and tryGet read IndexedDB, so preserving a
@@ -1404,6 +1414,14 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             payloadKeys[storeName] = Object.keys(stripExcludedKeys(storeName, entries));
         }
 
+        // Last check before the import writes, with no wait between it and the write: everything above (the
+        // local reads, the folds, the weighing) can outlast a takeover or a character switch, and the import
+        // would land the old download under the new session and latch its stores. Nothing has been written
+        // yet but the key-migration records this pull forgot, which go back as they were
+        if (!canContinue()) {
+            await restoreMigrationRecords(migrationRecords);
+            return { superseded: true };
+        }
         let imported;
         importStarted = true;
         try {

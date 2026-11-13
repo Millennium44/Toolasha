@@ -3521,3 +3521,67 @@ describe('a store read that aborts part way stops the sync before anything is se
         expect(importedPayloads[0].stores.dungeonRuns).toEqual({ a0: 1, run1: { kills: 3 } });
     });
 });
+
+describe('a pull taken over before its import writes nothing (#960)', () => {
+    const RECORD = 'settings_key_migrations_applied_script_settingsMap_abc';
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
+
+    test('one already superseded when the apply starts takes no restore hold and reads nothing', async () => {
+        const result = await applyPayload(payloadOf({ settings: { script_settingsMap_abc: {} } }), {
+            canContinue: () => false,
+        });
+
+        expect(result).toEqual({ superseded: true });
+        expect(flushLog).toEqual([]);
+        expect(reconcileKeyMigrationState).not.toHaveBeenCalled();
+        expect(importedPayloads).toHaveLength(0);
+    });
+
+    test('a takeover while the histories are folded stops it before the import, with the records put back', async () => {
+        let owned = true;
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: (local, incoming) => {
+                // Another sync takes over (or the character switches) while this fold runs
+                owned = false;
+                return [...local, ...incoming];
+            },
+            label: 'fake',
+        });
+        storeState.stores.settings[RECORD] = ['actionBarTimeDisplay'];
+        storeState.stores.dungeonRuns = { run_char: ['local'] };
+        reconcileKeyMigrationState.mockImplementationOnce(async () => {
+            delete storeState.stores.settings[RECORD];
+        });
+
+        try {
+            const result = await applyPayload(
+                payloadOf({
+                    settings: { script_settingsMap_abc: { chatCommands: { isTrue: false } } },
+                    dungeonRuns: { run_char: ['remote'] },
+                }),
+                { mode: 'merge', canContinue: () => owned }
+            );
+
+            expect(result).toEqual({ superseded: true });
+            expect(importedPayloads).toHaveLength(0);
+            expect(storeState.stores.dungeonRuns.run_char).toEqual(['local']);
+            expect(storeState.stores.settings.script_settingsMap_abc.chatCommands).toEqual({ isTrue: true });
+            expect(storeState.stores.settings[RECORD]).toEqual(['actionBarTimeDisplay']);
+            // The hold this apply took is the one it let go
+            expect(flushLog).toEqual(['beginRestore', 'endRestore']);
+        } finally {
+            off();
+        }
+    });
+
+    test('while it still owns the operation, the import runs as before', async () => {
+        const result = await applyPayload(payloadOf({ dungeonRuns: { run1: { kills: 9 } } }), {
+            canContinue: () => true,
+        });
+
+        expect(result.superseded).toBeUndefined();
+        expect(importedPayloads[0].stores.dungeonRuns.run1).toEqual({ kills: 9 });
+    });
+});
