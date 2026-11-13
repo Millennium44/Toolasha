@@ -2566,8 +2566,8 @@ function unstackRow(row) {
     row.style.justifyContent = row.dataset.mwiStackedJustify || '';
     row.style.paddingTop = row.dataset.mwiStackedPadTop || '';
     row.style.paddingBottom = row.dataset.mwiStackedPadBottom || '';
-    for (const child of row.children) {
-        if (child.dataset?.mwiStackedMargin === undefined) continue;
+    // The card may sit deeper than a direct child, so it is found by its mark
+    for (const child of row.querySelectorAll('[data-mwi-stacked-margin]')) {
         const [top, bottom] = child.dataset.mwiStackedMargin.split('|');
         child.style.marginTop = top;
         child.style.marginBottom = bottom;

@@ -1741,6 +1741,26 @@ describe('the skilling readout under the card', () => {
         expect(challenge.dataset.mwiStacked).toBeUndefined();
     });
 
+    test('a card nested one level inside the row is restored too', () => {
+        const { root, card, challenge, block } = layout(715);
+        const wrapper = document.createElement('div');
+        challenge.append(wrapper);
+        wrapper.append(card);
+        card.style.width = '77px';
+        card.style.marginTop = '3px';
+        card.innerHTML = '<div class="ProgressBar_text__t">1 / 2</div>';
+        placeTrialBlock(root, card, block, 'Tailoring');
+        expect(card.style.width).toBe('max-content');
+        block.remove();
+        restoreFightGrids(document);
+        expect(card.style.width).toBe('77px');
+        expect(card.style.minWidth).toBe('');
+        expect(card.style.marginTop).toBe('3px');
+        expect(card.style.marginBottom).toBe('');
+        expect(card.querySelector('[class*="ProgressBar_text"]').style.whiteSpace).toBe('');
+        expect(challenge.dataset.mwiStacked).toBeUndefined();
+    });
+
     test('the row and the card are restored when the readout comes down', () => {
         const { root, card, challenge, block } = layout(715);
         card.style.marginTop = '3px';
