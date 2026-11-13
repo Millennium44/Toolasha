@@ -43,6 +43,7 @@ import { TALISMAN_MECHANICS, computeTalismanCombat } from './engine/talisman-com
 import { TALISMAN_MODELED_STATS } from './engine/player.js';
 import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { randomSeed } from './engine/rng.js';
+import { profitScale } from './trigger-tuning.js';
 import config from '../../core/config.js';
 
 // The shared pieces, re-exported for the readers that know them by this module
@@ -103,6 +104,30 @@ export const DEFAULT_BALANCE_WEIGHTS = Object.freeze({ xp: 1, profit: 1, dps: 1 
  * fourth metric. A rise within its error bar takes nothing off; a significant one also flags the line.
  */
 export const DEATHS_PENALTY_SHARE = 1 / 3;
+
+/**
+ * A profit error bar in the units of `deltas.profit`. The noise is a percentage of `profitScale` (the larger of
+ * revenue, cost and |profit|), but the delta is a percentage of the baseline's NET profit, which near break-even is
+ * far smaller, so the same gold is a much bigger percentage of it. Rescaled the way the upgrade advisor's
+ * `rowErrorPct` does. A zero baseline has no percentage: its delta is the 0/100 convention, so the bar spans all of
+ * it (finite, so the row still reaches the close-call picker).
+ *
+ * @param {number} noisePct - `noise.profit`, percent of the profit scale
+ * @param {Object} baseline - The baseline's metrics
+ * @returns {number} Percent of |baseline net profit| (before the significance multiplier)
+ */
+export function profitNoiseOfNetPct(noisePct, baseline) {
+    const noise = Number(noisePct);
+    if (!Number.isFinite(noise)) return 0;
+    const net = Math.abs(Number(baseline?.profitPerHour) || 0);
+    if (!(net > 0)) return 100;
+    const scale = profitScale({
+        profit: baseline?.profitPerHour,
+        revenue: baseline?.revenuePerHour,
+        cost: baseline?.costPerHour,
+    });
+    return (noise * scale) / net;
+}
 
 /**
  * Weights as finite non-negative numbers; all zero (or none) falls back to equal.
@@ -645,7 +670,10 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
             change,
             value: good,
             valuePct: goodPct,
-            errPct: Z * (Number(noise?.[metric.key]) || 0),
+            errPct:
+                metric.key === 'profit'
+                    ? Z * profitNoiseOfNetPct(noise?.profit, against.metrics)
+                    : Z * (Number(noise?.[metric.key]) || 0),
             significant: Boolean(significantBy?.[metric.key]) && !profitDriven,
             ...unpricedFields,
             deathsRise,

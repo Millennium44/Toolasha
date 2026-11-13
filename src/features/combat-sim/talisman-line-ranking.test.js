@@ -364,6 +364,50 @@ describe('runCombatLineRanking', () => {
         }
     });
 
+    test('Profit/hr near break-even: the error bar is in percent of net profit, so it widens and reaches the re-sim', async () => {
+        const data = gameData();
+        const { deps } = fakeDeps(data, { gains });
+        // Net 100 gold/h on 10,000 revenue and 9,900 cost: noise is 1% of the 10,000 scale (100 gold), which is 100%
+        // of the net profit the delta is taken on
+        deps.computeMetrics = (r) => ({
+            dps: r.dps,
+            xpPerHour: 0,
+            profitPerHour: 100 + (r.dps - 1000),
+            revenuePerHour: 10000,
+            costPerHour: 9900,
+            encountersPerHour: 10,
+            deathsPerHour: 0,
+        });
+        deps.computeDeltas = (b, u) => ({
+            dps: 0,
+            xp: 0,
+            profit: ((u.profitPerHour - b.profitPerHour) / Math.abs(b.profitPerHour)) * 100,
+            encounters: 0,
+            deaths: 0,
+        });
+        deps.rateDeltaNoisePct = () => ({ dps: 0, xp: 0, profit: 1, encounters: 0, deaths: 0 });
+        const result = await runCombatLineRanking(params(data, { metricKey: 'profit' }), null, deps);
+        const crit = result.rows.find((r) => r.hrid === '/talisman_modifiers/critical_damage');
+        const smite = result.rows.find((r) => r.hrid === '/talisman_modifiers/smite');
+        // +40 gold on 100 net is +40%; the 1%-of-scale noise (100 gold) is 100% of net, so the bar is Z * 100
+        expect(crit.valuePct).toBeCloseTo(40, 6);
+        expect(crit.errPct).toBeGreaterThan(190);
+        expect(crit.errPct).toBeLessThan(200);
+        const close = talismanCloseCalls([crit, smite], { slots: 1, grade: 6 }).map((r) => r.hrid);
+        expect(close).toEqual(expect.arrayContaining([crit.hrid, smite.hrid]));
+    });
+
+    test('Profit/hr from a zero net baseline: the error bar stays finite and spans the 0/100 delta', async () => {
+        const { profitNoiseOfNetPct } = await import('./talisman-line-ranking.js');
+        expect(profitNoiseOfNetPct(1, { profitPerHour: 0, revenuePerHour: 5000, costPerHour: 5000 })).toBe(100);
+        expect(profitNoiseOfNetPct(2, { profitPerHour: 50, revenuePerHour: 5000, costPerHour: 4950 })).toBeCloseTo(
+            200,
+            6
+        );
+        // Net profit as large as the scale: no rescaling
+        expect(profitNoiseOfNetPct(2, { profitPerHour: 9000, revenuePerHour: 100, costPerHour: 100 })).toBe(2);
+    });
+
     test('a Small belt: no copy sims, one talisman of four lines', async () => {
         const data = gameData();
         const { calls, deps } = fakeDeps(data, { gains });
