@@ -224,6 +224,9 @@ export const OWNED_KEY_PREFIXES = [
     'mooketPanelPrefs',
     'market_volumeStats_columns',
     'overbidPanel_hidden_',
+    // Alchemy Best Items: the type last chosen in the modal, and the items hidden per type (both per character)
+    'alchemyBestItems_lastType_',
+    'alchemyBestItems_hidden_',
     'bulkSellStatusExpanded',
     'watchlist',
     'tradeHistory',
