@@ -77,7 +77,12 @@ vi.mock('../features/market/alchemy-profit-calculator.js', () => ({
     },
 }));
 vi.mock('../features/market/expected-value-calculator.js', () => ({
-    default: { resolveSellSideValue: (hrid) => engine.sellResolved[hrid] ?? null },
+    default: {
+        resolveSellSideValue: (hrid) => engine.sellResolved[hrid] ?? null,
+        get generation() {
+            return engine.evGeneration ?? 0;
+        },
+    },
 }));
 vi.mock('./profit-helpers.js', () => ({ calculatePriceAfterTax: (price, rate = 0.04) => price * (1 - rate) }));
 vi.mock('./market-data.js', () => ({
@@ -122,7 +127,7 @@ vi.mock('./market-data.js', () => ({
     },
 }));
 vi.mock('../features/settings/custom-price-overrides.js', () => ({
-    getCustomPriceVersion: () => 0,
+    getCustomPriceVersion: () => engine.customVersion ?? 0,
     getCustomPrice: () => null,
 }));
 vi.mock('./game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => 0 }));
@@ -205,6 +210,8 @@ beforeEach(() => {
     engine.asks = {};
     engine.estimatedOn = {};
     engine.settings = undefined;
+    engine.evGeneration = 0;
+    engine.customVersion = 0;
     clearDecomposeChainCaches();
 });
 
@@ -707,6 +714,38 @@ describe('maximizeChainRatio', () => {
             '/items/b': [],
         };
         expect(maximizeChainRatio('/items/a', { termsOf: (h) => terms[h], rootCost: 0 })).toBeNull();
+    });
+});
+
+describe('chain caches follow what priced them', () => {
+    /** item_a decomposes in one hour for `net` coins an action; the calculator's candidate is what gets memoised */
+    function chainNet(net) {
+        engine.itemDetails = {
+            '/items/item_a': gear([['/items/term_c', 1]]),
+            '/items/term_c': { alchemyDetail: null },
+        };
+        engine.bids = { '/items/term_c': 1000 };
+        engine.candidates = { '/items/item_a': [setup(960 - net, 3600)] };
+    }
+    const perHour = (net) => net * 3600;
+
+    test('a recompute of the expected-value calculator drops the memoised candidates', () => {
+        chainNet(100);
+        expect(decomposeChain('/items/item_a').netPerHour).toBeCloseTo(perHour(100), -1);
+        // Inside the calculator's debounce window its nested crate values moved; the pricing signature did not
+        chainNet(300);
+        expect(decomposeChain('/items/item_a').netPerHour).toBeCloseTo(perHour(100), -1);
+        engine.evGeneration = 1;
+        expect(decomposeChain('/items/item_a').netPerHour).toBeCloseTo(perHour(300), -1);
+    });
+
+    test('a custom-price change drops the memoised candidates', () => {
+        chainNet(100);
+        expect(decomposeChain('/items/item_a').netPerHour).toBeCloseTo(perHour(100), -1);
+        chainNet(300);
+        expect(decomposeChain('/items/item_a').netPerHour).toBeCloseTo(perHour(100), -1);
+        engine.customVersion = 1;
+        expect(decomposeChain('/items/item_a').netPerHour).toBeCloseTo(perHour(300), -1);
     });
 });
 

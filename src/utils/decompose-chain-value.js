@@ -37,6 +37,7 @@ import { alchemyProfitCalculator, expectedValueCalculator } from './bundle-bridg
 import { getItemPriceInfo, getModeBookSellPrice, getPricingMode, isPriceEstimated } from './market-data.js';
 import { isPatientTickOn } from './patient-tick.js';
 import { calculatePriceAfterTax } from './profit-helpers.js';
+import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
 import {
     DUNGEON_TOKEN_HRIDS,
     MODE_BOOK_SELL,
@@ -57,12 +58,16 @@ import {
 const PRICING_MODE_SETTING = 'profitCalc_pricingMode';
 
 /**
- * What the caches below were filled under: the pricing mode and both patient ticks.
- * The chain follows the player's dropdowns, so a figure priced under one set is wrong under another.
+ * What the caches below were filled under: the pricing mode, both patient ticks, the custom-price map and the
+ * expected-value calculator's generation. The chain follows the player's dropdowns, so a figure priced under one
+ * set is wrong under another. Nested crate values come from the calculator's container cache, which it rebuilds a
+ * debounce after a mode or price change and signals by bumping its generation; keying on that makes a chain
+ * priced inside the window drop its old crate figures once the calculator recomputes.
  * @returns {string}
  */
 function pricingSignature() {
-    return `${config.getSettingValue(PRICING_MODE_SETTING, '')}|${isPatientTickOn('buy')}|${isPatientTickOn('sell')}`;
+    const generation = expectedValueCalculator()?.generation ?? 0;
+    return `${config.getSettingValue(PRICING_MODE_SETTING, '')}|${isPatientTickOn('buy')}|${isPatientTickOn('sell')}|${getCustomPriceVersion()}|${generation}`;
 }
 
 /** The pricing signature the caches hold figures for; null until the first chain is worked out */
