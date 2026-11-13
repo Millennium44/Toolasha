@@ -2734,11 +2734,12 @@ describe('remembering the place and hiding rows', () => {
             pickType('transmute');
             marketplace();
             link().click();
+            // Closed so the market page is in view
+            expect(bestItems.modal.style.display).toBe('none');
             await vi.waitFor(() => expect(returnTab()).not.toBeNull());
             expect(returnTab().textContent).toContain('Best Items');
             expect(returnTab().textContent).toContain('Transmute');
 
-            bestItems.closeModal();
             bestItems.currentType = 'coinify';
             returnTab().click();
             await vi.waitFor(() => expect(bestItems.modal.style.display).toBe('flex'));
@@ -2757,6 +2758,8 @@ describe('remembering the place and hiding rows', () => {
             link().click();
             await new Promise((resolve) => setTimeout(resolve, 20));
             expect(returnTab()).toBeNull();
+            // Nowhere to go, so the window stays where the player was
+            expect(bestItems.modal.style.display).toBe('flex');
         });
 
         test('a second click replaces the tab rather than adding another', async () => {
