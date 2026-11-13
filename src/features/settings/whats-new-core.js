@@ -112,60 +112,107 @@ export function conservativeOverrides(newIds, lookup) {
 
 /**
  * Settings that already existed, were off for the people who never turned them on, and are worth
- * one more look after a change that makes them more useful. Each is offered once, in the update
- * popup, with its live switch, and is never switched on for anyone.
+ * one more look after a change that makes them more useful. Each is offered once per `round`, in the
+ * update popup, with its live switch, and is never switched on for anyone. Raising an entry's `round`
+ * offers it again to players who have it off, including those who saw an earlier round.
  *
- * - `simulateScrollEffects`: the scroll chips now sit on every action panel. A new player starts with
- *   nothing selected, but a player who chose scrolls in Defaults... or the Loadouts panel while it was
- *   off has them applied the moment it is switched on, so the popup says how many are chosen.
+ * - `simulateScrollEffects` (round 2): the scroll chips now sit on every action panel. A new player
+ *   starts with nothing selected, but a player who chose scrolls in Defaults... or the Loadouts panel
+ *   while it was off has them applied the moment it is switched on, so the popup says how many are
+ *   chosen. Round 2 is worth another look for anyone who passed on it the first time, now that the
+ *   Scroll Planner feeds the same scrolls.
  *
- * - `networth_abilityBooksAsInventory`: now on for new players. Existing players keep their split, and
- *   are reminded once that books can count as Current Assets. Total net worth is the same either way.
+ * - `networth_abilityBooksAsInventory` (round 1): now on for new players. Existing players keep their
+ *   split, and are reminded once that books can count as Current Assets. Total net worth is the same
+ *   either way.
+ *
+ * - `scrollPlanner` (round 1): plans and steps through opening scrolls. Only a player who turned it
+ *   off sees it; worth another look next to the scroll simulation.
  *
  * Not `newSettingIds`: those were never shown. These were, and nothing about them is new. Not
  * `conservativeOverrides` either, which switches things off; nothing here changes a value.
  *
- * @type {ReadonlyArray<string>}
+ * Stored form (`offeredIds`): round 1 is the plain id, exactly as before rounds existed; round N > 1
+ * is `id#N`. A plain id therefore reads as round 1 in every build, and an older build ignores the
+ * `#N` keys it does not know.
+ *
+ * @type {ReadonlyArray<{id: string, round: number}>}
  */
-export const REOFFERED_SETTINGS = Object.freeze(['simulateScrollEffects', 'networth_abilityBooksAsInventory']);
+export const REOFFERED_SETTINGS = Object.freeze([
+    Object.freeze({ id: 'simulateScrollEffects', round: 2 }),
+    Object.freeze({ id: 'networth_abilityBooksAsInventory', round: 1 }),
+    Object.freeze({ id: 'scrollPlanner', round: 1 }),
+]);
+
+/**
+ * Normalize a list entry: a bare string is round 1.
+ * @param {string|{id: string, round?: number}} entry
+ * @returns {{id: string, round: number}}
+ */
+function toEntry(entry) {
+    if (typeof entry === 'string') return { id: entry, round: 1 };
+    const round = Number.isInteger(entry?.round) && entry.round > 1 ? entry.round : 1;
+    return { id: entry?.id, round };
+}
+
+/**
+ * The key one round of one setting is stored under.
+ * @param {string} id - The setting id
+ * @param {number} round - The round, 1 or more
+ * @returns {string} The plain id for round 1, `id#round` after
+ */
+export function offerKey(id, round) {
+    return round > 1 ? `${id}#${round}` : id;
+}
 
 /**
  * The re-offered settings this player has not been shown yet.
  *
- * @param {Array<string>} reoffered - The list to offer (`REOFFERED_SETTINGS`)
- * @param {Array<string>|undefined} offeredIds - Ids already offered, from the saved state; absent in a
- *   state written before this field existed
- * @returns {Array<string>} Ids not yet offered, in list order
+ * @param {Array<string|{id: string, round: number}>} reoffered - The list to offer (`REOFFERED_SETTINGS`)
+ * @param {Array<string>|undefined} offeredIds - Keys already offered, from the saved state; absent in a
+ *   state written before this field existed. A plain id counts as round 1.
+ * @returns {Array<string>} Setting ids not yet offered at their current round, in list order
  */
 export function unofferedSettingIds(reoffered, offeredIds) {
     const offered = new Set(Array.isArray(offeredIds) ? offeredIds : []);
-    return (reoffered || []).filter((id) => !offered.has(id));
+    return (reoffered || [])
+        .map(toEntry)
+        .filter(({ id, round }) => !offered.has(offerKey(id, round)))
+        .map(({ id }) => id);
 }
 
 /**
- * Which re-offered settings to show now: never offered before, and off right now. One that is on
- * has nothing to offer; it is still marked as offered (see `unofferedSettingIds`), so switching it
- * off later does not bring the offer back.
+ * Which re-offered settings to show now: not yet offered at the current round, and off right now. One
+ * that is on has nothing to offer; it is still marked as offered (see `unofferedSettingIds`), so
+ * switching it off later does not bring the offer back.
  *
- * @param {Array<string>} reoffered - The list to offer (`REOFFERED_SETTINGS`)
- * @param {Array<string>|undefined} offeredIds - Ids already offered, from the saved state
+ * @param {Array<string|{id: string, round: number}>} reoffered - The list to offer (`REOFFERED_SETTINGS`)
+ * @param {Array<string>|undefined} offeredIds - Keys already offered, from the saved state
  * @param {(id: string) => boolean} isOn - Whether the setting is on for this character
- * @returns {Array<string>} Ids to show, in list order
+ * @returns {Array<string>} Setting ids to show, in list order
  */
 export function reofferedSettingIds(reoffered, offeredIds, isOn) {
     return unofferedSettingIds(reoffered, offeredIds).filter((id) => !isOn(id));
 }
 
 /**
- * The offered list to save: what was recorded, plus everything on the list now.
+ * The offered list to save: what was recorded, plus every round up to the current one for everything
+ * on the list. Lower rounds are recorded too, so an older build that knows only the plain id never
+ * offers a setting again that this build already asked about.
  *
- * @param {Array<string>|undefined} offeredIds - Ids already offered, from the saved state
- * @param {Array<string>} reoffered - The list (`REOFFERED_SETTINGS`)
- * @returns {Array<string>} Union, recorded ids first. Ids no longer on the list are kept, so a
+ * @param {Array<string>|undefined} offeredIds - Keys already offered, from the saved state
+ * @param {Array<string|{id: string, round: number}>} reoffered - The list (`REOFFERED_SETTINGS`)
+ * @returns {Array<string>} Union, recorded keys first. Keys no longer on the list are kept, so a
  *   later build that reuses one does not offer it to someone who was already asked
  */
 export function markOffered(offeredIds, reoffered) {
     const result = Array.isArray(offeredIds) ? [...offeredIds] : [];
-    for (const id of reoffered || []) if (!result.includes(id)) result.push(id);
+    for (const entry of reoffered || []) {
+        const { id, round } = toEntry(entry);
+        for (let r = 1; r <= round; r++) {
+            const key = offerKey(id, r);
+            if (!result.includes(key)) result.push(key);
+        }
+    }
     return result;
 }
