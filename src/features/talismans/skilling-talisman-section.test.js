@@ -203,3 +203,17 @@ describe('missing prices are worded as elsewhere', () => {
         expect(text()).not.toContain('count as zero');
     });
 });
+
+describe('the Optimizer selection as the Optimizer keeps it', () => {
+    test('a Set picks those actions, and an empty Set is none selected', async () => {
+        mocks.selected = new Set(['/actions/milking/cow']);
+        section.refreshActions();
+        expect([...q('action').options].map((o) => o.value)).toEqual(['/actions/milking/cow']);
+        mocks.selected = new Set();
+        section.refreshActions();
+        expect(q('action').options).toHaveLength(0);
+        expect(q('estimate').textContent).toContain('No action selected');
+        await run();
+        expect(text()).toContain('No action selected');
+    });
+});

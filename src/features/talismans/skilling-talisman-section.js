@@ -40,7 +40,7 @@ export function skillingTalismansAvailable() {
 /**
  * The actions the section can rank for the Optimizer's skill and selection.
  * @param {string} skillName - The Optimizer's skill ("Woodcutting")
- * @param {Array<string>|null} selected - The Optimizer's chosen actions (null: all)
+ * @param {Set<string>|Array<string>|null} selected - The Optimizer's chosen actions (null: all, empty: none)
  * @returns {{type: string, actions: Array<Object>}}
  */
 export function rankableActions(skillName, selected) {
@@ -49,14 +49,19 @@ export function rankableActions(skillName, selected) {
     let actions = Object.values(map)
         .filter((a) => a?.type === type)
         .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0));
-    if (Array.isArray(selected)) actions = actions.filter((a) => selected.includes(a.hrid));
+    // The Optimizer keeps its choice as a Set (an array is read the same way); null is every action, and an empty
+    // choice is none
+    if (selected instanceof Set || Array.isArray(selected)) {
+        const chosen = new Set(selected);
+        actions = actions.filter((a) => chosen.has(a.hrid));
+    }
     return { type, actions };
 }
 
 /** The Optimizer's Talismans section */
 export class SkillingTalismanSection extends TalismanRankingSectionBase {
     /**
-     * @param {Object} host - `{getSkill(): string, getSelectedActions(): string[]|null}`
+     * @param {Object} host - `{getSkill(): string, getSelectedActions(): Set<string>|string[]|null}`
      */
     constructor(host) {
         super({
