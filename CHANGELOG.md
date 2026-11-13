@@ -9,6 +9,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Talisman ranking no longer freezes the game
 
 Building a Budget set in the Combat Sim's Talisman lines locked the game tab for most of a minute while it priced talismans in orbs. That work now runs in short slices, so the game stays responsive; the recommended sets and costs are unchanged.
+### Buy missing supplies stocks to your run target
+
+The Labyrinth's "Buy missing supplies" now buys up to the Consumables panel's run target (5 runs unless you changed it), crates included, instead of one run's carry cap, so it no longer says nothing is missing when you are short of that target.
 
 ### Belt advisor: which Talisman Belt upgrade is worth buying
 

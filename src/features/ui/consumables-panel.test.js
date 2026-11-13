@@ -67,8 +67,9 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         ready: Promise.resolve(true),
         get: async (key, _name, fallback = null) => store.data[key] ?? fallback,
-        set: async (key, value) => {
+        set: async (key, value, _name, immediate = false) => {
             store.data[key] = value;
+            store.immediate = { ...(store.immediate || {}), [key]: immediate };
             return true;
         },
         delete: async (key) => {
@@ -174,6 +175,25 @@ const resolvedSnapshotEquipment = (snapshot) => {
 // getter left stubbed answers for every test after it.
 afterEach(() => {
     vi.restoreAllMocks();
+});
+
+describe('lab run target', () => {
+    test('cycling the run target writes it immediately, so the supplies button reads the new one at once', async () => {
+        const render = consumablesPanel._render;
+        const runs = consumablesPanel._labRuns;
+        consumablesPanel._render = () => {};
+        try {
+            consumablesPanel._labRuns = 5;
+            consumablesPanel._cycleLabRuns();
+            await Promise.resolve();
+            expect(store.data.consumablesLabRuns).toBe(10);
+            expect(store.immediate.consumablesLabRuns).toBe(true);
+        } finally {
+            consumablesPanel._render = render;
+            consumablesPanel._labRuns = runs;
+            delete store.data.consumablesLabRuns;
+        }
+    });
 });
 
 describe('the panel notices a move of the Buy side', () => {
@@ -1653,6 +1673,29 @@ describe('the labyrinth burn trend', () => {
         };
         game.inventory = [];
         consumablesPanel._ledgerRuns = [];
+    });
+
+    test('the lab restock queue is per-run need times the run target, less what the bag holds', async () => {
+        game.inventory = [{ itemHrid: '/items/basic_torch', count: 50, itemLocationHrid: '/item_locations/inventory' }];
+        await draw([ledgerRun({ key: 'a', torch: 60 }), ledgerRun({ key: 'b', torch: 80 })]);
+        const queue = () => consumablesPanel._buyQueues.find((q) => q.label === 'Labyrinth').queue;
+        // Measured: torches average 70 a run, shrouds 2, beacons 3; five runs, 50 torches held
+        expect(queue()).toEqual([
+            { itemHrid: '/items/basic_torch', count: 300 },
+            { itemHrid: '/items/basic_shroud', count: 10 },
+            { itemHrid: '/items/basic_beacon', count: 15 },
+        ]);
+
+        // Full capacity (100/4/5 a run) ignores the ledger
+        settings.values.consumables_labPerRunBasis = 'capacity';
+        consumablesPanel._buyQueues = [];
+        consumablesPanel._render();
+        expect(queue()).toEqual([
+            { itemHrid: '/items/basic_torch', count: 450 },
+            { itemHrid: '/items/basic_shroud', count: 20 },
+            { itemHrid: '/items/basic_beacon', count: 25 },
+        ]);
+        delete settings.values.consumables_labPerRunBasis;
     });
 
     test('the burn line reads every trusted run, not just the five the plan uses', async () => {
