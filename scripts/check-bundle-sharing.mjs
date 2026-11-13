@@ -150,6 +150,13 @@ const ALLOWLIST = new Map([
         'Pure incoming-damage attribution; every caller passes its own state object.',
     ],
     [
+        'src/utils/gathering-source.js',
+        // Pure functions over the action detail map passed in, no module state: which gathering action an item
+        // belongs to. Market sort (market), the collection filters (ui) and item navigation (utils) each call it;
+        // the caches live with their callers.
+        'stateless gathering-source choice; no module state to share',
+    ],
+    [
         'src/utils/alchemy-level.js',
         // One pure function, no imports and no module state: the alchemy item-level requirement. The
         // action bar (ui bundle) and the queue summaries (actions bundle) both read it.
