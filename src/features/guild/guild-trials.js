@@ -1272,11 +1272,11 @@ function line(label, value, color = GAME_COLORS.text, title = '') {
     const tip = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
     const text = String(value ?? '');
     return (
-        `<div style="display:grid; grid-template-columns:minmax(0,45%) minmax(0,1fr); align-items:baseline; ` +
-        `column-gap:8px; margin:1px 0;"${tip}>` +
+        `<div data-mwi-row="1" style="display:grid; grid-template-columns:minmax(0,45%) minmax(0,1fr); ` +
+        `align-items:baseline; column-gap:8px; margin:1px 0;"${tip}>` +
         `<span style="color:${GAME_COLORS.textDim}; overflow-wrap:break-word; hyphens:none;">${label}</span>` +
-        `<span style="color:${color}; font-weight:600; text-align:right; overflow-wrap:break-word; ` +
-        `line-height:1.35;">${text}</span></div>`
+        `<span data-mwi-value="1" style="color:${color}; font-weight:600; text-align:right; ` +
+        `overflow-wrap:break-word; line-height:1.35;">${text}</span></div>`
     );
 }
 
@@ -1473,7 +1473,7 @@ function bankedRow(analysis, past = null) {
  * @param {number|null} [options.startsInMs] - Countdown to the scheduled start
  * @param {Object|null} [options.forecast] - From `guild-trial-forecast.js`
  * @param {number|null} [options.deadlineMs] - Milliseconds of the trial's hour left, from
- *   the guild payload's own countdown rather than from a clock on the page
+ *   the guild payload's own countdown rather than from a clock on the page. Judges the clear time; not drawn as a row
  * @returns {string} HTML
  */
 export function renderTrialBlock(
@@ -1743,35 +1743,24 @@ export function renderTrialBlock(
                 );
             }
         }
+        // The hour's remaining time is no longer a row of its own (the game states it), but it still
+        // judges the projection: a clear time past it is the warning
+        const pastDeadline = Number.isFinite(deadlineMs) && analysis.etaMs !== null && analysis.etaMs > deadlineMs;
         rows.push(
             line(
                 analysis.kind === 'combat' ? 'Kill in' : 'Clears in',
                 analysis.etaMs === null ? '—' : formatEta(analysis.etaMs),
-                GOOD,
+                pastDeadline ? WARN : GOOD,
                 `${formatWithSeparator(Math.round(analysis.remaining || 0))} of ${formatWithSeparator(
                     Math.round(analysis.total || 0)
                 )} left${analysis.readingStale ? ` as of ${formatEta(analysis.readingAgeMs)} ago` : ''}.` +
-                    (staleNote ? `\n${staleNote}` : '')
+                    (staleNote ? `\n${staleNote}` : '') +
+                    (pastDeadline
+                        ? `\nThis runs past the ${formatEta(deadlineMs)} left of the trial’s hour: this tier does ` +
+                          'not clear in time.'
+                        : '')
             )
         );
-
-        // The other half of "clears in 17m": whether there is still 17 minutes
-        // to clear it in. The countdown is the guild's own — it rides on
-        // `guild_updated` and needs no clock on the page — and set beside the
-        // projection it turns an estimate into a verdict.
-        if (Number.isFinite(deadlineMs)) {
-            const tight = analysis.etaMs !== null && analysis.etaMs > deadlineMs;
-            rows.push(
-                line(
-                    'Deadline',
-                    formatEta(deadlineMs),
-                    tight ? WARN : DIM,
-                    'Left of the trial’s hour, from the guild’s own countdown rather than from a clock on ' +
-                        'this tab.' +
-                        (tight ? ' The projection above runs past it: this tier does not clear in time.' : '')
-                )
-            );
-        }
     }
 
     if (!analysis.pace && !notMine) {
@@ -2383,6 +2372,9 @@ export function withScrollKept(node, change) {
  * @returns {boolean}
  */
 function isSquashingRow(el) {
+    // A row Toolasha stacked into a column is still the game's squashing row as far as every other block
+    // is concerned: climbing must go on past it, or the payout lands inside the challenge area
+    if (el?.dataset?.mwiStacked === '1') return true;
     if (!el || typeof getComputedStyle !== 'function') return false;
     const style = getComputedStyle(el);
     if (!(style?.display || '').includes('flex')) return false;
@@ -2515,265 +2507,192 @@ export function isInProgressView(root) {
 }
 
 /**
- * The grid column just past the wave's boss cards — the sidecar's column.
- *
- * `grid-row:1` alone left the sidecar's column to auto-placement, and
- * auto-placement fills the *first free cell*: a wave whose boss cards carry
- * explicit columns (two Trial Badgers centred at columns 2–3) leaves column 1
- * free, and the sidecar was drawn to the LEFT of the cards. The column is
- * therefore computed per wave: boss cards with explicit grid columns state
- * where they end, auto-placed ones fill 1..n in order, and the sidecar takes
- * the column after the last of either — a single boss puts it at 2, two
- * badgers at 3 (or past their explicit columns), a four-monster swarm at 5.
- *
- * Only the game's own cards count. Our injected blocks (the sidecar itself on
- * a re-place, the payout in old DOMs) all carry an `mwi-` class and are not
- * bosses, so they must not push the column further right.
- *
- * @param {Element} grid - The `BattlePanel_combatUnitGrid` element
- * @returns {number} 1-based grid column line for the sidecar
- */
-export function fightSidecarColumn(grid) {
-    let autoPlaced = 0;
-    let lastExplicit = 0;
-    for (const child of grid?.children || []) {
-        if (String(child.className || '').includes('mwi-')) continue;
-        const computed = typeof getComputedStyle === 'function' ? getComputedStyle(child) : null;
-        const read = (prop) => child.style?.[prop] || computed?.[prop] || '';
-        let startText = read('gridColumnStart');
-        let endText = read('gridColumnEnd');
-        if (!startText && !endText) {
-            // The `grid-column` shorthand, for engines that do not expand it
-            [startText = '', endText = ''] = String(read('gridColumn')).split('/');
-        }
-        const start = parseInt(startText, 10);
-        const end = parseInt(endText, 10);
-        // `grid-column-end` is the line *after* the card; a bare start occupies one column
-        if (Number.isFinite(end)) lastExplicit = Math.max(lastExplicit, end - 1);
-        else if (Number.isFinite(start)) lastExplicit = Math.max(lastExplicit, start);
-        else autoPlaced += 1;
-    }
-    return Math.max(autoPlaced, lastExplicit) + 1;
-}
-
-/**
- * How many columns the fight grid actually has.
- *
- * The used value a browser reports is a track list ("176px 176px 176px 176px");
- * an engine that hands back the authored `repeat()` is parsed rather than
- * miscounted as one column. A grid with no template at all answers 0, which
- * reads as "unknown" to every caller and leaves the old behaviour in place.
- *
- * @param {string} template - A `grid-template-columns` value
- * @returns {number} Track count, or 0 when it cannot be read
- */
-export function gridColumnCount(template) {
-    const text = String(template || '').trim();
-    if (!text || text === 'none') return 0;
-    const repeated = text.match(/^repeat\(\s*(\d+)\s*,([^)]*)\)$/);
-    if (repeated) {
-        const tracks = repeated[2].trim().split(/\s+/).filter(Boolean).length || 1;
-        return Number(repeated[1]) * tracks;
-    }
-    return text.split(/\s+/).filter(Boolean).length;
-}
-
-/**
- * Where the sidecar goes in the fight grid — beside the wave, or under it.
- *
- * A single boss leaves three of the game's four columns free and the readout
- * belongs beside it, which is what the sidecar has always done. Trial Swarm
- * fields four monsters and fills all four columns, so the same rule asked the
- * grid for a fifth: 176 × 4 + 220, past the width of the panel, and the whole
- * fight grew a horizontal scrollbar with the fight itself pushed out of view.
- *
- * So a wave that fills the grid puts the readout on the row *beneath* it,
- * spanning every column — the row auto-placement would have used anyway, but
- * stated, because the explicit row is what stops it landing in the first free
- * cell of the bosses' own row. Full width is then a long thin box rather than a
- * tall thin one, so the caller lays its rows out in columns of their own.
- *
- * @param {Element} grid - The `BattlePanel_combatUnitGrid` element
- * @returns {{row: number, column: string, wrapped: boolean}} Where to put the block
- */
-export function fightSidecarPlacement(grid) {
-    refreshStaleFit(grid);
-    const column = fightSidecarColumn(grid);
-    const original = originalTemplate(grid);
-    const columns = gridColumnCount(original);
-    const wrapped = { row: 2, column: '1 / -1', wrapped: true };
-    const beside = { row: 1, column: String(column), wrapped: false };
-
-    // Size the sidecar's own track, so the wave and the readout sit as one
-    // centred group: a track list measured for the cards alone (five 120px
-    // tracks live) puts the 220px readout in a 120px cell, overflowing the
-    // panel into a horizontal scrollbar, with a blank gutter left of the cards
-    const fitted = fitTemplate(grid, original, column);
-    if (fitted) {
-        applyFit(grid, original, fitted);
-        return beside;
-    }
-    restoreFightGrid(grid);
-    // Measured, and the group does not fit the panel: under the wave, as ever
-    if (fitted === null) return wrapped;
-    // `1 / -1` spans to the end of the *explicit* grid, which is exactly the
-    // track list counted above — the wave's own columns and no implicit sixth
-    if (columns > 0 && column > columns) return wrapped;
-    return beside;
-}
-
-/** The sidecar's width in the fight grid; matches {@link fightSidecarStyle} */
-const SIDECAR_TRACK_PX = 220;
-
-/**
- * The grid's track list as the game laid it out, ignoring our own override.
- * @param {Element} grid - The fight grid
- * @returns {string} A `grid-template-columns` value, or '' when unreadable
- */
-function originalTemplate(grid) {
-    if (grid?.dataset?.mwiFitOriginal) return grid.dataset.mwiFitOriginal;
-    const computed = grid && typeof getComputedStyle === 'function' ? getComputedStyle(grid) : null;
-    return grid?.style?.gridTemplateColumns || computed?.gridTemplateColumns || '';
-}
-
-/**
- * The game's own cards in the grid (ours carry an `mwi-` class).
- * @param {Element} grid - The fight grid
- * @returns {number} Count
- */
-function gameCardCount(grid) {
-    let count = 0;
-    for (const child of grid?.children || []) {
-        if (!String(child.className || '').includes('mwi-')) count += 1;
-    }
-    return count;
-}
-
-/**
- * Drop a fit made for a different wave. The game's track list can change with
- * the monster count, and the measurement we stored belongs to the old one.
- * @param {Element} grid - The fight grid
- */
-function refreshStaleFit(grid) {
-    if (grid?.dataset?.mwiFitCards === undefined) return;
-    // The game re-rendered its own track list over our fit (a new wave, a
-    // resize): the template now on the grid is the game's current one, and the
-    // original and inline we stored belong to the layout it replaced
-    if (grid.style.gridTemplateColumns !== grid.dataset.mwiFitApplied) {
-        forgetFightFit(grid);
-        return;
-    }
-    if (Number(grid.dataset.mwiFitCards) !== gameCardCount(grid)) restoreFightGrid(grid);
-}
-
-/**
- * The track list with the sidecar's column sized to the sidecar, when that
- * group fits the panel. `undefined` when it cannot be measured (the old
- * placement rule applies); `null` when measured and it does not fit.
- * @param {Element} grid - The fight grid
- * @param {string} original - The game's track list
- * @param {number} column - 1-based sidecar column
- * @returns {string|null|undefined} New `grid-template-columns`
- */
-function fitTemplate(grid, original, column) {
-    const tracks = String(original || '')
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean);
-    // Only a plain pixel list is measurable; repeat()/fr/auto stay as authored
-    if (!tracks.length || !tracks.every((t) => /^\d+(\.\d+)?px$/.test(t))) return undefined;
-    const area = grid.closest?.('[class*="BattlePanel_monstersArea"]');
-    const width = grid.clientWidth || area?.clientWidth || 0;
-    if (!(width > 0)) return undefined;
-    const computed = typeof getComputedStyle === 'function' ? getComputedStyle(grid) : null;
-    const gap = parseFloat(grid.style?.columnGap || computed?.columnGap) || 0;
-    // Every card ends before the sidecar's column, so tracks past it hold
-    // nothing and would only widen the centred group
-    const sized = tracks.slice(0, column);
-    while (sized.length < column) sized.push('0px');
-    sized[column - 1] = `${SIDECAR_TRACK_PX}px`;
-    // A column past the end appends a track (any gap columns between are 0px)
-    const total = sized.reduce((sum, t) => sum + parseFloat(t), 0) + gap * (sized.length - 1);
-    if (total > width) return null;
-    return sized.join(' ');
-}
-
-/**
- * Write the fitted template inline, remembering what to put back.
- * @param {Element} grid - The fight grid
- * @param {string} original - The game's track list
- * @param {string} fitted - New track list
- */
-function applyFit(grid, original, fitted) {
-    if (grid.dataset.mwiFitCards === undefined) {
-        grid.dataset.mwiFitInline = grid.style.gridTemplateColumns || '';
-        grid.dataset.mwiFitOriginal = original;
-    }
-    grid.dataset.mwiFitCards = String(gameCardCount(grid));
-    if (grid.style.gridTemplateColumns !== fitted) grid.style.gridTemplateColumns = fitted;
-    grid.dataset.mwiFitApplied = fitted;
-}
-
-/**
- * Forget a stored fit without touching the grid's template.
- * @param {Element} grid - The fight grid
- */
-function forgetFightFit(grid) {
-    delete grid.dataset.mwiFitInline;
-    delete grid.dataset.mwiFitOriginal;
-    delete grid.dataset.mwiFitCards;
-    delete grid.dataset.mwiFitApplied;
-}
-
-/**
- * Put the fight grid's inline `grid-template-columns` back as the game had it.
- * @param {Element} grid - The fight grid
- */
-export function restoreFightGrid(grid) {
-    if (!grid?.dataset || grid.dataset.mwiFitCards === undefined) return;
-    // Only our own write is put back: when the game has re-rendered its track
-    // list since, what is on the grid is current and the stored one is not
-    if (grid.style.gridTemplateColumns === grid.dataset.mwiFitApplied) {
-        grid.style.gridTemplateColumns = grid.dataset.mwiFitInline || '';
-        if (!grid.getAttribute('style')) grid.removeAttribute('style');
-    }
-    forgetFightFit(grid);
-}
-
-/**
- * Restore every fitted fight grid that no longer holds a trial readout. Called
- * after any path that takes blocks down.
+ * Take down what a readout changed on the game's layout: every stacked skilling row that no longer holds one,
+ * and the phone-sized combat panel once no phone readout is left. (The fight grid itself is not changed: the
+ * wide readout is a full-width item in it.) Called after any path that takes blocks down.
  * @param {ParentNode} [scope] - Where to look (the document by default)
  */
 export function restoreFightGrids(scope = typeof document === 'undefined' ? null : document) {
-    for (const grid of scope?.querySelectorAll?.('[data-mwi-fit-cards]') || []) {
-        if (!grid.querySelector(`.${CSS_CLASS}[data-mwi-block^="tile:"]`)) restoreFightGrid(grid);
+    restoreStackedRows(scope);
+    restorePhoneFight(scope);
+}
+
+/** Three columns of about this width, and the gap between them, are what the wide readout needs */
+const WIDE_READOUT_COLUMN_PX = 170;
+const WIDE_READOUT_GAP_PX = 24;
+
+/**
+ * Whether the combat fight's monsters area is too narrow for the three-column readout under the bosses.
+ * An area that cannot be measured reads as wide.
+ * @param {Element} grid - The fight's unit grid
+ * @returns {boolean}
+ */
+function fightAreaNarrow(grid) {
+    const area = grid?.closest?.('[class*="BattlePanel_monstersArea"]');
+    const width = grid?.clientWidth || area?.clientWidth || 0;
+    if (!(width > 0)) return false;
+    return width < 3 * WIDE_READOUT_COLUMN_PX + 2 * WIDE_READOUT_GAP_PX;
+}
+
+/** The game's fight panel pieces a phone-sized trial fight reshapes, with the styles each one gets */
+const PHONE_FIGHT_PARTS = [
+    ['[class*="BattlePanel_combatConsumables"]', () => ({ display: 'none' })],
+    [
+        '[class*="BattlePanel_combatAbilityGrid"]',
+        (el) => ({
+            gridTemplateColumns: `repeat(${Math.max(1, el.children.length)}, 31.5px)`,
+            gridAutoFlow: 'column',
+        }),
+    ],
+    ['[class*="BattlePanel_combatAbilities"]', () => ({ width: 'auto', flex: '1 1 auto' })],
+];
+
+/**
+ * The fight's battle area, which holds the monsters area, when the grid belongs to one.
+ * @param {Element} grid - The fight's unit grid
+ * @returns {Element|null}
+ */
+function fightBattleArea(grid) {
+    return grid?.closest?.('[class*="BattlePanel_battleArea"]') || null;
+}
+
+/**
+ * Whether the fight is a guild trial on a phone-sized area, where the readout leaves the boss grid.
+ * @param {Element} grid - The fight's unit grid
+ * @returns {boolean}
+ */
+function phoneFightLayout(grid) {
+    return !!grid && fightAreaNarrow(grid) && !!fightBattleArea(grid);
+}
+
+/**
+ * Reshape the game's fight panel for a phone: consumables hidden, the ability row on one line. Idempotent, and
+ * it records the inline values it replaces the first time so teardown can put them back.
+ * @param {Element} grid - The fight's unit grid
+ */
+function applyPhoneFight(grid) {
+    const panel = grid.closest?.('[class*="BattlePanel_battlePanel"]') || fightBattleArea(grid)?.parentElement;
+    if (!panel) return;
+    for (const [selector, styles] of PHONE_FIGHT_PARTS) {
+        for (const el of panel.querySelectorAll(selector)) {
+            const wanted = styles(el);
+            if (el.dataset.mwiPhone === undefined) {
+                el.dataset.mwiPhone = JSON.stringify(
+                    Object.fromEntries(Object.keys(wanted).map((k) => [k, el.style[k] || '']))
+                );
+            }
+            for (const [key, value] of Object.entries(wanted)) {
+                if (el.style[key] !== value) el.style[key] = value;
+            }
+        }
     }
 }
 
 /**
- * The sidecar's own sizing, for the placement it got.
- *
- * Beside the wave it is a boss card's width: wide enough that a label and a
- * figure fit on one line, capped so it cannot stretch the panel. Under the wave
- * it may have the whole width, and a full-width column of one-line rows is a
- * long thin box for no reason — so the rows are laid out in as many columns of
- * their own as fit, which keeps the readout about as tall as it was beside the
- * bosses. `auto-fit`/`minmax` rather than a column count: the fight grid is
- * whatever width the panel is, and a number picked here would be wrong at some
- * of them.
- *
- * @param {{row: number, column: string, wrapped: boolean}} placement - From
- *   {@link fightSidecarPlacement}
- * @returns {string} Style declarations
+ * Put every phone-reshaped piece of the fight panel back, unless a phone readout is still on screen.
+ * @param {ParentNode} scope - Where to look
  */
-export function fightSidecarStyle(placement) {
-    const cell = `grid-row:${placement.row}; grid-column:${placement.column}; clear:none; align-self:start;`;
-    if (!placement.wrapped) return `${cell} width:220px; min-width:180px; max-width:220px;`;
-    return (
-        `${cell} width:auto; min-width:0; max-width:100%; justify-self:stretch;` +
-        'display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); column-gap:16px;'
-    );
+function restorePhoneFight(scope) {
+    const marked = scope?.querySelectorAll?.('[data-mwi-phone]') || [];
+    if (!marked.length) return;
+    if (scope.querySelector(`.${CSS_CLASS}[data-mwi-placement="fight-phone"]`)) return;
+    for (const el of marked) {
+        try {
+            for (const [key, value] of Object.entries(JSON.parse(el.dataset.mwiPhone))) el.style[key] = value;
+        } catch {
+            /* a mark that cannot be read leaves the styles as the game has them */
+        }
+        delete el.dataset.mwiPhone;
+    }
+}
+
+/** The narrowest a readout can be beside the card, and the margins around the pair */
+const SIDECAR_MIN_WIDTH = 170;
+const SIDECAR_ROW_SLACK = 16;
+
+/**
+ * Whether a skilling challenge row is too narrow for the wide, three-column readout.
+ *
+ * Every row is stacked (card above readout); only the readout's own layout follows the width. Measured from
+ * the row and the card, neither of which the readout widens, so the answer does not depend on the readout.
+ * A row that cannot be measured (hidden, not laid out) reads as wide.
+ *
+ * @param {Element} card - The game's card
+ * @returns {boolean}
+ */
+function skillingRowNarrow(card) {
+    const row = card?.closest?.('[class*="SkillingInstancePanel_challengeArea"]');
+    if (!row) return false;
+    const rowWidth = row.clientWidth;
+    const cardWidth = card.offsetWidth;
+    if (!(rowWidth > 0 && cardWidth > 0)) return false;
+    return rowWidth < cardWidth + SIDECAR_MIN_WIDTH + SIDECAR_ROW_SLACK;
+}
+
+/**
+ * Put a stacked challenge row back to the direction the game gave it.
+ * @param {Element} row - The challenge row
+ */
+function unstackRow(row) {
+    if (row?.dataset?.mwiStacked !== '1') return;
+    row.style.flexDirection = row.dataset.mwiStackedDirection || '';
+    row.style.justifyContent = row.dataset.mwiStackedJustify || '';
+    row.style.paddingTop = row.dataset.mwiStackedPadTop || '';
+    row.style.paddingBottom = row.dataset.mwiStackedPadBottom || '';
+    // The card may sit deeper than a direct child, so it is found by its mark
+    for (const child of row.querySelectorAll('[data-mwi-stacked-margin]')) {
+        const [top, bottom] = child.dataset.mwiStackedMargin.split('|');
+        child.style.marginTop = top;
+        child.style.marginBottom = bottom;
+        delete child.dataset.mwiStackedMargin;
+        if (child.dataset.mwiStackedSize !== undefined) {
+            const [width, minWidth] = child.dataset.mwiStackedSize.split('|');
+            child.style.width = width;
+            child.style.minWidth = minWidth;
+            delete child.dataset.mwiStackedSize;
+        }
+    }
+    for (const text of row.querySelectorAll('[data-mwi-stacked-ws]')) {
+        text.style.whiteSpace = text.dataset.mwiStackedWs;
+        delete text.dataset.mwiStackedWs;
+    }
+    delete row.dataset.mwiStacked;
+    delete row.dataset.mwiStackedDirection;
+    delete row.dataset.mwiStackedJustify;
+    delete row.dataset.mwiStackedPadTop;
+    delete row.dataset.mwiStackedPadBottom;
+    if (!row.getAttribute('style')) row.removeAttribute('style');
+}
+
+/**
+ * Restore every stacked challenge row that no longer holds a readout.
+ * @param {ParentNode} scope - Where to look
+ */
+function restoreStackedRows(scope) {
+    for (const row of scope?.querySelectorAll?.('[data-mwi-stacked]') || []) {
+        if (!row.querySelector(`.${CSS_CLASS}[data-mwi-block^="tile:"]`)) unstackRow(row);
+    }
+}
+
+/**
+ * Markup for the stacked readout: every value stays on one line, and anything that is not a label/value row
+ * spans the whole width of the wide grid.
+ * @param {string} html - From {@link renderTrialBlock}
+ * @param {boolean} wide - The three-column layout, where a value that still cannot fit is cut with an ellipsis
+ * @returns {string}
+ */
+export function compactTrialHtml(html, wide) {
+    const clip = wide ? ' overflow:hidden; text-overflow:ellipsis; min-width:0;' : '';
+    const marked = html
+        .split('data-mwi-value="1" style="')
+        .join(`data-mwi-value="1" style="white-space:nowrap;${clip} `);
+    if (typeof document === 'undefined') return marked;
+    const template = document.createElement('template');
+    template.innerHTML = marked;
+    for (const child of template.content.children) {
+        if (!child.hasAttribute('data-mwi-row')) child.style.gridColumn = '1 / -1';
+    }
+    return template.innerHTML;
 }
 
 export function placeTrialBlock(root, card, block, name = '') {
@@ -2783,36 +2702,66 @@ export function placeTrialBlock(root, card, block, name = '') {
     // filter that looks at the card. Placement is the last point at which "this
     // is not the guild panel" can still be said
     if (inFloatingDialog(card)) return 'refused';
+    delete block.dataset.mwiPlacement;
 
-    // The live fight: the block is a sidecar in the boss grid rather than a
-    // full-width strip below it, so the fight and the forecast are read
-    // together. Appended, never inserted after the anchor card — a wave of
-    // several bosses folds into one tile anchored on the *first* of them, and
-    // the block belongs after the last. `grid-row:1` keeps it on the bosses'
-    // row instead of wrapping to a line of its own, and the explicit
-    // `grid-column` puts it to the RIGHT of every boss card whatever the wave
-    // shape — auto-placement would drop it into the first *free* cell, which
-    // for a wave of explicitly-centred cards is the column to their left.
+    // The live fight: the block is the last item in the boss grid, spanning every column, so it sits on
+    // a row of its own under the bosses. Appended, never inserted after the anchor card — a wave of
+    // several bosses folds into one tile anchored on the *first* of them, and the block belongs after the
+    // last.
     const fightGrid = fightMonsterGrid(card);
     if (fightGrid && root?.contains?.(fightGrid)) {
-        const placement = fightSidecarPlacement(fightGrid);
-        block.style.gridRow = String(placement.row);
-        block.style.gridColumn = placement.column;
+        // A phone-sized fight has no room under the bosses (the monsters area scrolls): the readout is a
+        // full-width sibling right after the battle area instead
+        if (phoneFightLayout(fightGrid)) {
+            block.dataset.mwiPlacement = 'fight-phone';
+            fightBattleArea(fightGrid).insertAdjacentElement('afterend', block);
+            applyPhoneFight(fightGrid);
+            return 'fight-phone';
+        }
+        restorePhoneFight(root);
+        // Last in the grid and spanning every column (`grid-column: 1 / -1` rides the style, which _placeBlock
+        // reapplies): auto-placement starts a fresh row for it below the bosses, whatever their count
         fightGrid.appendChild(block);
-        return 'fight-sidecar';
+        return 'fight-below';
     }
 
-    // The skilling In Progress challenge row: the readout belongs BESIDE the
-    // card (reported preference), not exiled to its own line — the row has the
-    // width for both as long as the card is protected from shrinking and the
-    // block yields first. The card's flex-shrink is pinned at placement; the
-    // block's own sizing rides its base style, which _placeBlock reapplies.
+    // The skilling In Progress challenge row: always a column, the card centered above the readout. The
+    // row is marked so every other block still climbs out of it (a column is not a "squashing" row). Only
+    // the readout's own layout follows the row's width, and that rides its style, which _placeBlock reapplies.
     const challengeRow = card?.closest?.('[class*="SkillingInstancePanel_challengeArea"]');
     if (challengeRow && root?.contains?.(challengeRow)) {
         card.style.flexShrink = '0';
-        block.dataset.mwiPlacement = 'row-sidecar';
+        if (challengeRow.dataset.mwiStacked !== '1') {
+            challengeRow.dataset.mwiStacked = '1';
+            challengeRow.dataset.mwiStackedDirection = challengeRow.style.flexDirection || '';
+            challengeRow.dataset.mwiStackedJustify = challengeRow.style.justifyContent || '';
+            challengeRow.dataset.mwiStackedPadTop = challengeRow.style.paddingTop || '';
+            challengeRow.dataset.mwiStackedPadBottom = challengeRow.style.paddingBottom || '';
+        }
+        // The card centered in the space above the readout, the readout at the bottom
+        if (card.dataset.mwiStackedMargin === undefined) {
+            card.dataset.mwiStackedMargin = `${card.style.marginTop}|${card.style.marginBottom}`;
+        }
+        card.style.marginTop = 'auto';
+        card.style.marginBottom = 'auto';
+        // The game's card is a fixed width with its overflow hidden, and the progress text ("145,408 / 154,560")
+        // needs more than that: let the card grow to fit its text, and never below the width it came with
+        if (card.dataset.mwiStackedSize === undefined && card.offsetWidth > 0) {
+            card.dataset.mwiStackedSize = `${card.style.width}|${card.style.minWidth}`;
+            card.style.minWidth = `${card.offsetWidth}px`;
+            card.style.width = 'max-content';
+        }
+        for (const text of card.querySelectorAll('[class*="ProgressBar_text"]')) {
+            if (text.dataset.mwiStackedWs === undefined) text.dataset.mwiStackedWs = text.style.whiteSpace || '';
+            text.style.whiteSpace = 'nowrap';
+        }
+        challengeRow.style.flexDirection = 'column';
+        challengeRow.style.justifyContent = 'flex-start';
+        challengeRow.style.paddingTop = '6px';
+        challengeRow.style.paddingBottom = '4px';
+        block.dataset.mwiPlacement = 'row-stacked';
         card.insertAdjacentElement('afterend', block);
-        return 'row-sidecar';
+        return 'row-stacked';
     }
 
     const container = card?.parentElement;
@@ -2930,9 +2879,9 @@ export function blockNearAnchor(block, anchor, root = null) {
     if (block?.parentElement?.classList?.contains(BOX_ROW_CLASS)) {
         return !root || root.contains(block);
     }
-    // A row sidecar lives beside its card by request — adjacency IS its home,
-    // and the escape rule below would evict it from the very row it belongs in
-    if (block?.dataset?.mwiPlacement === 'row-sidecar') {
+    // A stacked readout lives right after its card in the challenge column — adjacency IS its home, and the
+    // escape rule below would evict it from the very row it belongs in
+    if (block?.dataset?.mwiPlacement === 'row-stacked') {
         return !anchor?.isConnected || anchor.nextElementSibling === block;
     }
     // The live fight's sidecar is anchored on the first boss of the wave but
@@ -2941,7 +2890,14 @@ export function blockNearAnchor(block, anchor, root = null) {
     // pass. Last child of the grid is the placement, and a boss that mounts
     // after it fails this and re-triggers placement, putting it back at the end.
     const fightGrid = fightMonsterGrid(anchor);
-    if (fightGrid && block?.parentElement === fightGrid) return fightGrid.lastElementChild === block;
+    // On a phone the readout follows the battle area, and reads as displaced the moment the area is wide again
+    if (block?.dataset?.mwiPlacement === 'fight-phone') {
+        if (!fightGrid) return true;
+        return fightBattleArea(fightGrid)?.nextElementSibling === block && phoneFightLayout(fightGrid);
+    }
+    if (fightGrid && block?.parentElement === fightGrid) {
+        return fightGrid.lastElementChild === block && !phoneFightLayout(fightGrid);
+    }
     if (!anchor?.isConnected) return true; // nothing to re-anchor against
     if (root) {
         const escaped = escapeSquashingRows(root, anchor);
@@ -4838,6 +4794,16 @@ class GuildTrials {
                 // wipes anything set on the element at placement time.
                 const fightGrid = fightMonsterGrid(tile.element);
                 const inSkillingRow = !!tile.element?.closest?.('[class*="SkillingInstancePanel_challengeArea"]');
+                // A skilling card sits over its readout in the challenge column, and the combat bosses sit over
+                // theirs in the fight grid: either way the readout is a full-width block of rows
+                const stackedReadout = inSkillingRow || !!fightGrid;
+                const phoneFight = !!fightGrid && phoneFightLayout(fightGrid);
+                const narrowRow = inSkillingRow
+                    ? skillingRowNarrow(tile.element)
+                    : !!fightGrid && fightAreaNarrow(fightGrid);
+                // Keep the phone reshaping in step with the width on every pass (a new ability count, a remount)
+                if (fightGrid && phoneFight) applyPhoneFight(fightGrid);
+                else if (fightGrid) restorePhoneFight(root);
                 this._placeBlock(root, key, {
                     // The card the block belongs beside, for the re-anchoring
                     // check below — the game tears cards down and remounts
@@ -4845,33 +4811,36 @@ class GuildTrials {
                     anchored: (block) => blockNearAnchor(block, tile.element, root),
                     // Scoped to this tile's encounter: one measurement must
                     // not dress every combat card
-                    html: renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
-                        participating: ownParticipation(tile.name),
-                        phase: tilePhase,
-                        startsInMs: status?.startsInMs ?? null,
-                        forecast: this._forecast(tile, analysis, participants, tilePhase, timing),
-                        looseForecast: timing,
-                        deadlineMs: this._trialBudgetMs(tile.kind, now, tile.name),
-                        pastRow: historyRowFor(pastTiers, tile.name),
-                    }),
-                    // Wide enough that a label and a figure fit on one line, and
-                    // capped so it cannot stretch a whole panel — the reported
-                    // screenshot was this block one card wide and a mile tall
-                    // The sidecar's grid column is part of the style string on
-                    // purpose: `_placeBlock` reapplies this cssText every pass,
-                    // which would wipe a column set only at placement time —
-                    // and recomputing it here is what keeps the column right
-                    // when a wave boundary changes the boss card count without
-                    // displacing the block.
-                    style:
-                        'position:static; display:block; box-sizing:border-box;' +
-                        (fightGrid
-                            ? fightSidecarStyle(fightSidecarPlacement(fightGrid))
-                            : inSkillingRow
-                              ? 'flex:0 1 300px; min-width:170px; max-width:300px; align-self:center; clear:none;'
-                              : 'clear:both; min-width:min(260px, 100%); max-width:520px;') +
-                        'margin:6px 0 8px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
-                        'border-radius:6px; font-size:11px; line-height:1.6;',
+                    html: ((markup) => (stackedReadout ? compactTrialHtml(markup, !narrowRow || phoneFight) : markup))(
+                        renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
+                            participating: ownParticipation(tile.name),
+                            phase: tilePhase,
+                            startsInMs: status?.startsInMs ?? null,
+                            forecast: this._forecast(tile, analysis, participants, tilePhase, timing),
+                            looseForecast: timing,
+                            deadlineMs: this._trialBudgetMs(tile.kind, now, tile.name),
+                            pastRow: historyRowFor(pastTiers, tile.name),
+                        })
+                    ),
+                    // A skilling or combat readout sits under its card or bosses: three columns when the room is
+                    // wide, one when it is narrow. The layout is in the style, because `_placeBlock` reapplies this
+                    // cssText every pass; a width change or a new boss count then needs no re-placement. In the
+                    // fight grid it spans every column on a row of its own
+                    style: stackedReadout
+                        ? 'position:static; box-sizing:border-box; flex:none; width:100%; max-width:100%; ' +
+                          'min-width:0; align-self:stretch; clear:none; margin:4px 0 0; ' +
+                          'background:rgba(0,0,0,0.25); border-radius:6px; font-size:11px; line-height:1.3;' +
+                          (fightGrid && !phoneFight ? 'grid-column:1 / -1; grid-row:auto; justify-self:stretch;' : '') +
+                          (phoneFight
+                              ? 'display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); column-gap:14px; ' +
+                                'row-gap:0; padding:3px 8px; margin:2px 0;'
+                              : narrowRow
+                                ? 'display:block; padding:3px 8px;'
+                                : 'display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); column-gap:24px; ' +
+                                  'padding:4px 12px;')
+                        : 'position:static; display:block; box-sizing:border-box; clear:both; ' +
+                          'min-width:min(260px, 100%); max-width:520px; margin:6px 0 8px; padding:6px 10px; ' +
+                          'background:rgba(0,0,0,0.25); border-radius:6px; font-size:11px; line-height:1.6;',
                     place: (block) => placeTrialBlock(root, tile.element, block, tile.name),
                 });
             }
@@ -5506,8 +5475,11 @@ class GuildTrials {
             // own layout (the payout, the In Progress card readouts) still get
             // the full check, which is what re-places one out of a squashing row.
             const inBoxRow = existing.parentElement?.classList?.contains(BOX_ROW_CLASS);
-            const isSidecar = existing.dataset?.mwiPlacement === 'row-sidecar';
-            if (!inBoxRow && !isSidecar) {
+            const inRow = existing.dataset?.mwiPlacement === 'row-stacked';
+            if (inRow) {
+                // Its home is the challenge row; only the anchor test (adjacency and the row's width) applies
+                if (anchored && !anchored(existing)) withScrollKept(root, () => place(existing));
+            } else if (!inBoxRow) {
                 const stuckInRow = existing.parentElement && isSquashingRow(existing.parentElement);
                 if (stuckInRow || (anchored && !anchored(existing))) {
                     withScrollKept(root, () => place(existing));
@@ -5769,22 +5741,13 @@ class GuildTrials {
                 )
               : pair('Guild Points banked', exact(banked.guildPoints), GOOD, this._pointsProvenance(trials));
 
-        // Folded, the heading carries the pace in one line, from the figures below. A trial with no pace
-        // yet has nothing to state, which reads as a dash and not as the banked figure it falls back to
+        // Folded, the block is the heading alone: no summary, no buttons
         const collapsed = this._foldsFor().payout === true;
-        const paceKnown = trials.some((trial) => Number.isFinite(trial.projected));
-        const paceFigure = (pick) =>
-            !paceKnown ? '—' : spread ? `~${exact(pick(lowEnd))}–${exact(pick(highEnd))}` : exact(pick(projected));
         const payoutHeading = foldHeading(
             'payout',
-            collapsed
-                ? `Trial payout · ${paceFigure((end) => end.guildPoints)} pts on pace · ` +
-                      `${paceFigure((end) => end.participantTokens)} tokens`
-                : 'Payout',
+            'Payout &amp; tools',
             'The week’s Guild Points banked and on pace, and the tokens that pays. ' +
-                (collapsed
-                    ? 'The summary is the pace and the tokens if you took part.'
-                    : 'Fold it to a one-line summary; the buttons stay.'),
+                (collapsed ? 'Open it for the figures and the buttons.' : 'Fold it to one short line.'),
             collapsed,
             !collapsed
         );
@@ -5915,13 +5878,16 @@ class GuildTrials {
                     ? payoutHeading
                     : `<div data-payout-figures="1" style="display:flex; flex-wrap:wrap; align-items:baseline; ` +
                       `column-gap:18px; row-gap:2px; width:100%;">${payoutHeading}${figures.join('')}</div>` +
-                      (rows.length ? `<div style="width:100%;">${rows.join('')}</div>` : '')) + this._controlsHTML(),
+                      (rows.length ? `<div style="width:100%;">${rows.join('')}</div>` : '')) +
+                // Folded, the block is one short line: the buttons go with the figures
+                (collapsed ? '' : this._controlsHTML()),
             // Flat: the title, the four figures and the buttons flow on one
             // wrapping line instead of stacking half the panel tall — each
             // line() is a self-sizing chip once the container is a wrapping row
             style:
                 'display:flex; flex-wrap:wrap; align-items:center; column-gap:18px; row-gap:2px;' +
-                'margin:8px 0 4px; padding:5px 12px; background:rgba(0,0,0,0.25);' +
+                (collapsed ? 'margin:2px 0; padding:2px 10px;' : 'margin:8px 0 4px; padding:5px 12px;') +
+                'background:rgba(0,0,0,0.25);' +
                 'border-radius:6px; font-size:12px; line-height:1.5;',
             place: (block) => {
                 // Under the game's own status row when there is one. Otherwise
