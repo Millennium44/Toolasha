@@ -277,4 +277,48 @@ describe('the core advisor in the Optimizer', () => {
         await check();
         expect(section._core.rows.map((r) => r.slotIndex)).toEqual([2]);
     });
+
+    test('live shape: nothing slotted live, the picked loadout names a 1-line talisman: a row for line 2 is drawn', async () => {
+        mocks.worn = [];
+        const gear = {
+            key: JSON.stringify(['loadout', 'Woodcutting', ['/items/large_talisman_belt', 20], { 1: 2837 }]),
+            label: 'Woodcutting ★ loadout',
+            equipment: new Map([
+                ['/item_locations/belt', { itemHrid: '/items/medium_talisman_belt', enhancementLevel: 4 }],
+            ]),
+            drinks: [],
+            talismans: [talisman(1, [MILKING_SPEED])],
+        };
+        section.detach();
+        container.innerHTML = '';
+        section = new SkillingTalismanSection({
+            getSkill: () => 'Milking',
+            getSelectedActions: () => null,
+            getGearContext: () => ({ ...gear, equipment: new Map(gear.equipment) }),
+        });
+        section.mount(container);
+        await rank();
+        await check();
+        expect(cores()).not.toBe('');
+        expect(section._core.status).toBe('done');
+        expect(section._core.rows.map((r) => r.lineNumber)).toEqual([2]);
+        expect(cores()).toContain('No price');
+    });
+
+    test('a ranking replaced while the check waits is said, not left blank', async () => {
+        await rank();
+        section._coreContext = async () => {
+            section._result = { ...section._result };
+            return { status: 'refused', message: 'x' };
+        };
+        await check();
+        expect(cores()).toContain('The ranking changed while checking');
+    });
+
+    test('a result that draws nothing is reported, not left blank', async () => {
+        await rank();
+        section._renderCores = () => {};
+        await check();
+        expect(cores()).not.toBe('');
+    });
 });

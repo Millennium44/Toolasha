@@ -1605,10 +1605,17 @@ export class TalismanRankingSectionBase {
                 }
                 // Read now, before the first await: a later edit must not relabel the check
                 const inputs = this._coreInputsNow();
+                this._progress('Checking cores…');
                 const ctx = await this._coreContext();
-                if (!current()) return;
+                if (!current()) {
+                    this._coreMessage('The character or the panel changed while checking. Press Check cores again.');
+                    return;
+                }
                 // The ranking on screen is the one that was read: a replaced one holds other rows
-                if (this._result !== ranking) return;
+                if (this._result !== ranking) {
+                    this._coreMessage('The ranking changed while checking. Press Check cores again.');
+                    return;
+                }
                 let result;
                 if (ctx?.status === 'refused') {
                     result = { status: 'refused', message: ctx.message, rows: [] };
@@ -1628,6 +1635,10 @@ export class TalismanRankingSectionBase {
                 result.inputs = inputs;
                 this._core = result;
                 this._renderCores();
+                // Every ending says something: a check that drew nothing is reported, never left blank
+                if (this._q('core-results') && !this._q('core-results').innerHTML) {
+                    this._coreMessage('The core check drew nothing. This is a bug: please report it.');
+                }
             },
             { refuse: (text) => this._coreMessage(text) }
         );
