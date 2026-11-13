@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.86.0 -->
+
 ### Skill page tiles can show your simulated scrolls
 
 With scrolls chosen in an action panel's scroll chips, the skill page's action tiles now show Profit/hr, Exp/hr and Eff. XP/hr as if those scrolls were active, marked 📜. A "Scrolls" button in the page header turns it off and on (a setting, on by default).
@@ -7498,6 +7500,186 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.86.0](https://github.com/Millennium44/Toolasha/compare/v3.85.0...v3.86.0) (2026-11-13)
+
+### Features
+
+- best items closes when an item link opens the market ([e7578da](https://github.com/Millennium44/Toolasha/commit/e7578da5d26639e7eae6cfa458799f3a2c8a0b95))
+- best items remembers its type, offers a way back from the market, and hides rows ([68da712](https://github.com/Millennium44/Toolasha/commit/68da7120a3263f86001476904398452180fefc6d))
+- bestiary plan warns when the route is much worse than one zone and can plan that zone alone ([e5e640f](https://github.com/Millennium44/Toolasha/commit/e5e640f631433b7a4334050ecbdebeed0430986c))
+- combat sim applies a player's talisman combat lines, scaled by their belt ([12318a0](https://github.com/Millennium44/Toolasha/commit/12318a08f3ff3ca26a82f06b4ccf855a39ac1139))
+- combat sim editor can edit the belt's talismans ([bedf0be](https://github.com/Millennium44/Toolasha/commit/bedf0beb418578818cb74da2e3e7e65b6552e90e))
+- combat sim models talisman Smite, Shatter, Overkill, Echo and Fortify ([47be4fd](https://github.com/Millennium44/Toolasha/commit/47be4fd716952105eed46dc8d8e33d6f75b7912d))
+- consumables panel and tile count every party member's dungeon keys, chest keys, and craft-route key shopping ([558b73f](https://github.com/Millennium44/Toolasha/commit/558b73fa515e282eaf042f788239caabc1e8b453))
+- Craft & Enhance window for gear made from dungeon drops and token-shop items ([39461de](https://github.com/Millennium44/Toolasha/commit/39461de642b114d602564f8ee4676d692b14816b))
+- dungeon token spend plan gets Buy best and per-row Buy buttons ([2e99274](https://github.com/Millennium44/Toolasha/commit/2e99274d3b77fe1c6e246cda29068863e0bc6422))
+- dungeon token spend plan opens the buy dialog and can skip essence ([bb36c4f](https://github.com/Millennium44/Toolasha/commit/bb36c4fe4324a1d8875f04d84132b88594602cc1))
+- keep character talismans current and carry the belt through slot lists ([6998350](https://github.com/Millennium44/Toolasha/commit/6998350391e267d814dc90feff04555e02aac99d))
+- loadouts warn when a talisman in them will do nothing (test server) ([9b8762f](https://github.com/Millennium44/Toolasha/commit/9b8762f3881f14c8d7e3c52647bb8872f3821df8))
+- reload-prompt log and optional auto-reload when data changes underneath you ([1fe9c63](https://github.com/Millennium44/Toolasha/commit/1fe9c6377439dec9465288e704b9d76cabc9f4af))
+- sim icon dropdowns draw their own list when the browser lacks customizable selects ([6b3edf0](https://github.com/Millennium44/Toolasha/commit/6b3edf0309c11078d57d17a6c03b4097f54c015d))
+- skill page action tiles can use the simulated scrolls ([8c22ad1](https://github.com/Millennium44/Toolasha/commit/8c22ad15fb1c1a4b4efca8f138930dacbf494d3c))
+- skill page Scrolls button opens a picker for the simulated scrolls ([c685090](https://github.com/Millennium44/Toolasha/commit/c685090fbdea6815243b3923fc132372b77fafdd))
+- skilling talisman bonuses in Toolasha's own calculations, and belt-scaled values in the talisman window ([74d5ffc](https://github.com/Millennium44/Toolasha/commit/74d5ffc8a39101b1a88b1aee8ae76921a11cf5be))
+- sort the treasure popup rows by clicking a column heading ([bcef6e2](https://github.com/Millennium44/Toolasha/commit/bcef6e2544a0457c9cc0d5fda91bce1f1a42b5a2))
+- talisman belt advisor weighs belt upgrades against what they cost ([e6236e7](https://github.com/Millennium44/Toolasha/commit/e6236e77753204cd017a36ebd239c83e838481c9))
+- talisman line ranking, recommended sets and Improve mine (test server) ([d9b6928](https://github.com/Millennium44/Toolasha/commit/d9b692825baf540308f939b96e7397fa7d0cf1f8))
+- talisman ranking budget takes coins (200m, 1.5b) and every control explains itself ([94a0bf0](https://github.com/Millennium44/Toolasha/commit/94a0bf07a321632a2d40211e4346c57f5e55f261))
+- talisman reroll advisor in the talisman window (test server) ([a4f7733](https://github.com/Millennium44/Toolasha/commit/a4f7733cbae0ba35c78fba32a0a39b399d3b94f7))
+- update popup offers the scroll simulation and scroll planner switches again ([5d985dd](https://github.com/Millennium44/Toolasha/commit/5d985dd8380a9e8f3455a5aedf4c1b0e6bd09ac9))
+
+### Bug Fixes
+
+- a failed-fold upload leaves an unsettled fingerprint, not a missing one ([1ad2d88](https://github.com/Millennium44/Toolasha/commit/1ad2d888073b2cb6cbdb9fdc78af5f6f7de19c18))
+- a history source change during a volume lookup no longer caches a false zero ([35ef06e](https://github.com/Millennium44/Toolasha/commit/35ef06ed89075c8d92168b86fc9bf877e51716ab))
+- a patient collection buy past its queue allowance walks the asks it really can take ([37910d8](https://github.com/Millennium44/Toolasha/commit/37910d86e2a79792b3cc714f88b0bbe3b7101123))
+- a sync upload whose record merge failed is no longer remembered as synced ([db66dbf](https://github.com/Millennium44/Toolasha/commit/db66dbfb7d860dd53a47f7499ba93ec382c77e96))
+- action bar run value, task cowbells and guild shrine costs follow the Buy/Sell dropdowns ([ee8aa80](https://github.com/Millennium44/Toolasha/commit/ee8aa807d3f629e83a4d456cb51d347043acd2f5))
+- auto-reload waits for a running sync, starts after the restore alert, and logs cancellations ([a3e5afb](https://github.com/Millennium44/Toolasha/commit/a3e5afbe90b011df9d811248d1231781d5217883))
+- belt advisor follows the loadout picked in the Optimizer too ([61d8bb8](https://github.com/Millennium44/Toolasha/commit/61d8bb8435da24a0056650bfc7018e166eb244a3))
+- belt advisor names the bench its enhancement estimate uses ([86d33e6](https://github.com/Millennium44/Toolasha/commit/86d33e6fa2dd8a7a86205dd5badb1ba6eec79c74))
+- belt advisor uses the run hours, the build sale tax, live gear in its stale check and per-basis free wording ([4e28f9b](https://github.com/Millennium44/Toolasha/commit/4e28f9b2c7aaec8b9b460af57a17b1f831a84649))
+- best items hidden list survives a failed read, other tabs' hides and unknown types ([98cb952](https://github.com/Millennium44/Toolasha/commit/98cb952ffed991c7ed94a50ca798f84198396356))
+- best items return tab appears on a game client in another language ([740fe2b](https://github.com/Millennium44/Toolasha/commit/740fe2b5aad53d9693b4a757698d6f608a66245d))
+- buy missing lab supplies sizes to the Consumables panel run target ([10255ac](https://github.com/Millennium44/Toolasha/commit/10255ac42e74fae71ca4d2f9c7da8d730080014e))
+- chain Profit/hr keeps the volume cap when the chain kept the row's setup; mode-neutral chain wording ([21ea4f2](https://github.com/Millennium44/Toolasha/commit/21ea4f2aa697a5898ff8b671e2876c59012f83cd))
+- changelog-pr-entries compares titles within the current release only ([8e9e7d2](https://github.com/Millennium44/Toolasha/commit/8e9e7d26d2ebcbd66d1109457e315dc467d659ff))
+- chest loot dialog and Treasure popup show above open Toolasha panels ([ea1425e](https://github.com/Millennium44/Toolasha/commit/ea1425e290c8f122d77d15858b0588a193f7b060))
+- collection optimizer and achievement finisher follow the Buy/Sell dropdowns ([6879d18](https://github.com/Millennium44/Toolasha/commit/6879d1866076d7e71f2b0547014f81ab5d171248))
+- combat sim drops talisman Fortify stacks on a dungeon wipe restart ([ba51933](https://github.com/Millennium44/Toolasha/commit/ba51933314ade91d0c1caf06e4084f93c8cd85f8))
+- combat sim keeps edited talismans when a party loads with the live self ([bfb3b1f](https://github.com/Millennium44/Toolasha/commit/bfb3b1f4e1492a1a31f5eee92dcbe0d84a3b059f))
+- combat sim talisman editor locks skilling talismans, follows the game, keeps rows on a missing payload ([8d0f3e6](https://github.com/Millennium44/Toolasha/commit/8d0f3e6d3db4f05bdc244d01fdf93a54fdd563e6))
+- combat sim talisman rows sit three side by side, and the belt row hides where the game has no belts ([0622678](https://github.com/Millennium44/Toolasha/commit/0622678a6953000705e380ca2d4b5121afcebc43))
+- consumable costs, drop order, house builds and cowbell tooltip follow the Buy/Sell dropdowns ([3d4da25](https://github.com/Millennium44/Toolasha/commit/3d4da25e51b97591e8c9a67e47c29fbfe2659af4))
+- consumables Buy all is one list, members' keys priced at market, tile cache kept for unrelated drops ([bd9e273](https://github.com/Millennium44/Toolasha/commit/bd9e273284ef33bfc66c1f19f286a49afab22f53))
+- consumables Buy all restocks market-bought chest keys ([e6700d4](https://github.com/Millennium44/Toolasha/commit/e6700d4318e6badbe1b1e15b961902367af11fdc))
+- consumables lab run target is written immediately ([e02562b](https://github.com/Millennium44/Toolasha/commit/e02562bfee62e4dbb161248b20f9c8fde98026a2))
+- craft & enhance crafting XP counts the upgrade chain whose time is already charged ([c7eb49a](https://github.com/Millennium44/Toolasha/commit/c7eb49a24a17ce9eb675b0e8ecf63bd21919458d))
+- craft & enhance rows refresh after an order book or custom price changes a price ([d6b8570](https://github.com/Millennium44/Toolasha/commit/d6b85702bf762dcdf88e1d77f3cf7c7368f6a99e))
+- craft & enhance window counts enhancing drinks, adds a buy-price mode and prices stale or estimated inputs honestly ([1cf9212](https://github.com/Millennium44/Toolasha/commit/1cf921250016c9ec5b79fcf523c2fd79c77e08eb))
+- craft & enhance window refreshes when gear, drinks or levels change and honors skill-level teas ([770dc2b](https://github.com/Millennium44/Toolasha/commit/770dc2bbb7346dacf01f3290ac2b36a0e0d23019))
+- decompose chain sorts follow the Buy/Sell pricing dropdowns; chain Profit/hr matches its breakdown; Gear only filter ([0fbf4b1](https://github.com/Millennium44/Toolasha/commit/0fbf4b1ce5f00e790b66779e117c29cf443f7ce2))
+- dismissed eviction ids are pruned to the record, not cut by dismissal order ([83b0fcd](https://github.com/Millennium44/Toolasha/commit/83b0fcd36d714970781b2fefb8c73237c60058c4))
+- dismissed sync-eviction notes are remembered by id, not by a time stamp ([8462438](https://github.com/Millennium44/Toolasha/commit/8462438c1967258125d7b1b11d5a593a6aca0d65))
+- Equipment Watch no longer saves a pending goal into the next character after a switch ([d2ac16e](https://github.com/Millennium44/Toolasha/commit/d2ac16eb645e5678eb7e60d0abe293d62f8b9a37))
+- Equipment Watch refuses a goal change unless the record load committed, and keeps the form ([cf58f66](https://github.com/Millennium44/Toolasha/commit/cf58f66251e707ee850082f92f525b074fa73ba1))
+- food optimizer ranks on the cost the sim shows, and settings help matches the Buy/Sell dropdowns ([afbd214](https://github.com/Millennium44/Toolasha/commit/afbd214182fcdc4e24b2243604c459e8322dbd6d))
+- full backup fails instead of exporting a partially read store as complete ([2594cd5](https://github.com/Millennium44/Toolasha/commit/2594cd5c1354ebdf951f9c50ba50443aea7ffb88))
+- goal planner no longer reports a goal as added when the save failed ([3a9cd2c](https://github.com/Millennium44/Toolasha/commit/3a9cd2cf813f494e30d24a04a6e8f62998ec0cd3))
+- goal planner treats a second Add of an unsaved goal as still unsaved ([5c47b8e](https://github.com/Millennium44/Toolasha/commit/5c47b8e9315c8da01dfb069e9ab1700813af336d))
+- guard sync ownership and stale market and profile updates ([406390a](https://github.com/Millennium44/Toolasha/commit/406390aea83bd313ac513e7a32f8d4fe8ff4483f))
+- keep Major Patch 1 belt and talisman surfaces off the live server ([9e2ee5e](https://github.com/Millennium44/Toolasha/commit/9e2ee5e7d2881a924b34694bdbe2979c1c8a1696))
+- key-craft materials bill deducts what queued actions already need ([f62c899](https://github.com/Millennium44/Toolasha/commit/f62c8992a44cc4e8d7ae1cd3e4fead6c7cdf2438))
+- lab sim talismans are scaled by the editor's belt, and their experience reaches the XP forecast ([32ce434](https://github.com/Millennium44/Toolasha/commit/32ce4343a71d727a268b98547a6b1dd1dc2b6beb))
+- lab supplies target refuses to guess when storage cannot be read ([dc48c6e](https://github.com/Millennium44/Toolasha/commit/dc48c6e45046e61b0ed14f6d4aca5dcec78f0c7d))
+- labyrinth buy missing supplies button sits beside the label ([d0ac723](https://github.com/Millennium44/Toolasha/commit/d0ac723fd0055d7732654258849e6fec25619dc9))
+- labyrinth buy supplies button replaces the supplies heading ([a8cd10d](https://github.com/Millennium44/Toolasha/commit/a8cd10d2177eee2e76f64358068b1399a6745484))
+- labyrinth cache identity includes the talismans slotted now for rooms that fight with the worn kit ([f8e3d2b](https://github.com/Millennium44/Toolasha/commit/f8e3d2b6fd1589eaf77b91d6702226f5195e7a72))
+- labyrinth supplies label stays centered with the buy button beside it ([ba1d0c0](https://github.com/Millennium44/Toolasha/commit/ba1d0c09f0871b0b9a488d81923cae55ce02b0e6))
+- legacy adoption keeps the old copy when the write fails and never overwrites a newer value ([e5d57fb](https://github.com/Millennium44/Toolasha/commit/e5d57fb5792679c7824a07b91b30f8fcd88a6e12))
+- line up the Total Profit tile party rows in columns ([98bfdb7](https://github.com/Millennium44/Toolasha/commit/98bfdb7c6ae918e1e7571706c456a3843b30b102))
+- log the incomplete-import "reload and pull again" prompt after the rebase ([fd1d7b3](https://github.com/Millennium44/Toolasha/commit/fd1d7b380c1e3a1bd57e1060eafe40b4fbcb094d))
+- log the pull that did not apply cleanly as a reload prompt ([f7f56ee](https://github.com/Millennium44/Toolasha/commit/f7f56eeb4cd51fa8a4e064ca9d7c8349d0cf12ea))
+- malformed talisman lines no longer crash a sim build, and a talisman reroll invalidates cached labyrinth sims ([3129c5d](https://github.com/Millennium44/Toolasha/commit/3129c5de6714b47ae953b7d37889e0d7fb8fefd8))
+- marketplace alchemy sort and refinement base costs follow the Buy/Sell dropdowns ([edb3189](https://github.com/Millennium44/Toolasha/commit/edb318916b26b83882521d8cbc6e21c4c04a2800))
+- marketplace shortcuts stop at native navigation and keep later quantity edits ([5f102f8](https://github.com/Millennium44/Toolasha/commit/5f102f823a041a910f290308e79222409e46fb3c))
+- narrowed bestiary plan says so in Copy and Notify, falls back when empty, and resets with the zones ([26318b6](https://github.com/Millennium44/Toolasha/commit/26318b66db830f2df46ebaf3a7fd254ad5a64ee7))
+- optimizer talisman ranking follows the loadout picked in the Optimizer ([ff93d60](https://github.com/Millennium44/Toolasha/commit/ff93d60068055dd5e210776b8c4341bdce9804a5))
+- Optimizer Talismans section reads the Optimizer's action selection as a Set ([3f64010](https://github.com/Millennium44/Toolasha/commit/3f640108d6d4cd9afdaa299bd212a43577b54afe))
+- party ready state no longer logs "Skill not found: /skills/special" repeatedly ([166d8bb](https://github.com/Millennium44/Toolasha/commit/166d8bb41c95a080ed0bee3f722de6c0a67ed01f))
+- plain wording for the Best Items Gear only hover ([e4bc9d8](https://github.com/Millennium44/Toolasha/commit/e4bc9d8125ad78e9febe6ca4b99a2a6e72d6b90c))
+- planner, enhancement and loot-log figures follow the Buy/Sell dropdowns ([6f0ae24](https://github.com/Millennium44/Toolasha/commit/6f0ae2447daf8a541bdf52faa9368ca4277db50c))
+- production costs follow a slotted drink going in or out of stock ([dd6c69d](https://github.com/Millennium44/Toolasha/commit/dd6c69d1a741cb061ff5c13e06751014f973562b))
+- refinement chest luck counts drop quantity as extra rolls of the table rate ([c36e9cc](https://github.com/Millennium44/Toolasha/commit/c36e9cc76f08c1729fdcb221771934f6d445b0ba))
+- refinement luck survives long runs and says its rolls are assumed ([d76f787](https://github.com/Millennium44/Toolasha/commit/d76f7872a1ba58de090323b9f6d84ee80353eee7))
+- reload prompt log is off by default ([9205d44](https://github.com/Millennium44/Toolasha/commit/9205d448d90352f39be9e336c8e660ef1ff47f62))
+- reroll advisor re-checks the chosen orb before a deferred reroll ([0113577](https://github.com/Millennium44/Toolasha/commit/0113577a3c6cf85526be2e0dca5e74365c85dcb6))
+- review fixes for the Buy/Sell dropdown figures ([100339f](https://github.com/Millennium44/Toolasha/commit/100339fac26111b97ec71148fd965bb0f02836a7))
+- review follow-ups for talisman chain pricing and drop-source choice ([e84dc31](https://github.com/Millennium44/Toolasha/commit/e84dc319ad98b832fe792ef374c4afab7e2d704f))
+- same-named loadouts share a talisman warning only when its reason matches ([b234692](https://github.com/Millennium44/Toolasha/commit/b234692033a736d8e3804f9c15abeb798245cf56))
+- saved party and roster evictions past the cap are recorded in the sync fold ([d0787a9](https://github.com/Millennium44/Toolasha/commit/d0787a9fd125381f2ab2c192f094cffc124cf1ee))
+- scroll picker menu text is light on its dark background ([847217b](https://github.com/Millennium44/Toolasha/commit/847217bdea57ce7e7dd7fcdb02a1c469775ad78b))
+- shop Max beside Enhancement Level sets +10, Quantity keeps its own Max ([eeec031](https://github.com/Millennium44/Toolasha/commit/eeec031c5ca4570429e257effc356354350888e2))
+- sim icon dropdown fallback handles Space keyup, focus, empty lists and labels ([cb0e6e0](https://github.com/Millennium44/Toolasha/commit/cb0e6e0520f7e64621e8a4e24d3710f7c7750601))
+- skilling optimizer tool row label no longer overlaps the item name ([1ee5259](https://github.com/Millennium44/Toolasha/commit/1ee525953260b5ef1a433d7396944720f6df797a))
+- skilling talisman figures count any rise in an unpriced input as free cost ([fa47b2e](https://github.com/Millennium44/Toolasha/commit/fa47b2e75bcf4440d03dbdbff0b9863e3dab7fad))
+- stopped-after-apply toast asks for a reload when a store write failed ([3c4578a](https://github.com/Millennium44/Toolasha/commit/3c4578a5b6728d0e101f67adf30c7feed3343042))
+- switching Market History pools refetches and no longer mislabels the previous chart ([a7dbdb3](https://github.com/Millennium44/Toolasha/commit/a7dbdb3e0c067566acbadd12608b016ca0a1d695))
+- talisman chain pricing, drop-source choice, tooltip drop rates, rare-find sell-through ([5a1c001](https://github.com/Millennium44/Toolasha/commit/5a1c00124f8af5640c97843fdb95bc2438cb968a))
+- talisman changes reach the alchemy and arbitrage caches, the lab skilling tiles, and the window on a wrapped row ([e217e57](https://github.com/Millennium44/Toolasha/commit/e217e579bd7e92cb707c36670abe59a53bf6433d))
+- talisman Echo skips a caster felled by thorns, Fortify expires lazily, pre-change pin ([800652d](https://github.com/Millennium44/Toolasha/commit/800652dbe9a6fdfdfbc616c372959108c1fbd5b5))
+- talisman line ranking marks profit gains that rest on unpriced running costs ([fc3552c](https://github.com/Millennium44/Toolasha/commit/fc3552c32a16ea6b69d16d612525e0b6df9b2fe3))
+- talisman line ranking sizes the Profit/hr error bar on net profit, not revenue scale ([5818613](https://github.com/Millennium44/Toolasha/commit/5818613a67bd87f47dfb4736df08c2c560fbbf50))
+- talisman orb costs carry the solver's grade clamp and Mutation limits ([369b93b](https://github.com/Millennium44/Toolasha/commit/369b93b8960c177b526f4ab5b44f24a32f1947d8))
+- talisman orb solver yields on a MessageChannel so set building is not idle a third of the time ([f7dcde2](https://github.com/Millennium44/Toolasha/commit/f7dcde263b47342be94f4e7859072967c7b67200))
+- talisman ranking Budget set no longer freezes the game tab ([c60ab42](https://github.com/Millennium44/Toolasha/commit/c60ab42ab6ac1da3f3c54e8931e97cce5770850e))
+- talisman ranking labels its budget with the coins it started with ([09f791b](https://github.com/Millennium44/Toolasha/commit/09f791bf9d8fec2760712e46922e0c75ecf64452))
+- talisman skilling ranking tells unpriced inputs from unpriced outputs ([8747e32](https://github.com/Millennium44/Toolasha/commit/8747e326a51f2783e7fca2ccf4359bb6596a89d5))
+- task reroll retirement keeps the live row until the history write lands ([fcb7429](https://github.com/Millennium44/Toolasha/commit/fcb742970044071deafda0b757a57caa1d2d5de8))
+
+### Performance Improvements
+
+- the Lab Sim restores saved upgrade results after feature startup ([e3dcb1f](https://github.com/Millennium44/Toolasha/commit/e3dcb1f9195c53ddbb4b21ebb4712925ace21b61))
+
+### Documentation
+
+- changelog entries for decompose chain pricing and Gear only ([be57e2d](https://github.com/Millennium44/Toolasha/commit/be57e2d07af2cde6a0ecfd8122f4df86e3bb35d0))
+- changelog entries for party keys in Consumables ([5b73bab](https://github.com/Millennium44/Toolasha/commit/5b73bab9b5b347ee83d145adf0cc3834146be5c3))
+- changelog entries for profit figures following the Buy/Sell dropdowns ([39674b1](https://github.com/Millennium44/Toolasha/commit/39674b11abdbdeb5e5e8d33ce2ceb16eef3e0263))
+- changelog entries for the belt advisor and the scroll settings re-offer ([214fa61](https://github.com/Millennium44/Toolasha/commit/214fa61d984a46cda72c9826aa4057d64ea26222))
+- changelog entry for combat talismans in the Combat Sim ([62ba412](https://github.com/Millennium44/Toolasha/commit/62ba412b2ec01c999d8c183b8a337db77dbcb94d))
+- changelog entry for editable Combat Sim talismans ([343d874](https://github.com/Millennium44/Toolasha/commit/343d874bbf500c5da65ffa33fdec448ca10adec9))
+- changelog entry for skill tiles using simulated scrolls ([356d248](https://github.com/Millennium44/Toolasha/commit/356d248759a346b20c64101652146f99c361df1d))
+- changelog entry for the compact talisman editor ([04e149e](https://github.com/Millennium44/Toolasha/commit/04e149eb768d5c91a22f0218550a2a8a0ef6fd7e))
+- changelog entry for the Craft & Enhance window ([f5eae87](https://github.com/Millennium44/Toolasha/commit/f5eae87fc0a698d091ce140c0223ac6e50bb5439))
+- changelog entry for the lab supplies run target ([b654250](https://github.com/Millennium44/Toolasha/commit/b654250b970ab918fee658f843ee98716b2b729e))
+- changelog entry for the optimizer talisman ranking following the loadout ([ff0a913](https://github.com/Millennium44/Toolasha/commit/ff0a9130e46865aafd7f093dcb5034eca4a6fbc6))
+- changelog entry for the talisman coin budget and ranking hovers ([50479e7](https://github.com/Millennium44/Toolasha/commit/50479e786133d347659a3cdb37d109c668dbb07a))
+- changelog entry for the talisman ranking freeze fix ([94e2399](https://github.com/Millennium44/Toolasha/commit/94e2399fafea1f02fbe413cd3ff52858f0e08d3f))
+- changelog for best items place memory, hidden rows and treasure popup sort ([e468c7b](https://github.com/Millennium44/Toolasha/commit/e468c7be4b26768af41c8d1953ef44c77424b269))
+- changelog for crop gathering spots and talisman material pricing ([56cd98a](https://github.com/Millennium44/Toolasha/commit/56cd98a4962b9c3a16da3a57a1b6aff06202de70))
+- changelog for refinement chest luck ([4f076e1](https://github.com/Millennium44/Toolasha/commit/4f076e1f6869fd8a595f5bb7924722c1e2102152))
+- changelog for the 2026-11-12 leftover fixes ([6347142](https://github.com/Millennium44/Toolasha/commit/6347142c5b41b34b11176ecee6e4f099d394c669))
+- changelog for the reload prompt log ([9a9e697](https://github.com/Millennium44/Toolasha/commit/9a9e69753edb814973266bae048dadb22af6cb8a))
+- changelog for the sim dropdown, Bestiary note and roster eviction changes ([79ccffe](https://github.com/Millennium44/Toolasha/commit/79ccffe61deb7c2af8012f8cc2ec29dd2e31ca0f))
+- changelog for the talisman mechanics in the combat sim ([514b080](https://github.com/Millennium44/Toolasha/commit/514b080aafa985779d63d348ae8eead12bed6af1))
+- changelog is main's plus this PR's entry ([6fba37f](https://github.com/Millennium44/Toolasha/commit/6fba37f96ac8077a4fc1e5d016294d134c847f8d))
+- changelog matches main after the rebase, with the close-on-click wording ([2d72b2c](https://github.com/Millennium44/Toolasha/commit/2d72b2c6887d4c8005f1e1f3d0a0420211ba6ccf))
+- claude.md says .claude/ is its own repo, not out of git ([235011a](https://github.com/Millennium44/Toolasha/commit/235011a96180eeff6f45064fddc6f066a6d8eb25))
+- craft & enhance changelog names the three drop pricing modes ([b4f7ac4](https://github.com/Millennium44/Toolasha/commit/b4f7ac4e2ac81898ee91eb15b31e39ba5cf8971a))
+- drop the replaced supplies changelog heading ([76deedc](https://github.com/Millennium44/Toolasha/commit/76deedc71eecb0bc66fcfd1685289cebf1c8bfa7))
+- integration branches go in their own worktree; the main checkout stays on main ([2253eb9](https://github.com/Millennium44/Toolasha/commit/2253eb99f9fce9789e88a34c3e62c6d8c41d70b3))
+- keep a blank line between changelog entries after merging main ([33c50fd](https://github.com/Millennium44/Toolasha/commit/33c50fd46247dcd23825cc6f31c4df17487966ef))
+- keep a blank line between the new talisman changelog entries ([2a57244](https://github.com/Millennium44/Toolasha/commit/2a57244c777321e9327f1af92b7a7ebc7d4e7acc))
+- restore changelog spacing after rebase ([41f1189](https://github.com/Millennium44/Toolasha/commit/41f11894136d7b4066b32b39197df7d401a3e849))
+
+### Styles
+
+- prettier on the talisman line ranking test ([00e9893](https://github.com/Millennium44/Toolasha/commit/00e9893001c2d9a0e71993f2ec89614f5ea38af7))
+
+### Tests
+
+- combat sim talisman stats are checked against 30404's real gear in combat ([e520890](https://github.com/Millennium44/Toolasha/commit/e5208905d6e93fe0482c444e2648b1d2c180e5b5))
+- craft & enhance dungeon input index checked on real test-server data ([d6a521e](https://github.com/Millennium44/Toolasha/commit/d6a521e702dd2b62642634461e716629e72aabca))
+- loadout talismanIdMap fixture uses the game's shape, with a changelog entry ([ab76088](https://github.com/Millennium44/Toolasha/commit/ab760882cd36fe6710e51cdceb4b31a853e19733))
+- re-offer review fixes, test name and offeredIds comment ([52d3131](https://github.com/Millennium44/Toolasha/commit/52d3131d38030dc4bee69d7fe5d2db8a5288967f))
+- register the craft chest keys setting for sync and stub bridge mocks ([0a9c39b](https://github.com/Millennium44/Toolasha/commit/0a9c39b531b1445542f5e4e5029ef495e081e79e))
+- reroll advisor test keeps the real game-server exports when it mocks isTestServer ([6bbf74c](https://github.com/Millennium44/Toolasha/commit/6bbf74c51fe931b743b256cdb71d82ff836ae7eb))
+- scroll-tile tests stub every bundle-bridge export ([9b44c34](https://github.com/Millennium44/Toolasha/commit/9b44c34e860f93c0268c2e7e542438d20350b0db))
+- talisman budget tests use a flat orb cost instead of the real solve ([6304533](https://github.com/Millennium44/Toolasha/commit/63045331017c210f73b1f3bbb39c9c00304e58b8))
+
+### Build System
+
+- allow talisman-bonuses inline in several bundles, with a changelog entry ([b5850bf](https://github.com/Millennium44/Toolasha/commit/b5850bf7c5838deab8d2075745eecdcceb95aed3))
+- share shop-index between the utils and actions bundles ([a0ae3ca](https://github.com/Millennium44/Toolasha/commit/a0ae3ca98201982aa646573f3d6ddb1f8803e5ff))
+
+### Miscellaneous Chores
+
+- allowlist the stateless gathering-source module for bundle sharing ([b372c7e](https://github.com/Millennium44/Toolasha/commit/b372c7eb08eb6f0114759b7a290d34448dbfb1e4))
+- dev-load-branch script and a live-press rule in AGENTS.md ([788d1f1](https://github.com/Millennium44/Toolasha/commit/788d1f11aff71371570e716d5016cee2083a12c9))
+- land-stack leaves the integration worktree clean on exit ([9d57f51](https://github.com/Millennium44/Toolasha/commit/9d57f515ee7876a85c8797f96709c80bf3d9babd))
+- land-stack merges PRs that contain merge commits and rebuilds their changelog ([e7e13f6](https://github.com/Millennium44/Toolasha/commit/e7e13f67bc8f5f7971b25acd4cd70db6811808ba))
 
 ## [3.85.0](https://github.com/Millennium44/Toolasha/compare/v3.84.0...v3.85.0) (2026-11-12)
 
