@@ -830,16 +830,20 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
     const ID = 'simulateScrollEffects';
     // Everything on the shipped list is offered together; this block follows the scroll switch
     const BOOKS = 'networth_abilityBooksAsInventory';
-    const ALL = [ID, BOOKS];
+    const PLANNER = 'scrollPlanner';
+    const ALL = [ID, BOOKS, PLANNER];
+    // What gets recorded: the plain id is round 1, round 2 of the scroll switch adds `#2`
+    const KEYS = [ID, `${ID}#2`, BOOKS, PLANNER];
     // The state record, not the snapshot the popup's Reopen reads
     const saved = () => mocks.saved.filter(([key]) => key === 'whatsNew_state_char-1').at(-1)?.[1];
-    const state = (extra = {}) => ({ ...CURRENT, knownIds: [ID, BOOKS, 'other'], ...extra });
+    const state = (extra = {}) => ({ ...CURRENT, knownIds: [ID, BOOKS, PLANNER, 'other'], ...extra });
 
     beforeEach(() => {
         // A checkboxWithButton in the real schema; shipping on since the default flipped
         mocks.definitions = {
             [ID]: { type: 'checkboxWithButton', default: true, label: 'Simulate', help: 'h' },
             [BOOKS]: { type: 'checkbox', default: true, label: 'Books', help: 'h' },
+            [PLANNER]: { type: 'checkbox', default: true, label: 'Planner', help: 'h' },
             other: { type: 'checkbox', default: false },
         };
         domWindow.Toolasha = { ...CURRENT };
@@ -853,9 +857,49 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
 
         expect(whatsNew._pending.reoffered).toEqual(ALL);
         expect(whatsNew._pending.newIds).toEqual([]);
-        expect(saved().offeredIds).toEqual(ALL);
+        expect(saved().offeredIds).toEqual(KEYS);
         // Never the new-defaults machinery, and no value changed
         expect(mocks.written).toEqual([]);
+    });
+
+    test('a legacy record that already offered the plain ids: only round 2 of the scroll switch and the planner come back, once', async () => {
+        // What the last build saved: plain ids, no round keys
+        mocks.stateRead = { found: true, value: state({ offeredIds: [ID, BOOKS] }) };
+        mocks.settingValues = { [ID]: false, [BOOKS]: false, [PLANNER]: false };
+
+        await whatsNew.applyPolicy();
+
+        expect(whatsNew._pending.reoffered).toEqual([ID, PLANNER]);
+        // Nothing lost: the legacy plain ids stay, and the new keys are added
+        expect(saved().offeredIds).toEqual([ID, BOOKS, `${ID}#2`, PLANNER]);
+        expect(mocks.written).toEqual([]);
+
+        // Next start reads what was just saved: nothing again
+        mocks.stateRead = { found: true, value: saved() };
+        whatsNew._pending = null;
+        mocks.saved = [];
+        await whatsNew.applyPolicy();
+        expect(whatsNew._pending).toBeNull();
+        expect(mocks.saved).toEqual([]);
+    });
+
+    test('the planner on: not shown but marked; the books switch is never re-shown to someone who saw it', async () => {
+        mocks.stateRead = { found: true, value: state({ offeredIds: [ID, BOOKS] }) };
+        mocks.settingValues = { [ID]: true, [BOOKS]: false, [PLANNER]: true };
+
+        await whatsNew.applyPolicy();
+
+        expect(whatsNew._pending).toBeNull();
+        expect(saved().offeredIds).toEqual(expect.arrayContaining([PLANNER, `${ID}#2`, BOOKS]));
+        expect(saved().offeredIds).toHaveLength(4);
+    });
+
+    test('a legacy plain-id record is saved with every earlier round, so plain-id readers see it as offered', async () => {
+        mocks.stateRead = { found: true, value: state({ offeredIds: [ID] }) };
+        await whatsNew.applyPolicy();
+
+        // An older build offers whatever plain id is missing from the record
+        expect(saved().offeredIds).toEqual(expect.arrayContaining([ID, BOOKS]));
     });
 
     test('a re-offer on an unchanged build does not claim a new version; a real update still says so', async () => {
@@ -910,26 +954,26 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
     });
 
     test('it is not offered again after a later update either', async () => {
-        mocks.stateRead = { found: true, value: state({ version: '2.89.0', offeredIds: ALL }) };
+        mocks.stateRead = { found: true, value: state({ version: '2.89.0', offeredIds: KEYS }) };
 
         await whatsNew.applyPolicy();
 
         expect(whatsNew._pending.reoffered).toEqual([]);
         expect(whatsNew._pending.headline).toContain('Updated 2.89.0');
-        expect(saved().offeredIds).toEqual(ALL);
+        expect(saved().offeredIds).toEqual(KEYS);
     });
 
     test('a player who has it on is offered nothing, but it is marked so turning it off later does not offer it', async () => {
         mocks.stateRead = { found: true, value: state() };
-        mocks.settingValues = { [ID]: true, [BOOKS]: true };
+        mocks.settingValues = { [ID]: true, [BOOKS]: true, [PLANNER]: true };
 
         await whatsNew.applyPolicy();
 
         expect(whatsNew._pending).toBeNull();
-        expect(saved().offeredIds).toEqual(ALL);
+        expect(saved().offeredIds).toEqual(KEYS);
 
         mocks.stateRead = { found: true, value: saved() };
-        mocks.settingValues = { [ID]: false, [BOOKS]: false };
+        mocks.settingValues = { [ID]: false, [BOOKS]: false, [PLANNER]: false };
         mocks.saved = [];
         await whatsNew.applyPolicy();
         expect(whatsNew._pending).toBeNull();
@@ -941,7 +985,7 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
         await whatsNew.applyPolicy();
 
         expect(whatsNew._pending?.reoffered ?? []).toEqual([]);
-        expect(saved().offeredIds).toEqual(ALL);
+        expect(saved().offeredIds).toEqual(KEYS);
     });
 
     test('a new version is a normal update with the offer alongside the new settings', async () => {
@@ -974,7 +1018,7 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
         whatsNew.maybeShow();
 
         expect(whatsNew.panel).toBeNull();
-        expect(saved().offeredIds).toEqual(ALL);
+        expect(saved().offeredIds).toEqual(KEYS);
         expect(whatsNew._shownData.reoffered).toEqual(ALL);
     });
 
@@ -994,7 +1038,7 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
 
         await whatsNew.applyPolicy();
 
-        expect(saved().offeredIds).toEqual(['futureSetting', ...ALL]);
+        expect(saved().offeredIds).toEqual(['futureSetting', ...KEYS]);
     });
 
     test('the popup shows it under "Worth another look" with a live switch that changes only that setting', () => {

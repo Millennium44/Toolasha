@@ -127,11 +127,13 @@ describe('settings offered a second time', () => {
     const off = () => false;
 
     test('the shipped list names the scroll simulation switch, and every id on it is a switch in the schema', async () => {
-        expect(REOFFERED_SETTINGS).toContain('simulateScrollEffects');
+        const ids = REOFFERED_SETTINGS.map((entry) => entry.id);
+        expect(ids).toContain('simulateScrollEffects');
+        expect(ids).toContain('scrollPlanner');
         // On for new players since 2026-11-05; existing players are reminded once
-        expect(REOFFERED_SETTINGS).toContain('networth_abilityBooksAsInventory');
+        expect(ids).toContain('networth_abilityBooksAsInventory');
         const { getSettingDefinition } = await import('../../core/settings-schema.js');
-        for (const id of REOFFERED_SETTINGS) {
+        for (const id of ids) {
             // The popup draws a live checkbox for these; a number or select would need its own row
             expect(['checkbox', 'checkboxWithButton'], id).toContain(getSettingDefinition(id)?.type);
         }
@@ -153,6 +155,21 @@ describe('settings offered a second time', () => {
         const isOn = (id) => id === 'b';
         expect(reofferedSettingIds(LIST, [], isOn)).toEqual(['a', 'c']);
         expect(unofferedSettingIds(LIST, [])).toEqual(LIST);
+    });
+
+    test('rounds: a plain id is round 1, a higher round is offered again once, and marking records every round up to it', () => {
+        const ROUNDS = [
+            { id: 'a', round: 2 },
+            { id: 'b', round: 1 },
+        ];
+        // A legacy plain id counts as round 1: round 2 of `a` is still owed, `b` is done
+        expect(unofferedSettingIds(ROUNDS, ['a', 'b'])).toEqual(['a']);
+        expect(reofferedSettingIds(ROUNDS, ['a', 'b'], off)).toEqual(['a']);
+        expect(unofferedSettingIds(ROUNDS, ['a', 'b', 'a#2'])).toEqual([]);
+        // Marking keeps the plain id as well, so an older build never re-offers it
+        expect(markOffered(['a', 'b'], ROUNDS)).toEqual(['a', 'b', 'a#2']);
+        expect(markOffered(null, ROUNDS)).toEqual(['a', 'a#2', 'b']);
+        expect(markOffered(markOffered(null, ROUNDS), ROUNDS)).toEqual(['a', 'a#2', 'b']);
     });
 
     test('marking adds the whole list once, keeps unknown ids, and never mutates its input', () => {

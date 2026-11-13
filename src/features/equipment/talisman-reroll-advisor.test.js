@@ -13,7 +13,10 @@ const game = vi.hoisted(() => ({
     handlers: new Map(),
 }));
 
-vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.server }));
+vi.mock('../../utils/game-server.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    isTestServer: () => game.server,
+}));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => game.setting } }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
