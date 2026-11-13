@@ -387,6 +387,19 @@ class DungeonShopPlanner {
         summary.textContent = summaryText;
         body.appendChild(summary);
 
+        const next = result.rows.find((row) => row.quantity > 0);
+        if (next) {
+            const openNext = document.createElement('button');
+            openNext.type = 'button';
+            openNext.className = 'toolasha-dungeon-plan-open-next';
+            openNext.textContent = `Buy best: ${next.name} × ${formatWithSeparator(next.quantity)}`;
+            openNext.title = 'Opens its buy dialog in the Dungeon shop with the quantity filled in. You press Buy.';
+            styleGameButton(openNext, 'primary', true);
+            openNext.style.margin = '4px 0';
+            openNext.addEventListener('click', () => this.openInShop(next));
+            body.appendChild(openNext);
+        }
+
         if (result.measuring > 0) {
             body.appendChild(panelNote(`Measuring traded volume for ${result.measuring} item(s)…`));
         }
@@ -407,7 +420,7 @@ class DungeonShopPlanner {
             panelNote(
                 `Values are current ask prices less ${taxPercent}% market tax — sell prices, not a walk down the ` +
                     `order book. Caps: ${result.options.sharePercent}% of ${result.options.days} day(s) of traded ` +
-                    'volume. Click a planned row to open its buy dialog with the quantity filled in; you press Buy.'
+                    "volume. Buy opens the item's buy dialog with the quantity filled in; you press Buy there."
             )
         );
     }
@@ -506,6 +519,7 @@ class DungeonShopPlanner {
             ['Gold', 'right'],
             ['Gold/Token', 'right'],
             ['Cap', 'right'],
+            ['', 'right'],
         ]) {
             const th = document.createElement('th');
             th.textContent = text;
@@ -541,6 +555,22 @@ class DungeonShopPlanner {
                     td.style.color = WARN;
                 }
             });
+            const action = tr.insertCell();
+            action.style.padding = '2px 0 2px 4px';
+            if (planned) {
+                const buy = document.createElement('button');
+                buy.type = 'button';
+                buy.className = 'toolasha-dungeon-plan-buy';
+                buy.textContent = 'Buy';
+                buy.title = tr.title;
+                styleGameButton(buy, 'quiet', true);
+                buy.addEventListener('click', (event) => {
+                    // The row's own click would open it a second time
+                    event.stopPropagation();
+                    this.openInShop(planRow);
+                });
+                action.appendChild(buy);
+            }
         }
         return table;
     }

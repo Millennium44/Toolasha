@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Dungeon token spend plan opens the buy dialog and can skip essence
 
-Clicking a planned row now opens that item's buy dialog in the Dungeon shop with the quantity typed in; you still press Buy. A new "skip essence" box leaves essence out of the plan so spare tokens stay for next time.
+A "Buy best" button and a Buy button on each planned row now open that item's buy dialog in the Dungeon shop with the quantity typed in; you still press Buy in the game's dialog. A new "skip essence" box leaves essence out of the plan so spare tokens stay for next time.
 
 ### Combat Sim models talisman Smite, Shatter, Overkill, Echo and Fortify
 

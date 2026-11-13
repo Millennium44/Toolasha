@@ -444,6 +444,23 @@ describe('a plan row click', () => {
         expect(body().textContent).toContain('Marksman Brooch × 2 is in the buy dialog. Press Buy yourself.');
     });
 
+    test('the Buy best button opens the top planned item, and a row Buy button opens its own once', async () => {
+        await openPirate();
+        const fang = shopCard('kraken_fang');
+        const brooch = shopCard('marksman_brooch');
+        const best = body().querySelector('.toolasha-dungeon-plan-open-next');
+        expect(best.textContent).toBe('Buy best: Kraken Fang × 1');
+        best.click();
+        await settle();
+        expect(fang.dialogs).toHaveLength(1);
+        expect(fang.dialogs[0].input.value).toBe('1');
+
+        rowFor('/items/marksman_brooch').querySelector('.toolasha-dungeon-plan-buy').click();
+        await settle();
+        expect(brooch.dialogs).toHaveLength(1);
+        expect(rowFor('/items/pirate_essence').querySelector('.toolasha-dungeon-plan-buy')).not.toBeNull();
+    });
+
     test('with no card on screen it arms the quantity and says to click the card', async () => {
         await openPirate();
         vi.useFakeTimers();
