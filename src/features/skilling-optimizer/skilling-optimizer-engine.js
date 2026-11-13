@@ -408,13 +408,13 @@ export function calculateSlotUpgradeCost(itemHrid, enhancementLevel, currentEqui
             const base = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel: 0 });
             const gameData = dataManager.getInitClientData();
             const enhancementCost = calculateDirectEnhancementCost(itemHrid, 0, enhancementLevel, gameData);
-            if (!base.missing && typeof base.price === 'number' && enhancementCost !== null) {
+            if (!base.missing && !base.partial && typeof base.price === 'number' && enhancementCost !== null) {
                 buyPrice = base.price + enhancementCost;
             }
         }
     } else {
         const buy = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel: 0 });
-        if (!buy.missing && typeof buy.price === 'number') buyPrice = buy.price;
+        if (!buy.missing && !buy.partial && typeof buy.price === 'number') buyPrice = buy.price;
     }
     if (typeof buyPrice !== 'number') return null;
 
@@ -433,7 +433,7 @@ export function calculateSlotUpgradeCost(itemHrid, enhancementLevel, currentEqui
         side: 'sell',
         enhancementLevel: currentEquipped.enhancementLevel || 0,
     });
-    if (sell.missing || typeof sell.price !== 'number') return null;
+    if (sell.missing || sell.partial || typeof sell.price !== 'number') return null;
 
     return Math.max(0, buyPrice - sell.price);
 }
