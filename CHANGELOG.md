@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Loadouts warn about talismans that do nothing on the test server
 
 The Loadouts panel marks the selected loadout with ⚠ when one of its talismans was deleted, sits in a slot its belt does not have, or is the wrong kind (a skilling talisman in a combat loadout, or the reverse); hover for the reason.
+
 ### Crops open their own gathering spot
 
 Items found in several gathering spots (Spaceberry, Star Fruit, Wheat, Sugar, Orange, the coffee beans and others) now link to their own dedicated spot rather than the mixed zone, which yields them faster. This affects "go to action", collection time-to-tier and the market's profit sort.
