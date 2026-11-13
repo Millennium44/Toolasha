@@ -407,7 +407,7 @@ export function noiseSummary(rows) {
  * @param {number} limit
  * @returns {Promise<Array>}
  */
-async function mapLanes(items, run, limit) {
+export async function mapLanes(items, run, limit) {
     const results = new Array(items.length);
     let next = 0;
     let failure = null;
@@ -425,6 +425,101 @@ async function mapLanes(items, run, limit) {
     await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane));
     if (failure) throw failure;
     return results;
+}
+
+/**
+ * The measuring rules of a paired comparison, shared by the ranking and the belt advisor: a sim's metrics at the run's
+ * prices and sale tax, and one sim against a baseline of the same length (changes per hour, error bars, verdicts, the
+ * Balanced score, profit that rests on a cost counted as free).
+ *
+ * @param {Object} params
+ * @param {Object} params.deps - `{computeMetrics, computeDeltas, rateDeltaNoisePct, significantDeltas}`
+ * @param {Object} params.gameData - The run's payload
+ * @param {string} params.playerHrid
+ * @param {Map} params.priceCache - The run's seeded sim price cache
+ * @param {number|null} params.saleTaxRate
+ * @param {Object} params.metric - A COMBAT_RANKING_METRICS entry
+ * @param {Object} params.balanceWeights
+ * @param {number|null} params.seed - The shared seed (null: every sim is an independent sample)
+ * @returns {{metricsOf: Function, measureAgainst: Function}} `metricsOf(result, hours)`;
+ *   `measureAgainst(result, {result, metrics, hours})`
+ */
+export function createMeasurer({ deps, gameData, playerHrid, priceCache, saleTaxRate, metric, balanceWeights, seed }) {
+    const metricsOf = (result, simHours) =>
+        deps.computeMetrics(result, gameData, playerHrid, simHours, {
+            priceCache,
+            ...(saleTaxRate != null ? { saleTaxRate } : {}),
+        });
+
+    /**
+     * One sim against a bare baseline of the same length (the first pass's, or a close-call round's): per-metric
+     * changes per hour, error bars and verdicts. Rates per hour from runs of different lengths estimate the same
+     * change, so a re-measured row replaces its first figures as they are.
+     */
+    const measureAgainst = (result, against) => {
+        const metrics = metricsOf(result, against.hours);
+        const deltas = deps.computeDeltas(against.metrics, metrics);
+        const noise = deps.rateDeltaNoisePct(against.result, result, playerHrid);
+        const significantBy = deps.significantDeltas(deltas, noise, {
+            baseline: against.metrics,
+            upgraded: metrics,
+            deathCounts: { baseline: against.result?.deaths?.[playerHrid], upgraded: result?.deaths?.[playerHrid] },
+        });
+        const change = {};
+        for (const m of COMBAT_RANKING_METRICS) {
+            change[m.key] = (m.rate(metrics) || 0) - (m.rate(against.metrics) || 0);
+        }
+        // A profit gain (alone or inside Balanced) that rests on a running cost counted as free is a ceiling, so it is
+        // never "significant": the row says so, and the set marks it
+        const costUnpriced = newlyUnpricedLineCosts(against.metrics, metrics);
+        const profitDriven =
+            costUnpriced.length > 0 &&
+            (metric.balanced ? normalizeBalanceWeights(balanceWeights).profit > 0 : metric.key === 'profit');
+        const unpricedFields = costUnpriced.length ? { costUnpriced } : {};
+        // A significant rise in deaths/hr flags the line whatever it is ranked by
+        const deathsRise = Boolean(significantBy?.deaths) && Number(deltas?.deaths) > 0;
+        if (metric.balanced) {
+            const score = balancedScore(
+                { deltas, noise, change, baseline: against.metrics, significantBy },
+                balanceWeights
+            );
+            return {
+                metrics,
+                deltas,
+                noise,
+                significantBy,
+                change,
+                value: score.valuePct,
+                valuePct: score.valuePct,
+                errPct: score.errPct,
+                significant: score.significant && !profitDriven,
+                ...unpricedFields,
+                deathsRise,
+                noEffect: seed != null && COMBAT_RANKING_METRICS.every((m) => change[m.key] === 0),
+            };
+        }
+        const good = metric.lowerIsBetter ? -change[metric.key] : change[metric.key];
+        const goodPct = metric.lowerIsBetter ? -deltas[metric.key] : deltas[metric.key];
+        return {
+            metrics,
+            deltas,
+            noise,
+            significantBy,
+            change,
+            value: good,
+            valuePct: goodPct,
+            errPct:
+                metric.key === 'profit'
+                    ? Z * profitNoiseOfNetPct(noise?.profit, against.metrics)
+                    : Z * (Number(noise?.[metric.key]) || 0),
+            significant: Boolean(significantBy?.[metric.key]) && !profitDriven,
+            ...unpricedFields,
+            deathsRise,
+            // Same seed and nothing moved: the line does nothing for this build here
+            noEffect: seed != null && COMBAT_RANKING_METRICS.every((m) => change[m.key] === 0),
+        };
+    };
+    return { metricsOf, measureAgainst };
 }
 
 /**
@@ -581,84 +676,23 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
     const baselineResult = await simulate([]);
     if (!baselineResult || stopped()) return stoppedResult([]);
     current++;
-    const metricsOf = (result, simHours = hours) =>
-        deps.computeMetrics(result, gameData, playerHrid, simHours, {
-            priceCache,
-            ...(saleTaxRate != null ? { saleTaxRate } : {}),
-        });
+    const { metricsOf, measureAgainst } = createMeasurer({
+        deps,
+        gameData,
+        playerHrid,
+        priceCache,
+        saleTaxRate,
+        metric,
+        balanceWeights,
+        seed,
+    });
     const baseline = metricsOf(baselineResult);
     base.baseline = baseline;
     // Profit built on unpriced drops or consumables counts them at zero: a floor, said with the figures
     base.unpriced = Array.isArray(baseline?.unpriced) ? baseline.unpriced : [];
 
-    /**
-     * One sim against a bare baseline of the same length (the first pass's, or a close-call round's): per-metric
-     * changes per hour, error bars and verdicts. Rates per hour from runs of different lengths estimate the same
-     * change, so a re-measured row replaces its first figures as they are.
-     */
-    const measure = (result, against = { result: baselineResult, metrics: baseline, hours }) => {
-        const metrics = metricsOf(result, against.hours);
-        const deltas = deps.computeDeltas(against.metrics, metrics);
-        const noise = deps.rateDeltaNoisePct(against.result, result, playerHrid);
-        const significantBy = deps.significantDeltas(deltas, noise, {
-            baseline: against.metrics,
-            upgraded: metrics,
-            deathCounts: { baseline: against.result?.deaths?.[playerHrid], upgraded: result?.deaths?.[playerHrid] },
-        });
-        const change = {};
-        for (const m of COMBAT_RANKING_METRICS) {
-            change[m.key] = (m.rate(metrics) || 0) - (m.rate(against.metrics) || 0);
-        }
-        // A profit gain (alone or inside Balanced) that rests on a running cost counted as free is a ceiling, so it is
-        // never "significant": the row says so, and the set marks it
-        const costUnpriced = newlyUnpricedLineCosts(against.metrics, metrics);
-        const profitDriven =
-            costUnpriced.length > 0 &&
-            (metric.balanced ? normalizeBalanceWeights(balanceWeights).profit > 0 : metric.key === 'profit');
-        const unpricedFields = costUnpriced.length ? { costUnpriced } : {};
-        // A significant rise in deaths/hr flags the line whatever it is ranked by
-        const deathsRise = Boolean(significantBy?.deaths) && Number(deltas?.deaths) > 0;
-        if (metric.balanced) {
-            const score = balancedScore(
-                { deltas, noise, change, baseline: against.metrics, significantBy },
-                balanceWeights
-            );
-            return {
-                metrics,
-                deltas,
-                noise,
-                significantBy,
-                change,
-                value: score.valuePct,
-                valuePct: score.valuePct,
-                errPct: score.errPct,
-                significant: score.significant && !profitDriven,
-                ...unpricedFields,
-                deathsRise,
-                noEffect: seed != null && COMBAT_RANKING_METRICS.every((m) => change[m.key] === 0),
-            };
-        }
-        const good = metric.lowerIsBetter ? -change[metric.key] : change[metric.key];
-        const goodPct = metric.lowerIsBetter ? -deltas[metric.key] : deltas[metric.key];
-        return {
-            metrics,
-            deltas,
-            noise,
-            significantBy,
-            change,
-            value: good,
-            valuePct: goodPct,
-            errPct:
-                metric.key === 'profit'
-                    ? Z * profitNoiseOfNetPct(noise?.profit, against.metrics)
-                    : Z * (Number(noise?.[metric.key]) || 0),
-            significant: Boolean(significantBy?.[metric.key]) && !profitDriven,
-            ...unpricedFields,
-            deathsRise,
-            // Same seed and nothing moved: the line does nothing for this build here
-            noEffect: seed != null && COMBAT_RANKING_METRICS.every((m) => change[m.key] === 0),
-        };
-    };
+    const measure = (result, against = { result: baselineResult, metrics: baseline, hours }) =>
+        measureAgainst(result, against);
 
     /** A ranking row for one line from one measurement */
     const lineRow = (detail, measured) => ({
