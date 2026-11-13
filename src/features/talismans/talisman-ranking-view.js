@@ -1393,6 +1393,11 @@ export class TalismanRankingSectionBase {
             warn('Some prices are missing and are left out: profit figures are floors.');
         }
         if (metric.key === 'profit' && result.hasUnpricedInputs) warn(`${UNPRICED_INPUTS_NOTE}.`);
+        if (basis === 'enhance') {
+            // Pro rates or a manual bench price the estimate on a bench that is not the player's: say whose
+            const benches = [...new Set((result.rows || []).map((row) => row.costs?.enhance?.bench).filter(Boolean))];
+            if (benches.length) warn(`The enhancement estimate uses ${benches.join('; ')}.`);
+        }
         const rows = sortBeltRows(result.rows || [], basis);
         if (!rows.length) {
             parts.push(

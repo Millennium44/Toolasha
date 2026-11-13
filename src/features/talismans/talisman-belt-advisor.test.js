@@ -14,6 +14,10 @@ vi.mock('../../utils/game-server.js', async (importOriginal) => ({
     ...(await importOriginal()),
     isTestServer: () => mocks.test,
 }));
+vi.mock('../enhancement/enhancement-params-source.js', () => ({
+    enhancementParamsFor: () => ({ paramsSource: 'auto' }),
+    benchNote: () => null,
+}));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPriceInfo: (hrid, options) => mocks.price(hrid, options),
 }));
@@ -157,6 +161,25 @@ describe('beltCosts', () => {
         expect(costs.market.price).toBe(1000);
         expect(costs.net).toEqual({ price: 1000 - Math.floor(100 * 0.96), resale: 96 });
         expect(costs.enhance.price).toBe(250);
+    });
+
+    test('the enhancement estimate carries the bench it ran on when that is not the players own', () => {
+        const pro = beltCosts(sameBelt, current, BELT_ITEMS, {
+            priceInfo,
+            afterTax,
+            testerOn: () => false,
+            enhanceCost: () => 250,
+            bench: () => 'pro rates — a top-end enhancer’s bench, not yours',
+        });
+        expect(pro.enhance).toEqual({ price: 250, bench: 'pro rates — a top-end enhancer’s bench, not yours' });
+        const own = beltCosts(sameBelt, current, BELT_ITEMS, {
+            priceInfo,
+            afterTax,
+            testerOn: () => false,
+            enhanceCost: () => 250,
+            bench: () => null,
+        });
+        expect(own.enhance.bench).toBeNull();
     });
 
     test('an unpriced belt has no cost on any basis that needs it, and says why: never 0', () => {
