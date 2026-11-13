@@ -22,6 +22,7 @@
 import dataManager from '../core/data-manager.js';
 import bundledLoadoutSnapshot from '../features/combat/loadout-snapshot.js';
 import { loadoutSnapshot } from './bundle-bridge.js';
+import { resolveLoadoutTalismans } from './talisman-bonuses.js';
 
 /**
  * The loadout store that actually has the loadouts in it.
@@ -52,6 +53,21 @@ export function resolveActionContext(actionTypeHrid) {
         equipment: loadoutSnapshot.getSnapshotForSkill(actionTypeHrid) ?? dataManager.getEquipment(),
         drinks: activeDrinksOf(rawDrinks),
     };
+}
+
+/**
+ * The talisman records the gear {@link resolveActionContext} puts on carries: the loadout the skill equips names its
+ * own (resolved against what the character owns, slot as the loadout puts it), else those slotted now. The context's
+ * equipment Map holds their summed bonuses only; a reader that needs the lines themselves takes them here, in the
+ * same tick as the context.
+ *
+ * @param {string} actionTypeHrid - e.g. "/action_types/cooking"
+ * @returns {Array<Object>} `{id, talismanTypeHrid, modifiers, slotIndex}` records; empty for none
+ */
+export function resolveActionTalismans(actionTypeHrid) {
+    const snapshot = loadouts().findSnapshotForSkill?.(actionTypeHrid) ?? null;
+    if (snapshot) return resolveLoadoutTalismans(snapshot.talismanIdMap, dataManager.getCharacterTalismans?.() || []);
+    return dataManager.getSlottedTalismans?.() || [];
 }
 
 /**

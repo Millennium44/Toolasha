@@ -53,6 +53,7 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPriceInfo: () => ({ price: null, source: null, estimated: false }),
 }));
 vi.mock('../../utils/action-context.js', () => ({
+    resolveActionTalismans: () => [],
     describeActionContextSource: (type) => ({
         key: `skill:${type}:Milking ★`,
         label: 'Milking ★ (the loadout this skill equips)',
