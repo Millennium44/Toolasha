@@ -8,7 +8,10 @@ vi.mock('../../core/storage.js', () => ({
         // A read that aborts part way says so here, and hands back only what it read in `getAll`, as the real
         // store does (`storeState.shortRead`: the store, and how many rows in key order it got through)
         async getAllChecked(name) {
-            if (storeState.shortRead?.store === name) return { ok: false, error: 'AbortError: transaction aborted' };
+            // `skip`: how many whole reads of the store succeed before the short one
+            if (storeState.shortRead?.store === name && !(storeState.shortRead.skip-- > 0)) {
+                return { ok: false, error: 'AbortError: transaction aborted' };
+            }
             return { ok: true, rows: await this.getAll(name) };
         },
         getAll: async (name) => {
@@ -3678,5 +3681,32 @@ describe('only the key-migration records the pull cleared are put back', () => {
 
         expect(storeState.stores.settings[CLEARED]).toEqual(['old-a']);
         expect(storeState.stores.settings[REWRITTEN]).toEqual(['old-d', 'new-d']);
+    });
+});
+
+describe('a pressed pull that cannot weigh a store still writes a record with its tombstones', () => {
+    const RECORD = 'enhancementTracker_sessions';
+    const GRAVES = 'enhancementTracker_sessionTombstones';
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
+
+    beforeEach(() => {
+        storeState.stores.settings[RECORD] = { s1: 1, s2: 1 };
+        storeState.stores.settings[GRAVES] = { s0: 1, s2: 2 };
+        // The settings fold reads the store whole; the weighing read after it comes back short
+        storeState.shortRead = { store: 'settings', keep: 1, skip: 1 };
+    });
+
+    test('both halves of a pair the download carries land, though identical here', async () => {
+        await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1, s2: 1 }, [GRAVES]: { s0: 1, s2: 2 } } }));
+
+        const landed = importedPayloads[0].stores.settings;
+        expect(landed[RECORD]).toEqual({ s1: 1, s2: 1 });
+        expect(landed[GRAVES]).toEqual({ s0: 1, s2: 2 });
+    });
+
+    test('a record the download carries without tombstones lands, so the restore can clear the ones hiding it', async () => {
+        await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1, s2: 1 } } }));
+
+        expect(importedPayloads[0].stores.settings[RECORD]).toEqual({ s1: 1, s2: 1 });
     });
 });
