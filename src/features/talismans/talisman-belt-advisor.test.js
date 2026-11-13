@@ -538,6 +538,29 @@ describe('runSkillingBeltAdvisor', () => {
         for (const r of unreal) expect(rateRow({ ...r, costs: { market: { price: 5 } } }, 'market').kind).toBe('none');
     });
 
+    test('skilling figures are exact: a rise of under 2% in an unpriced input still marks the gain unreal', async () => {
+        const context = contextFor(MEDIUM, 4);
+        const deps = makeDeps(context, {
+            evaluate: async (actionHrid, { equipment }) => {
+                const faster = (talismanBonusesOf(equipment).noncombat.milkingSpeed || 0) > 0.14;
+                return {
+                    profitPerHour: faster ? 1010 : 1000,
+                    xpPerHour: 1,
+                    revenuePerHour: 1000,
+                    hasMissingPrices: true,
+                    outputsUnpriced: false,
+                    unpricedCost: ['Milk'],
+                    // A 1% rise: inside the sampled combat path's 2% tolerance, but real here
+                    unpricedCostRates: { Milk: faster ? 10.1 : 10 },
+                };
+            },
+        });
+        const result = await runSkillingBeltAdvisor({ actionHrid: ACTION, metricKey: 'profit' }, deps);
+        const risen = result.rows.filter((r) => r.value > 0);
+        expect(risen.length).toBeGreaterThan(0);
+        for (const r of risen) expect(r.gainUnreal).toBe(true);
+    });
+
     test('Stop keeps the belts already valued, and says it stopped', async () => {
         const context = contextFor(MEDIUM, 4);
         let calls = 0;
