@@ -2705,6 +2705,17 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            skillingOptimizer_talismans: {
+                id: 'skillingOptimizer_talismans',
+                label: 'Skilling Simulator/Optimizer: Talismans section (test server)',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Test server only. Adds a Talismans section to the Optimizer tab: ranks every skilling talisman ' +
+                    'line for one of its actions (exact, from the profit and experience math), recommends a set ' +
+                    '(Practical, Ideal or within an orb budget), and finds the best next target for the talismans ' +
+                    'you own. Off: the section is not drawn.',
+            },
         },
     },
 
@@ -3432,6 +3443,41 @@ export const settingsGroups = {
                     'Adds a Party tab to the Combat Simulator: save teammate builds to a roster, then sim you with ' +
                     'every party you could make from it, in the zones you pick, and rank the parties by your own ' +
                     'EXP/hr and profit/hr against going solo. Off: the tab and its roster controls are not drawn.',
+            },
+            combatSim_talismanLineRanking: {
+                id: 'combatSim_talismanLineRanking',
+                label: 'Combat Simulator: Talisman lines ranking (test server)',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Test server only. Adds a Talisman lines section to the Upgrade tab: ranks every combat talisman ' +
+                    'line by what it adds to your build (by sim in the chosen zone) and recommends a set (Practical, ' +
+                    'Ideal or within an orb budget). Off: the section is not drawn. The skilling ranking is in the ' +
+                    'Skilling Optimizer.',
+            },
+            combatSim_talismanBalanceXp: {
+                id: 'combatSim_talismanBalanceXp',
+                label: 'Combat Simulator: Talisman lines Balanced weight, EXP/hr',
+                type: 'number',
+                default: 1,
+                min: 0,
+                help: 'How much the EXP/hr % gain counts in the Talisman lines "Balanced" ranking.',
+            },
+            combatSim_talismanBalanceProfit: {
+                id: 'combatSim_talismanBalanceProfit',
+                label: 'Combat Simulator: Talisman lines Balanced weight, Profit/hr',
+                type: 'number',
+                default: 1,
+                min: 0,
+                help: 'How much the Profit/hr % gain counts in the Talisman lines "Balanced" ranking.',
+            },
+            combatSim_talismanBalanceDps: {
+                id: 'combatSim_talismanBalanceDps',
+                label: 'Combat Simulator: Talisman lines Balanced weight, DPS',
+                type: 'number',
+                default: 1,
+                min: 0,
+                help: 'How much the DPS % gain counts in the Talisman lines "Balanced" ranking.',
             },
             combatSim_decimalMinutes: {
                 id: 'combatSim_decimalMinutes',

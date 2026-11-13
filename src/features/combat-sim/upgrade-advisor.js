@@ -6344,10 +6344,13 @@ export function closeCallRows(rows) {
  * @param {Function} [context.onRoundStart] - (rows, multiplier) before a round runs
  * @param {Function} context.runRound - (rows, multiplier) => Promise<rows|null>: the re-measured rows in order, null
  *   when stopped
+ * @param {Function} [context.pickClose] - (rows) => the close calls; {@link closeCallRows} when omitted. The talisman
+ *   line ranking passes its own (rows near the recommended set's cut line), since its rows carry no cost
  * @returns {Promise<{ran: boolean, rounds: number, rows: number, reason: string, hours: number, budgetMs: number}>}
  */
 export async function resimCloseCallRows(results, context) {
     const { firstPassMs, firstPassSims, hours, now, abortSignal, lanes = 1, onRoundStart, runRound } = context;
+    const pickClose = typeof context.pickClose === 'function' ? context.pickClose : closeCallRows;
     // The setting's ceiling; Infinity means no time cap (the phase then ends on separation, the round limit or Stop)
     const maxBudgetMs = typeof context.maxBudgetMs === 'number' ? context.maxBudgetMs : resimMaxBudgetMs();
     const budgetMs =
@@ -6361,7 +6364,7 @@ export async function resimCloseCallRows(results, context) {
     let reason = 'separated';
 
     for (const multiplier of RESIM_MULTIPLIERS) {
-        const close = closeCallRows(results);
+        const close = pickClose(results);
         if (!close.length) {
             reason = 'separated';
             break;
@@ -6399,7 +6402,7 @@ export async function resimCloseCallRows(results, context) {
         }
         reason = multiplier === RESIM_MULTIPLIERS[RESIM_MULTIPLIERS.length - 1] ? 'max-hours' : 'separated';
     }
-    if (reason === 'max-hours' && !closeCallRows(results).length) reason = 'separated';
+    if (reason === 'max-hours' && !pickClose(results).length) reason = 'separated';
     return { ran: true, rounds, rows: touched.size, reason, hours: lastHours, budgetMs };
 }
 

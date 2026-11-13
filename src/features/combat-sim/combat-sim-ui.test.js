@@ -138,6 +138,9 @@ const mocks = vi.hoisted(() => ({
     skipSkillingRooms: false,
     /** `combatSim_partyFinder`: off unless a test turns the Party tab on */
     partyFinder: false,
+    /** `combatSim_talismanLineRanking`, and whether the section may be drawn (test server + talisman tables) */
+    talismanRanking: true,
+    talismanAvailable: false,
     settingChangeCallbacks: new Map(),
     /** The `getSettingValue` mock's `profitCalc_keyPricingMode`, for the pricing quick-settings row */
     keyPricingMode: 'ask',
@@ -217,6 +220,7 @@ vi.mock('../../core/config.js', () => ({
         getSetting: (key, fallback = false) => {
             if (key === 'combatSim_upgradeSkipSkillingRooms') return mocks.skipSkillingRooms;
             if (key === 'combatSim_partyFinder') return mocks.partyFinder;
+            if (key === 'combatSim_talismanLineRanking') return mocks.talismanRanking;
             return fallback;
         },
         // Real `setSetting`/`setSettingValue` fire the registered change callback
@@ -621,6 +625,30 @@ vi.mock('../../utils/ability-cost-calculator.js', () => ({
     }),
 }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: () => ({}) }));
+// The section itself is tested in talisman-line-ranking-ui.test.js; here only how the panel builds and drops it
+vi.mock('./talisman-line-ranking-ui.js', () => ({
+    talismanRankingAvailable: () => mocks.talismanAvailable,
+    TalismanLineRankingSection: class {
+        constructor(host) {
+            this.host = host;
+            this.root = null;
+            this.busy = false;
+        }
+        mount(container) {
+            this.root = document.createElement('div');
+            this.root.className = 'mwi-csim-talisman-rank-test';
+            container.appendChild(this.root);
+        }
+        detach() {
+            this.root?.remove();
+            this.root = null;
+        }
+        isBusy() {
+            return this.busy;
+        }
+        onShow() {}
+    },
+}));
 
 vi.mock('./all-zones-runner.js', () => ({
     runAllZonesSimulation: async (params) => {
@@ -18843,6 +18871,68 @@ describe('the Party tab follows its setting', () => {
         expect(ui._partyFinder).toBeNull();
         expect(mocks.settingChangeCallbacks.has('combatSim_partyFinder')).toBe(false);
         // destroy() runs again in afterEach; build a panel for it to take down
+        ui.buildPanel();
+    });
+});
+
+describe('the Talisman lines section follows its setting and the server', () => {
+    afterEach(() => {
+        ui.destroy();
+        mocks.talismanRanking = true;
+        mocks.talismanAvailable = false;
+    });
+    const drawn = () => ui.panel.querySelector('.mwi-csim-talisman-rank-test');
+
+    test('live server (no talisman tables): nothing is drawn', () => {
+        mocks.talismanAvailable = false;
+        ui.buildPanel();
+        ui._switchTab('upgrade');
+        expect(drawn()).toBeNull();
+        expect(ui._talismanRanking).toBeNull();
+    });
+
+    test('setting off: nothing; turned on, drawn; turned off again, gone', () => {
+        mocks.talismanAvailable = true;
+        mocks.talismanRanking = false;
+        ui.buildPanel();
+        expect(drawn()).toBeNull();
+        mocks.talismanRanking = true;
+        mocks.settingChangeCallbacks.get('combatSim_talismanLineRanking')?.('combatSim_talismanLineRanking', true);
+        expect(drawn()).not.toBeNull();
+        mocks.talismanRanking = false;
+        mocks.settingChangeCallbacks.get('combatSim_talismanLineRanking')?.('combatSim_talismanLineRanking', false);
+        expect(drawn()).toBeNull();
+        expect(ui._talismanRanking).toBeNull();
+    });
+
+    test('a ranking in flight makes the panel busy, Simulate refuses instead of cancelling it, destroy lets it go', async () => {
+        mocks.talismanAvailable = true;
+        ui.buildPanel();
+        const section = ui._talismanRanking;
+        section.busy = true;
+        expect(ui._isBusy()).toBe(true);
+        const cancels = mocks.cancelActiveCalls;
+        await ui._onSimulate();
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe(
+            'A talisman ranking is running. Stop it in the Upgrade tab first.'
+        );
+        expect(mocks.cancelActiveCalls).toBe(cancels);
+        // Analyze says why it does nothing, and an All Zones sweep refuses the same way Simulate does
+        await ui._onUpgradeAnalyze();
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe(
+            'A talisman ranking is running. Stop it first.'
+        );
+        ui.panel.querySelector('#mwi-csim-status').textContent = '';
+        await ui._onSimulateAllZones();
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe(
+            'A talisman ranking is running. Stop it in the Upgrade tab first.'
+        );
+        expect(mocks.cancelActiveCalls).toBe(cancels);
+        section.busy = false;
+        ui.destroy();
+        expect(section.root).toBeNull();
+        expect(ui._talismanRanking).toBeNull();
+        expect(mocks.settingChangeCallbacks.has('combatSim_talismanLineRanking')).toBe(false);
         ui.buildPanel();
     });
 });

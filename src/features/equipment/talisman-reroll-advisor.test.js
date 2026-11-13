@@ -56,6 +56,7 @@ const {
     coinCost,
     describeAdvice,
     ADVISOR_HELP,
+    setRerollTarget,
 } = await import('./talisman-reroll-advisor.js');
 
 const M = (name) => `/talisman_modifiers/${name}`;
@@ -405,5 +406,72 @@ describe('review fixes', () => {
         expect(assumed).toContain('Exchange');
         expect(ADVISOR_HELP.join(' ')).toMatch(/Binding Orb, measured/);
         expect(ADVISOR_HELP.join(' ')).toMatch(/average weight/);
+    });
+});
+
+describe('a target handed in from outside (Aim for this in the line ranking)', () => {
+    test('not running: refused', () => {
+        expect(setRerollTarget(5, [{ hrid: M('armor'), minGrade: 3 }])).toBe(false);
+    });
+
+    test('the open window for that talisman shows the target in its rows', () => {
+        const talisman = talismanRow(5, [
+            line('armor', 1),
+            line('tenacity', 1),
+            line('max_hitpoints', 1),
+            line('hp_regen', 1),
+        ]);
+        openWindow(talisman);
+        expect(setRerollTarget(5, [{ hrid: M('critical_damage'), minGrade: 3 }])).toBe(true);
+        vi.advanceTimersByTime(200);
+        vi.runAllTimers();
+        const types = panel().querySelectorAll('.toolasha-reroll-advisor-type');
+        const grades = panel().querySelectorAll('.toolasha-reroll-advisor-grade');
+        expect(types[0].value).toBe(M('critical_damage'));
+        expect(grades[0].value).toBe('3');
+        expect(moveText()).toBeTruthy();
+    });
+});
+
+describe('Aim for this, through the path the line ranking button uses', () => {
+    afterEach(() => {
+        delete globalThis.window.Toolasha;
+    });
+
+    test('a target handed in through Toolasha.UI before the window opens shows in its rows when it opens', async () => {
+        const { aimRerollAdvisor } = await import('../talismans/talisman-ranking-view.js');
+        feature.initialize();
+        globalThis.window.Toolasha = { UI: { talismanRerollAdvisor: feature } };
+        const talisman = talismanRow(3208, [
+            line('fortify', 1),
+            line('intelligence_experience', 6),
+            line('ranged_experience', 2),
+            line('defense_experience', 3),
+        ]);
+        game.talismans = [talisman];
+        // Ids come from characterTalismans as numbers; the window's prop carries the same record
+        expect(aimRerollAdvisor(3208, [{ hrid: M('magic_experience'), minGrade: 1 }])).toBe('ok');
+        openWindow(
+            talismanRow(3208, [
+                line('fortify', 1),
+                line('intelligence_experience', 6),
+                line('ranged_experience', 2),
+                line('defense_experience', 3),
+            ])
+        );
+        vi.runAllTimers();
+        const types = panel().querySelectorAll('.toolasha-reroll-advisor-type');
+        expect(types[0].value).toBe(M('magic_experience'));
+        expect(moveText()).not.toBe('Pick up to four lines you want.');
+    });
+});
+
+describe("aimAt only for this character's talismans", () => {
+    test('an id the character does not own is refused and nothing is kept', () => {
+        openWindow(talismanRow(5, [line('armor', 1)]));
+        expect(setRerollTarget(999, [{ hrid: M('armor'), minGrade: 2 }])).toBe(false);
+        expect(feature.getTargets({ id: 999 })).toEqual([]);
+        // A string id of an owned one still counts
+        expect(setRerollTarget('5', [{ hrid: M('armor'), minGrade: 2 }])).toBe(true);
     });
 });

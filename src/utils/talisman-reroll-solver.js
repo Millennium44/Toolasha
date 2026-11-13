@@ -66,6 +66,25 @@ export const MEASURED_ODDS = Object.freeze({
     /** Focus ×5, 100 rolls focused on Armor: Armor in 33% of rolls (36.9% predicted at ×5), every grade kept */
     focusRolls: 100,
     /**
+     * Lines a talisman gets from creation and from cores (lines 2, 3 and 4), 2026-11-13 (character 32030): 99 combat
+     * talismans, 396 lines. Never above G3 (about 44 would have been G4-G6 on the Reforging curve): G1 57.1 / G2 27.5
+     * / G3 15.4, the Reforging curve cut at G3 and renormalized (57.3 / 26.9 / 15.8). The same for every source:
+     * create 51.5 / 32.3 / 16.2, 5 Basic cores 63.6 / 22.2 / 14.1, an Advanced core 58.6 / 28.3 / 13.1, an Expert core
+     * 54.5 / 27.3 / 18.2. Types never repeat on one talisman; Specials 5 of 396 (1.3%, data weight 1.15%).
+     */
+    freshLineGrades: Object.freeze({
+        cap: 3,
+        odds: Object.freeze([0.571, 0.275, 0.154]),
+        lines: 396,
+        talismans: 99,
+        bySource: Object.freeze({
+            create: Object.freeze([0.515, 0.323, 0.162]),
+            basicCores: Object.freeze([0.636, 0.222, 0.141]),
+            advancedCore: Object.freeze([0.586, 0.283, 0.131]),
+            expertCore: Object.freeze([0.545, 0.273, 0.182]),
+        }),
+    }),
+    /**
      * Binding Orb, 2026-11-13 (character 32030): a lock costs one Binding Orb; locking another line while one is
      * locked costs one more and moves the lock; unlocking is free. The lock and unlock edges below model exactly that.
      */
