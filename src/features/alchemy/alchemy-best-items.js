@@ -1142,7 +1142,7 @@ class AlchemyBestItems {
         gearLabel.setAttribute('data-mwi-gear-only-label', 'true');
         gearLabel.title =
             'Hide every item that is not gear. Lumber, cheese, hides, teas, fibers and cores only yield ' +
-            'essences, so a gear chain is not rare to find among them.';
+            'essences, so hiding them makes the gear worth decomposing easier to spot.';
         gearLabel.style.cssText =
             'display: flex; align-items: center; gap: 3px; margin-left: 4px; font-size: 0.75rem; color: #ddd; cursor: pointer;';
         const gearBox = document.createElement('input');
