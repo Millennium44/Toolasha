@@ -582,7 +582,12 @@ describe('runSkillingLineRanking', () => {
 
         test('a missing output keeps the floor label and its gain', async () => {
             const result = await run(
-                vi.fn(async (hrid, ctx) => ({ ...(await evaluate(hrid, ctx)), revenuePerHour: 500, hasMissingPrices: true, outputsUnpriced: true }))
+                vi.fn(async (hrid, ctx) => ({
+                    ...(await evaluate(hrid, ctx)),
+                    revenuePerHour: 500,
+                    hasMissingPrices: true,
+                    outputsUnpriced: true,
+                }))
             );
             expect(result.hasMissingPrices).toBe(true);
             expect(result.hasUnpricedInputs).toBe(false);
