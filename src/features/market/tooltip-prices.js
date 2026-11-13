@@ -37,8 +37,14 @@ import { patientTickPrice } from '../../utils/patient-tick.js';
 import { currentPricingSideChoice } from '../../utils/pricing-side-select.js';
 import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { resolveItemPrice, calculatePriceAfterTax } from '../../utils/profit-helpers.js';
-import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
+import {
+    MARKET_TAX,
+    COWBELL_BAG_HRID,
+    COWBELL_BAG_TAX,
+    SELL_TAX_EXCLUDED_TOOLTIP,
+} from '../../utils/profit-constants.js';
 import dom from '../../utils/dom.js';
+import { sellTaxMarker } from '../../utils/sell-tax-marker.js';
 import { shortDuration } from '../../utils/overlay-format.js';
 import { describeAssumedCape } from '../../utils/untradable-cape.js';
 import { parseItemCount, parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
@@ -52,13 +58,16 @@ import performanceMonitor from '../../utils/performance-monitor.js';
 import { parseWearable, highestOwnedEnhancements, resolveEnhancementLevel } from '../../utils/loadout-equipment.js';
 import { maxLevel } from '../../utils/game-maximums.js';
 import {
+    CHAIN_MAX_DEPTH,
     bestSelfUseCandidate,
+    decomposeStepTerms,
     ownUseUnitCost,
     selfUseDecompose,
     selfUseDecomposeChain,
     selfUseTransmuteHeld,
     untaxedContainerValue,
 } from '../../utils/self-use-alchemy.js';
+import { maximizeChainRatio } from '../../utils/decompose-chain-value.js';
 import selfUseWanted, {
     KEEP_SECTION_CLASS,
     MARK_MEANING_SETTING,
@@ -1556,7 +1565,6 @@ class TooltipPrices {
     injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip = false, simulated = []) {
         const scrollMark = tileScrollMarker(simulated);
         const scrollTitle = tileScrollTitle(simulated);
-        const scrollTitleAttr = scrollTitle ? ` title="${escapeAttribute(scrollTitle)}"` : '';
         const tooltipText = isCollectionTooltip
             ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
             : tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
@@ -1590,7 +1598,8 @@ class TooltipPrices {
             const profitPerDay = profitData.profitPerDay;
             const profitColor = profitData.profitPerHour >= 0 ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
 
-            html += `<div style="color: ${profitColor}; font-weight: bold;"${scrollTitleAttr}>Net: ${formatKMB(profitData.profitPerHour)}/hr (${formatKMB(profitPerDay)}/day)${scrollMark}</div>`;
+            const { attr: marksAttr, mark: marks } = this._profitMarks(profitData, simulated);
+            html += `<div style="color: ${profitColor}; font-weight: bold;"${marksAttr}>Net: ${formatKMB(profitData.profitPerHour)}/hr (${formatKMB(profitPerDay)}/day)${marks}</div>`;
 
             // Show detailed breakdown if enabled
             if (showDetailed) {
@@ -1704,6 +1713,22 @@ class TooltipPrices {
         html += '</tr>';
         html += `<tr><td colspan="4" style="padding: 2px 4px; opacity: 0.7; font-style: italic;">${note}</td></tr>`;
         return html;
+    }
+
+    /**
+     * The title and marker a craft-profit figure carries: the tiles' simulated scrolls it assumes and the
+     * personal-use sell-tax exclusion it was computed under (both are things the tile marks too).
+     * @param {Object} profitData - Craft profit (`excludeSellTax`)
+     * @param {string[]} simulated - Short names of the scrolls the figures assume
+     * @returns {{attr: string, mark: string}} A ` title="..."` attribute (or empty) and a marker string
+     */
+    _profitMarks(profitData, simulated) {
+        const excluded = Boolean(profitData?.excludeSellTax);
+        const title = [tileScrollTitle(simulated), excluded ? SELL_TAX_EXCLUDED_TOOLTIP : ''].filter(Boolean).join(' ');
+        return {
+            attr: title ? ` title="${escapeAttribute(title)}"` : '',
+            mark: `${tileScrollMarker(simulated)}${sellTaxMarker(excluded)}`,
+        };
     }
 
     /**
@@ -1845,8 +1870,8 @@ class TooltipPrices {
             const profitPerDay = profitData.profitPerDay;
             const profitColor = profitData.profitPerHour >= 0 ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
 
-            const profitTitle = simulated.length ? ` title="${escapeAttribute(tileScrollTitle(simulated))}"` : '';
-            html += `<div style="color: ${profitColor};"${profitTitle}>Profit: ${formatKMB(profitPerAction)}/action, ${formatKMB(profitData.profitPerHour)}/hour, ${formatKMB(profitPerDay)}/day${tileScrollMarker(simulated)}</div>`;
+            const { attr: marksAttr, mark: marks } = this._profitMarks(profitData, simulated);
+            html += `<div style="color: ${profitColor};"${marksAttr}>Profit: ${formatKMB(profitPerAction)}/action, ${formatKMB(profitData.profitPerHour)}/hour, ${formatKMB(profitPerDay)}/day${marks}</div>`;
             html += '</div>';
         }
 
@@ -2585,8 +2610,8 @@ class TooltipPrices {
     }
 
     /**
-     * The tooltip's full decompose chain for one base item: each chain step on the setup best for the
-     * chain below it, the top item charged at its own-use cost, outputs valued under the self-use
+     * The tooltip's full decompose chain for one base item: every step's setup picked jointly for the
+     * chain's gold per hour (see {@link solveSelfUseChainByRate}), the top item charged at its own-use cost, outputs valued under the self-use
      * pricing. The one place that arithmetic lives; the tooltip line and the Best Items own-stock sort both read it.
      * @param {string} itemHrid
      * @param {Object} env - From {@link buildSelfUseEnv}
@@ -2612,6 +2637,19 @@ class TooltipPrices {
             },
             ...pricing,
         };
+        // The /hr figure is the whole chain's gold per hour, so every step's setup is picked jointly for it,
+        // by the selector the Best Items chain table uses (this chain keeps its own self-use pricing and
+        // own-use cost). Where that cannot run (no own-use cost, a cycle, the depth cap, a step with an
+        // unpriced output) each step falls back to the per-item pick below.
+        const joint = this.solveSelfUseChainByRate(itemHrid, decompose, ownUseCost, chainDeps, candidatesFor);
+        if (joint) {
+            const chain = selfUseDecomposeChain(itemHrid, {
+                ...chainDeps,
+                getDecompose: (hrid) => joint.selection.get(hrid) ?? null,
+                ownUseCost,
+            });
+            return { ownUseCost, chain, topStep: joint.selection.get(itemHrid) ?? null };
+        }
         const chainSteps = new Map();
         const bestChainStep = (hrid) => {
             if (!chainSteps.has(hrid)) {
@@ -2648,6 +2686,54 @@ class TooltipPrices {
         });
         // The setup the top step settled on, for a caller that shows its catalyst
         return { ownUseCost, chain, topStep: chainSteps.get(itemHrid) ?? null };
+    }
+
+    /**
+     * Every chain step's setup, picked jointly for the whole chain's gold per hour
+     * ({@link maximizeChainRatio}, the selector the Best Items chain table runs) under the tooltip's own
+     * self-use pricing: its keep list, and the top item charged at its own-use cost.
+     * @param {string} itemHrid
+     * @param {Object} decompose - The item's decompose calculator result (the seller's pick)
+     * @param {number|null} ownUseCost - The top item's own-use cost
+     * @param {Object} chainDeps - Pricing and chain deps as {@link selfUseDecomposeChain} takes them
+     * @param {Function} candidatesFor - From {@link buildSelfUseEnv}
+     * @returns {{selection: Map<string, Object>}|null} Null when the pick cannot run
+     */
+    solveSelfUseChainByRate(itemHrid, decompose, ownUseCost, chainDeps, candidatesFor) {
+        const rootCost = Number(ownUseCost);
+        if (ownUseCost === null || ownUseCost === undefined || !Number.isFinite(rootCost)) return null;
+        const outputsOf = (hrid) => dataManager.getItemDetails(hrid)?.alchemyDetail?.decomposeItems;
+        // maximizeChainRatio needs an acyclic tree the walk reaches within its depth cap
+        const heights = new Map();
+        const heightOf = (hrid, path = new Set()) => {
+            if (heights.has(hrid)) return heights.get(hrid);
+            if (path.has(hrid)) return Infinity;
+            const inner = new Set([...path, hrid]);
+            let height = 0;
+            for (const output of outputsOf(hrid) ?? []) {
+                if (!(Number(output?.count) > 0) || !chainDeps.isChainable(output.itemHrid)) continue;
+                height = Math.max(height, 1 + heightOf(output.itemHrid, inner));
+            }
+            heights.set(hrid, height);
+            return height;
+        };
+        if (heightOf(itemHrid) > CHAIN_MAX_DEPTH) return null;
+        const termsCache = new Map();
+        const termsOf = (hrid) => {
+            if (!termsCache.has(hrid)) {
+                const candidates = candidatesFor('decompose', hrid, () =>
+                    hrid === itemHrid ? decompose : alchemyProfitCalculator.calculateDecomposeProfit(hrid)
+                );
+                const terms = [];
+                for (const result of candidates) {
+                    const stepTerms = decomposeStepTerms(result, outputsOf(hrid), chainDeps);
+                    if (stepTerms) terms.push({ ...stepTerms, result });
+                }
+                termsCache.set(hrid, terms);
+            }
+            return termsCache.get(hrid);
+        };
+        return maximizeChainRatio(itemHrid, { termsOf, rootCost });
     }
 
     /**
@@ -2688,7 +2774,7 @@ class TooltipPrices {
         let profitData = craftProfitData;
         if (profitData === undefined) {
             profitData = profitCalculator.findProductionAction?.(itemHrid)
-                ? await profitCalculator.calculateProfit(itemHrid, { keepSellTax: true })
+                ? await profitCalculator.calculateProfit(itemHrid)
                 : null;
         }
         const comparison = profitData
