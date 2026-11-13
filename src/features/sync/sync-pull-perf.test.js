@@ -18,6 +18,10 @@ vi.mock('../../core/storage.js', () => ({
             await macro();
             return Object.keys(storeState.stores);
         },
+        // Sync reads whole stores through the checked read; this store's reads never come back short
+        async getAllChecked(name) {
+            return { ok: true, rows: await this.getAll(name) };
+        },
         getAll: async (name) => {
             await macro();
             return structuredClone(storeState.stores[name] || {});

@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync never uploads a half-read store
+
+If this device's storage could not be read in full (a stuck or interrupted database read), sync could upload the incomplete copy over the complete one on GitHub, or let a pull overwrite your local edits. It now stops, says so, and tries again on the next sync.
+
+### Sync stands down cleanly when overtaken mid-pull
+
+A pull that another sync or a character switch overtook while it was combining the download no longer writes that download afterward; the next sync picks it up.
+
+### Sync reports an unreadable store once
+
+When this device's storage stays too slow to read in full, automatic sync says so once instead of showing an error every interval, and syncs nothing until the store can be read.
+
 ### Show hidden brings hidden Best Items rows back
 
 Hidden rows now reappear where they rank, dimmed, with a ↺ to unhide each one, instead of landing below the 100-row cap where they could not be seen. The button also says how many hidden items match your current filters.

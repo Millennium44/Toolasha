@@ -61,6 +61,10 @@ vi.mock('../../core/storage.js', () => {
             },
             parseJSON: (raw, _key, fallback) => raw ?? fallback,
             listStores: async () => ['settings'],
+            // Sync reads whole stores through the checked read; this store's reads never come back short
+            async getAllChecked(name) {
+                return { ok: true, rows: await this.getAll(name) };
+            },
             getAll: async (name) => Object.fromEntries(area(name)),
             getAllKeys: async (name = 'settings') => [...area(name).keys()],
             tryGetAllKeys: async (name = 'settings') => [...area(name).keys()],

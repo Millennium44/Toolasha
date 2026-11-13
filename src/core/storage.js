@@ -1864,16 +1864,19 @@ class Storage {
      * @param {string} storeName - Object store name
      * @param {Array<string>} keys - Every key the callback may read or change
      * @param {(values: Record<string, *>) => Record<string, *>|undefined} mutate - Synchronous update
+     * @param {{bypassRestoreLatch?: boolean}} [options] - `bypassRestoreLatch` for restore bookkeeping that is
+     *   not pre-restore state (as on `putAll`); a pending debounced write to any key still refuses
      * @returns {Promise<{values: Record<string, *>, written: Array<string>}|null>} Committed outcome, or null
      */
-    async updateMany(storeName, keys, mutate) {
+    async updateMany(storeName, keys, mutate, { bypassRestoreLatch = false } = {}) {
         if (!Array.isArray(keys) || keys.length === 0 || typeof mutate !== 'function') return null;
         keys = [...new Set(keys)];
         const refused = () =>
             this._closingForTeardown ||
             keys.some(
                 (key) =>
-                    this._refuseDuringRestore(key, storeName, 'save') || this.pendingWrites.has(`${storeName}:${key}`)
+                    (!bypassRestoreLatch && this._refuseDuringRestore(key, storeName, 'save')) ||
+                    this.pendingWrites.has(`${storeName}:${key}`)
             );
         if (refused()) return null;
         if (!this.db && !(await this._awaitConnection())) return null;
@@ -2693,7 +2696,7 @@ class Storage {
      * `getAll` answers `{}` or the rows read before an abort when IndexedDB fails, which suits callers that
      * tolerate a short answer but lets a backup pass off a partial store as the whole of it. This answers
      * `{ ok: true, rows }` only when the cursor walked to its end; any error, abort, missing connection or
-     * timed-out read is `{ ok: false, error }`. Used by the full backup only.
+     * timed-out read is `{ ok: false, error }`. Used by the full backup and by sync's whole-store reads.
      * @param {string} storeName - Object store name
      * @returns {Promise<{ok: true, rows: Object}|{ok: false, error: string}>} The checked read
      */

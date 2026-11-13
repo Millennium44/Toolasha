@@ -16,6 +16,10 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         ready: Promise.resolve(),
         listStores: async () => Object.keys(storeState.stores),
+        // Sync reads whole stores through the checked read; this store's reads never come back short
+        async getAllChecked(name) {
+            return { ok: true, rows: await this.getAll(name) };
+        },
         getAll: async (name) => {
             // Something else running while a build waits on a read
             const during = storeState.duringGetAll;

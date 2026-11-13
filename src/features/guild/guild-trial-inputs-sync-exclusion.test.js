@@ -16,6 +16,10 @@ const state = vi.hoisted(() => ({ stores: {}, written: {} }));
 vi.mock('../../core/storage.js', () => ({
     default: {
         listStores: async () => Object.keys(state.stores),
+        // Sync reads whole stores through the checked read; this store's reads never come back short
+        async getAllChecked(name) {
+            return { ok: true, rows: await this.getAll(name) };
+        },
         getAll: async (name) => ({ ...(state.stores[name] || {}) }),
         getJSON: async (key, name, fallback = null) => {
             const store = state.stores[name] || {};
