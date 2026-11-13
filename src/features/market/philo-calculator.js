@@ -758,7 +758,7 @@ class PhiloCalculator {
             // tick on a plain book quote (a custom price, a shop floor or an estimate has no queue to jump)
             priceBase: (hrid) => {
                 const base = resolveItemPrice(hrid, { side: 'buy', mode: buyType, context: 'profit' });
-                if (base.missing || !(base.price > 0)) return null;
+                if (base.missing || base.partial || !(base.price > 0)) return null;
                 if (base.custom || base.estimated) return base.price;
                 const book = ironCowBook(hrid) ?? marketAPI.getPrice(hrid, 0);
                 return base.price === book?.[buyType]
@@ -875,7 +875,7 @@ class PhiloCalculator {
                     // side and applies the patient tick the catalyst and inputs already take
                     const mode = this.pricingMode === GLOBAL_PRICING_MODE ? undefined : buyType;
                     const resolved = resolveItemPrice(hrid, { side: 'buy', mode, context: 'profit' });
-                    return resolved.missing ? null : resolved.price;
+                    return resolved.missing || resolved.partial ? null : resolved.price;
                 },
             });
             return { perAction: teaCosts.totalCostPerHour / actionsPerHour, missing: teaCosts.hasMissingPrices };
