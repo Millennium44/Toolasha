@@ -1332,10 +1332,7 @@ describe('placeTrialBlock', () => {
 
     describe('the combat readout under the bosses', () => {
         const setWidth = (el, prop, value) => Object.defineProperty(el, prop, { value, configurable: true });
-        const bossCountsAndWidths = [1, 2, 4].flatMap((bosses) => [
-            [bosses, 704],
-            [bosses, 300],
-        ]);
+        const bossCountsAndWidths = [1, 2, 4].map((bosses) => [bosses, 704]);
 
         for (const [bosses, width] of bossCountsAndWidths) {
             test(`${bosses} boss(es) in a ${width}px grid: the block is the last item, below the cards, never in the payout's place`, () => {
@@ -1351,6 +1348,112 @@ describe('placeTrialBlock', () => {
                 expect(blockNearAnchor(block, cards[0], root)).toBe(true);
             });
         }
+
+        describe('on a phone-sized fight', () => {
+            /** The fight panel with the consumables and ability pieces the game draws beside the battle area */
+            function phoneFight(bosses, width) {
+                const fight = fightLayout(bosses);
+                setWidth(fight.grid, 'clientWidth', width);
+                const panel = document.querySelector('[class*="BattlePanel_battlePanel"]');
+                panel.insertAdjacentHTML(
+                    'beforeend',
+                    '<div id="consumables" class="BattlePanel_combatConsumables__c" style="display:flex">c</div>' +
+                        '<div id="abilities" class="BattlePanel_combatAbilities__a" style="width:50%; flex:0 0 auto">' +
+                        '<div id="abilityGrid" class="BattlePanel_combatAbilityGrid__g" ' +
+                        'style="grid-template-columns:repeat(4, 40px)">' +
+                        '<i></i><i></i><i></i><i></i><i></i></div></div>'
+                );
+                return {
+                    ...fight,
+                    battle: document.querySelector('[class*="BattlePanel_battleArea"]'),
+                    consumables: document.getElementById('consumables'),
+                    abilities: document.getElementById('abilities'),
+                    abilityGrid: document.getElementById('abilityGrid'),
+                };
+            }
+
+            for (const bosses of [1, 2, 4]) {
+                test(`${bosses} boss(es): the readout follows the battle area and the panel is flattened`, () => {
+                    const { root, grid, cards, battle, consumables, abilities, abilityGrid } = phoneFight(bosses, 300);
+                    const block = newBlock();
+                    expect(placeTrialBlock(root, cards[0], block, 'Trial Badger')).toBe('fight-phone');
+                    expect(battle.nextElementSibling).toBe(block);
+                    expect(grid.contains(block)).toBe(false);
+                    expect(consumables.style.display).toBe('none');
+                    expect(abilityGrid.style.gridTemplateColumns).toBe('repeat(5, 31.5px)');
+                    expect(abilityGrid.style.gridAutoFlow).toBe('column');
+                    expect(abilities.style.width).toBe('auto');
+                    expect(abilities.style.flex).toContain('1 1 auto');
+                    expect(blockNearAnchor(block, cards[0], root)).toBe(true);
+                });
+            }
+
+            test('a wide trial fight is left as it was', () => {
+                const { root, grid, cards, consumables, abilities, abilityGrid } = phoneFight(2, 704);
+                const block = newBlock();
+                expect(placeTrialBlock(root, cards[0], block, 'Trial Badger')).toBe('fight-below');
+                expect(grid.lastElementChild).toBe(block);
+                expect(consumables.style.display).toBe('flex');
+                expect(abilityGrid.style.gridTemplateColumns).toBe('repeat(4, 40px)');
+                expect(abilities.style.width).toBe('50%');
+            });
+
+            test('a fight with no trial readout is never touched', () => {
+                const { consumables, abilities, abilityGrid } = phoneFight(2, 300);
+                restoreFightGrids(document);
+                expect(consumables.style.display).toBe('flex');
+                expect(abilityGrid.style.gridTemplateColumns).toBe('repeat(4, 40px)');
+                expect(abilities.style.width).toBe('50%');
+            });
+
+            test('taking the readout down restores every style the game had', () => {
+                const { root, cards, consumables, abilities, abilityGrid } = phoneFight(2, 300);
+                const block = newBlock();
+                placeTrialBlock(root, cards[0], block, 'Trial Badger');
+                placeTrialBlock(root, cards[0], block, 'Trial Badger');
+                block.remove();
+                restoreFightGrids(document);
+                expect(consumables.style.display).toBe('flex');
+                expect(abilityGrid.style.gridTemplateColumns).toBe('repeat(4, 40px)');
+                expect(abilityGrid.style.gridAutoFlow).toBe('');
+                expect(abilities.style.width).toBe('50%');
+                expect(abilities.style.flex).toContain('0 0 auto');
+                expect(document.querySelector('[data-mwi-phone]')).toBeNull();
+            });
+
+            test('leaving narrow mode moves the readout back under the bosses and restores the panel', () => {
+                const { root, grid, cards, battle, consumables, abilityGrid } = phoneFight(2, 300);
+                const block = newBlock();
+                placeTrialBlock(root, cards[0], block, 'Trial Badger');
+                setWidth(grid, 'clientWidth', 704);
+                expect(blockNearAnchor(block, cards[0], root)).toBe(false);
+                expect(placeTrialBlock(root, cards[0], block, 'Trial Badger')).toBe('fight-below');
+                expect(grid.lastElementChild).toBe(block);
+                expect(battle.nextElementSibling).not.toBe(block);
+                expect(consumables.style.display).toBe('flex');
+                expect(abilityGrid.style.gridTemplateColumns).toBe('repeat(4, 40px)');
+                expect(blockNearAnchor(block, cards[0], root)).toBe(true);
+            });
+
+            test('the payout still sits above the battle area', () => {
+                const { root, cards, battle, monsters } = phoneFight(2, 300);
+                document.getElementById('payout').remove();
+                placeTrialBlock(root, cards[0], newBlock(), 'Trial Badger');
+                guildTrials.sectionFolds = {};
+                guildTrials._renderPayout(
+                    root,
+                    [{ name: 'Trial Badger', type: 'combat', banked: 3, projected: 15, tierKnown: true }],
+                    cards[0],
+                    {
+                        buildersHall: { bonus: 0.2, level: 5, rules: null, source: 'test' },
+                        treasury: { bonus: 0.3, level: 5 },
+                    }
+                );
+                const payout = document.querySelector('[data-mwi-block="payout"]');
+                expect(monsters.contains(payout)).toBe(false);
+                expect(payout.nextElementSibling).toBe(battle);
+            });
+        });
 
         test('a wave remount that changes the boss count puts the readout back on its own last row, once', () => {
             const { root, grid, cards } = fightLayout(2);

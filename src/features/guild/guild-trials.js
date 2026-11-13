@@ -2507,13 +2507,14 @@ export function isInProgressView(root) {
 }
 
 /**
- * Take down what a readout changed on the game's layout: every stacked skilling row that no longer holds one.
- * (The fight grid is not changed at all: the readout is a full-width item in it.) Called after any path that
- * takes blocks down.
+ * Take down what a readout changed on the game's layout: every stacked skilling row that no longer holds one,
+ * and the phone-sized combat panel once no phone readout is left. (The fight grid itself is not changed: the
+ * wide readout is a full-width item in it.) Called after any path that takes blocks down.
  * @param {ParentNode} [scope] - Where to look (the document by default)
  */
 export function restoreFightGrids(scope = typeof document === 'undefined' ? null : document) {
     restoreStackedRows(scope);
+    restorePhoneFight(scope);
 }
 
 /** Three columns of about this width, and the gap between them, are what the wide readout needs */
@@ -2531,6 +2532,78 @@ function fightAreaNarrow(grid) {
     const width = grid?.clientWidth || area?.clientWidth || 0;
     if (!(width > 0)) return false;
     return width < 3 * WIDE_READOUT_COLUMN_PX + 2 * WIDE_READOUT_GAP_PX;
+}
+
+/** The game's fight panel pieces a phone-sized trial fight reshapes, with the styles each one gets */
+const PHONE_FIGHT_PARTS = [
+    ['[class*="BattlePanel_combatConsumables"]', () => ({ display: 'none' })],
+    [
+        '[class*="BattlePanel_combatAbilityGrid"]',
+        (el) => ({
+            gridTemplateColumns: `repeat(${Math.max(1, el.children.length)}, 31.5px)`,
+            gridAutoFlow: 'column',
+        }),
+    ],
+    ['[class*="BattlePanel_combatAbilities"]', () => ({ width: 'auto', flex: '1 1 auto' })],
+];
+
+/**
+ * The fight's battle area, which holds the monsters area, when the grid belongs to one.
+ * @param {Element} grid - The fight's unit grid
+ * @returns {Element|null}
+ */
+function fightBattleArea(grid) {
+    return grid?.closest?.('[class*="BattlePanel_battleArea"]') || null;
+}
+
+/**
+ * Whether the fight is a guild trial on a phone-sized area, where the readout leaves the boss grid.
+ * @param {Element} grid - The fight's unit grid
+ * @returns {boolean}
+ */
+function phoneFightLayout(grid) {
+    return !!grid && fightAreaNarrow(grid) && !!fightBattleArea(grid);
+}
+
+/**
+ * Reshape the game's fight panel for a phone: consumables hidden, the ability row on one line. Idempotent, and
+ * it records the inline values it replaces the first time so teardown can put them back.
+ * @param {Element} grid - The fight's unit grid
+ */
+function applyPhoneFight(grid) {
+    const panel = grid.closest?.('[class*="BattlePanel_battlePanel"]') || fightBattleArea(grid)?.parentElement;
+    if (!panel) return;
+    for (const [selector, styles] of PHONE_FIGHT_PARTS) {
+        for (const el of panel.querySelectorAll(selector)) {
+            const wanted = styles(el);
+            if (el.dataset.mwiPhone === undefined) {
+                el.dataset.mwiPhone = JSON.stringify(
+                    Object.fromEntries(Object.keys(wanted).map((k) => [k, el.style[k] || '']))
+                );
+            }
+            for (const [key, value] of Object.entries(wanted)) {
+                if (el.style[key] !== value) el.style[key] = value;
+            }
+        }
+    }
+}
+
+/**
+ * Put every phone-reshaped piece of the fight panel back, unless a phone readout is still on screen.
+ * @param {ParentNode} scope - Where to look
+ */
+function restorePhoneFight(scope) {
+    const marked = scope?.querySelectorAll?.('[data-mwi-phone]') || [];
+    if (!marked.length) return;
+    if (scope.querySelector(`.${CSS_CLASS}[data-mwi-placement="fight-phone"]`)) return;
+    for (const el of marked) {
+        try {
+            for (const [key, value] of Object.entries(JSON.parse(el.dataset.mwiPhone))) el.style[key] = value;
+        } catch {
+            /* a mark that cannot be read leaves the styles as the game has them */
+        }
+        delete el.dataset.mwiPhone;
+    }
 }
 
 /** The narrowest a readout can be beside the card, and the margins around the pair */
@@ -2637,6 +2710,15 @@ export function placeTrialBlock(root, card, block, name = '') {
     // last.
     const fightGrid = fightMonsterGrid(card);
     if (fightGrid && root?.contains?.(fightGrid)) {
+        // A phone-sized fight has no room under the bosses (the monsters area scrolls): the readout is a
+        // full-width sibling right after the battle area instead
+        if (phoneFightLayout(fightGrid)) {
+            block.dataset.mwiPlacement = 'fight-phone';
+            fightBattleArea(fightGrid).insertAdjacentElement('afterend', block);
+            applyPhoneFight(fightGrid);
+            return 'fight-phone';
+        }
+        restorePhoneFight(root);
         // Last in the grid and spanning every column (`grid-column: 1 / -1` rides the style, which _placeBlock
         // reapplies): auto-placement starts a fresh row for it below the bosses, whatever their count
         fightGrid.appendChild(block);
@@ -2808,7 +2890,14 @@ export function blockNearAnchor(block, anchor, root = null) {
     // pass. Last child of the grid is the placement, and a boss that mounts
     // after it fails this and re-triggers placement, putting it back at the end.
     const fightGrid = fightMonsterGrid(anchor);
-    if (fightGrid && block?.parentElement === fightGrid) return fightGrid.lastElementChild === block;
+    // On a phone the readout follows the battle area, and reads as displaced the moment the area is wide again
+    if (block?.dataset?.mwiPlacement === 'fight-phone') {
+        if (!fightGrid) return true;
+        return fightBattleArea(fightGrid)?.nextElementSibling === block && phoneFightLayout(fightGrid);
+    }
+    if (fightGrid && block?.parentElement === fightGrid) {
+        return fightGrid.lastElementChild === block && !phoneFightLayout(fightGrid);
+    }
     if (!anchor?.isConnected) return true; // nothing to re-anchor against
     if (root) {
         const escaped = escapeSquashingRows(root, anchor);
@@ -4708,9 +4797,13 @@ class GuildTrials {
                 // A skilling card sits over its readout in the challenge column, and the combat bosses sit over
                 // theirs in the fight grid: either way the readout is a full-width block of rows
                 const stackedReadout = inSkillingRow || !!fightGrid;
+                const phoneFight = !!fightGrid && phoneFightLayout(fightGrid);
                 const narrowRow = inSkillingRow
                     ? skillingRowNarrow(tile.element)
                     : !!fightGrid && fightAreaNarrow(fightGrid);
+                // Keep the phone reshaping in step with the width on every pass (a new ability count, a remount)
+                if (fightGrid && phoneFight) applyPhoneFight(fightGrid);
+                else if (fightGrid) restorePhoneFight(root);
                 this._placeBlock(root, key, {
                     // The card the block belongs beside, for the re-anchoring
                     // check below — the game tears cards down and remounts
@@ -4718,7 +4811,7 @@ class GuildTrials {
                     anchored: (block) => blockNearAnchor(block, tile.element, root),
                     // Scoped to this tile's encounter: one measurement must
                     // not dress every combat card
-                    html: ((markup) => (stackedReadout ? compactTrialHtml(markup, !narrowRow) : markup))(
+                    html: ((markup) => (stackedReadout ? compactTrialHtml(markup, !narrowRow || phoneFight) : markup))(
                         renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
                             participating: ownParticipation(tile.name),
                             phase: tilePhase,
@@ -4737,11 +4830,14 @@ class GuildTrials {
                         ? 'position:static; box-sizing:border-box; flex:none; width:100%; max-width:100%; ' +
                           'min-width:0; align-self:stretch; clear:none; margin:4px 0 0; ' +
                           'background:rgba(0,0,0,0.25); border-radius:6px; font-size:11px; line-height:1.3;' +
-                          (fightGrid ? 'grid-column:1 / -1; grid-row:auto; justify-self:stretch;' : '') +
-                          (narrowRow
-                              ? 'display:block; padding:3px 8px;'
-                              : 'display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); column-gap:24px; ' +
-                                'padding:4px 12px;')
+                          (fightGrid && !phoneFight ? 'grid-column:1 / -1; grid-row:auto; justify-self:stretch;' : '') +
+                          (phoneFight
+                              ? 'display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); column-gap:14px; ' +
+                                'row-gap:0; padding:3px 8px; margin:2px 0;'
+                              : narrowRow
+                                ? 'display:block; padding:3px 8px;'
+                                : 'display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); column-gap:24px; ' +
+                                  'padding:4px 12px;')
                         : 'position:static; display:block; box-sizing:border-box; clear:both; ' +
                           'min-width:min(260px, 100%); max-width:520px; margin:6px 0 8px; padding:6px 10px; ' +
                           'background:rgba(0,0,0,0.25); border-radius:6px; font-size:11px; line-height:1.6;',
