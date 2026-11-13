@@ -736,6 +736,19 @@ describe('Fortify', () => {
         expect(player.overkillStore).toBe(0);
         expect(player.fortifyStacks).toBe(0);
     });
+
+    test('a dungeon wipe restart drops live stacks and their armor, though it keeps other buffs', () => {
+        const { sim, player } = fightSim({ mechanics: { fortify: VALUE } });
+        player.combatDetails.maxHitpoints = player.combatDetails.currentHitpoints = 1e9;
+        const base = bases(player);
+        hit(sim, player);
+        hit(sim, player);
+        expect(player.fortifyStacks).toBe(2);
+        // A wipe restart (currentTime > 0) inside the stacks' 5 s window
+        player.reset(player.fortifyExpireTime - 1);
+        expect(player.fortifyStacks).toBe(0);
+        bases(player).forEach((value, i) => expect(value).toBeCloseTo(base[i], 9));
+    });
 });
 
 // ---------------------------------------------------------------------------------------------------------------
