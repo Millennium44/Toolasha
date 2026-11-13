@@ -13,6 +13,7 @@ The Goal Planner, Enhancing XP/hr profit, the Enhancement Tracker and Loot Log e
 ### Task cowbells and the action bar run value
 
 Cowbell rewards in task profit are now worth a Bag of 10 Cowbells' sell price after its 18% tax, so they read lower than before. The action bar's "This run" value now uses your sell pricing after market tax, and marks drops it could not price with \*.
+
 ### Party members' dungeon keys count in Consumables
 
 In a dungeon party, every member's table now has an entry-key row from the party's key-count message, and their "stops in" counts it. Other members' sections show what they are short and its cost, without buy links.
