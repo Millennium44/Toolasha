@@ -20,7 +20,27 @@
 import { MEASURED_ODDS, buildProblem, advise, gradeOdds, isFocusable, solveSteps } from './talisman-reroll-solver.js';
 
 /** Time one slice of a solve may take before the page gets a turn */
-const SLICE_MS = 12;
+const SLICE_MS = 14;
+
+let yieldChannel = null;
+/**
+ * Give the page a turn: a MessageChannel macrotask, which nested timers' 4 ms clamp does not delay (a setTimeout(0)
+ * chain left a third of the wall time idle). Falls back to setTimeout where there is no MessageChannel.
+ * @returns {Promise<void>}
+ */
+function macrotaskYield() {
+    if (typeof MessageChannel === 'undefined') return new Promise((resolve) => setTimeout(resolve, 0));
+    if (!yieldChannel) {
+        const channel = new MessageChannel();
+        const waiting = [];
+        channel.port1.onmessage = () => waiting.shift()?.();
+        yieldChannel = { port: channel.port2, waiting };
+    }
+    return new Promise((resolve) => {
+        yieldChannel.waiting.push(resolve);
+        yieldChannel.port.postMessage(null);
+    });
+}
 
 /** The orb a cost is counted in: a full reroll at the top grade (Reforging), else the first full-reroll orb */
 const FULL_MODE = '/talisman_reroll_modes/full';
@@ -167,7 +187,7 @@ export class OrbCostSolver {
         this.scale = scale;
         this.reference = referenceOrb(info, scale?.weights);
         this.abortSignal = abortSignal || (() => false);
-        this.yieldNow = yieldNow || (() => new Promise((resolve) => setTimeout(resolve, 0)));
+        this.yieldNow = yieldNow || macrotaskYield;
         this.now = now || (() => Date.now());
         this.maxSolves = maxSolves;
         this.cache = new Map();
