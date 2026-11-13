@@ -18,7 +18,12 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getActionDetails: (hrid) => ({ name: hrid.split('/').at(-1) }) },
+    default: {
+        getActionDetails: (hrid) => ({ name: hrid.split('/').at(-1) }),
+        setScrollSimulation: () => {},
+        clearScrollSimulation: () => {},
+        isBuffBeingSimulated: () => false,
+    },
 }));
 vi.mock('./action-panel-sort.js', () => ({
     default: {
@@ -75,12 +80,20 @@ describe('gathering tile Profit/hr and the sell-tax exclusion', () => {
         state.profitData = { profitPerHour: 1200, hasMissingPrices: false, excludeSellTax: true };
         await renderTile();
         expect(state.updateProfitCalls.at(-1)[1]).toBe(1200);
-        expect(state.updateProfitCalls.at(-1)[2]).toEqual({ excludeSellTax: true, taxedProfitPerHour: 1000 });
+        expect(state.updateProfitCalls.at(-1)[2]).toEqual({
+            excludeSellTax: true,
+            taxedProfitPerHour: 1000,
+            simulated: false,
+        });
 
         state.taxedData = null;
         state.profitData = { profitPerHour: 1200, hasMissingPrices: false, excludeSellTax: false };
         await renderTile();
-        expect(state.updateProfitCalls.at(-1)[2]).toEqual({ excludeSellTax: false, taxedProfitPerHour: null });
+        expect(state.updateProfitCalls.at(-1)[2]).toEqual({
+            excludeSellTax: false,
+            taxedProfitPerHour: null,
+            simulated: false,
+        });
     });
 
     test.each([true, false])(

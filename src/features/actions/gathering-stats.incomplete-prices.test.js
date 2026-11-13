@@ -19,6 +19,9 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getActionDetails: (hrid) => ({ name: hrid.split('/').at(-1) }),
+        setScrollSimulation: () => {},
+        clearScrollSimulation: () => {},
+        isBuffBeingSimulated: () => false,
     },
 }));
 vi.mock('./action-panel-sort.js', () => ({

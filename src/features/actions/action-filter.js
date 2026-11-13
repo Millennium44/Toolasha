@@ -22,6 +22,8 @@ import {
 } from '../../utils/pricing-side-select.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { SELL_TAX_EXCLUDED_TOOLTIP } from '../../utils/profit-constants.js';
+import { TILE_SCROLLS_SETTING, getChosenScrolls, onTileScrollsChanged } from './tile-scrolls.js';
+import { shortScrollName } from './scroll-chips.js';
 import actionPanelSort from './action-panel-sort.js';
 import { displayGatheringProfit, displayProductionProfit } from './profit-display.js';
 
@@ -69,6 +71,8 @@ class ActionFilter {
         this._updateCraftBtn = null;
         this._updateSellTaxBtn = null;
         this._updateSortBtn = null;
+        this._updateScrollsBtn = null;
+        this.scrollsButton = null; // The "Scrolls" toggle for simulated scrolls on the tiles
         // Mobile-only collapsible row — see injectFilterInput(). Desktop never
         // creates these, so they stay null there.
         this.controlsToggle = null; // The compact "show controls" button
@@ -161,10 +165,19 @@ class ActionFilter {
         // Ported from upstream Celasha/Toolasha#630.
         this.unregisterHandlers.push(
             config.onSettingsLoaded(() => {
+                if (this._updateScrollsBtn) this._updateScrollsBtn();
                 if (this._updatePricingSelects) this._updatePricingSelects();
                 if (this._updateCraftBtn) this._updateCraftBtn();
                 if (this._updateSellTaxBtn) this._updateSellTaxBtn();
                 this._scheduleProfitRefresh();
+            })
+        );
+
+        // The "Scrolls" button shows only while there are scrolls chosen for this skill, so it follows the
+        // selection, the simulation switch and the tile setting
+        this.unregisterHandlers.push(
+            onTileScrollsChanged(() => {
+                if (this._updateScrollsBtn) this._updateScrollsBtn();
             })
         );
 
@@ -521,6 +534,49 @@ class ActionFilter {
         }
         this.refreshButton = refreshBtn;
 
+        // Simulated scrolls on the tiles. Shown only while the simulation is on and at least one scroll is
+        // chosen for this skill (otherwise there is nothing for it to apply). The skill is the one the tiles
+        // resolved to, not the page's displayed text.
+        const scrollsBtn = document.createElement('button');
+        scrollsBtn.id = 'mwi-action-scrolls-toggle';
+        scrollsBtn.style.cssText = `
+            padding: 8px 12px;
+            font-size: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.23);
+            border-radius: 4px;
+            background: transparent;
+            cursor: pointer;
+            font-family: inherit;
+            flex-shrink: 0;
+        `;
+        this._updateScrollsBtn = () => {
+            const chosen = getChosenScrolls(this._currentActionType());
+            scrollsBtn.style.display = chosen.size > 0 ? '' : 'none';
+            if (chosen.size === 0) return;
+            const on = Boolean(config.getSetting(TILE_SCROLLS_SETTING));
+            const names = [...chosen].map(shortScrollName).join(', ');
+            scrollsBtn.textContent = on ? '📜 Scrolls: On' : 'Scrolls: Off';
+            scrollsBtn.style.borderColor = on ? config.COLOR_ACCENT : 'rgba(255, 255, 255, 0.23)';
+            scrollsBtn.style.color = on ? config.COLOR_ACCENT : 'inherit';
+            scrollsBtn.title =
+                `Scrolls chosen for this skill: ${names}. ` +
+                (on
+                    ? 'The Profit/hr, Exp/hr and Eff. XP/hr on these tiles assume them (the scrolls are not active in the game). Click to show the real figures.'
+                    : 'The tiles show the real figures. Click to show them as if these scrolls were active (they are not used).');
+        };
+        scrollsBtn.addEventListener('click', () => {
+            // The tile modules redraw from the setting change
+            config.setSetting(TILE_SCROLLS_SETTING, !config.getSetting(TILE_SCROLLS_SETTING));
+            this._updateScrollsBtn();
+        });
+        if (controlsHost) {
+            controlsHost.appendChild(scrollsBtn);
+        } else {
+            refreshBtn.insertAdjacentElement('afterend', scrollsBtn);
+        }
+        this.scrollsButton = scrollsBtn;
+        this._updateScrollsBtn();
+
         // Sell-tax exclusion toggle (personal-use production). Opt-in, so it is only created when
         // its setting is on; the setting it flips is separate and also lives in the Settings panel.
         if (config.getSetting('actionPanel_showSellTaxToggle')) {
@@ -555,7 +611,7 @@ class ActionFilter {
             if (controlsHost) {
                 controlsHost.appendChild(sellTaxBtn);
             } else {
-                refreshBtn.insertAdjacentElement('afterend', sellTaxBtn);
+                (this.scrollsButton || refreshBtn).insertAdjacentElement('afterend', sellTaxBtn);
             }
             this.sellTaxButton = sellTaxBtn;
         }
@@ -567,6 +623,18 @@ class ActionFilter {
 
         // Find the container for action panels to inject "No results" message
         this.setupNoResultsMessage(titleElement);
+    }
+
+    /**
+     * The action type of the skill page the tiles belong to: the first registered tile still on the page
+     * that resolved to an action.
+     * @returns {string|null}
+     */
+    _currentActionType() {
+        for (const [panel, data] of this.panels) {
+            if (data.actionTypeHrid && panel.isConnected) return data.actionTypeHrid;
+        }
+        return null;
     }
 
     /**
@@ -702,7 +770,7 @@ class ActionFilter {
      * @param {HTMLElement} actionPanel - The action panel element
      * @param {string} actionName - The action/item name
      */
-    registerPanel(actionPanel, actionName) {
+    registerPanel(actionPanel, actionName, actionTypeHrid = null) {
         // The tile class this registers from (SkillAction_skillAction__.../panel-observer.js) is
         // generic and reused outside filterable skill pages (e.g. Combat Zones). If the title bar
         // we attached the filter to has since been removed from the DOM without a new filterable
@@ -719,7 +787,10 @@ class ActionFilter {
         this.panels.set(actionPanel, {
             actionName: actionName.toLowerCase(),
             container: container,
+            actionTypeHrid,
         });
+        // The skill page is known once a tile has resolved
+        if (this._updateScrollsBtn) this._updateScrollsBtn();
 
         // Apply current filter if one is active
         if (this.filterValue) {
@@ -877,6 +948,11 @@ class ActionFilter {
             this.refreshButton = null;
         }
 
+        if (this.scrollsButton && this.scrollsButton.parentElement) {
+            this.scrollsButton.remove();
+        }
+        this.scrollsButton = null;
+
         if (this.sellTaxButton && this.sellTaxButton.parentElement) {
             this.sellTaxButton.remove();
         }
@@ -905,6 +981,7 @@ class ActionFilter {
         this._updateCraftBtn = null;
         this._updateSellTaxBtn = null;
         this._updateSortBtn = null;
+        this._updateScrollsBtn = null;
 
         if (this.noResultsMessage && this.noResultsMessage.parentElement) {
             this.noResultsMessage.remove();

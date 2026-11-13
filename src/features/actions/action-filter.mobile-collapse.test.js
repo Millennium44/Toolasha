@@ -159,6 +159,7 @@ describe('ActionFilter mobile collapsible controls row', () => {
                 'mwi-action-pricing-sell',
                 'mwi-action-craft-toggle',
                 'mwi-action-price-refresh',
+                'mwi-action-scrolls-toggle',
                 '', // the skill name div
             ]);
 
@@ -212,6 +213,7 @@ describe('ActionFilter mobile collapsible controls row', () => {
                 'mwi-action-pricing-sell',
                 'mwi-action-craft-toggle',
                 'mwi-action-price-refresh',
+                'mwi-action-scrolls-toggle',
             ]);
         });
 

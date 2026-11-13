@@ -29,6 +29,13 @@ import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { SELL_TAX_SETTING, sellTaxMarker, sellTaxTitleAttr } from '../../utils/sell-tax-marker.js';
 import { SELL_TAX_EXCLUDED_TOOLTIP } from '../../utils/profit-constants.js';
+import {
+    onTileScrollsChanged,
+    paintTileScrollMark,
+    runWithTileScrolls,
+    runWithoutScrolls,
+    tileScrollMarker,
+} from './tile-scrolls.js';
 
 /**
  * Action type constants for classification
@@ -82,6 +89,8 @@ class MaxProduceable {
         this.profitPerHourSettingHandler = null; // Handler for the profit/hr display toggle
         this.expPerHourSettingHandler = null; // Handler for the exp/hr display toggle
         this.profitCalcTimeout = null; // Debounce timer for deferred profit calculations
+        this.stopTileScrolls = null; // Undo for the scroll-selection listeners
+        this.scrollsChangedTimer = null; // Debounce timer for scroll-selection redraws
         this.isInitialized = false;
         this.itemsUpdatedDebounceTimer = null; // Debounce timer for items_updated events
         this.DEBOUNCE_DELAY = 300; // 300ms debounce for event handlers
@@ -155,6 +164,15 @@ class MaxProduceable {
         config.onSettingChange('actionPanel_maxProduceable', this.maxProduceableSettingHandler);
         config.onSettingChange('actionPanel_showProfitPerHour_production', this.profitPerHourSettingHandler);
         config.onSettingChange('actionPanel_showExpPerHour_production', this.expPerHourSettingHandler);
+
+        // The chosen scrolls, the tile setting and the simulation switch change what the tiles show
+        this.stopTileScrolls = onTileScrollsChanged(() => {
+            clearTimeout(this.scrollsChangedTimer);
+            this.scrollsChangedTimer = setTimeout(() => {
+                this.scrollsChangedTimer = null;
+                this.updateAllCounts();
+            }, 50);
+        });
     }
 
     /**
@@ -459,14 +477,28 @@ class MaxProduceable {
         let excludeSellTax = false;
         const actionDetails = dataManager.getActionDetails(data.actionHrid);
 
+        // The chosen scrolls apply when the tiles use them. The calculators (and the exp one below, started in
+        // the same armed span) do their arithmetic before their first await, so the armed span ends first.
+        const isGathering = Boolean(actionDetails) && GATHERING_TYPES.includes(actionDetails.type);
+        const isProduction = Boolean(actionDetails) && PRODUCTION_TYPES.includes(actionDetails.type);
+        const calculateProfit = (options) =>
+            isGathering
+                ? calculateGatheringProfit(data.actionHrid, options)
+                : calculateProductionProfit(data.actionHrid, options);
+        const { result: started, simulated } = runWithTileScrolls(actionDetails?.type, () => ({
+            profit: isGathering || isProduction ? calculateProfit() : null,
+            exp: data.displayElement ? calculateExpPerHour(data.actionHrid) : null,
+        }));
+        const isSimulated = simulated.length > 0;
+
         if (actionDetails) {
-            if (GATHERING_TYPES.includes(actionDetails.type)) {
-                const profitData = await calculateGatheringProfit(data.actionHrid);
+            if (isGathering) {
+                const profitData = await started.profit;
                 profitPerHour = profitData?.profitPerHour || null;
                 hasMissingPrices = profitData?.hasMissingPrices || false;
                 excludeSellTax = profitData?.excludeSellTax || false;
-            } else if (PRODUCTION_TYPES.includes(actionDetails.type)) {
-                const profitData = await calculateProductionProfit(data.actionHrid);
+            } else if (isProduction) {
+                const profitData = await started.profit;
                 profitPerHour = profitData?.profitPerHour || null;
                 hasMissingPrices = profitData?.hasMissingPrices || false;
                 outputPriceEstimated = profitData?.outputPriceEstimated || false;
@@ -474,13 +506,11 @@ class MaxProduceable {
             }
         }
 
-        // The shared sort cache holds sale-valued rates (task cards read it), so the toggle's untaxed tile
-        // figure needs a taxed twin. Only paid for while the toggle is on.
+        // The shared sort cache holds sale-valued, scroll-free rates (task cards read it), so the toggle's
+        // untaxed tile figure and a scroll-assuming one each need a real taxed twin. Only paid for while one is on.
         let taxedProfitPerHour = null;
-        if (excludeSellTax && actionDetails) {
-            const taxed = GATHERING_TYPES.includes(actionDetails.type)
-                ? await calculateGatheringProfit(data.actionHrid, { keepSellTax: true })
-                : await calculateProductionProfit(data.actionHrid, { keepSellTax: true });
+        if ((excludeSellTax || isSimulated) && (isGathering || isProduction)) {
+            const taxed = await runWithoutScrolls(actionDetails.type, () => calculateProfit({ keepSellTax: true }));
             taxedProfitPerHour = taxed?.hasMissingPrices ? null : (taxed?.profitPerHour ?? null);
         }
 
@@ -488,7 +518,12 @@ class MaxProduceable {
         const resolvedProfitPerHour = hasMissingPrices ? null : profitPerHour;
         data.profitPerHour = resolvedProfitPerHour;
         data.excludeSellTax = excludeSellTax;
-        actionPanelSort.updateProfit(actionPanel, resolvedProfitPerHour, { excludeSellTax, taxedProfitPerHour });
+        data.simulatedScrolls = simulated;
+        actionPanelSort.updateProfit(actionPanel, resolvedProfitPerHour, {
+            excludeSellTax,
+            taxedProfitPerHour,
+            simulated: isSimulated,
+        });
 
         // Check if we should hide actions with negative profit (unless pinned)
         const hideNegativeProfit = config.getSetting('actionPanel_hideNegativeProfit');
@@ -514,8 +549,10 @@ class MaxProduceable {
         }
 
         // Calculate exp/hr using shared utility
-        const expData = calculateExpPerHour(data.actionHrid);
-        const expPerHour = expData?.expPerHour || null;
+        const expPerHour = started.exp?.expPerHour || null;
+        const realExpPerHour = isSimulated
+            ? runWithoutScrolls(actionDetails.type, () => calculateExpPerHour(data.actionHrid))?.expPerHour || null
+            : expPerHour;
 
         // Color coding for "Can produce"
         let canProduceColor;
@@ -533,7 +570,12 @@ class MaxProduceable {
         data.expPerHour = expPerHour;
         data.hasMissingPrices = hasMissingPrices;
         data.outputPriceEstimated = outputPriceEstimated;
-        actionPanelSort.updateExpPerHour(actionPanel, expPerHour);
+        actionPanelSort.updateExpPerHour(
+            actionPanel,
+            expPerHour,
+            isSimulated ? { cachedExpPerHour: realExpPerHour } : {}
+        );
+        paintTileScrollMark(data.displayElement, simulated);
 
         // Build display HTML using .mwi-action-stat-line divs so fitLineFontSizes
         // can size each line immediately — avoids the multi-second flash of tiny
@@ -542,6 +584,7 @@ class MaxProduceable {
         const showProfit = config.getSetting('actionPanel_showProfitPerHour_production');
         const showExp = config.getSetting('actionPanel_showExpPerHour_production');
 
+        const scrollMark = tileScrollMarker(simulated);
         let html = '';
 
         if (showMaxProduceable) {
@@ -558,13 +601,13 @@ class MaxProduceable {
                 const profitSign = resolvedProfitPerHour >= 0 ? '' : '-';
                 const estimatedNote = outputPriceEstimated ? ' ⚠' : '';
                 html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-                html += `<span data-stat="profit"${sellTaxTitleAttr(excludeSellTax)} style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(resolvedProfitPerHour))}${estimatedNote}${sellTaxMarker(excludeSellTax)}</span></div>`;
+                html += `<span data-stat="profit"${sellTaxTitleAttr(excludeSellTax)} style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(resolvedProfitPerHour))}${estimatedNote}${sellTaxMarker(excludeSellTax)}${scrollMark}</span></div>`;
             }
         }
 
         if (showExp && expPerHour !== null && expPerHour > 0) {
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-            html += `<span data-stat="exp" style="color: #fff;">Exp/hr: ${formatKMB(expPerHour)}</span></div>`;
+            html += `<span data-stat="exp" style="color: #fff;">Exp/hr: ${formatKMB(expPerHour)}${scrollMark}</span></div>`;
         }
 
         if (
@@ -576,7 +619,7 @@ class MaxProduceable {
             expPerHour > 0
         ) {
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-            html += `<span data-stat="overall"${sellTaxTitleAttr(excludeSellTax)} style="color: #fff;">Eff. XP/hr: ${formatKMB(expPerHour)}${sellTaxMarker(excludeSellTax)}</span></div>`;
+            html += `<span data-stat="overall"${sellTaxTitleAttr(excludeSellTax)} style="color: #fff;">Eff. XP/hr: ${formatKMB(expPerHour)}${sellTaxMarker(excludeSellTax)}${scrollMark}</span></div>`;
         }
 
         // Rewriting innerHTML inserts new elements every time, which wakes every DOM observer handler.
@@ -772,8 +815,14 @@ class MaxProduceable {
                 const label =
                     effXp != null
                         ? `Eff. XP/hr: ${formatKMB(effXp)}`
-                        : stripEmoji(overallSpan.textContent).replace(sellTaxMarker(true), '');
-                overallSpan.textContent = label + sellTaxMarker(data.excludeSellTax) + (isBestOverall ? ' 🏆' : '');
+                        : stripEmoji(overallSpan.textContent)
+                              .replace(tileScrollMarker(['x']), '')
+                              .replace(sellTaxMarker(true), '');
+                overallSpan.textContent =
+                    label +
+                    sellTaxMarker(data.excludeSellTax) +
+                    tileScrollMarker(data.simulatedScrolls) +
+                    (isBestOverall ? ' 🏆' : '');
 
                 if (data.profitPerHour < 0 && bestProfit > 0 && effXp != null) {
                     const loss = Math.abs(data.profitPerHour);
@@ -1004,6 +1053,12 @@ ${SELL_TAX_EXCLUDED_TOOLTIP}`
             clearTimeout(this.actionCompletedDebounceTimer);
             this.itemsUpdatedDebounceTimer = null;
             this.actionCompletedDebounceTimer = null;
+            clearTimeout(this.scrollsChangedTimer);
+            this.scrollsChangedTimer = null;
+            if (this.stopTileScrolls) {
+                this.stopTileScrolls();
+                this.stopTileScrolls = null;
+            }
 
             if (this.itemsUpdatedHandler) {
                 dataManager.off('items_updated', this.itemsUpdatedHandler);

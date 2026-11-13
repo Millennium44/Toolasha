@@ -135,6 +135,31 @@ describe('cachedStats and a pricing-setting change', () => {
         expect(actionPanelSort.getCachedStats('/actions/milking/fresh')).toBeNull();
     });
 
+    test('a scroll-assuming figure sorts the panel and never caches itself; the real twin is cached', () => {
+        const panel = document.createElement('div');
+        actionPanelSort.registerPanel(panel, '/actions/milking/cow');
+        actionPanelSort.updateProfit(panel, 4000);
+        actionPanelSort.updateExpPerHour(panel, 1000);
+
+        actionPanelSort.updateProfit(panel, 5000, { simulated: true, taxedProfitPerHour: 4000 });
+        actionPanelSort.updateExpPerHour(panel, 1300, { cachedExpPerHour: 1000 });
+        expect(actionPanelSort.panels.get(panel).profitPerHour).toBe(5000);
+        expect(actionPanelSort.panels.get(panel).expPerHour).toBe(1300);
+        expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toEqual({
+            profitPerHour: 4000,
+            expPerHour: 1000,
+        });
+
+        // No real twin to give: the earlier real rate is stale and goes, a simulated one is never stored
+        actionPanelSort.updateProfit(panel, 5200, { simulated: true });
+        expect(actionPanelSort.getCachedStats('/actions/milking/cow').profitPerHour).toBeUndefined();
+
+        const fresh = document.createElement('div');
+        actionPanelSort.registerPanel(fresh, '/actions/milking/fresh');
+        actionPanelSort.updateProfit(fresh, 700, { simulated: true });
+        expect(actionPanelSort.getCachedStats('/actions/milking/fresh')).toBeNull();
+    });
+
     test('an untaxed figure caches the taxed twin when one is given', () => {
         const panel = document.createElement('div');
         actionPanelSort.registerPanel(panel, '/actions/milking/cow');

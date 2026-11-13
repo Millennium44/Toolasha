@@ -221,15 +221,22 @@ class ActionPanelSort {
      * @param {boolean} [options.excludeSellTax=false] - The figure leaves out the market tax (personal-use
      *   toggle). The panel sort follows it, but `cachedStats` is read by sale-valued consumers (task cards'
      *   opportunity cost, the pinned page), so an untaxed figure is never written there.
-     * @param {number|null} [options.taxedProfitPerHour] - The sale-valued (taxed) rate to cache instead when
-     *   `excludeSellTax` is set; without a finite one nothing is cached.
+     * @param {number|null} [options.taxedProfitPerHour] - The sale-valued, scroll-free rate to cache instead
+     *   when `excludeSellTax` or `simulated` is set; without a finite one nothing is cached.
+     * @param {boolean} [options.simulated=false] - The figure assumes simulated scrolls. The panel sort follows
+     *   it (it is what the tile shows), but the cache is read as real by task cards and the pinned page, so
+     *   the real rate goes there, as for `excludeSellTax`.
      */
-    updateProfit(actionPanel, profitPerHour, { excludeSellTax = false, taxedProfitPerHour = null } = {}) {
+    updateProfit(
+        actionPanel,
+        profitPerHour,
+        { excludeSellTax = false, taxedProfitPerHour = null, simulated = false } = {}
+    ) {
         const data = this.panels.get(actionPanel);
         if (data) {
             data.profitPerHour = profitPerHour;
             let cachedRate = profitPerHour;
-            if (excludeSellTax) {
+            if (excludeSellTax || simulated) {
                 if (!Number.isFinite(taxedProfitPerHour)) {
                     // Unpriceable now: a rate cached earlier is stale, but the XP beside it is still good
                     const stale = this.cachedStats[data.actionHrid];
@@ -254,14 +261,19 @@ class ActionPanelSort {
     /**
      * Update exp/hr for a registered panel
      * @param {HTMLElement} actionPanel - The action panel element
-     * @param {number|null} expPerHour - Experience per hour
+     * @param {number|null} expPerHour - Experience per hour (what the tile shows and the sort uses)
+     * @param {Object} [options]
+     * @param {number|null} [options.cachedExpPerHour] - The scroll-free rate to cache instead, when the
+     *   tile figure assumes simulated scrolls (the cache is read as real). Absent: `expPerHour` is cached.
      */
-    updateExpPerHour(actionPanel, expPerHour) {
+    updateExpPerHour(actionPanel, expPerHour, options = {}) {
         const data = this.panels.get(actionPanel);
         if (data) {
             data.expPerHour = expPerHour;
             if (!this.cachedStats[data.actionHrid]) this.cachedStats[data.actionHrid] = {};
-            this.cachedStats[data.actionHrid].expPerHour = expPerHour;
+            this.cachedStats[data.actionHrid].expPerHour = Object.hasOwn(options, 'cachedExpPerHour')
+                ? options.cachedExpPerHour
+                : expPerHour;
         }
     }
 

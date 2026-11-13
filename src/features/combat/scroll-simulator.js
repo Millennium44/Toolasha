@@ -100,6 +100,13 @@ class ScrollSimulator {
             this.scrollsByLoadout = next;
             this.owner = charId;
             this.initialized = true;
+            // The selections just arrived: whatever was drawn from an empty set before (the skill page's
+            // action tiles, a chip row) is stale, and nothing else announces the load
+            if (typeof document !== 'undefined' && typeof CustomEvent !== 'undefined') {
+                document.dispatchEvent(
+                    new CustomEvent(SELECTION_CHANGED_EVENT, { detail: { key: null, loaded: true } })
+                );
+            }
         }
     }
 

@@ -333,7 +333,7 @@ function handleEnhancingPanelMutations(panel, mutations) {
  * Handle skill action tile appearance (the clickable tiles on gathering/production pages)
  * @param {import('../../utils/action-panel-helper.js').ActionPanelContext} context - The tile and its title
  */
-function handleSkillActionTile({ panel: actionTile, nameElement }) {
+function handleSkillActionTile({ panel: actionTile, nameElement, actionDetails }) {
     if (!actionTile) return;
 
     // The tile's name, as the filter matches it
@@ -348,7 +348,9 @@ function handleSkillActionTile({ panel: actionTile, nameElement }) {
     }
 
     // Register tile with action filter
-    actionFilter.registerPanel(actionTile, actionName);
+    // The action type comes from the resolved action (not the page's displayed text, which a Chinese client
+    // translates), so the filter's header controls know which skill page this is
+    actionFilter.registerPanel(actionTile, actionName, actionDetails?.type ?? null);
 }
 
 /**

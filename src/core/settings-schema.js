@@ -2681,6 +2681,14 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds scroll chips to gathering and production action panels. A chip you press makes the speed, XP and profit figures show hypothetical results as if that scroll were active (the scroll itself is never used). With no scrolls chosen every figure is the real one; scrolls already chosen with the Defaults button or in the Loadouts panel apply as soon as this is on.',
             },
+            skillTiles_simulatedScrolls: {
+                id: 'skillTiles_simulatedScrolls',
+                label: 'Skill page: Action tiles use simulated scrolls',
+                type: 'checkbox',
+                default: true,
+                requires: 'simulateScrollEffects',
+                help: 'Only matters while "Simulate missing scroll effects" is on. The Profit/hr, Exp/hr and Eff. XP/hr on every action tile of a skill page then assume the scrolls you chose (Defaults button, Loadouts panel or the chips), so you can compare actions with them. Tiles that assume scrolls are marked with a scroll and say which. A scroll already active in the game is not counted twice. Off, or with no scrolls chosen, the tiles show the real figures. A "Scrolls" button on the skill page flips this setting.',
+            },
             xpTracker: {
                 id: 'xpTracker',
                 label: 'Left sidebar: Show XP/hr rate on skill bars',
