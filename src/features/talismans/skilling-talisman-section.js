@@ -259,9 +259,24 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         if (!Array.isArray(talismans)) {
             return { status: 'refused', message: `The talismans of ${source.label} could not be read.` };
         }
+        const picked = this._q('action')?.value || this._actionHrid;
+        if (
+            (result?.gearKey && result.gearKey !== source.key) ||
+            (picked && result?.actionHrid && picked !== result.actionHrid)
+        ) {
+            return {
+                status: 'refused',
+                message: 'The ranking is out of date for this gear. Rank again, then check the cores.',
+            };
+        }
         return {
             talismans: talismans.filter(
-                (t) => Number.isInteger(t?.slotIndex) && t.slotIndex >= 1 && t.slotIndex <= slots
+                (t) =>
+                    Number.isInteger(t?.slotIndex) &&
+                    t.slotIndex >= 1 &&
+                    t.slotIndex <= slots &&
+                    Array.isArray(t.modifiers) &&
+                    t.modifiers.length > 0
             ),
             power: getTalismanPower(belt, gameData.itemDetailMap, gameData.enhancementLevelTotalBonusMultiplierTable),
             slots,

@@ -251,4 +251,30 @@ describe('the core advisor in the Optimizer', () => {
         await check();
         expect(section._core).toBeNull();
     });
+
+    test('a loadout picked after the ranking is not valued with the old rows', async () => {
+        const beltMap = () =>
+            new Map([['/item_locations/belt', { itemHrid: '/items/medium_talisman_belt', enhancementLevel: 4 }]]);
+        let gear = { key: 'A', label: 'A loadout', equipment: beltMap(), drinks: [], talismans: mocks.worn };
+        section.detach();
+        container.innerHTML = '';
+        section = new SkillingTalismanSection({
+            getSkill: () => 'Milking',
+            getSelectedActions: () => null,
+            getGearContext: () => gear,
+        });
+        section.mount(container);
+        await rank();
+        gear = { ...gear, key: 'B', label: 'B loadout', talismans: [talisman(1, [OTHERS[1]])] };
+        await check();
+        expect(cores()).toContain('out of date for this gear');
+        expect(section._core.rows).toHaveLength(0);
+    });
+
+    test('a worn talisman with no lines is not valued', async () => {
+        mocks.worn = [talisman(1, []), talisman(2, [MILKING_SPEED])];
+        await rank();
+        await check();
+        expect(section._core.rows.map((r) => r.slotIndex)).toEqual([2]);
+    });
 });

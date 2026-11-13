@@ -252,8 +252,8 @@ describe('the core advisor in the Combat Sim', () => {
     });
 
     test('no talisman is worn', async () => {
-        await rank();
         dto.talismans = [];
+        await rank();
         await check();
         expect(cores()).toContain('No talisman of this type is worn');
     });
@@ -262,7 +262,7 @@ describe('the core advisor in the Combat Sim', () => {
         await rank();
         dto.equipment['/equipment_types/belt'] = { hrid: '/items/medium_talisman_belt', enhancementLevel: 9 };
         await check();
-        expect(cores()).toContain('another belt');
+        expect(cores()).toContain('out of date for this gear');
     });
 
     test('a new ranking clears the cores; a changed build marks them out of date', async () => {
@@ -282,5 +282,13 @@ describe('the core advisor in the Combat Sim', () => {
         await check();
         section.detach();
         expect(section._core).toBeNull();
+    });
+
+    test('a build edited after the ranking is not valued with the old rows', async () => {
+        await rank();
+        dto.talismans = [{ slotIndex: 1, modifiers: [crit(6), { hrid: '/talisman_modifiers/armor', grade: 2 }] }];
+        await check();
+        expect(cores()).toContain('out of date for this gear');
+        expect(section._core.rows).toHaveLength(0);
     });
 });

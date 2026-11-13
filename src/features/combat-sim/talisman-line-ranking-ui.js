@@ -345,6 +345,12 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
      * @returns {Promise<Object>}
      */
     async _coreContext() {
+        if (this._staleInputs(this._result).length) {
+            return {
+                status: 'refused',
+                message: 'The ranking is out of date for this gear. Rank again, then check the cores.',
+            };
+        }
         const { zoneHrid } = this.host._readUpgradeInputs();
         const playerIndex = this.host._upgradePlayerIndex();
         const { playerDTOs } = await this._loadRoster();
