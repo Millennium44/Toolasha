@@ -8,6 +8,8 @@ import dataManager from '../../core/data-manager.js';
 import tooltipObserver from '../../core/tooltip-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import profitCalculator from './profit-calculator.js';
+import { calculateTooltipCraftProfit, tooltipScrollSignature } from './tooltip-tile-scrolls.js';
+import { tileScrollMarker, tileScrollTitle } from '../actions/tile-scrolls.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import expectedValueCalculator from './expected-value-calculator.js';
 import {
@@ -798,7 +800,12 @@ class TooltipPrices {
         // Use the full item name (includes enhancement suffix e.g. "+3") as the key so
         // that switching to a different item — or a different enhancement level of the same
         // item — clears stale injected content and re-processes.
-        if (tooltipElement.dataset.pricesProcessedItem === itemName) {
+        // The scrolls the tiles assume are part of the key: the profit figures differ with them
+        const scrollSignature = tooltipScrollSignature(info.itemHrid);
+        if (
+            tooltipElement.dataset.pricesProcessedItem === itemName &&
+            (tooltipElement.dataset.pricesProcessedScrolls ?? '') === scrollSignature
+        ) {
             return;
         }
 
@@ -829,6 +836,7 @@ class TooltipPrices {
         }
 
         tooltipElement.dataset.pricesProcessedItem = itemName;
+        tooltipElement.dataset.pricesProcessedScrolls = scrollSignature;
 
         // The sprite or item link first: a translated client's displayed name does not match
         // the item data's English name. The name is the fallback for tooltips that carry neither
@@ -921,11 +929,13 @@ class TooltipPrices {
             // Original single-action craft profit display
             // Only run for base items (enhancementLevel = 0), not enhanced items
             // Enhanced items show their cost in the enhancement path section instead
-            const profitData = await profitCalculator.calculateProfit(itemHrid, { keepSellTax: true });
-            craftProfitData = profitData ?? null;
+            // With the tiles' simulated scrolls when they apply to this item's action
+            const { profitData, realProfitData, simulated } = await calculateTooltipCraftProfit(itemHrid);
+            // Self-use alchemy values a real bench, so it reads the figure with no scroll assumed
+            craftProfitData = realProfitData ?? null;
             if (isStale()) return;
             if (profitData) {
-                this.injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip);
+                this.injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip, simulated);
             }
         }
 
@@ -1541,8 +1551,12 @@ class TooltipPrices {
      * @param {Element} tooltipElement - Tooltip element
      * @param {Object} profitData - Profit calculation data
      * @param {boolean} isCollectionTooltip - True if this is a collection tooltip
+     * @param {string[]} [simulated] - Short names of the scrolls the figures assume (the tiles' simulation)
      */
-    injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip = false) {
+    injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip = false, simulated = []) {
+        const scrollMark = tileScrollMarker(simulated);
+        const scrollTitle = tileScrollTitle(simulated);
+        const scrollTitleAttr = scrollTitle ? ` title="${escapeAttribute(scrollTitle)}"` : '';
         const tooltipText = isCollectionTooltip
             ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
             : tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
@@ -1576,18 +1590,18 @@ class TooltipPrices {
             const profitPerDay = profitData.profitPerDay;
             const profitColor = profitData.profitPerHour >= 0 ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
 
-            html += `<div style="color: ${profitColor}; font-weight: bold;">Net: ${formatKMB(profitData.profitPerHour)}/hr (${formatKMB(profitPerDay)}/day)</div>`;
+            html += `<div style="color: ${profitColor}; font-weight: bold;"${scrollTitleAttr}>Net: ${formatKMB(profitData.profitPerHour)}/hr (${formatKMB(profitPerDay)}/day)${scrollMark}</div>`;
 
             // Show detailed breakdown if enabled
             if (showDetailed) {
-                html += this.buildDetailedProfitDisplay(profitData);
+                html += this.buildDetailedProfitDisplay(profitData, true, simulated);
             }
         } else {
             // No market data - show cost summary (compact) or materials table (detailed)
             html += '<div style="font-size: 0.9em; margin-left: 8px;">';
 
             if (showDetailed) {
-                html += this.buildDetailedProfitDisplay(profitData, false);
+                html += this.buildDetailedProfitDisplay(profitData, false, simulated);
             } else {
                 html += `<div style="font-weight: bold; color: ${config.COLOR_TOOLTIP_INFO};">Cost: ${formatKMB(profitData.totalMaterialCost)}/item</div>`;
             }
@@ -1600,10 +1614,11 @@ class TooltipPrices {
             const line = ownUseLine(ownUseCompare(profitData, ownUseAction));
             if (line) {
                 const title =
+                    (scrollTitle ? `${scrollTitle} ` : '') +
                     'Buying vs crafting at your own bench cost per item (materials + teas, your efficiency and ' +
                     'Gourmet). Both sides use your profit pricing mode, so the buy figure is the ask or the bid ' +
                     'that mode would pay. No sales tax on either side — a consumed item is never sold.';
-                html += `<div style="color: ${line.color}; margin-top: 4px;" title="${title}">${line.text}</div>`;
+                html += `<div style="color: ${line.color}; margin-top: 4px;" title="${escapeAttribute(title)}">${line.text}${scrollMark}</div>`;
             }
         }
 
@@ -1696,7 +1711,7 @@ class TooltipPrices {
      * @param {Object} profitData - Profit calculation data
      * @returns {string} HTML string for detailed display
      */
-    buildDetailedProfitDisplay(profitData, showProfitSummary = true) {
+    buildDetailedProfitDisplay(profitData, showProfitSummary = true, simulated = []) {
         let html = '';
 
         // Materials table
@@ -1830,7 +1845,8 @@ class TooltipPrices {
             const profitPerDay = profitData.profitPerDay;
             const profitColor = profitData.profitPerHour >= 0 ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
 
-            html += `<div style="color: ${profitColor};">Profit: ${formatKMB(profitPerAction)}/action, ${formatKMB(profitData.profitPerHour)}/hour, ${formatKMB(profitPerDay)}/day</div>`;
+            const profitTitle = simulated.length ? ` title="${escapeAttribute(tileScrollTitle(simulated))}"` : '';
+            html += `<div style="color: ${profitColor};"${profitTitle}>Profit: ${formatKMB(profitPerAction)}/action, ${formatKMB(profitData.profitPerHour)}/hour, ${formatKMB(profitPerDay)}/day${tileScrollMarker(simulated)}</div>`;
             html += '</div>';
         }
 
