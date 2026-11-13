@@ -14,6 +14,14 @@ The Solo gathering rows in an item tooltip now skip the market sell tax when "Ex
 
 When your party moves straight to a different dungeon, the run in progress now ends as a cancel instead of lingering; the tracker was reading a "Battle started" field the game never sends.
 
+### Best Items no longer stays on "checking…" after a failed volume check
+
+If the whole market-volume check fails, rows now show their figures without the volume cap instead of waiting forever.
+
+### Alchemy chain figures follow price recomputes and custom prices
+
+The decompose chain no longer keeps stale crate values after a pricing change or a custom price edit.
+
 ### Open in Optimizer from skill pages
 
 Gathering and production skill pages get an Open in Optimizer button (behind the ⋯ controls on phones, in the title bar on desktop) that opens the side panel on the Optimizer set to that skill and action.
