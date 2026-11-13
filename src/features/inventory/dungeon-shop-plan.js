@@ -65,16 +65,19 @@ export function volumeCap(volume, { days, sharePercent, includeUnmeasured = fals
  *   an item with no entry is treated as unmeasured with a cap of 0
  * @param {number} [input.holdPercent=0] - The hold threshold, in percent of the best purchasable
  *   item's gold/token; 0 disables it (every purchasable item is spent on, as before)
+ * @param {Iterable<string>} [input.skip] - Item hrids the player chose not to buy; they get no
+ *   tokens, do not set the best gold/token, and read `skipped`
  * @returns {{rows: Array<Object>, spent: number, held: number, leftover: number, gold: number}}
  *   One row per offer, best gold/token first, each with `quantity`, `tokens`,
  *   `gold`, `goldPerToken`, `cap`, `measured` and `reason` — why the quantity is
  *   what it is (`volume`, `tokens`, `no-price`, `unprofitable`, `no-volume`,
- *   `below-threshold`, or `null` when neither bound was reached). `held` is
+ *   `below-threshold`, `skipped`, or `null` when neither bound was reached). `held` is
  *   tokens withheld by the threshold; `leftover` is tokens nothing could buy
  *   even without it.
  */
-export function planTokenSpend({ offers, tokens, caps, holdPercent = 0 }) {
+export function planTokenSpend({ offers, tokens, caps, holdPercent = 0, skip = null }) {
     const startingTokens = Math.max(0, Math.floor(Number(tokens) || 0));
+    const skipped = new Set(skip || []);
     const ranked = (offers || [])
         .filter((offer) => offer?.itemHrid && offer.cost > 0)
         .map((offer) => ({
@@ -94,6 +97,7 @@ export function planTokenSpend({ offers, tokens, caps, holdPercent = 0 }) {
     // Ranked is already sorted best-first, so the first one that qualifies is it.
     let bestGoldPerToken = 0;
     for (const offer of ranked) {
+        if (skipped.has(offer.itemHrid)) continue;
         if (!(offer.netValue > 0)) continue;
         const capInfo = caps?.[offer.itemHrid] || { cap: 0, measured: false };
         if (!capInfo.measured && !(capInfo.cap > 0)) continue;
@@ -128,6 +132,11 @@ export function planTokenSpend({ offers, tokens, caps, holdPercent = 0 }) {
             reason: null,
         };
 
+        if (skipped.has(offer.itemHrid)) {
+            // Left out by the player: its tokens stay unspent and show as left over
+            row.reason = 'skipped';
+            return row;
+        }
         if (!(offer.netValue > 0)) {
             row.reason = offer.netValue === null || offer.netValue === undefined ? 'no-price' : 'unprofitable';
             return row;

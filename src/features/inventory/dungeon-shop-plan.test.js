@@ -244,3 +244,29 @@ describe('planTokenSpend', () => {
         });
     });
 });
+
+describe('skipped items', () => {
+    test('get no tokens, do not set the bar, and leave their tokens over', () => {
+        const result = planTokenSpend({
+            offers: [
+                { itemHrid: '/items/pirate_essence', name: 'Pirate Essence', cost: 1, netValue: 150 },
+                { itemHrid: '/items/marksman_brooch', name: 'Marksman Brooch', cost: 2000, netValue: 240_000 },
+                { itemHrid: '/items/kraken_fang', name: 'Kraken Fang', cost: 3000, netValue: 210_000 },
+            ],
+            tokens: 7500,
+            caps: {
+                '/items/pirate_essence': { cap: 10_000, measured: true },
+                '/items/marksman_brooch': { cap: 2, measured: true },
+                '/items/kraken_fang': { cap: 1, measured: true },
+            },
+            holdPercent: 80,
+            skip: ['/items/marksman_brooch', '/items/pirate_essence'],
+        });
+        const row = (hrid) => result.rows.find((r) => r.itemHrid === hrid);
+        expect(row('/items/marksman_brooch')).toMatchObject({ quantity: 0, reason: 'skipped' });
+        expect(row('/items/pirate_essence')).toMatchObject({ quantity: 0, reason: 'skipped' });
+        // Fang is the best left once the brooch is skipped, so the 80% bar does not hold it
+        expect(row('/items/kraken_fang').quantity).toBe(1);
+        expect(result).toMatchObject({ spent: 3000, held: 0, leftover: 4500 });
+    });
+});

@@ -1179,6 +1179,14 @@ export const settingsGroups = {
                 requires: 'dungeonShopPlanner',
                 help: 'Once the best items hit their volume caps, leftover tokens used to fall through to whatever was next in line, often at a much worse price. This holds those tokens for the next run instead of spending them on an item below this share of the best gold/token available. 0 turns the hold off.',
             },
+            dungeonShopPlanner_skipEssence: {
+                id: 'dungeonShopPlanner_skipEssence',
+                label: 'Dungeon shop planner: Never plan essence',
+                type: 'checkbox',
+                default: false,
+                requires: 'dungeonShopPlanner',
+                help: 'Leaves dungeon essence out of the plan, so tokens the other items cannot take stay unspent for next time instead of going into essence.',
+            },
             itemTooltip_gathering: {
                 id: 'itemTooltip_gathering',
                 label: 'Show gathering sources and profit',

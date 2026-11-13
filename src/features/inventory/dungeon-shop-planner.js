@@ -10,12 +10,11 @@
  *
  * ## Toolasha never buys
  *
- * A plan row opens the Shop on its Dungeon tab, filters it to the item and arms
- * the quantity; the player clicks the item's card and the game's dialog opens
- * with the quantity already typed. Pressing Buy is the player's click. The shop
- * card is not clicked for them either — one click, one game action (see
- * `tester-shop-nav.js`). When the shop cannot be reached the panel says the
- * number to type instead.
+ * A plan row opens the Shop on its Dungeon tab, opens the item's card (which
+ * only shows the game's buy dialog — no game action) and types the quantity.
+ * Pressing Buy is the player's click. When the card cannot be found the
+ * quantity stays armed for the dialog the player opens; when the shop cannot be
+ * reached the panel says the number to type instead.
  *
  * ## Values
  *
@@ -30,10 +29,12 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { itemDailyVolume } from '../../utils/liquidity-cap.js';
-import { createAutofillManager } from '../../utils/marketplace-autofill.js';
+import { createAutofillManager, findQuantityInput } from '../../utils/marketplace-autofill.js';
 import { calculatePriceAfterTax, outputTaxRate } from '../../utils/profit-helpers.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
 import { styleGameButton } from '../../utils/game-look.js';
+import { setReactInputValue } from '../../utils/react-input.js';
+import { createTimerRegistry } from '../../utils/timer-registry.js';
 
 import { openShopTab, setShopFilter } from '../../utils/tester-shop-nav.js';
 import { DUNGEON_TOKEN_HRIDS, dungeonShopOffers, ownedTokenCount } from './dungeon-shop-offers.js';
@@ -51,6 +52,7 @@ export const DAYS_SETTING = 'dungeonShopPlanner_days';
 export const SHARE_SETTING = 'dungeonShopPlanner_sharePercent';
 export const UNMEASURED_SETTING = 'dungeonShopPlanner_includeUnmeasured';
 export const HOLD_SETTING = 'dungeonShopPlanner_holdPercent';
+export const SKIP_ESSENCE_SETTING = 'dungeonShopPlanner_skipEssence';
 
 /** The Shop tab the dungeon items are sold on */
 export const DUNGEON_TAB_LABEL = /^\s*dungeons?\s*$/i;
@@ -59,7 +61,17 @@ const BUTTON_CLASS = 'toolasha-dungeon-plan-spend';
 const MUTED = 'rgba(232, 236, 245, 0.5)';
 const WARN = '#ffb74d';
 
+const timerRegistry = createTimerRegistry();
+
+/** Resolve after `ms`, through the registry so a teardown cancels it */
+function wait(ms) {
+    return new Promise((resolve) => {
+        timerRegistry.scheduleTimeout(resolve, ms);
+    });
+}
+
 const REASON_TEXT = {
+    skipped: 'skipped',
     volume: 'volume cap',
     tokens: 'out of tokens',
     'no-price': 'no market price',
@@ -137,6 +149,7 @@ class DungeonShopPlanner {
         this.status = '';
         this.initialized = false;
         this.pendingToken = null;
+        timerRegistry.clearAll();
     }
 
     /**
@@ -192,6 +205,7 @@ class DungeonShopPlanner {
             // 0 is a real, distinct value here (the threshold off) rather than "unset", so it
             // is clamped rather than treated as invalid the way `clampNumber` treats a stored 0
             holdPercent: clampHoldPercent(config.getSettingValue(HOLD_SETTING, DEFAULT_HOLD_PERCENT)),
+            skipEssence: config.getSetting(SKIP_ESSENCE_SETTING, false) === true,
         };
     }
 
@@ -306,7 +320,13 @@ class DungeonShopPlanner {
         }
         const tokens = ownedTokenCount(tokenHrid);
         return {
-            ...planTokenSpend({ offers, tokens, caps, holdPercent: options.holdPercent }),
+            ...planTokenSpend({
+                offers,
+                tokens,
+                caps,
+                holdPercent: options.holdPercent,
+                skip: options.skipEssence ? offers.filter((o) => isEssence(o.itemHrid)).map((o) => o.itemHrid) : null,
+            }),
             tokens,
             options,
             measuring: offers.filter((offer) => this.measuring.has(offer.itemHrid)).length,
@@ -387,7 +407,7 @@ class DungeonShopPlanner {
             panelNote(
                 `Values are current ask prices less ${taxPercent}% market tax — sell prices, not a walk down the ` +
                     `order book. Caps: ${result.options.sharePercent}% of ${result.options.days} day(s) of traded ` +
-                    'volume. Click a planned row to open it in the Shop; you press Buy.'
+                    'volume. Click a planned row to open its buy dialog with the quantity filled in; you press Buy.'
             )
         );
     }
@@ -460,6 +480,13 @@ class DungeonShopPlanner {
         label.append(box, document.createTextNode('include unmeasured'));
         row.appendChild(label);
 
+        row.appendChild(
+            checkboxField('skip essence', options.skipEssence, 'toolasha-dungeon-plan-skip-essence', (checked) => {
+                config.setSetting(SKIP_ESSENCE_SETTING, checked);
+                this.panel?.render();
+            })
+        );
+
         return row;
     }
 
@@ -525,6 +552,7 @@ class DungeonShopPlanner {
      * @returns {string}
      */
     capText(planRow, holdPercent) {
+        if (planRow.reason === 'skipped') return REASON_TEXT.skipped;
         if (this.measuring.has(planRow.itemHrid)) return 'measuring…';
         if (planRow.reason === 'no-price' || planRow.reason === 'unprofitable') return REASON_TEXT[planRow.reason];
         if (!planRow.measured && planRow.reason !== 'below-threshold') {
@@ -570,13 +598,47 @@ class DungeonShopPlanner {
         }
 
         // Armed after the tab is selected: selecting a shop tab is what clears
-        // an armed quantity
+        // an armed quantity. Kept as the fallback for a card this cannot find.
         const filtered = setShopFilter(planRow.name);
         this.autofill.initialize();
         this.autofill.setQuantity(quantity, { itemHrid: planRow.itemHrid });
-        this.status =
-            `${filtered ? 'Shop filtered to' : 'Find'} ${planRow.name}: click its card and the quantity box will ` +
-            `read ${quantity} (if not, type it). Press Buy yourself.`;
+
+        // Open the item's card: that only shows the game's buy dialog, it buys nothing
+        let card = findShopCard(planRow.itemHrid);
+        for (let i = 0; i < 20 && !card; i++) {
+            await wait(100);
+            if (!this.initialized || this.generation !== generation) return;
+            card = findShopCard(planRow.itemHrid);
+        }
+        if (!card) {
+            this.status =
+                `${filtered ? 'Shop filtered to' : 'Find'} ${planRow.name}: click its card and the quantity box will ` +
+                `read ${quantity} (if not, type it). Press Buy yourself.`;
+            this.panel?.render();
+            return;
+        }
+        card.scrollIntoView?.({ block: 'center' });
+        card.click();
+
+        let modal = null;
+        for (let i = 0; i < 20 && !modal; i++) {
+            await wait(100);
+            if (!this.initialized || this.generation !== generation) return;
+            modal = openBuyDialog();
+        }
+        const input = modal ? findQuantityInput(modal) : null;
+        if (!input) {
+            this.status = `Click ${planRow.name}'s card and type ${quantity} in the quantity box. Press Buy yourself.`;
+            this.panel?.render();
+            return;
+        }
+        // The autofill may have filled it already; writing it again is harmless
+        if (input.value !== String(quantity)) {
+            setReactInputValue(input, String(quantity), { dispatchInput: true, dispatchChange: true });
+        }
+        // Filled for this one dialog; a later one for the same item is the player's own
+        this.autofill.clearQuantity();
+        this.status = `${planRow.name} × ${formatWithSeparator(quantity)} is in the buy dialog. Press Buy yourself.`;
         this.panel?.render();
     }
 }
@@ -588,6 +650,68 @@ class DungeonShopPlanner {
  */
 function findDungeonTab(strip) {
     return Array.from(strip.children).find((el) => DUNGEON_TAB_LABEL.test(el.textContent || '')) || null;
+}
+
+/**
+ * Whether an item is a dungeon essence (the cheap per-token filler the shop sells).
+ * @param {string} itemHrid - An item
+ * @returns {boolean}
+ */
+export function isEssence(itemHrid) {
+    return /_essence$/.test(itemHrid || '');
+}
+
+/**
+ * The Shop's card for an item, on screen, found by its icon sprite rather than
+ * its name, which the game may show in another language.
+ * @param {string} itemHrid - An item
+ * @returns {HTMLElement|null}
+ */
+export function findShopCard(itemHrid) {
+    const slug = String(itemHrid || '')
+        .split('/')
+        .pop();
+    if (!slug) return null;
+    for (const card of document.querySelectorAll('[class*="ShopPanel_shopItem__"]')) {
+        if (card.offsetParent === null) continue;
+        const use = card.querySelector('[class*="ShopPanel_itemContainer"] use') || card.querySelector('use');
+        const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
+        if (href.split('#')[1] === slug) return card;
+    }
+    return null;
+}
+
+/**
+ * The buy dialog on screen. Fixed-position, so `offsetParent` is null even
+ * when shown; being drawn is the test.
+ * @returns {HTMLElement|null}
+ */
+function openBuyDialog() {
+    return (
+        Array.from(document.querySelectorAll('[class*="Modal_modalContainer"]')).find(
+            (el) => el.getClientRects().length > 0 && /quantity/i.test(el.textContent || '')
+        ) || null
+    );
+}
+
+/**
+ * A labelled checkbox that reports on change.
+ * @param {string} labelText - Label
+ * @param {boolean} checked - Current state
+ * @param {string} className - For tests and styling
+ * @param {Function} onChange - `(boolean) => void`
+ * @returns {HTMLElement}
+ */
+function checkboxField(labelText, checked, className, onChange) {
+    const label = document.createElement('label');
+    Object.assign(label.style, { display: 'flex', gap: '3px', alignItems: 'center', cursor: 'pointer' });
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = className;
+    box.checked = checked;
+    box.addEventListener('change', () => onChange(box.checked));
+    label.append(box, document.createTextNode(labelText));
+    return label;
 }
 
 /**

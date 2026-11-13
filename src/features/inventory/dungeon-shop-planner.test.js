@@ -210,6 +210,20 @@ describe('the plan', () => {
         expect(body().textContent).not.toContain('could not be drawn');
     });
 
+    test('skip essence leaves essence out and the tokens left over', async () => {
+        await openPirate();
+        const box = body().querySelector('.toolasha-dungeon-plan-skip-essence');
+        box.checked = true;
+        box.dispatchEvent(new Event('change'));
+        expect(state.settings.dungeonShopPlanner_skipEssence).toBe(true);
+        expect(qtyOf('/items/kraken_fang')).toBe('1');
+        expect(qtyOf('/items/marksman_brooch')).toBe('2');
+        expect(qtyOf('/items/pirate_essence')).toBe('—');
+        expect(rowFor('/items/pirate_essence').cells[5].textContent).toBe('skipped');
+        // 7,500 − 3,000 − 4,000
+        expect(body().textContent).toContain('500 left over');
+    });
+
     test('changing the window and share re-caps the plan', async () => {
         await openPirate();
         const days = body().querySelector('.toolasha-dungeon-plan-days');
@@ -386,21 +400,61 @@ describe('the hold threshold', () => {
     });
 });
 
-describe('a plan row click', () => {
-    test("opens the Dungeon tab, filters to the item and fills the shop dialog's quantity — never Buy", async () => {
-        await openPirate();
-        rowFor('/items/marksman_brooch').click();
-        await flush();
-        expect(state.filtered).toEqual(['Marksman Brooch']);
-        expect(body().textContent).toContain('Press Buy yourself');
+/**
+ * A Dungeon-tab card shaped like the game's (name, icon container, costs),
+ * drawn on screen, whose click opens a drawn buy dialog as the game's does.
+ * @param {string} slug - Item sprite id
+ * @returns {{card: HTMLElement, dialogs: Array<Object>}}
+ */
+function shopCard(slug) {
+    const card = document.createElement('div');
+    card.className = 'ShopPanel_shopItem__10Noo';
+    card.innerHTML = `
+        <div class="ShopPanel_name__3vA">Item</div>
+        <div class="ShopPanel_itemContainer__1Ml"><svg><use href="/static/items_sprite.svg#${slug}"></use></svg></div>
+        <div class="ShopPanel_costs__Xff">2,000 Pirate Token</div>`;
+    Object.defineProperty(card, 'offsetParent', { get: () => document.body });
+    const dialogs = [];
+    card.addEventListener('click', () => {
+        const dialog = shopDialog(slug);
+        dialog.modal.getClientRects = () => [{}];
+        dialogs.push(dialog);
+    });
+    document.body.appendChild(card);
+    return { card, dialogs };
+}
 
-        const { modal, input, buy } = shopDialog('marksman_brooch');
+const settle = () => new Promise((resolve) => setTimeout(resolve, 350));
+
+describe('a plan row click', () => {
+    test("opens the item's card and fills the buy dialog's quantity — never Buy", async () => {
+        await openPirate();
+        shopCard('kraken_fang');
+        const { dialogs } = shopCard('marksman_brooch');
+        rowFor('/items/marksman_brooch').click();
+        await settle();
+
+        expect(dialogs).toHaveLength(1);
+        const { input, buy } = dialogs[0];
         const clicked = vi.fn();
         buy.addEventListener('click', clicked);
-        announceModal(modal);
-
+        await settle();
         expect(input.value).toBe('2');
         expect(clicked).not.toHaveBeenCalled();
+        expect(body().textContent).toContain('Marksman Brooch × 2 is in the buy dialog. Press Buy yourself.');
+    });
+
+    test('with no card on screen it arms the quantity and says to click the card', async () => {
+        await openPirate();
+        vi.useFakeTimers();
+        rowFor('/items/marksman_brooch').click();
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(state.filtered).toEqual(['Marksman Brooch']);
+        expect(body().textContent).toContain('click its card');
+
+        const { modal, input } = shopDialog('marksman_brooch');
+        announceModal(modal);
+        expect(input.value).toBe('2');
     });
 
     test('a dialog for another item is left alone', async () => {
