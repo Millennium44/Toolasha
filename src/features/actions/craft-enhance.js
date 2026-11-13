@@ -107,10 +107,12 @@ function tokenRouteValue(index, itemHrid) {
 
 /**
  * The market data's age stamp. The window compares it with the one its rows were built on to know they are stale.
- * @returns {number}
+ * A new snapshot moves the fetch time; an order book opened or a custom price edited moves only `priceVersion`,
+ * so both are in it.
+ * @returns {string}
  */
 export function craftEnhancePriceStamp() {
-    return marketAPI.lastFetchTimestamp || 0;
+    return `${marketAPI.lastFetchTimestamp || 0}:${marketAPI.priceVersion || 0}`;
 }
 
 /**
@@ -203,7 +205,7 @@ export function craftEnhanceStateKey() {
             targetLevel: normalizeTargetLevel(config.getSettingValue(TARGET_LEVEL_SETTING, 5)),
             ownedMode: normalizeOwnedMode(config.getSettingValue(OWNED_MODE_SETTING, 'market')),
             params: getAutoDetectedParams(),
-            priceStamp: marketAPI.lastFetchTimestamp || 0,
+            priceStamp: craftEnhancePriceStamp(),
         });
     } catch (error) {
         console.error('[CraftEnhance] Reading the state key failed:', error);
@@ -225,7 +227,7 @@ export function craftEnhanceStateKey() {
 export function rankCraftEnhance({
     targetLevel: requestedLevel,
     ownedMode: requestedMode,
-    priceStamp = marketAPI.lastFetchTimestamp || 0,
+    priceStamp = craftEnhancePriceStamp(),
     onProgress,
     isCurrent = () => true,
 } = {}) {

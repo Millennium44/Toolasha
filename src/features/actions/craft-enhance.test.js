@@ -46,6 +46,9 @@ vi.mock('../../api/marketplace.js', () => ({
         get lastFetchTimestamp() {
             return game.stamp;
         },
+        get priceVersion() {
+            return game.priceVersion;
+        },
     },
 }));
 vi.mock('../market/profit-calculator.js', () => ({
@@ -88,7 +91,7 @@ vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => g
 vi.mock('../../utils/background-work.js', () => ({ yieldToEventLoop: async () => {} }));
 vi.mock('./production-arbitrage.js', () => ({
     productionRecipes: () => game.recipes,
-    stateFingerprint: () => `fp${game.stamp}${game.fpExtra}`,
+    stateFingerprint: (stamp) => `fp${stamp}${game.fpExtra}`,
 }));
 
 const {
@@ -490,7 +493,21 @@ describe('buy mode, estimates, teas and the price stamp', () => {
 
     test('the price stamp is exposed for staleness checks', () => {
         game.stamp = 123;
-        expect(craftEnhancePriceStamp()).toBe(123);
+        game.priceVersion = 0;
+        const stamp = craftEnhancePriceStamp();
+        expect(craftEnhanceStateKey()).toContain(stamp);
+        game.stamp = 124;
+        expect(craftEnhancePriceStamp()).not.toBe(stamp);
+    });
+
+    test('an order book opened or a custom price edited (priceVersion only) moves the stamp and the state key', () => {
+        game.stamp = 123;
+        game.priceVersion = 4;
+        const stamp = craftEnhancePriceStamp();
+        const key = craftEnhanceStateKey();
+        game.priceVersion = 5;
+        expect(craftEnhancePriceStamp()).not.toBe(stamp);
+        expect(craftEnhanceStateKey()).not.toBe(key);
     });
 });
 
