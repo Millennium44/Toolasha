@@ -39,27 +39,44 @@ export function enhancementSweepParams(itemHrid) {
 }
 
 /**
- * Calculate the gold cost of enhancing an item from startLevel to targetLevel.
- * Uses incremental cost approach: cost(0→target) - cost(0→start), matching
- * the tooltip's enhancement path calculation exactly.
+ * What one enhancement run costs, how long it takes and what it teaches, on the cheapest protect-from plan.
+ *
+ * {@link calculateDirectEnhancementCost} is this, reduced to the gold. A caller that rates the run per
+ * hour (the Craft & Enhance window) needs the seconds and the XP of the same plan, so one solve answers
+ * all three and they cannot disagree about which plan was cheapest.
+ *
  * @param {string} itemHrid - Item HRID
  * @param {number} startLevel - Starting enhancement level
  * @param {number} targetLevel - Target enhancement level
  * @param {Object} gameData - Game data from buildGameDataPayload()
- * @returns {number|null} Expected gold cost, or null when it cannot be quoted (no recipe, a material with no
- *   price, or nothing about the run priceable)
+ * @param {Object} [options] - Options
+ * @param {Object} [options.params] - Enhancing parameters to quote at (for example the player's detected
+ *   bench). Omitted, the advisor's resolution applies: pro rates or the simulator's bench, as set.
+ * @returns {{cost: number, seconds: number, xp: number, xpKnown: boolean, attempts: number, protectFrom: number,
+ *   protectionItemHrid: string|null}|null} Null when it cannot be quoted (no recipe, a material with no price,
+ *   or nothing about the run priceable): unknown, never free
  */
-export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
+export function quoteDirectEnhancement(itemHrid, startLevel, targetLevel, gameData, { params } = {}) {
     // Genuine no-op: nothing to enhance
     if (targetLevel <= startLevel) {
-        return 0;
+        return { cost: 0, seconds: 0, xp: 0, xpKnown: true, attempts: 0, protectFrom: 0, protectionItemHrid: null };
     }
 
     // On the test server with the Tester shop priced in, nobody rolls the
     // dice: the finished level is a shop copy mirrored up, guaranteed
     if (testerShopEnabled()) {
         const tester = testerGearPrice(itemHrid, targetLevel, { itemDetailMap: gameData?.itemDetailMap });
-        if (tester) return tester.price;
+        if (tester) {
+            return {
+                cost: tester.price,
+                seconds: 0,
+                xp: 0,
+                xpKnown: false,
+                attempts: 0,
+                protectFrom: 0,
+                protectionItemHrid: null,
+            };
+        }
     }
 
     const itemDetails = gameData.itemDetailMap[itemHrid];
@@ -69,7 +86,7 @@ export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel
         return null;
     }
 
-    const enhancingParams = enhancementSweepParams(itemHrid);
+    const enhancingParams = params || enhancementSweepParams(itemHrid);
 
     // The shared rule: a one-sided book cross-fills, then production cost, and
     // trainee charms take the one shop-price constant. A material with none of
@@ -114,6 +131,9 @@ export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel
             targetLevel,
             startLevel,
             materialCostPerAttempt: materials.cost,
+            // The XP formula keys on the item's own level, the same reading the enhancing panel takes
+            xpBaseLevel: itemDetails.itemLevel || 0,
+            wisdomDecimal: (enhancingParams.experienceBonus || 0) / 100,
             protectionOptions: protPrice > 0 ? [{ itemHrid: protHrid, price: protPrice }] : [],
             hasMissingPrices: materials.hasMissingPrices || materials.hasPartialPrices,
         });
@@ -122,8 +142,32 @@ export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel
         if (plan && protPartial && plan.protectFrom > 0 && plan.protectionItemHrid) return null;
 
         // Nothing about the run could be priced — unknown, not free
-        return plan ? Math.max(0, Math.round(plan.cost)) : null;
+        if (!plan) return null;
+        return {
+            cost: Math.max(0, Math.round(plan.cost)),
+            seconds: plan.seconds,
+            xp: plan.xp,
+            xpKnown: true,
+            attempts: plan.attempts,
+            protectFrom: plan.protectFrom,
+            protectionItemHrid: plan.protectionItemHrid,
+        };
     } catch {
         return null;
     }
+}
+
+/**
+ * Calculate the gold cost of enhancing an item from startLevel to targetLevel.
+ * Uses incremental cost approach: cost(0→target) - cost(0→start), matching
+ * the tooltip's enhancement path calculation exactly.
+ * @param {string} itemHrid - Item HRID
+ * @param {number} startLevel - Starting enhancement level
+ * @param {number} targetLevel - Target enhancement level
+ * @param {Object} gameData - Game data from buildGameDataPayload()
+ * @returns {number|null} Expected gold cost, or null when it cannot be quoted (no recipe, a material with no
+ *   price, or nothing about the run priceable)
+ */
+export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
+    return quoteDirectEnhancement(itemHrid, startLevel, targetLevel, gameData)?.cost ?? null;
 }

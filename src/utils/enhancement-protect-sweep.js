@@ -595,7 +595,7 @@ export function sweepProtectFrom({
  * @param {boolean} [args.hasMissingPrices=false] - Whether the caller's material
  *   tally left something unpriced (from `perAttemptMaterialCost`)
  * @returns {{cost: number, protectFrom: number, protectionItemHrid: string|null,
- *   attempts: number, protections: number, hasMissingPrices: boolean}|null} The
+ *   attempts: number, protections: number, xp: number, seconds: number, hasMissingPrices: boolean}|null} The
  *   cheapest plan, or null when the run cannot be priced at all
  */
 export function cheapestProtectPlan({ hasMissingPrices = false, ...args }) {
@@ -610,6 +610,9 @@ export function cheapestProtectPlan({ hasMissingPrices = false, ...args }) {
         protectionItemHrid: row.itemHrid,
         attempts: row.attempts,
         protections: row.protections,
+        // Expected XP and seconds of the same run, for a caller that rates the run per hour
+        xp: row.xp,
+        seconds: row.time,
         hasMissingPrices: Boolean(hasMissingPrices),
     };
 }

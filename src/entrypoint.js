@@ -1380,6 +1380,25 @@ function registerFeatures() {
                 }),
         },
         {
+            key: 'craftEnhanceBoard',
+            name: 'Craft & Enhance Window',
+            category: 'Actions',
+            module: Actions.craftEnhanceBoard,
+            async: false,
+            customCheck: () => config.getSetting('actions_craftEnhance'),
+            // The button only belongs on a gear-making skill page, so any other page is not a verdict either way
+            healthCheck: () =>
+                whenSetting('actions_craftEnhance', () => {
+                    const title = document.querySelector('[class*="GatheringProductionSkillPanel_title"]');
+                    if (!title) return null;
+                    const gear = ['Cheesesmithing', 'Crafting', 'Tailoring'];
+                    if (!gear.some((name) => title.textContent.includes(name))) return null;
+                    // An Iron Cow character has no window and no button (initialize declined), which is not a failure
+                    if (!Actions.craftEnhanceBoard.initialized) return null;
+                    return Boolean(title.querySelector('.mwi-craft-enhance-open'));
+                }),
+        },
+        {
             key: 'alchemyProfitDisplay',
             name: 'Alchemy Profit Display',
             category: 'Alchemy',
