@@ -82,6 +82,9 @@ vi.mock('../features/market/expected-value-calculator.js', () => ({
         get generation() {
             return engine.evGeneration ?? 0;
         },
+        get completions() {
+            return engine.evCompletions ?? 0;
+        },
     },
 }));
 vi.mock('./profit-helpers.js', () => ({ calculatePriceAfterTax: (price, rate = 0.04) => price * (1 - rate) }));
@@ -211,6 +214,7 @@ beforeEach(() => {
     engine.estimatedOn = {};
     engine.settings = undefined;
     engine.evGeneration = 0;
+    engine.evCompletions = 0;
     engine.customVersion = 0;
     clearDecomposeChainCaches();
 });
@@ -736,6 +740,19 @@ describe('chain caches follow what priced them', () => {
         chainNet(300);
         expect(decomposeChain('/items/item_a').netPerHour).toBeCloseTo(perHour(100), -1);
         engine.evGeneration = 1;
+        expect(decomposeChain('/items/item_a').netPerHour).toBeCloseTo(perHour(300), -1);
+    });
+
+    test('a chain priced while the calculator cache is empty is repriced once the refill completes', () => {
+        chainNet(100);
+        // invalidateCache(): generation bumps, the container cache is empty
+        engine.evGeneration = 1;
+        chainNet(0);
+        expect(decomposeChain('/items/item_a').netPerHour).toBeCloseTo(perHour(0), -1);
+        // The pass finishes and publishes the refilled cache: generation does not move, completions does
+        chainNet(300);
+        expect(decomposeChain('/items/item_a').netPerHour).toBeCloseTo(perHour(0), -1);
+        engine.evCompletions = 1;
         expect(decomposeChain('/items/item_a').netPerHour).toBeCloseTo(perHour(300), -1);
     });
 

@@ -74,6 +74,10 @@ class ExpectedValueCalculator {
         // superseded — see initialize()/calculateNestedContainers().
         this.generation = 0;
 
+        // Bumped each time a pass finishes and publishes a refilled cache, so a reader that memoised a figure while
+        // the cache was empty (between invalidateCache() and this) can tell it was priced before the refill.
+        this.completions = 0;
+
         // The start currently running, shared by every plain initialize() caller so
         // they join one pass instead of each enqueueing their own. invalidateCache()
         // replaces it; cleanup() clears it.
@@ -224,6 +228,7 @@ class ExpectedValueCalculator {
         }
 
         this.isInitialized = true;
+        this.completions++;
 
         // Notify listeners that calculator is ready
         dataManager.emit('expected_value_initialized', { timestamp: Date.now() });

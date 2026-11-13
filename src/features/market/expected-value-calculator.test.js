@@ -1044,6 +1044,18 @@ describe('cache invalidation on pricing changes', () => {
         invalidateSpy.mockRestore();
     });
 
+    test('a finished pass bumps the completion count after invalidation bumped the generation', async () => {
+        await expectedValueCalculator.initialize();
+        const generation = expectedValueCalculator.generation;
+        const completions = expectedValueCalculator.completions;
+        expectedValueCalculator.invalidateCache();
+        expect(expectedValueCalculator.generation).toBe(generation + 1);
+        expect(expectedValueCalculator.completions).toBe(completions);
+        await expectedValueCalculator.initialize();
+        expect(expectedValueCalculator.generation).toBe(generation + 1);
+        expect(expectedValueCalculator.completions).toBe(completions + 1);
+    });
+
     test('concurrent initialize() calls share one pass and emit once', async () => {
         const { calculateEVBatch } = await import('../../utils/ev-worker-manager.js');
         calculateEVBatch.mockClear();

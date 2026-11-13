@@ -59,14 +59,15 @@ const PRICING_MODE_SETTING = 'profitCalc_pricingMode';
 
 /**
  * What the caches below were filled under: the pricing mode, both patient ticks, the custom-price map and the
- * expected-value calculator's generation. The chain follows the player's dropdowns, so a figure priced under one
- * set is wrong under another. Nested crate values come from the calculator's container cache, which it rebuilds a
- * debounce after a mode or price change and signals by bumping its generation; keying on that makes a chain
- * priced inside the window drop its old crate figures once the calculator recomputes.
+ * expected-value calculator's generation and completion count. The chain follows the player's dropdowns, so a
+ * figure priced under one set is wrong under another. Nested crate values come from the calculator's container
+ * cache, which it clears when a price or setting moves (generation bump) and refills a moment later (completion
+ * bump); a chain priced while it was empty must not outlive the refill, so both counters are keyed.
  * @returns {string}
  */
 function pricingSignature() {
-    const generation = expectedValueCalculator()?.generation ?? 0;
+    const calculator = expectedValueCalculator();
+    const generation = `${calculator?.generation ?? 0}.${calculator?.completions ?? 0}`;
     return `${config.getSettingValue(PRICING_MODE_SETTING, '')}|${isPatientTickOn('buy')}|${isPatientTickOn('sell')}|${getCustomPriceVersion()}|${generation}`;
 }
 
