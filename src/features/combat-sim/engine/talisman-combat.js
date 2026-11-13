@@ -1,6 +1,8 @@
 import {
     getBeltSlotCount,
+    createLineAccumulator,
     getTalismanPower,
+    isSpecialModifierDetail,
     scaleTalismanModifier,
     talismanStatName,
 } from '../../../utils/talisman-bonuses.js';
@@ -20,7 +22,8 @@ export const TALISMAN_MECHANICS = Object.freeze(['echo', 'smite', 'shatter', 'fo
  *
  * A line's value is `gradeValues[grade - 1] * (1 + talismanPower)`, the same arithmetic the server uses for the
  * `combatStats` it sends (checked against a live character: criticalDamage grade 3 is 0.03 * 1.258). Lines that
- * name the same stat add up. A slot the belt does not have is ignored, and so is a second record in one slot.
+ * name the same stat add up, except copies of one Special line (echo, fortify, overkill, shatter, smite): those
+ * count once, at the highest grade. Measured 2026-11-13: Fortify G2 at power 0.15 is 0.01725 with one copy or two. A slot the belt does not have is ignored, and so is a second record in one slot.
  *
  * Applied only when the game data payload says talismans exist (`gameData.talismansEnabled`, which the main
  * thread sets from the host): the engine runs in a worker, where the host is not visible, and a build saved on
@@ -48,6 +51,7 @@ export function computeTalismanCombat({ talismans, belt, gameData, modeledStats 
     const power = getTalismanPower(beltRef, itemDetailMap, gameData.enhancementLevelTotalBonusMultiplierTable);
 
     const seenSlots = new Set();
+    const accumulator = createLineAccumulator();
     for (const talisman of talismans) {
         const slot = talisman?.slotIndex;
         if (!Number.isInteger(slot) || slot < 1 || slot > slots || seenSlots.has(slot)) continue;
@@ -57,16 +61,19 @@ export function computeTalismanCombat({ talismans, belt, gameData, modeledStats 
         for (const modifier of talisman.modifiers) {
             const scaled = scaleTalismanModifier(modifier, modifierDetailMap, power);
             if (!scaled || scaled.detail.targetHrid !== TARGET_COMBAT) continue;
-            for (const key of scaled.detail.keys || []) {
-                const name = talismanStatName(key);
+            const names = (scaled.detail.keys || []).map(talismanStatName);
+            // A mechanic is a Special line whatever the table's group label says
+            const special = isSpecialModifierDetail(scaled.detail) || names.some((n) => TALISMAN_MECHANICS.includes(n));
+            for (const name of names) {
                 const into = TALISMAN_MECHANICS.includes(name)
                     ? result.mechanics
                     : modeledStats?.has(name)
                       ? result.stats
                       : result.unmodeled;
-                into[name] = (into[name] || 0) + scaled.value;
+                accumulator.add(into, [name], scaled.value, special, `${modifier.hrid}|${name}`);
             }
         }
     }
+    accumulator.finish();
     return result;
 }
