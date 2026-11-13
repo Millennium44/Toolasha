@@ -29,6 +29,9 @@ import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { buildEnhancementLevelMap } from '../../utils/loadout-scraper.js';
 import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot, dataManager as sharedDataManager } from '../../utils/bundle-bridge.js';
+import { registerOptimizerOpener } from '../../utils/optimizer-bridge.js';
+import { ensureCharacterPanelOpen } from '../../utils/character-panel.js';
+import { showToast } from '../../utils/toast.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 import { maxEnhancementLevel, maxLevel } from '../../utils/game-maximums.js';
@@ -153,6 +156,12 @@ class SkillingSimulatorUI {
             { childList: true, subtree: true }
         );
         this._tryInjectTabButton();
+        // Skill pages offer "Open in Optimizer" only while this is registered
+        this._unregisterOpener?.();
+        this._unregisterOpener = registerOptimizerOpener({
+            supports: (skillHrid) => this._skillNameForHrid(skillHrid) !== null,
+            open: (skillHrid, actionHrid) => this.openForSkill(skillHrid, actionHrid),
+        });
         // Turning the Talismans section on or off redraws an open panel
         this._unsubscribeTalismans?.();
         this._unsubscribeTalismans = config.onSettingChange?.('skillingOptimizer_talismans', () => {
@@ -205,6 +214,68 @@ class SkillingSimulatorUI {
         }
 
         if (this.isActive) this._activatePanel();
+    }
+
+    /**
+     * The Optimizer's name for a skill hrid, or null when it has no view for it.
+     * @param {string} skillHrid - e.g. `/skills/woodcutting`
+     * @returns {string|null}
+     */
+    _skillNameForHrid(skillHrid) {
+        return SKILL_NAMES.find((name) => `/skills/${name.toLowerCase()}` === skillHrid) ?? null;
+    }
+
+    /**
+     * Show the Optimizer on a skill: open the character panel if it is closed, select this tab, switch to
+     * the skill and preselect one action (the given one if the skill offers it, else the skill's first).
+     * @param {string} skillHrid - e.g. `/skills/woodcutting`
+     * @param {string|null} [actionHrid] - Action to preselect
+     * @returns {Promise<boolean>} Whether the Optimizer is now showing
+     */
+    async openForSkill(skillHrid, actionHrid = null) {
+        const skillName = this._skillNameForHrid(skillHrid);
+        if (!skillName) return false;
+
+        // Opening the panel mounts the tab strip; the body watcher then injects our tab
+        if (!this.tabBtn?.isConnected) this.tabBtn = null;
+        const opened = ensureCharacterPanelOpen();
+        if (!this.tabBtn) {
+            if (opened) await this._waitForTab();
+            else this._tryInjectTabButton();
+        }
+        if (!this.tabBtn) {
+            showToast('Open the character panel, then the Optimizer tab: it could not be opened from here.', {
+                kind: 'warn',
+            });
+            return false;
+        }
+
+        const changed = this.currentSkill !== skillName;
+        this.currentSkill = skillName;
+        if (changed) {
+            this.currentLevel = getPlayerSkillLevel(skillName);
+            this.teas = [null, null, null];
+        }
+        const available = getSkillActionsForDisplay(skillName, this.currentLevel, this.equipment).filter(
+            (action) => action.available
+        );
+        const chosen = available.find((action) => action.hrid === actionHrid) ?? available[0] ?? null;
+        this.selectedActionHrids = chosen ? new Set([chosen.hrid]) : null;
+        // _activatePanel builds a fresh panel whether the tab was open on another tab or on this one
+        this._activatePanel();
+        return true;
+    }
+
+    /**
+     * Wait (bounded) for the character panel's tab strip to mount and take our tab.
+     * @returns {Promise<void>}
+     */
+    async _waitForTab() {
+        for (let i = 0; i < 20 && !this.tabBtn; i++) {
+            this._tryInjectTabButton();
+            if (this.tabBtn) return;
+            await new Promise((resolve) => setTimeout(resolve, 150));
+        }
     }
 
     _findContentContainer() {
@@ -2278,6 +2349,8 @@ class SkillingSimulatorUI {
         this._talismanSection = null;
         this._unsubscribeTalismans?.();
         this._unsubscribeTalismans = null;
+        this._unregisterOpener?.();
+        this._unregisterOpener = null;
     }
 }
 
