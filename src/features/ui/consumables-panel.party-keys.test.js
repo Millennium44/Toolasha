@@ -323,6 +323,19 @@ describe('the chest key', () => {
         expect(mine.textContent).toContain('Ask: 489K');
     });
 
+    test('on a market route Buy all restocks the chest keys too, without them deciding the stop', async () => {
+        scene();
+        await draw();
+
+        const mine = sectionOf('Me (you)');
+        click(buyAllLink(mine));
+        expect(shopping.calls).toHaveLength(1);
+        const chest = shopping.calls[0].find((item) => item.itemHrid === CHEST_KEY);
+        // 192 a day for a one-day target, 5 held
+        expect(chest?.count).toBe(187);
+        expect(mine.textContent).toContain('stops in 15h 30m · Sinister Entry Key');
+    });
+
     test('nobody else gets a chest key row', async () => {
         scene();
         await draw();
