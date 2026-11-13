@@ -32,6 +32,7 @@ import craftingPlanWalk from '../features/crafting-plan/crafting-plan-walk.js';
 // surface the action panel drives.
 import taskCraftingTrain from '../features/crafting-plan/task-crafting-train.js';
 import productionArbitrageBoard from '../features/actions/production-arbitrage-board.js';
+import craftEnhanceBoard from '../features/actions/craft-enhance-board.js';
 import * as craftingPlanCalculator from '../features/crafting-plan/crafting-plan-calculator.js';
 import * as craftArbitrage from '../features/crafting-plan/craft-arbitrage-adapter.js';
 import teaRecommendation from '../features/actions/tea-recommendation.js';
@@ -101,6 +102,7 @@ toolashaRoot.Actions = {
     craftingPlanWalk,
     taskCraftingTrain,
     productionArbitrageBoard,
+    craftEnhanceBoard,
     // Reached by Equipment Watch, which lives in the market bundle: importing
     // it there would copy the whole recursive costing model into a second bundle
     craftingPlanCalculator,

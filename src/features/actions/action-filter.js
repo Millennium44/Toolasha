@@ -35,6 +35,9 @@ import { displayGatheringProfit, displayProductionProfit } from './profit-displa
 // Class of the Arbitrage button (production-arbitrage-board.js OPEN_BUTTON_CLASS); named here
 // rather than imported so the filter does not pull the board module in
 const ARBITRAGE_OPEN_BUTTON_CLASS = 'mwi-arbitrage-open';
+// The Craft & Enhance button (craft-enhance-board.js OPEN_BUTTON_CLASS) rides the same title bar
+const CRAFT_ENHANCE_OPEN_BUTTON_CLASS = 'mwi-craft-enhance-open';
+const TITLE_BAR_BUTTON_CLASSES = [ARBITRAGE_OPEN_BUTTON_CLASS, CRAFT_ENHANCE_OPEN_BUTTON_CLASS];
 const CONTROLS_EXPANDED_KEY = 'toolasha_local_actionFilterControlsExpanded';
 
 class ActionFilter {
@@ -326,8 +329,10 @@ class ActionFilter {
             // The Arbitrage button may have been injected first, onto the title
             // bar; fold it into the row so it does not sit alone under it. (When
             // it injects later it finds this wrapper itself.)
-            const arbitrageButton = titleElement.querySelector(`:scope > .${ARBITRAGE_OPEN_BUTTON_CLASS}`);
-            if (arbitrageButton) wrapper.appendChild(arbitrageButton);
+            for (const buttonClass of TITLE_BAR_BUTTON_CLASSES) {
+                const titleBarButton = titleElement.querySelector(`:scope > .${buttonClass}`);
+                if (titleBarButton) wrapper.appendChild(titleBarButton);
+            }
 
             // Collapsed until proven otherwise — a device that never stored a
             // preference (or storage that cannot be read) gets the compact
@@ -882,8 +887,10 @@ class ActionFilter {
         if (this.controlsWrapper && this.controlsWrapper.parentElement) {
             // Hand the Arbitrage button back to the title bar: it belongs to the
             // other feature and nothing re-injects it when only this row goes.
-            const arbitrageButton = this.controlsWrapper.querySelector(`.${ARBITRAGE_OPEN_BUTTON_CLASS}`);
-            if (arbitrageButton) this.controlsWrapper.parentElement.appendChild(arbitrageButton);
+            for (const buttonClass of TITLE_BAR_BUTTON_CLASSES) {
+                const titleBarButton = this.controlsWrapper.querySelector(`.${buttonClass}`);
+                if (titleBarButton) this.controlsWrapper.parentElement.appendChild(titleBarButton);
+            }
             this.controlsWrapper.remove();
         }
         this.controlsWrapper = null;
