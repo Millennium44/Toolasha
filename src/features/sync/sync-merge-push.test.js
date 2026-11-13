@@ -2117,6 +2117,34 @@ describe('a store read that aborts part way is never uploaded or recorded (#962)
     });
 });
 
+describe('a store that stays unreadable is said once, not every interval', () => {
+    test('automatic syncs stop each time but toast once, and again after a sync that read it whole', async () => {
+        const { a } = await syncedPair();
+        const writes = gist.writes;
+        world.shortRead = { store: 'xpHistory', keep: 0 };
+        toasts.length = 0;
+
+        for (let tick = 0; tick < 3; tick += 1) {
+            a.db.xpHistory.testHistory_c1 = ['s1', `a${tick}`];
+            expect(await as(a, auto.push)).toMatchObject({ ok: false, reason: 'store-unreadable' });
+            expect(await as(a, auto.pull)).toMatchObject({ ok: true });
+        }
+        expect(gist.writes).toBe(writes);
+        expect(toasts.filter((toast) => /could not be read in full/.test(toast.message))).toHaveLength(1);
+
+        // A pressed push still says so
+        expect((await as(a, () => syncManager.push())).ok).toBe(false);
+        expect(toasts.filter((toast) => /could not be read in full/.test(toast.message))).toHaveLength(2);
+
+        world.shortRead = null;
+        expect((await as(a, auto.push)).ok).toBe(true);
+        world.shortRead = { store: 'xpHistory', keep: 0 };
+        a.db.xpHistory.testHistory_c1 = ['s1', 'later'];
+        await as(a, auto.push);
+        expect(toasts.filter((toast) => /could not be read in full/.test(toast.message))).toHaveLength(3);
+    });
+});
+
 describe('an edit made after a pull that could not be read back is kept', () => {
     test('the baseline records the download, so the next merge keeps the edit and sends it', async () => {
         const { a, b } = await syncedPair();

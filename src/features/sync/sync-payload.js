@@ -517,13 +517,17 @@ let lastLeftOutSummary = null;
  * the next sync tries again.
  * @param {string} storeName - Object store name
  * @returns {Promise<Object>} The store's rows, key → value
- * @throws {Error} When the read was not complete
+ * @throws {GistError} With kind 'store-unreadable' when the read was not complete: said once a session by an
+ *   automatic sync (see `ONCE_A_SESSION_KINDS`), since a store that stays slow fails every interval the same way
  */
 async function readWholeStore(storeName) {
     const read = await storage.getAllChecked(storeName);
     if (read?.ok && read.rows && typeof read.rows === 'object') return read.rows;
-    throw new Error(
-        `could not read all of this device's ${storeName} data (${read?.error || 'unknown error'}); nothing was synced`
+    console.warn(`[Sync] The ${storeName} store could not be read whole:`, read?.error || 'unknown error');
+    throw new GistError(
+        'store-unreadable',
+        `This device's ${storeName} data could not be read in full, so nothing was synced. Sync tries again ` +
+            'later; reload the page if it keeps happening.'
     );
 }
 
@@ -586,7 +590,11 @@ export async function buildPayloadJSON(scope = 'settings') {
     // `listStores` answers [] with no connection. The settings store always exists (sync's own records live in
     // it), so a listing without it is one that failed, and building from it would upload `"stores":{}`
     if (!ours.includes(SETTINGS_STORE)) {
-        throw new Error("could not list this device's stores (database not available); nothing was synced");
+        throw new GistError(
+            'store-unreadable',
+            "This device's stores could not be listed (the database is not available), so nothing was synced. " +
+                'Sync tries again later; reload the page if it keeps happening.'
+        );
     }
     const storeNames = scope === 'everything' ? ours : ours.filter((name) => name === SETTINGS_STORE);
     // One view of ownership for the whole build. The stores are read one at a

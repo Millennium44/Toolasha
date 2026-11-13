@@ -3246,7 +3246,11 @@ class SyncManager {
         try {
             // A takeover skips the cross-tab lock: the wedged operation it is
             // replacing is the very thing still holding it
-            return await (takingOver ? operation(token) : this._withCrossTabLock(silent, operation, token));
+            const outcome = await (takingOver ? operation(token) : this._withCrossTabLock(silent, operation, token));
+            // A push that went up read every store whole, so the next store that cannot be read is news again.
+            // Not any success: a pull in step with the gist, or a skipped push, read nothing whole
+            if (label === 'push' && outcome?.ok && !outcome.skipped) this._toastedSilently?.delete('store-unreadable');
+            return outcome;
         } catch (error) {
             if (!this._stillOwns(token)) return this._supersededResult(silent, label, token);
             // GistError messages are written to be shown; anything else is a bug
@@ -3315,7 +3319,9 @@ const REMEDIES = {
 };
 
 /** Failures an unattended sync toasts once a session rather than on every interval */
-const ONCE_A_SESSION_KINDS = new Set(['parse', 'ambiguous', 'wrong-server']);
+// A store that cannot be read whole (`store-unreadable`) is usually one that stays slow or wedged, and fails
+// every interval the same way until it recovers or the page reloads; said once, and again after a sync succeeds
+const ONCE_A_SESSION_KINDS = new Set(['parse', 'ambiguous', 'wrong-server', 'store-unreadable']);
 
 /** Failures the player has to do something about, so their toast stays up */
 const ACTIONABLE_KINDS = new Set(Object.keys(REMEDIES));
