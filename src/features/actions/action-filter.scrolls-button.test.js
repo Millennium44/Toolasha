@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
     settings: {},
     listeners: {},
     chosen: {},
+    offered: {},
+    owned: {},
+    picked: [],
     redraw: null,
 }));
 
@@ -48,10 +51,26 @@ vi.mock('./profit-display.js', () => ({
     displayGatheringProfit: vi.fn(async () => {}),
     displayProductionProfit: vi.fn(async () => {}),
 }));
-vi.mock('./scroll-chips.js', () => ({ shortScrollName: (hrid) => hrid.split('/').at(-1) }));
+vi.mock('../../utils/formatters.js', () => ({ formatWithSeparator: (n) => String(n) }));
 vi.mock('./tile-scrolls.js', () => ({
     TILE_SCROLLS_SETTING: 'skillTiles_simulatedScrolls',
-    getChosenScrolls: (type) => new Set(mocks.chosen[type] ?? []),
+    listPickerScrolls: (type) =>
+        (mocks.offered[type] ?? []).map((buff) => ({
+            buff,
+            name: buff.split('/').at(-1),
+            itemHrid: null,
+            owned: mocks.owned[buff] ?? null,
+            checked: (mocks.chosen[type] ?? []).includes(buff),
+        })),
+    setPickerScroll: async (type, buff, on) => {
+        const now = new Set(mocks.chosen[type] ?? []);
+        if (on) now.add(buff);
+        else now.delete(buff);
+        mocks.chosen[type] = [...now];
+        mocks.picked.push([type, buff, on]);
+        mocks.redraw?.();
+        return true;
+    },
     onTileScrollsChanged: (cb) => {
         mocks.redraw = cb;
         return () => {
@@ -83,10 +102,18 @@ function registerTile(type = MILKING) {
 const scrollsBtn = () => document.querySelector('#mwi-action-scrolls-toggle');
 const visible = () => scrollsBtn() && scrollsBtn().style.display !== 'none';
 
-describe('action filter: Scrolls button', () => {
+const EFF = '/buff_types/efficiency';
+const GATH = '/buff_types/gathering';
+const menu = () => document.querySelector('#mwi-action-scrolls-menu');
+const box = (key) => menu()?.querySelector(`input[data-key="${key}"]`);
+
+describe('action filter: Scrolls picker', () => {
     beforeEach(async () => {
         mocks.listeners = {};
         mocks.chosen = {};
+        mocks.offered = { [MILKING]: [EFF, GATH], '/action_types/brewing': ['/buff_types/gourmet'] };
+        mocks.owned = { [EFF]: 79 };
+        mocks.picked = [];
         mocks.redraw = null;
         mocks.settings = {
             actionPanel_showFilter: true,
@@ -95,6 +122,7 @@ describe('action filter: Scrolls button', () => {
             actionPanel_showCraftToggle: true,
             actionPanel_showProfitPerHour_gathering: true,
             profitCalc_pricingMode: 'hybrid',
+            simulateScrollEffects: true,
             skillTiles_simulatedScrolls: true,
         };
         await actionFilter.initialize();
@@ -106,68 +134,85 @@ describe('action filter: Scrolls button', () => {
         vi.restoreAllMocks();
     });
 
-    it('is hidden while no scroll is chosen for the skill', () => {
+    const setup = () => {
         actionFilter.injectFilterInput(buildSkillPage());
         registerTile();
-        expect(scrollsBtn()).not.toBeNull();
-        expect(visible()).toBe(false);
-    });
+    };
 
-    it('is hidden before any tile has told the filter which skill this is', () => {
-        mocks.chosen[MILKING] = ['/buff_types/efficiency'];
-        actionFilter.injectFilterInput(buildSkillPage());
-        expect(visible()).toBe(false);
-    });
-
-    it('appears once scrolls are chosen for the skill of the tiles, naming them on hover', () => {
-        actionFilter.injectFilterInput(buildSkillPage());
-        registerTile();
-        mocks.chosen[MILKING] = ['/buff_types/efficiency', '/buff_types/gathering'];
+    it('is visible with zero scrolls chosen, labeled with the state', () => {
+        setup();
+        expect(visible()).toBe(true);
+        expect(scrollsBtn().textContent).toBe('📜 Scrolls: On ▾');
+        mocks.settings.skillTiles_simulatedScrolls = false;
         mocks.redraw();
-        expect(visible()).toBe(true);
-        expect(scrollsBtn().textContent).toContain('Scrolls: On');
-        expect(scrollsBtn().title).toContain('efficiency, gathering');
-        expect(scrollsBtn().title).toContain('not active in the game');
+        expect(scrollsBtn().textContent).toBe('Scrolls: Off ▾');
     });
 
-    it('stays hidden when the chosen scrolls belong to another skill', () => {
-        mocks.chosen['/action_types/brewing'] = ['/buff_types/efficiency'];
+    it('is hidden while the simulation is off or before the skill is known', () => {
         actionFilter.injectFilterInput(buildSkillPage());
-        registerTile(MILKING);
         expect(visible()).toBe(false);
-    });
-
-    it('is hidden again when the choice is cleared or the simulation switched off', () => {
-        mocks.chosen[MILKING] = ['/buff_types/efficiency'];
-        actionFilter.injectFilterInput(buildSkillPage());
         registerTile();
-        expect(visible()).toBe(true);
-        mocks.chosen[MILKING] = [];
+        mocks.settings.simulateScrollEffects = false;
         mocks.redraw();
         expect(visible()).toBe(false);
     });
 
-    it('flips the tile setting and says so', () => {
-        mocks.chosen[MILKING] = ['/buff_types/efficiency'];
-        actionFilter.injectFilterInput(buildSkillPage());
-        registerTile();
-
+    it('opens a menu listing the switch and the skill scrolls with owned counts', () => {
+        setup();
         scrollsBtn().click();
+        expect(menu()).not.toBeNull();
+        expect(box('use').checked).toBe(true);
+        expect(menu().textContent).toContain('Use on tiles');
+        expect(menu().textContent).toContain('efficiency ×79');
+        expect(menu().textContent).toContain('gathering');
+        expect(menu().textContent).not.toContain('gourmet');
+        expect(scrollsBtn().getAttribute('aria-expanded')).toBe('true');
+    });
+
+    it('ticking a scroll goes through the simulator call and the menu follows', () => {
+        setup();
+        scrollsBtn().click();
+        box(EFF).checked = true;
+        box(EFF).dispatchEvent(new Event('change'));
+        expect(mocks.picked).toEqual([[MILKING, EFF, true]]);
+        expect(box(EFF).checked).toBe(true);
+        expect(scrollsBtn().title).toContain('efficiency');
+    });
+
+    it('Use on tiles flips the setting', () => {
+        setup();
+        scrollsBtn().click();
+        box('use').checked = false;
+        box('use').dispatchEvent(new Event('change'));
         expect(mocks.settings.skillTiles_simulatedScrolls).toBe(false);
-        expect(scrollsBtn().textContent).toBe('Scrolls: Off');
-        expect(scrollsBtn().title).toContain('real figures');
-
-        scrollsBtn().click();
-        expect(mocks.settings.skillTiles_simulatedScrolls).toBe(true);
-        expect(scrollsBtn().textContent).toContain('Scrolls: On');
     });
 
-    it('ignores a tile that was removed from the page', () => {
-        mocks.chosen[MILKING] = ['/buff_types/efficiency'];
-        actionFilter.injectFilterInput(buildSkillPage());
-        const tile = registerTile();
-        tile.remove();
-        mocks.redraw();
-        expect(visible()).toBe(false);
+    it('closes on a second click, an outside click and Escape', () => {
+        setup();
+        scrollsBtn().click();
+        scrollsBtn().click();
+        expect(menu()).toBeNull();
+        scrollsBtn().click();
+        document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        expect(menu()).toBeNull();
+        scrollsBtn().click();
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(menu()).toBeNull();
+        expect(scrollsBtn().getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('stays open for a click inside it', () => {
+        setup();
+        scrollsBtn().click();
+        menu().dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        expect(menu()).not.toBeNull();
+    });
+
+    it('is removed with the filter (disable)', () => {
+        setup();
+        scrollsBtn().click();
+        actionFilter.cleanup();
+        expect(menu()).toBeNull();
+        expect(scrollsBtn()).toBeNull();
     });
 });

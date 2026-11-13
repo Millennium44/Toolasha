@@ -252,3 +252,24 @@ describe('what makes the tiles redraw', () => {
         expect(redraw).not.toHaveBeenCalled();
     });
 });
+
+describe('the picker edits the selection the chips edit', () => {
+    test('lists the skill scrolls by hrid, and a ticked scroll is seen by the chips and the tiles', async () => {
+        scrollSimulator.owner = dataManager.getCurrentCharacterId() || 'default';
+        const { buildScrollChips } = await import('./scroll-chips.js');
+        expect(tiles.listPickerScrolls(MILKING).map((s) => s.buff)).toEqual([EFFICIENCY, GATHERING]);
+        expect(tiles.listPickerScrolls(MILKING).every((s) => !s.checked)).toBe(true);
+
+        expect(await tiles.setPickerScroll(MILKING, GATHERING, true)).toBe(true);
+
+        expect(tiles.listPickerScrolls(MILKING).find((s) => s.buff === GATHERING).checked).toBe(true);
+        const chips = buildScrollChips({ actionTypeHrid: MILKING, onChange: () => {}, spriteUrl: '' });
+        expect(chips.element.querySelector(`button[data-buff="${GATHERING}"]`).dataset.on).toBe('true');
+        expect(chips.element.querySelector(`button[data-buff="${EFFICIENCY}"]`).dataset.on).toBe('false');
+        expect(tiles.getTileScrolls(MILKING).has(GATHERING)).toBe(true);
+        chips.dispose();
+
+        await tiles.setPickerScroll(MILKING, GATHERING, false);
+        expect(tiles.getTileScrolls(MILKING).size).toBe(0);
+    });
+});

@@ -22,8 +22,8 @@ import {
 } from '../../utils/pricing-side-select.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { SELL_TAX_EXCLUDED_TOOLTIP } from '../../utils/profit-constants.js';
-import { TILE_SCROLLS_SETTING, getChosenScrolls, onTileScrollsChanged } from './tile-scrolls.js';
-import { shortScrollName } from './scroll-chips.js';
+import { TILE_SCROLLS_SETTING, listPickerScrolls, onTileScrollsChanged, setPickerScroll } from './tile-scrolls.js';
+import { formatWithSeparator } from '../../utils/formatters.js';
 import actionPanelSort from './action-panel-sort.js';
 import { displayGatheringProfit, displayProductionProfit } from './profit-display.js';
 
@@ -72,7 +72,9 @@ class ActionFilter {
         this._updateSellTaxBtn = null;
         this._updateSortBtn = null;
         this._updateScrollsBtn = null;
-        this.scrollsButton = null; // The "Scrolls" toggle for simulated scrolls on the tiles
+        this.scrollsButton = null; // The "Scrolls" picker button for simulated scrolls on the tiles
+        this._closeScrollsMenu = null; // Closes the open picker menu, if any
+        this._refreshScrollsMenu = null; // Redraws the open picker menu, if any
         // Mobile-only collapsible row — see injectFilterInput(). Desktop never
         // creates these, so they stay null there.
         this.controlsToggle = null; // The compact "show controls" button
@@ -549,25 +551,36 @@ class ActionFilter {
             font-family: inherit;
             flex-shrink: 0;
         `;
+        scrollsBtn.setAttribute('aria-haspopup', 'true');
+        scrollsBtn.setAttribute('aria-expanded', 'false');
         this._updateScrollsBtn = () => {
-            const chosen = getChosenScrolls(this._currentActionType());
-            scrollsBtn.style.display = chosen.size > 0 ? '' : 'none';
-            if (chosen.size === 0) return;
+            // Shown whenever the simulation is on and the skill is known: the picker is how scrolls get chosen
+            const type = this._currentActionType();
+            const shown = Boolean(config.getSetting('simulateScrollEffects')) && Boolean(type);
+            scrollsBtn.style.display = shown ? '' : 'none';
+            if (!shown) {
+                this._closeScrollsMenu?.();
+                return;
+            }
             const on = Boolean(config.getSetting(TILE_SCROLLS_SETTING));
-            const names = [...chosen].map(shortScrollName).join(', ');
-            scrollsBtn.textContent = on ? '📜 Scrolls: On' : 'Scrolls: Off';
+            const names = listPickerScrolls(type)
+                .filter((s) => s.checked)
+                .map((s) => s.name)
+                .join(', ');
+            scrollsBtn.textContent = on ? '📜 Scrolls: On ▾' : 'Scrolls: Off ▾';
+            this._refreshScrollsMenu?.();
             scrollsBtn.style.borderColor = on ? config.COLOR_ACCENT : 'rgba(255, 255, 255, 0.23)';
             scrollsBtn.style.color = on ? config.COLOR_ACCENT : 'inherit';
             scrollsBtn.title =
-                `Scrolls chosen for this skill: ${names}. ` +
+                (names ? `Scrolls chosen for this skill: ${names}. ` : 'No scrolls chosen for this skill yet. ') +
                 (on
-                    ? 'The Profit/hr, Exp/hr and Eff. XP/hr on these tiles assume them (the scrolls are not active in the game). Click to show the real figures.'
-                    : 'The tiles show the real figures. Click to show them as if these scrolls were active (they are not used).');
+                    ? 'The tiles assume the chosen scrolls (they are not active in the game).'
+                    : 'The tiles show the real figures.') +
+                ' Click to choose scrolls or turn this on or off.';
         };
         scrollsBtn.addEventListener('click', () => {
-            // The tile modules redraw from the setting change
-            config.setSetting(TILE_SCROLLS_SETTING, !config.getSetting(TILE_SCROLLS_SETTING));
-            this._updateScrollsBtn();
+            if (this._closeScrollsMenu) this._closeScrollsMenu();
+            else this._openScrollsMenu(scrollsBtn);
         });
         if (controlsHost) {
             controlsHost.appendChild(scrollsBtn);
@@ -623,6 +636,112 @@ class ActionFilter {
 
         // Find the container for action panels to inject "No results" message
         this.setupNoResultsMessage(titleElement);
+    }
+
+    /**
+     * Open the scroll picker under its button: the tile switch and one checkbox per scroll this skill can use.
+     * Ticking edits the selection the chips edit (through the simulator), so the chips, the tiles and Defaults
+     * stay one piece of state. Closes on outside click, Escape and when the page is torn down.
+     * @param {HTMLElement} anchor - The Scrolls button
+     */
+    _openScrollsMenu(anchor) {
+        const type = this._currentActionType();
+        if (!type) return;
+        const menu = document.createElement('div');
+        menu.id = 'mwi-action-scrolls-menu';
+        menu.setAttribute('role', 'group');
+        menu.setAttribute('aria-label', 'Simulated scrolls');
+        menu.style.cssText = `
+            position: fixed;
+            z-index: 100000;
+            box-sizing: border-box;
+            max-width: calc(100vw - 16px);
+            max-height: calc(100vh - 16px);
+            overflow-y: auto;
+            padding: 8px 10px;
+            background: #1b1b2b;
+            border: 1px solid ${config.COLOR_ACCENT};
+            border-radius: 6px;
+            font-size: 14px;
+            line-height: 1.5;
+        `;
+        const row = (inputEl, text) => {
+            const label = document.createElement('label');
+            label.style.cssText = 'display:flex;align-items:center;gap:8px;min-height:32px;cursor:pointer;';
+            label.appendChild(inputEl);
+            const span = document.createElement('span');
+            span.textContent = text;
+            label.appendChild(span);
+            return { label, span };
+        };
+        const place = () => {
+            const rect = anchor.getBoundingClientRect();
+            const width = menu.offsetWidth;
+            const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+            menu.style.left = `${left}px`;
+            menu.style.top = `${rect.bottom + 4}px`;
+        };
+        const paint = () => {
+            const focused = menu.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+            menu.textContent = '';
+            const useBox = document.createElement('input');
+            useBox.type = 'checkbox';
+            useBox.dataset.key = 'use';
+            useBox.checked = Boolean(config.getSetting(TILE_SCROLLS_SETTING));
+            useBox.addEventListener('change', () => config.setSetting(TILE_SCROLLS_SETTING, useBox.checked));
+            const use = row(useBox, 'Use on tiles');
+            use.label.title = 'Make the tile figures (Profit/hr, Exp/hr, Eff. XP/hr) assume the ticked scrolls.';
+            menu.appendChild(use.label);
+            const rule = document.createElement('div');
+            rule.style.cssText = 'border-top:1px solid rgba(255,255,255,0.2);margin:4px 0;';
+            menu.appendChild(rule);
+            const scrolls = listPickerScrolls(type);
+            for (const scroll of scrolls) {
+                const box = document.createElement('input');
+                box.type = 'checkbox';
+                box.dataset.key = scroll.buff;
+                box.dataset.buff = scroll.buff;
+                box.checked = scroll.checked;
+                box.addEventListener('change', () => {
+                    setPickerScroll(type, scroll.buff, box.checked).catch((error) => {
+                        console.error('[ActionFilter] Choosing a scroll failed:', error);
+                    });
+                });
+                const count = scroll.owned === null ? '' : ` ×${formatWithSeparator(scroll.owned)}`;
+                const item = row(box, `${scroll.name}${count}`);
+                item.label.title = 'Simulated only: the scroll is not used. This is the same choice as the chips.';
+                menu.appendChild(item.label);
+            }
+            if (focused) menu.querySelector(`input[data-key="${CSS.escape(focused)}"]`)?.focus();
+            place();
+        };
+        const onPointerDown = (event) => {
+            if (!menu.contains(event.target) && !anchor.contains(event.target)) this._closeScrollsMenu?.();
+        };
+        const onKeyDown = (event) => {
+            if (event.key === 'Escape') {
+                event.stopPropagation();
+                this._closeScrollsMenu?.();
+                anchor.focus();
+            }
+        };
+        document.body.appendChild(menu);
+        paint();
+        document.addEventListener('pointerdown', onPointerDown, true);
+        document.addEventListener('keydown', onKeyDown, true);
+        window.addEventListener('resize', place);
+        anchor.setAttribute('aria-expanded', 'true');
+        this._refreshScrollsMenu = paint;
+        this._closeScrollsMenu = () => {
+            document.removeEventListener('pointerdown', onPointerDown, true);
+            document.removeEventListener('keydown', onKeyDown, true);
+            window.removeEventListener('resize', place);
+            menu.remove();
+            anchor.setAttribute('aria-expanded', 'false');
+            this._closeScrollsMenu = null;
+            this._refreshScrollsMenu = null;
+        };
+        menu.querySelector('input')?.focus();
     }
 
     /**
@@ -948,6 +1067,7 @@ class ActionFilter {
             this.refreshButton = null;
         }
 
+        this._closeScrollsMenu?.();
         if (this.scrollsButton && this.scrollsButton.parentElement) {
             this.scrollsButton.remove();
         }

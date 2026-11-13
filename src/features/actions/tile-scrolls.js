@@ -17,7 +17,14 @@ import { loadoutSnapshot, scrollSimulator } from '../../utils/bundle-bridge.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { SELECTION_CHANGED_EVENT } from '../../utils/scroll-buff-values.js';
-import { SIMULATED_ACTION_TYPES, getApplicableScrollBuffs, getSimulatedScrollNames } from './scroll-chips.js';
+import {
+    SIMULATED_ACTION_TYPES,
+    getApplicableScrollBuffs,
+    getOwnedScrolls,
+    getSimulatedScrollNames,
+    scrollItemHrid,
+    shortScrollName,
+} from './scroll-chips.js';
 
 /** The setting behind the tiles' use of simulated scrolls (and the header "Scrolls" button) */
 export const TILE_SCROLLS_SETTING = 'skillTiles_simulatedScrolls';
@@ -41,6 +48,44 @@ export function getChosenScrolls(actionTypeHrid) {
     if (!chosen || chosen.size === 0) return new Set();
     const usable = new Set(getApplicableScrollBuffs(actionTypeHrid));
     return new Set([...chosen].filter((hrid) => usable.has(hrid)));
+}
+
+/**
+ * Every scroll the picker offers for an action type, in chip order, with what the picker shows for each.
+ * Scrolls are identified by buff hrid and item hrid, never by their displayed names.
+ * @param {string} actionTypeHrid
+ * @returns {Array<{buff: string, name: string, itemHrid: string|null, owned: number|null, checked: boolean}>}
+ */
+export function listPickerScrolls(actionTypeHrid) {
+    if (!actionTypeHrid) return [];
+    const selected = simulator().resolveSelection(actionTypeHrid).set;
+    return getApplicableScrollBuffs(actionTypeHrid).map((buff) => {
+        const itemHrid = scrollItemHrid(buff);
+        return {
+            buff,
+            name: shortScrollName(buff),
+            itemHrid,
+            owned: getOwnedScrolls(itemHrid),
+            checked: selected.has(buff),
+        };
+    });
+}
+
+/**
+ * Tick or untick one scroll in the selection the chips edit (the active loadout's list, else the default),
+ * through the same simulator call a chip click makes. Resolves again at call time, as the chip does.
+ * @param {string} actionTypeHrid
+ * @param {string} buffTypeHrid
+ * @param {boolean} on
+ * @returns {Promise<boolean>} Whether the selection was kept
+ */
+export async function setPickerScroll(actionTypeHrid, buffTypeHrid, on) {
+    const sim = simulator();
+    const current = sim.resolveSelection(actionTypeHrid);
+    const next = new Set(current.set);
+    if (on) next.add(buffTypeHrid);
+    else next.delete(buffTypeHrid);
+    return sim.saveScrollsForLoadout(current.loadoutName, [...next]);
 }
 
 /**
