@@ -507,6 +507,27 @@ export function redactSettingsStore(entries) {
 let lastLeftOutSummary = null;
 
 /**
+ * Read one whole store of this device's, or throw.
+ *
+ * `storage.getAll` answers `{}` with no connection or a wedged read, and the rows read so far when the
+ * transaction aborts, without saying so. Every sync read of a whole store decides something from what is
+ * missing: a push built from a short read uploads a cut-down store over the gist's complete copy, and a pull
+ * weighed against an empty one reads every local edit as absent and writes the download over it. So a read
+ * that did not walk the store to its end stops the push, merge or pull before anything is written or sent;
+ * the next sync tries again.
+ * @param {string} storeName - Object store name
+ * @returns {Promise<Object>} The store's rows, key → value
+ * @throws {Error} When the read was not complete
+ */
+async function readWholeStore(storeName) {
+    const read = await storage.getAllChecked(storeName);
+    if (read?.ok && read.rows && typeof read.rows === 'object') return read.rows;
+    throw new Error(
+        `could not read all of this device's ${storeName} data (${read?.error || 'unknown error'}); nothing was synced`
+    );
+}
+
+/**
  * Displaced keys whose delete failed, retried by the next pull on this page.
  * A reload forgets them; the owning tracker prunes the key at its next save.
  * @type {Map<string, {store: string, key: string}>}
@@ -582,7 +603,8 @@ export async function buildPayloadJSON(scope = 'settings') {
     let foreignKeys = 0;
     let foreignBytes = 0;
     for (const storeName of storeNames) {
-        const entries = stripExcludedKeys(storeName, await storage.getAll(storeName));
+        // A short read would upload a cut-down store over the gist's whole one: it throws instead
+        const entries = stripExcludedKeys(storeName, await readWholeStore(storeName));
         const partition = partitionOwnedKeys(storeName, entries, ownership.owns);
         foreignKeys += partition.foreignKeys;
         foreignBytes += partition.foreignBytes;
@@ -1246,11 +1268,15 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
     /** What the pull wrote and deleted, told to the pull listeners once the restore hold has ended */
     let announcement = null;
     let result;
+    /** Whether `importEverything` was reached: from there its own failure path owns the migration records */
+    let importStarted = false;
     try {
         await storage.beginRestore?.();
 
         if (settingsStore) {
-            const local = await storage.getAll(SETTINGS_STORE);
+            // A short read throws: folded over an empty map, the download would take every setting and
+            // this device's token, and the migration records below would be read as none
+            const local = await readWholeStore(SETTINGS_STORE);
             for (const [key, incoming] of Object.entries(settingsStore)) {
                 if (!key.startsWith('script_settingsMap')) continue;
                 const stampKey = `${SETTING_STAMPS_PREFIX}${key}`;
@@ -1379,6 +1405,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
         }
 
         let imported;
+        importStarted = true;
         try {
             imported = await phase('write', () =>
                 importEverything(payload, { liveSafeMerge: true, folds: histories.refolds, strictFolds: true })
@@ -1488,6 +1515,11 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             exportedAt: payload?.exportedAt ?? null,
             applied,
         };
+    } catch (error) {
+        // Stopped before anything was imported (a store that could not be read whole, a fold that threw):
+        // the maps the records were forgotten for never landed, so the records go back as they were
+        if (!importStarted) await restoreMigrationRecords(migrationRecords);
+        throw error;
     } finally {
         // `importEverything` ends the hold itself on its way out; this covers
         // a throw between the flush above and reaching it, which would
@@ -2197,10 +2229,16 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
         const carried = new Set(Object.keys(entries));
         let local;
         try {
-            local = await storage.getAll(storeName);
+            // A short read throws: weighed against it, the baseline rule would take every missing key as
+            // one this device never held and let the download overwrite it
+            local = await readWholeStore(storeName);
             await slice();
         } catch (error) {
-            // The baseline rule always needed this read; only the comparison is optional
+            // The baseline rule always needed this read; only the comparison is optional. Without a
+            // baseline (a pull someone asked for, or a merge with no exchange on record) `keepMine` never
+            // runs and the download takes every whole key it names anyway, so
+            // writing all of it loses nothing the read would have kept: identical keys are rewritten, and
+            // no local key is deleted for falling out of a window
             if (baseline) throw error;
             console.warn(`[Sync] Could not read ${storeName} to compare; writing all of it:`, error);
             if (!Array.isArray(entries)) {

@@ -22,6 +22,10 @@ const storageMock = vi.hoisted(() => {
     return {
         FOLD_DELETE,
         listStores: async () => Object.keys(storeState.stores),
+        // Sync reads whole stores through the checked read; this store's reads never come back short
+        async getAllChecked(name) {
+            return { ok: true, rows: await this.getAll(name) };
+        },
         getAll: async (name) => structuredClone(map(name)),
         get: async (key, name, fallback = null) => (has(name, key) ? structuredClone(map(name)[key]) : fallback),
         tryGet: async (key, name) => read(key, name),

@@ -1978,41 +1978,59 @@ class SyncManager {
         // the rebuilt copy when not (so nothing does).
         let mergedRebuild = null;
         let pushOwed = false;
-        if (silent && !mergeHeld?.length) {
-            mergedRebuild = await phase('build-local', () =>
-                buildPayloadJSON(config.getSetting('sync_scope', 'settings'))
-            );
-            pushOwed = await phase('push-check', () => addsToRemoteSliced(mergedRebuild, payload));
-            // Also owed when this device's scope or cleaning would take something
-            // out of the gist (a Settings-only device pulling a gist that still
-            // holds history stores): the trimmed upload is what stops every
-            // device downloading them. The remembered fingerprint then stays the
-            // gist's, so the push is not 'unchanged'; once it lands, it is.
-            if (!pushOwed) {
-                try {
-                    pushOwed = (await phase('push-check', () => mergeForUploadSliced(mergedRebuild, payload, null)))
-                        .dropsFromRemote;
-                } catch (error) {
-                    console.warn('[Sync] Could not check whether the gist holds more than this device syncs:', error);
+        let appliedHash;
+        try {
+            if (silent && !mergeHeld?.length) {
+                mergedRebuild = await phase('build-local', () =>
+                    buildPayloadJSON(config.getSetting('sync_scope', 'settings'))
+                );
+                pushOwed = await phase('push-check', () => addsToRemoteSliced(mergedRebuild, payload));
+                // Also owed when this device's scope or cleaning would take something
+                // out of the gist (a Settings-only device pulling a gist that still
+                // holds history stores): the trimmed upload is what stops every
+                // device downloading them. The remembered fingerprint then stays the
+                // gist's, so the push is not 'unchanged'; once it lands, it is.
+                if (!pushOwed) {
+                    try {
+                        pushOwed = (await phase('push-check', () => mergeForUploadSliced(mergedRebuild, payload, null)))
+                            .dropsFromRemote;
+                    } catch (error) {
+                        console.warn(
+                            '[Sync] Could not check whether the gist holds more than this device syncs:',
+                            error
+                        );
+                    }
                 }
             }
-        }
 
-        // Worked out before the record is written, each a wait of its own: a takeover during them (the
-        // rebuild, the weighing above) leaves the stamp alone, as one during the import does. Its marker
-        // landed above while this pull still owned the operation, so it is not written again: whatever is
-        // stored by now is the newer operation's, and putting this one back would only force a spurious retry
-        const appliedHash = mergedRebuild
-            ? pushOwed
-                ? pulledHash
-                : await phase('hash-applied', () => contentHashSliced(mergedRebuild))
-            : mergeHeld?.length
-              ? await phase('hash-applied', async () =>
-                    contentHashSliced(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')))
-                )
-              : (applied ?? payload) === payload
-                ? pulledHash
-                : await phase('hash-applied', () => contentHashSliced(applied));
+            // Worked out before the record is written, each a wait of its own: a takeover during them (the
+            // rebuild, the weighing above) leaves the stamp alone, as one during the import does. Its marker
+            // landed above while this pull still owned the operation, so it is not written again: whatever is
+            // stored by now is the newer operation's, and putting this one back would only force a spurious retry
+            appliedHash = mergedRebuild
+                ? pushOwed
+                    ? pulledHash
+                    : await phase('hash-applied', () => contentHashSliced(mergedRebuild))
+                : mergeHeld?.length
+                  ? await phase('hash-applied', async () =>
+                        contentHashSliced(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')))
+                    )
+                  : (applied ?? payload) === payload
+                    ? pulledHash
+                    : await phase('hash-applied', () => contentHashSliced(applied));
+        } catch (error) {
+            // The import has landed, but this device could not be read back whole to fingerprint it (see
+            // `buildPayloadJSON`). Recording the pull without that fingerprint would remember a state this
+            // device may not hold, so the stamp is left alone and the next sync works it out again; the
+            // stores the import latched still need the reload
+            return this._unconfirmedAfterApply(error, opToken, silent, {
+                latched,
+                latchedKeys,
+                complete,
+                mergeFailed,
+                mergeHeld,
+            });
+        }
         const pulledHashes = await phase('hash-keys', () => wholeKeyHashesSliced(payload));
         if (!this._stillOwns(opToken)) {
             return this._stoppedAfterApply({ latched, latchedKeys, complete, mergeFailed, mergeHeld });
@@ -3078,6 +3096,46 @@ class SyncManager {
             );
         }
         return { ok: false, reason: 'stopped-after-apply' };
+    }
+
+    /**
+     * The end of a pull whose import landed but whose post-import read of this device failed (a store that
+     * could not be read whole): the stamp is left for the next sync to settle, and a latched store is still
+     * reloaded for. A takeover meanwhile ends it as {@link _stoppedAfterApply} does.
+     * @param {Error} error - What stopped the read
+     * @param {number} opToken - The pull's ownership token
+     * @param {boolean} silent - An automatic pull says nothing unless a latched store needs the reload
+     * @param {{latched: number|undefined, latchedKeys: Array|undefined, complete: boolean,
+     *   mergeFailed: Array|undefined, mergeHeld: Array|undefined}} imported - What the import reported
+     * @returns {{ok: false, reason: string}} The pull's result
+     * @private
+     */
+    _unconfirmedAfterApply(error, opToken, silent, imported) {
+        if (!this._stillOwns(opToken)) return this._stoppedAfterApply(imported);
+        console.error(
+            '[Sync] The pull was applied, but this device could not be read back to record it; leaving the sync ' +
+                'stamp for the next sync.',
+            error
+        );
+        // A result without the count is taken as having latched, as on the other paths
+        const latched = imported.latched !== 0;
+        const reloadPrompt = latched
+            ? this._recordReloadPrompt(
+                  'sync-pull',
+                  'Sync pull applied but could not be recorded; reload advised',
+                  imported.latchedKeys
+              )
+            : null;
+        if (silent && !latched) return { ok: false, reason: 'unconfirmed-apply' };
+        showToast(
+            'Sync applied the download from GitHub, but could not read this device back to record it, so it was ' +
+                'not marked as synced.' +
+                (latched
+                    ? ' Reload now — changes made before reloading will not be kept.'
+                    : ' The next sync checks again.'),
+            { kind: 'warn', duration: 0, onClose: () => reloadPrompt?.settle('dismissed') }
+        );
+        return { ok: false, reason: 'unconfirmed-apply' };
     }
 
     /**

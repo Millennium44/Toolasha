@@ -50,6 +50,8 @@ vi.mock('../../core/storage.js', () => {
             endRestore: async () => {},
             finishRestore: () => {
                 world.device.latches += 1;
+                // Something that goes wrong once the import has landed, such as a read that then aborts
+                if (world.onRestore) world.onRestore();
             },
             listStores: async () => Object.keys(db()).sort(),
             get: async (key, name = 'settings', fallback = null) => store(name)[key] ?? fallback,
@@ -57,7 +59,18 @@ vi.mock('../../core/storage.js', () => {
                 store(name)[key] = value;
                 return true;
             },
-            getAll: async (name) => structuredClone(store(name)),
+            // A read that aborts part way says so here, and hands back only what it read in `getAll`, as the
+            // real store does (`world.shortRead`: the store, and how many rows in key order it got through)
+            async getAllChecked(name) {
+                if (world.shortRead?.store === name) return { ok: false, error: 'AbortError: transaction aborted' };
+                return { ok: true, rows: await this.getAll(name) };
+            },
+            getAll: async (name) => {
+                const rows = structuredClone(store(name));
+                if (world.shortRead?.store !== name) return rows;
+                const kept = Object.keys(rows).sort().slice(0, world.shortRead.keep);
+                return Object.fromEntries(kept.map((key) => [key, rows[key]]));
+            },
             tryGet: async (key, name) =>
                 Object.hasOwn(store(name), key)
                     ? { found: true, value: structuredClone(store(name)[key]) }
@@ -398,6 +411,8 @@ function raceSixPushes(shape = () => {}) {
 
 beforeEach(() => {
     world.gzip = false;
+    world.shortRead = null;
+    world.onRestore = null;
     vi.useFakeTimers();
     gist.state = null;
     gist.etag = 0;
@@ -2034,5 +2049,66 @@ describe('data a device pruned by retention', () => {
         expect(a.latches).toBe(0);
         expect(toasts).toHaveLength(0);
         expect(Object.keys(a.db.networthHistory)).toHaveLength(25);
+    });
+});
+
+describe('a store read that aborts part way is never uploaded or recorded (#962)', () => {
+    test('an automatic push stops rather than upload a store cut short, and the next one sends all of it', async () => {
+        const { a } = await syncedPair();
+        a.db.xpHistory.cappedLog_c1 = [3, 2, 1];
+        a.db.xpHistory.flakyLog_c1 = ['a'];
+        const writes = gist.writes;
+        const lastHash = a.db.settings.toolasha_sync_lastHash;
+        world.shortRead = { store: 'xpHistory', keep: 1 };
+
+        const result = await as(a, auto.push);
+
+        expect(result.ok).toBe(false);
+        expect(gist.writes).toBe(writes);
+        expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1']);
+        expect(a.db.settings.toolasha_sync_lastHash).toBe(lastHash);
+
+        world.shortRead = null;
+        expect((await as(a, auto.push)).ok).toBe(true);
+        expect(gistStores().xpHistory).toMatchObject({
+            cappedLog_c1: [3, 2, 1],
+            flakyLog_c1: ['a'],
+            testHistory_c1: ['s1'],
+        });
+    });
+
+    test('a pull whose read-back fails once the import landed is not recorded as synced, and asks for the reload', async () => {
+        const { a, b } = await syncedPair();
+        await as(b, async () => {
+            changeSetting(b, 'X', true);
+            expect((await auto.push()).ok).toBe(true);
+        });
+        const before = {
+            hash: a.db.settings.toolasha_sync_lastHash,
+            seq: a.db.settings.toolasha_sync_lastSyncedSeq,
+            at: a.db.settings.toolasha_sync_lastSyncedAt,
+        };
+        world.onRestore = () => {
+            world.shortRead = { store: 'xpHistory', keep: 0 };
+        };
+        toasts.length = 0;
+
+        const result = await as(a, auto.startup);
+
+        expect(a.db.settings[MAP].X.isTrue).toBe(true);
+        expect(result).toMatchObject({ ok: false, reason: 'unconfirmed-apply' });
+        expect(a.db.settings.toolasha_sync_lastHash).toBe(before.hash);
+        expect(a.db.settings.toolasha_sync_lastSyncedSeq).toBe(before.seq);
+        expect(a.db.settings.toolasha_sync_lastSyncedAt).toBe(before.at);
+        expect(toasts.some((toast) => /Reload now/.test(toast.message))).toBe(true);
+
+        // Once the store reads whole again, the next sync settles it and the gist still has B's change
+        world.onRestore = null;
+        world.shortRead = null;
+        expect((await as(a, auto.startup)).ok).toBe(true);
+        expect((await as(a, auto.push)).ok).toBe(true);
+        expect(a.db.settings.toolasha_sync_lastSyncedAt).not.toBe(before.at);
+        expect(a.db.settings[MAP].X.isTrue).toBe(true);
+        expect(gistStores().settings[MAP].X.isTrue).toBe(true);
     });
 });

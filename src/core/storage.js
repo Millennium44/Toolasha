@@ -2693,7 +2693,7 @@ class Storage {
      * `getAll` answers `{}` or the rows read before an abort when IndexedDB fails, which suits callers that
      * tolerate a short answer but lets a backup pass off a partial store as the whole of it. This answers
      * `{ ok: true, rows }` only when the cursor walked to its end; any error, abort, missing connection or
-     * timed-out read is `{ ok: false, error }`. Used by the full backup only.
+     * timed-out read is `{ ok: false, error }`. Used by the full backup and by sync's whole-store reads.
      * @param {string} storeName - Object store name
      * @returns {Promise<{ok: true, rows: Object}|{ok: false, error: string}>} The checked read
      */

@@ -5,9 +5,18 @@ const storeState = vi.hoisted(() => ({ stores: {} }));
 vi.mock('../../core/storage.js', () => ({
     default: {
         listStores: async () => Object.keys(storeState.stores),
+        // A read that aborts part way says so here, and hands back only what it read in `getAll`, as the real
+        // store does (`storeState.shortRead`: the store, and how many rows in key order it got through)
+        async getAllChecked(name) {
+            if (storeState.shortRead?.store === name) return { ok: false, error: 'AbortError: transaction aborted' };
+            return { ok: true, rows: await this.getAll(name) };
+        },
         getAll: async (name) => {
             if (storeState.getAllThrows === name) throw new Error('unreadable store');
-            return { ...(storeState.stores[name] || {}) };
+            const rows = { ...(storeState.stores[name] || {}) };
+            if (storeState.shortRead?.store !== name) return rows;
+            const kept = Object.keys(rows).sort().slice(0, storeState.shortRead.keep);
+            return Object.fromEntries(kept.map((key) => [key, rows[key]]));
         },
         tryGet: async (key, name) => {
             // Unreadable histories, not the sync's own registry record (whose
@@ -186,6 +195,7 @@ beforeEach(() => {
     storeState.flushError = null;
     storeState.putAllCalls = [];
     storeState.shortWrites = 0;
+    storeState.shortRead = null;
     flushLog.length = 0;
     reconcileKeyMigrationState.mockClear();
     storeState.stores = {
@@ -3429,5 +3439,85 @@ describe('the pre-split networth detail key on a pull', () => {
 
         expect(importedPayloads[0].stores[STORE]).toEqual(gist);
         expect(result.writtenWholeKeys).toEqual([{ store: STORE, key: 'theirs_1' }]);
+    });
+});
+
+describe('a store read that aborts part way stops the sync before anything is sent or written (#962)', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
+
+    test('no upload is built from a store cut short', async () => {
+        storeState.stores.dungeonRuns = { run1: { kills: 3 }, run2: { kills: 4 }, run3: { kills: 5 } };
+        storeState.shortRead = { store: 'dungeonRuns', keep: 1 };
+
+        await expect(buildPayloadJSON('everything')).rejects.toThrow(/dungeonRuns/);
+    });
+
+    test('nor from a settings store that reads as empty', async () => {
+        storeState.shortRead = { store: 'settings', keep: 0 };
+
+        await expect(buildPayloadJSON('settings')).rejects.toThrow(/settings/);
+    });
+
+    test("a pull does not fold this device's settings over an empty read of them", async () => {
+        storeState.shortRead = { store: 'settings', keep: 0 };
+
+        await expect(
+            applyPayload(payloadOf({ settings: { script_settingsMap_abc: { chatCommands: { isTrue: false } } } }), {
+                mode: 'merge',
+            })
+        ).rejects.toThrow(/settings/);
+
+        // Nothing landed, and no key-migration record was forgotten
+        expect(importedPayloads).toHaveLength(0);
+        expect(reconcileKeyMigrationState).not.toHaveBeenCalled();
+        expect(storeState.stores.settings.script_settingsMap_abc.sync_token).toEqual({ value: 'ghp_secret' });
+        // The restore hold the pull took is let go
+        expect(flushLog.at(-1)).toBe('endRestore');
+    });
+
+    test('an automatic merge does not write the download over a value this device moved, unseen in a short read', async () => {
+        storeState.stores.dungeonRuns = { a0: 1, run1: { kills: 5 } };
+        const baseline = wholeKeyHashes(payloadOf({ dungeonRuns: { a0: 1, run1: { kills: 3 } } }));
+        storeState.shortRead = { store: 'dungeonRuns', keep: 1 };
+
+        await expect(
+            applyPayload(payloadOf({ dungeonRuns: { a0: 1, run1: { kills: 3 } } }), { mode: 'merge', baseline })
+        ).rejects.toThrow(/dungeonRuns/);
+
+        expect(importedPayloads).toHaveLength(0);
+        expect(storeState.stores.dungeonRuns.run1).toEqual({ kills: 5 });
+    });
+
+    test('the key-migration records a merge forgot are put back when a later read stops it', async () => {
+        const RECORD = 'settings_key_migrations_applied_script_settingsMap_abc';
+        storeState.stores.settings[RECORD] = ['actionBarTimeDisplay'];
+        storeState.stores.dungeonRuns = { a0: 1, run1: { kills: 5 } };
+        const baseline = wholeKeyHashes(payloadOf({ dungeonRuns: { a0: 1, run1: { kills: 3 } } }));
+        reconcileKeyMigrationState.mockImplementationOnce(async () => {
+            delete storeState.stores.settings[RECORD];
+        });
+        storeState.shortRead = { store: 'dungeonRuns', keep: 1 };
+
+        await expect(
+            applyPayload(
+                payloadOf({
+                    settings: { script_settingsMap_abc: { chatCommands: { isTrue: false } } },
+                    dungeonRuns: { a0: 1, run1: { kills: 3 } },
+                }),
+                { mode: 'merge', baseline }
+            )
+        ).rejects.toThrow(/dungeonRuns/);
+
+        expect(importedPayloads).toHaveLength(0);
+        expect(storeState.stores.settings[RECORD]).toEqual(['actionBarTimeDisplay']);
+    });
+
+    test('a pull someone asked for still writes all of a store it could not weigh, as the download wins it anyway', async () => {
+        storeState.stores.dungeonRuns = { a0: 1, run1: { kills: 5 } };
+        storeState.shortRead = { store: 'dungeonRuns', keep: 1 };
+
+        await applyPayload(payloadOf({ dungeonRuns: { a0: 1, run1: { kills: 3 } } }));
+
+        expect(importedPayloads[0].stores.dungeonRuns).toEqual({ a0: 1, run1: { kills: 3 } });
     });
 });
