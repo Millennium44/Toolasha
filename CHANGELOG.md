@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Buy missing supplies stocks to your run target
 
 The Labyrinth's "Buy missing supplies" now buys up to the Consumables panel's run target (5 runs unless you changed it), crates included, instead of one run's carry cap, so it no longer says nothing is missing when you are short of that target.
+
 ### Belt advisor: which Talisman Belt upgrade is worth buying
 
 Test server. Beside Talisman lines in the Combat Sim and the Skilling Optimizer, "Check belts" weighs higher levels of your belt and larger belts against their market cost, using the talismans you have slotted (a larger belt's new slots count as empty).
