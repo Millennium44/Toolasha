@@ -169,6 +169,8 @@ class ProfitCalculator {
         // "Direct recipe only" buys the upgrade item at market instead of
         // crafting it, so there is no upgrade chain to add time for.
         let effectiveActionTime = actionTime;
+        // Whether the chain's time was added above, so a caller can add what the chain teaches too
+        let upgradeChainCrafted = false;
         const craftUpgradeItems =
             config.getSetting('profitCalc_craftUpgradeItems') && !config.getSetting('itemTooltip_detailedProfitFlat');
         if (actionDetails.upgradeItemHrid && craftUpgradeItems && upgradeLevel === 0) {
@@ -185,6 +187,7 @@ class ProfitCalculator {
                     const chainTimeWithSpeed =
                         upgradeChainTime / (1 + equipmentSpeedBonus + personalSpeedBonus + guildSpeedBonus);
                     effectiveActionTime += chainTimeWithSpeed;
+                    upgradeChainCrafted = true;
                 }
             }
         }
@@ -319,6 +322,7 @@ class ProfitCalculator {
             actionHrid: action.actionHrid,
             productionCandidates: action.candidateActionHrids,
             actionTime: effectiveActionTime,
+            upgradeChainCrafted, // True when the upgrade item's production chain time is inside actionTime
             actionsPerHour,
             itemsPerHour,
             totalItemsPerHour, // Items/hour including Gourmet bonus

@@ -441,6 +441,36 @@ export function getProductionChainTime(itemHrid) {
     return result;
 }
 
+/**
+ * The actions {@link getProductionChainTime} adds up for an item, in order: the item's own producing action, then
+ * its upgrade item's when crafting that is cheaper than buying it, and so on down the chain. The same walk and the
+ * same condition, so a caller that wants what the chain teaches (not only how long it takes) sees the same actions.
+ *
+ * @param {string} itemHrid - Item HRID
+ * @returns {string[]} Action hrids, empty when the item has no timed producing action
+ */
+export function getProductionChainActions(itemHrid) {
+    const gameData = dataManager.getInitClientData();
+    if (!gameData?.actionDetailMap) return [];
+
+    const actions = [];
+    const seen = new Set();
+    let current = itemHrid;
+    while (current && !seen.has(current)) {
+        seen.add(current);
+        const found = findProducingAction(current, { primaryOnly: true, actionDetailMap: gameData.actionDetailMap });
+        const action = found?.action;
+        if (!action || !action.baseTimeCost) break;
+        actions.push(found.actionHrid);
+        if (!action.upgradeItemHrid) break;
+        const marketPrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask', side: 'buy' }) || 0;
+        const craftPrice = getProductionCost(action.upgradeItemHrid, 'ask');
+        if (!(craftPrice > 0 && (marketPrice === 0 || craftPrice < marketPrice))) break;
+        current = action.upgradeItemHrid;
+    }
+    return actions;
+}
+
 function _computeProductionChainTime(itemHrid) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return 0;
