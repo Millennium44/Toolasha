@@ -198,6 +198,9 @@ import equipmentMismatchWarning from '../features/equipment/equipment-mismatch-w
 // Test server: the belt-scaled value beside each line of the game's talisman window
 import talismanWindowValues from '../features/equipment/talisman-window-values.js';
 
+// Test server: the reroll advisor in the game's talisman window
+import talismanRerollAdvisor from '../features/equipment/talisman-reroll-advisor.js';
+
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
 // Shared console-only debug namespace; nothing schedules these
@@ -325,6 +328,7 @@ toolashaRoot.UI = {
     ironCowFarmPanel,
     equipmentMismatchWarning,
     talismanWindowValues,
+    talismanRerollAdvisor,
     combatText,
     dpsPanel,
     deathsPanel,

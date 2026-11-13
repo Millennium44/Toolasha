@@ -1978,6 +1978,14 @@ function registerFeatures() {
             async: false,
         },
         {
+            // Test server only: the module returns at once anywhere else
+            key: 'talismanRerollAdvisor',
+            name: 'Talisman Reroll Advisor',
+            category: 'UI',
+            module: UI.talismanRerollAdvisor,
+            async: false,
+        },
+        {
             key: 'hideLabyrinthBadge',
             name: 'Hide Labyrinth Badge',
             category: 'UI',
