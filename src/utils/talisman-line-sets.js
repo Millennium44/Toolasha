@@ -6,7 +6,7 @@
  *
  * - talisman tables and limits, grade scaling, laying a chosen set of lines out as real talismans;
  * - the set modes: Practical (the default: at most one Special-group line per talisman, a grade cap, G3 unless
- *   chosen), Ideal (the simulated grade, no limit) and Budget (the most value whose expected orb cost per talisman
+ *   chosen), Ideal (the simulated grade, no limit on different Specials) and Budget (the most value whose expected orb cost per talisman
  *   fits a budget), plus value per orb and "Improve mine" over the talismans the player owns;
  * - the skilling ranking (exact figures from the profit and experience math, no sim).
  *
@@ -23,7 +23,9 @@ import {
     attachTalismanBonuses,
     computeTalismanBonuses,
     getBeltSlotCount,
+    SPECIAL_GROUP,
     getTalismanPower,
+    isSpecialModifierDetail,
     talismanBonusesOf,
     talismanStatName,
 } from './talisman-bonuses.js';
@@ -33,8 +35,7 @@ import { GATHERING_TYPES, PRODUCTION_TYPES } from './profit-constants.js';
 export const COMBAT_TALISMAN_TYPE = '/talisman_types/combat';
 export const SKILLING_TALISMAN_TYPE = '/talisman_types/skilling';
 
-/** The group of the five talisman-only lines (Echo, Fortify, Overkill, Shatter, Smite), from the game data */
-export const SPECIAL_GROUP = '/talisman_modifier_groups/special';
+export { SPECIAL_GROUP };
 
 /** Highest grade, and lines per talisman, when the game data does not say (`talismanInfo`) */
 export const DEFAULT_MAX_GRADE = 6;
@@ -108,7 +109,7 @@ export function talismanLines(modifierDetailMap, typeHrid) {
  * @returns {boolean}
  */
 export function isSpecialLine(detail) {
-    return detail?.groupHrid === SPECIAL_GROUP;
+    return isSpecialModifierDetail(detail);
 }
 
 /**
@@ -227,7 +228,8 @@ export function valueAtGrade(row, grade) {
  * What each copy of a line adds at a grade, first copy first. A row measured with a copy in every slot
  * (`copiesValue`, at the simulated grade) values later copies by what they added, scaled to the grade like the
  * first; a line whose later copies add more than the first (synergy) has every copy at the average; a row never
- * measured that way is assumed linear (`assumed`).
+ * measured that way is assumed linear (`assumed`). A Special line has one copy only: a second copy of the same
+ * Special adds nothing (measured 2026-11-13), whatever a copies run read.
  * @param {Object} row
  * @param {number} slots
  * @param {number} grade
@@ -237,7 +239,7 @@ export function lineMarginals(row, slots, grade) {
     const v = valueAtGrade(row, grade);
     const count = Math.max(1, Math.floor(slots) || 1);
     if (!(v > 0)) return { marginals: [], assumed: false };
-    if (count === 1) return { marginals: [v], assumed: false };
+    if (count === 1 || row.special) return { marginals: [v], assumed: false };
     if (Number.isFinite(row.copiesValue) && row.value) {
         const copies = row.copiesValue * (v / row.value);
         const later = (copies - v) / (count - 1);
@@ -977,7 +979,8 @@ export async function runSkillingLineRanking(params, deps, options = {}) {
             let best = null;
             const specialsTaken = picks.filter((p) => p.special).length;
             for (const row of candidates) {
-                if (picks.filter((p) => p.hrid === row.hrid).length >= slots) continue;
+                // A Special line counts once however many copies are worn
+                if (picks.filter((p) => p.hrid === row.hrid).length >= (row.special ? 1 : slots)) continue;
                 if (row.special && specialsTaken >= specialLimit) continue;
                 const trial = [...picks, { hrid: row.hrid, grade: setGrade, special: row.special }];
                 const value = read(await evaluateWith(layout(trial)));

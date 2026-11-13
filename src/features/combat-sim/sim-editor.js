@@ -49,6 +49,7 @@ import {
     describeScaledValue,
     getBeltSlotCount,
     getTalismanPower,
+    deadSpecialLines,
     scaleTalismanModifier,
     toSimTalismans,
 } from '../../utils/talisman-bonuses.js';
@@ -3113,6 +3114,10 @@ export class SimEditor {
         const unchanged =
             talismanListSignature(dto.talismans) === talismanListSignature(reference?.talismans) &&
             (!live || talismanListSignature(dto.talismans) === talismanListSignature(live));
+        // Special lines a higher (or earlier, at equal grade) copy on another talisman makes redundant
+        const deadLines = new Set(
+            deadSpecialLines(dto.talismans, modifierDetailMap, slots).map((d) => `${d.slotIndex}:${d.lineIndex}`)
+        );
         const btn = `background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;`;
         const field = `background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:3px; padding:1px 3px; font-size:12px;`;
 
@@ -3142,6 +3147,7 @@ export class SimEditor {
                 const detail = modifierDetailMap[modifier?.hrid];
                 const scaled = scaleTalismanModifier(modifier, modifierDetailMap, power);
                 const lineName = detail?.name || String(modifier?.hrid || '?');
+                const isDead = deadLines.has(key);
                 html += `<div class="mwi-tal-line">`;
                 html += `<select data-talisman-type="${key}" title="${locked ? lockNote : escapeHtml(lineName)}"${locked ? ' disabled' : ''} style="${field}">`;
                 // The current type is always an option, so a line the combat list does not carry (another talisman
@@ -3160,8 +3166,12 @@ export class SimEditor {
                     html += `<option value="${grade}"${grade === shownGrade ? ' selected' : ''}>G${grade}</option>`;
                 }
                 html += '</select>';
-                html += `<span data-talisman-value="${key}" style="color:${GAME_COLORS.textDim}; font-size:11px; min-width:3.6em; text-align:right; white-space:nowrap;">${
-                    scaled ? escapeHtml(describeScaledValue(scaled)) : ''
+                html += `<span data-talisman-value="${key}"${
+                    isDead
+                        ? ' title="A second copy of a Special line adds nothing (measured); the higher grade counts"'
+                        : ''
+                } style="color:${GAME_COLORS.textDim}; font-size:11px; min-width:3.6em; text-align:right; white-space:nowrap;">${
+                    isDead ? 'no effect' : scaled ? escapeHtml(describeScaledValue(scaled)) : ''
                 }</span>`;
                 html += `<button class="mwi-tal-remove" data-talisman-remove="${key}" title="Remove this line" style="${btn}">&times;</button>`;
                 html += '</div>';
