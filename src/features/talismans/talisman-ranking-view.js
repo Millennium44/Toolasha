@@ -47,6 +47,7 @@ import {
     rateRow,
     sortBeltRows,
 } from './talisman-belt-advisor.js';
+import { CORE_BASIS, adviseCores, coreQuoteKey } from './talisman-core-advisor.js';
 
 export const ACCENT = '#4a9eff';
 export const CHIP_BUTTON_STYLE =
@@ -106,6 +107,17 @@ const TIP_BELT_COST_COL =
     'The cost on the chosen basis, from live market prices when the check ran. "No price" means no listing.';
 const TIP_BELT_RATIO = `Gain per ${COST_UNIT / 1e6}m coins of cost. Only for a priced upgrade with a real, positive gain.`;
 const TIP_BELT_NOTE = 'What to know about the row.';
+const TIP_CORE_HEAD =
+    'Is adding the next line to a worn talisman with a core worth it? The next line is a draw (G1-G3 only, any type the talisman does not hold, by weight); each outcome is valued from the ranking rows above, and the cores are priced from the market. No sims are run.';
+const TIP_CORE_RUN =
+    'Value the next line of every worn talisman of this type that has room, from the ranking above, and price its cores from the market. Rank first.';
+const TIP_CORE_GAIN =
+    'The expected change in the chosen Rank by metric from the next line: every line it can roll, at G1-G3, times its chance, valued from the ranking rows. A line already worn on another talisman adds only its later-copy value. Lines the ranking has no row for count as 0.';
+const TIP_CORE_USEFUL = 'The chance the new line is worth something (a gain above zero). The rest is a blank draw.';
+const TIP_CORE_BEST = 'The best single outcome: the line and grade, its gain and its chance of being the one drawn.';
+const TIP_CORE_COST =
+    'The cores the game asks for that line, at the market Buy price under your profit pricing mode (or your own price). "No price" means a core has no listing: it is never counted as free.';
+const TIP_CORE_RATIO = `Expected gain per ${COST_UNIT / 1e6}m coins of cores. Only for a priced row with a real, positive gain.`;
 const TIP_HASH = 'Rank: the line with the biggest gain is 1.';
 const TIP_LINE = 'The talisman line. Hover the name for its value at the measured grade.';
 
@@ -426,8 +438,9 @@ export function coresNote() {
         ([hrid, count]) => `${count} ${init?.itemDetailMap?.[hrid]?.name || hrid.replace('/items/', '')}`
     );
     return parts.length
-        ? `A fresh talisman also takes ${parts.join(', ')} (create and add lines; not priced, the same for every target). ` +
-              'Lines from creation and cores roll G1-G3 only (measured, 396 lines), then orbs take them higher.'
+        ? `A fresh talisman also takes ${parts.join(', ')} (create and add lines; not priced in these costs, the same for every target). ` +
+              'Lines from creation and cores roll G1-G3 only (measured, 396 lines), then orbs take them higher. ' +
+              'The Core advisor prices the next line of a talisman you wear.'
         : '';
 }
 
@@ -463,6 +476,9 @@ export class TalismanRankingSectionBase {
         this._improve = null;
         /** The belt advisor's last result (`{status, rows, inputs, ...}`), or null */
         this._belt = null;
+        /** The core advisor's last result (`{status, rows, inputs, ...}`), or null */
+        this._core = null;
+        this._rankSeq = 0;
         this._sortBy = 'gain';
         this._listeners = [];
         /** The player has typed in the budget field: the default is no longer refilled */
@@ -538,6 +554,11 @@ export class TalismanRankingSectionBase {
                     <button data-role="belt-run" style="${CHIP_BUTTON_STYLE}" title="${escapeHtml(TIP_BELT_RUN)}">Check belts</button>
                     <span data-role="belt-estimate" style="color:${GAME_COLORS.textDim}; font-size:11px;" title="${escapeHtml(TIP_BELT_ESTIMATE)}"></span>
                 </div>
+                <div data-role="core-controls" style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin-top:6px;">
+                    <span style="color:${ACCENT}; font-weight:700; font-size:12px;" title="${escapeHtml(TIP_CORE_HEAD)}">Core advisor</span>
+                    <button data-role="core-run" style="${CHIP_BUTTON_STYLE}" title="${escapeHtml(TIP_CORE_RUN)}">Check cores</button>
+                    <span style="color:${GAME_COLORS.textDim}; font-size:11px;" title="${escapeHtml(TIP_CORE_HEAD)}">Adds one line to a worn talisman; run the ranking first. No sims.</span>
+                </div>
                 <div data-role="progress" style="display:none; color:${GAME_COLORS.textDim}; font-size:11px; margin-top:4px;"></div>
                 <div data-role="notice" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
                 <div data-role="stale" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
@@ -545,6 +566,8 @@ export class TalismanRankingSectionBase {
                 <div data-role="improve" style="margin-top:4px;"></div>
                 <div data-role="belt-stale" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
                 <div data-role="belt-results" style="margin-top:4px;"></div>
+                <div data-role="core-stale" style="display:none; color:#ff9800; font-size:11px; margin-top:4px;"></div>
+                <div data-role="core-results" style="margin-top:4px;"></div>
             </div>`;
         container.appendChild(root);
         this.root = root;
@@ -573,6 +596,7 @@ export class TalismanRankingSectionBase {
         });
         this._on(this._q('belt-run'), 'click', () => this._onBelts());
         this._on(this._q('belt-cost'), 'change', () => this._renderBelts());
+        this._on(this._q('core-run'), 'click', () => this._onCores());
         this._on(this._q('results'), 'click', (e) => {
             if (e.target.closest?.('[data-role="copy-targets"]')) this._copyTargets(e.target);
             if (e.target.closest?.('[data-role="improve-run"]')) this._onImprove();
@@ -618,6 +642,7 @@ export class TalismanRankingSectionBase {
         this._orbs = null;
         this._improve = null;
         this._belt = null;
+        this._core = null;
         this._budgetTouched = false;
         this._budgetDefaultText = '';
     }
@@ -726,6 +751,8 @@ export class TalismanRankingSectionBase {
     _setRunning(running) {
         this._running = running;
         const run = this._q('run');
+        const coreRun = this._q('core-run');
+        if (coreRun) coreRun.style.display = running ? 'none' : '';
         const beltRun = this._q('belt-run');
         const stop = this._q('stop');
         const progress = this._q('progress');
@@ -817,6 +844,9 @@ export class TalismanRankingSectionBase {
             this._renderMessage('');
             this._improve = null;
             this._renderImprove();
+            // The cores were valued from the rows of the ranking being replaced
+            this._core = null;
+            this._renderCores();
             this._orbs = makeOrbSolver(() => this._aborted || !current());
             // Read now, with the controls the run reads before its first await: a later edit must not relabel it
             const ref = solverOrbReference(this._orbs);
@@ -827,6 +857,7 @@ export class TalismanRankingSectionBase {
                 result.budgetCoins = started.ok ? started.coins : typed.budgetCoins;
                 result.budgetOrbName = ref?.name || 'Reforging Orb';
             }
+            result.rankingId = ++this._rankSeq;
             this._result = result;
             this._render(result);
         });
@@ -1305,6 +1336,7 @@ export class TalismanRankingSectionBase {
 
     /** Say when the drawn belt figures were valued for other inputs than the controls now hold */
     _refreshBeltStale() {
+        this._refreshCoreStale();
         const note = this._q('belt-stale');
         if (!note) return;
         const result = this._belt;
@@ -1502,6 +1534,216 @@ export class TalismanRankingSectionBase {
         );
         box.innerHTML = parts.join('');
         this._refreshBeltStale();
+    }
+
+    // -----------------------------------------------------------------------------------------------------------
+    // Core advisor: is adding the next line to a worn talisman with a core worth it. No sim: it values the draw from
+    // the ranking's rows (`_result`), so it needs a finished ranking, and is stamped with the ranking it read and every
+    // input that changes it (gear, worn lines, belt, core quotes). A subclass supplies `_coreContext`.
+    // -----------------------------------------------------------------------------------------------------------
+
+    /**
+     * The gear the cores are valued for, now.
+     * @returns {Promise<{status: 'refused', message: string}|{talismans: Array<Object>, power: number, slots: number}>}
+     */
+    async _coreContext() {
+        return { status: 'refused', message: 'The core advisor is not available here.' };
+    }
+
+    /** @returns {Object} What a core result was valued for: the belt check's inputs, the ranking, and the core quotes */
+    _coreInputsNow() {
+        const gameData = dataManager.getInitClientData?.() || {};
+        let prices = null;
+        try {
+            prices = coreQuoteKey(gameData.talismanInfo, gameData.itemDetailMap);
+        } catch (error) {
+            console.error('[TalismanRanking] Reading the core quotes failed:', error);
+        }
+        return { ...this._beltInputsNow(), ranking: this._result?.rankingId ?? null, 'core prices': prices };
+    }
+
+    /** Say when the drawn core figures were valued for other inputs than stand now */
+    _refreshCoreStale() {
+        const note = this._q('core-stale');
+        if (!note) return;
+        const result = this._core;
+        let changed = [];
+        if (result && result.inputs && !this._running) {
+            const now = this._coreInputsNow();
+            changed = Object.keys({ ...result.inputs, ...now }).filter(
+                (key) => JSON.stringify(result.inputs[key]) !== JSON.stringify(now[key])
+            );
+        }
+        note.style.display = changed.length ? 'block' : 'none';
+        note.textContent = changed.length
+            ? `The core figures are out of date: the ${changed.join(', ')} changed since the check ran. Check cores again.`
+            : '';
+    }
+
+    /** Put a line where the core results go */
+    _coreMessage(text) {
+        const box = this._q('core-results');
+        if (box) {
+            box.innerHTML = text
+                ? `<div style="color:#ff9800; font-size:12px; padding:4px 0;">${escapeHtml(text)}</div>`
+                : '';
+        }
+    }
+
+    /** Check the cores: never beside a run in flight */
+    _onCores() {
+        if (this._running) return;
+        return this._guardedRun(
+            async (current) => {
+                this._core = null;
+                this._coreMessage('');
+                this._refreshCoreStale();
+                const ranking = this._result;
+                if (!ranking) {
+                    this._coreMessage('Run the ranking first: the cores are valued from its rows.');
+                    return;
+                }
+                // Read now, before the first await: a later edit must not relabel the check
+                const inputs = this._coreInputsNow();
+                const ctx = await this._coreContext();
+                if (!current()) return;
+                // The ranking on screen is the one that was read: a replaced one holds other rows
+                if (this._result !== ranking) return;
+                let result;
+                if (ctx?.status === 'refused') {
+                    result = { status: 'refused', message: ctx.message, rows: [] };
+                } else {
+                    result = adviseCores({
+                        talismans: ctx.talismans,
+                        ranking,
+                        power: ctx.power,
+                        typeHrid: this.typeHrid,
+                        gameData: dataManager.getInitClientData?.() || {},
+                    });
+                    result.notValued = ranking?.notValued?.length || 0;
+                    result.context = ranking?.zoneName
+                        ? `${ranking.zoneName} T${ranking.difficultyTier}`
+                        : ranking?.actionName || '';
+                }
+                result.inputs = inputs;
+                this._core = result;
+                this._renderCores();
+            },
+            { refuse: (text) => this._coreMessage(text) }
+        );
+    }
+
+    /** Draw the core result */
+    _renderCores() {
+        const box = this._q('core-results');
+        if (!box) return;
+        const result = this._core;
+        if (!result) {
+            box.innerHTML = '';
+            this._refreshCoreStale();
+            return;
+        }
+        if (result.status === 'refused') {
+            this._coreMessage(result.message || 'Nothing to check.');
+            this._refreshCoreStale();
+            return;
+        }
+        const metric = rankingMetric(result.metricKey, this.metrics);
+        const pct = (p) => `${Math.round(p * 100)}%`;
+        const oddsText = result.odds.map((p, i) => `G${i + 1} ${(p * 100).toFixed(0)}%`).join(' / ');
+        const parts = [
+            `<div style="color:#bbb; font-size:11px; margin:2px 0 6px;">${escapeHtml(
+                `${result.context ? `${result.context} · ` : ''}Next line from a core, valued from the ranking above by ${metric.label} ` +
+                    `(Talisman Power ${(result.power * 100).toFixed(1)}%). The draw: ${oddsText} (cores roll G1-G3 only), any type the ` +
+                    `talisman does not hold, by its game-data weight. Prices were read when the check ran.`
+            )}</div>`,
+        ];
+        const rows = result.rows;
+        if (rows.every((row) => rateRow(row, CORE_BASIS).kind === 'unpriced')) {
+            parts.push(
+                `<div style="color:#ff9800; font-size:11px; margin-bottom:4px;">${escapeHtml(
+                    'No core has a market price: the gains are shown, but none can be set against a cost.'
+                )}</div>`
+            );
+        }
+        const th = (text, title, align = 'right') =>
+            `<th style="text-align:${align}; padding:2px 6px; color:#888; font-weight:600;" title="${escapeHtml(title)}">${text}</th>`;
+        const head =
+            `<tr>${th('#', TIP_HASH, 'left')}${th('Talisman', 'The worn talisman and the lines it has now.', 'left')}` +
+            th('Adds', 'The line number the core adds.') +
+            th(escapeHtml(metric.label), TIP_CORE_GAIN) +
+            th('Useful', TIP_CORE_USEFUL) +
+            th('Best', TIP_CORE_BEST, 'left') +
+            th('Cost', TIP_CORE_COST) +
+            th(`per ${COST_UNIT / 1e6}m`, TIP_CORE_RATIO) +
+            th('Note', TIP_BELT_NOTE, 'left') +
+            '</tr>';
+        const body = rows
+            .map((row, index) => {
+                const rate = rateRow(row, CORE_BASIS);
+                const dim = row.significant === false;
+                const color = dim
+                    ? '#777'
+                    : row.value > 0
+                      ? GAME_COLORS.good
+                      : row.value < 0
+                        ? GAME_COLORS.bad
+                        : '#aaa';
+                const cost = row.costs[CORE_BASIS];
+                const costCell =
+                    rate.cost === null
+                        ? `<span style="color:#ff9800;" title="${escapeHtml(rate.why)}">No price</span>`
+                        : `<span title="${escapeHtml(`${cost.count} × ${formatKMB(cost.unit)}`)}">${formatKMB(rate.cost)}</span>`;
+                const ratioCell =
+                    rate.kind === 'ratio'
+                        ? this._ratioText(rate.per100m, metric)
+                        : `<span style="color:#777;" title="${escapeHtml(rate.why || '')}">—</span>`;
+                const notes = [
+                    rate.kind === 'unpriced' ? 'Unpriced: no gain per cost.' : '',
+                    row.value < 0 ? 'The expected change is negative.' : '',
+                    row.value === 0 ? 'No line it can roll is worth anything here.' : '',
+                    row.value > 0 && row.significant === false ? 'The gain is within noise.' : '',
+                    row.mechanicShare > 0 ? 'Leans on mechanic or non-linear lines: rough.' : '',
+                    row.assumedShare > 0
+                        ? 'Later copies of a line already worn are assumed to add as much as the first.'
+                        : '',
+                    row.unvaluedShare > 0
+                        ? `${pct(row.unvaluedShare)} of draws land on lines the ranking did not value (counted 0).`
+                        : '',
+                    row.unrealShare > 0
+                        ? `${pct(row.unrealShare)} of draws land on lines whose gain counts a free input (counted 0).`
+                        : '',
+                ].filter(Boolean);
+                const lines = row.lines.map((l) => `${l.name} G${l.grade}`).join(', ');
+                const best = row.best
+                    ? `${escapeHtml(row.best.name)} G${row.best.grade} ${this._formatValue(row.best.value, metric)} <span style="color:#777;">(${(row.best.chance * 100).toFixed(1)}%)</span>`
+                    : '<span style="color:#777;">—</span>';
+                return (
+                    `<tr><td style="padding:2px 6px; color:#888;">${index + 1}</td>` +
+                    `<td style="padding:2px 6px; color:${dim ? '#999' : '#ddd'};" title="${escapeHtml(lines)}">${escapeHtml(`${row.id != null ? `#${row.id} ` : ''}slot ${row.slotIndex}`)} <span style="color:#777;">(${row.lines.length} line${row.lines.length === 1 ? '' : 's'})</span></td>` +
+                    `<td style="text-align:right; padding:2px 6px; color:#ccc;">line ${row.lineNumber}</td>` +
+                    `<td style="text-align:right; padding:2px 6px; color:${color};" title="${escapeHtml(TIP_CORE_GAIN)}">${this._formatValue(row.value, metric)}</td>` +
+                    `<td style="text-align:right; padding:2px 6px; color:#ccc;" title="${escapeHtml(TIP_CORE_USEFUL)}">${pct(row.pUseful)}</td>` +
+                    `<td style="padding:2px 6px; color:#ccc; white-space:nowrap;">${best}</td>` +
+                    `<td style="text-align:right; padding:2px 6px; color:#ccc;">${costCell}</td>` +
+                    `<td style="text-align:right; padding:2px 6px; color:#ccc;">${ratioCell}</td>` +
+                    `<td style="padding:2px 6px; color:#999;">${escapeHtml(notes.join(' '))}</td></tr>`
+                );
+            })
+            .join('');
+        parts.push(
+            `<div style="overflow-x:auto;"><table style="border-collapse:collapse; font-size:11px; width:100%;">${head}${body}</table></div>`
+        );
+        parts.push(
+            `<div style="font-size:11px; color:#888; margin-top:4px;">${escapeHtml(
+                'Each outcome is the ranking row for that line (measured with that line alone on the belt), so lines are assumed to add up. ' +
+                    'It is a lottery: the expected gain is an average over draws, and the Useful chance and Best outcome show the spread. ' +
+                    'What the extra line does to the orbs the other lines need later is not included. ' +
+                    (result.notValued ? `${result.notValued} lines were not valued by the sim and count as 0.` : '')
+            )}</div>`
+        );
+        box.innerHTML = parts.join('');
+        this._refreshCoreStale();
     }
 
     async _copyTargets(button) {

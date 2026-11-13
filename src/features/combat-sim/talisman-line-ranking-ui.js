@@ -339,6 +339,27 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             : `Up to ${estimateBeltSims(count)} sims for ${count} candidate belts.`;
     }
 
+    /**
+     * The build the cores are valued for, now: the belt's power and slots and the talismans it wears (the roster the
+     * belt check reads, so the picked player and the Configure edits are the same).
+     * @returns {Promise<Object>}
+     */
+    async _coreContext() {
+        const { zoneHrid } = this.host._readUpgradeInputs();
+        const playerIndex = this.host._upgradePlayerIndex();
+        const { playerDTOs } = await this._loadRoster();
+        const dto = playerDTOs?.[playerIndex] || null;
+        const ready = combatRankingReadiness({ gameData: this._payload(), playerDTO: dto, zoneHrid });
+        if (!ready.ok) return { status: 'refused', message: ready.message };
+        if (this._result?.playerHrid && dto.hrid !== this._result.playerHrid) {
+            return {
+                status: 'refused',
+                message: 'The ranking was run for another player. Rank again, then check the cores.',
+            };
+        }
+        return { talismans: wornTalismans(dto.talismans, ready.slots), power: ready.power, slots: ready.slots };
+    }
+
     async _runBelts(current, metricKey) {
         const { zoneHrid, difficultyTier, hours } = this.host._readUpgradeInputs();
         const playerIndex = this.host._upgradePlayerIndex();

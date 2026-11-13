@@ -11,14 +11,18 @@
 
 import dataManager from '../../core/data-manager.js';
 import { escapeHtml } from '../../utils/html-escape.js';
-import { describeActionContextSource, resolveActionContext } from '../../utils/action-context.js';
+import {
+    describeActionContextSource,
+    resolveActionContext,
+    resolveActionTalismans,
+} from '../../utils/action-context.js';
 import {
     RANKABLE_SKILLING_TYPES,
     SKILLING_RANKING_METRICS,
     SKILLING_TALISMAN_TYPE,
     runSkillingLineRanking,
 } from '../../utils/talisman-line-sets.js';
-import { BELT_LOCATION, talismanBonusesOf } from '../../utils/talisman-bonuses.js';
+import { BELT_LOCATION, getBeltSlotCount, getTalismanPower, talismanBonusesOf } from '../../utils/talisman-bonuses.js';
 import { beltCandidates, runSkillingBeltAdvisor } from './talisman-belt-advisor.js';
 import {
     SELECT_STYLE,
@@ -118,14 +122,20 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
     /**
      * The context a run values, with the source it names, taken in one call (ranking and belt advisor alike).
      * @param {string} type - The action's type hrid
-     * @returns {{context: {equipment: Map, drinks: Array}, source: Object}}
+     * @returns {{context: {equipment: Map, drinks: Array}, source: Object, talismans: Array<Object>|null}} The
+     *   talismans are the gear's own records (null when the host does not say), taken in the same call
      */
     _gearContextFor(type) {
         const source = this._gearSource(type);
         const context = source.own
             ? { equipment: source.own.equipment, drinks: source.own.drinks }
             : resolveActionContext(type);
-        return { context, source };
+        const talismans = source.own
+            ? Array.isArray(source.own.talismans)
+                ? source.own.talismans
+                : null
+            : resolveActionTalismans(type);
+        return { context, source, talismans };
     }
 
     /** The host's gear, picked loadout or its rows, changed: a shown ranking may be for other gear */
@@ -196,12 +206,14 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         const type = dataManager.getInitClientData?.()?.actionDetailMap?.[actionHrid]?.type;
         let gear = null;
         if (type) {
-            const { context, source } = this._gearContextFor(type);
+            const { context, source, talismans } = this._gearContextFor(type);
             const belt = context?.equipment?.get?.(BELT_LOCATION);
             gear = {
                 source: source.key,
                 belt: belt ? [belt.itemHrid, belt.enhancementLevel || 0] : null,
                 talismans: talismanBonusesOf(context?.equipment),
+                // The lines themselves: the core advisor values the next line of each
+                worn: (talismans || []).map((t) => [t.slotIndex, (t.modifiers || []).map((m) => [m.hrid, m.grade])]),
             };
         }
         return { character: dataManager.getCurrentCharacterId(), action: actionHrid || null, gear };
@@ -224,6 +236,37 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         return count === 0
             ? 'No larger belt or higher level to check.'
             : `No sims: exact figures for ${count} candidate belts.`;
+    }
+
+    /**
+     * What the core advisor values, for the gear a run would use now: the belt's power and slots and the worn
+     * talisman records (slots the belt does not have are dropped).
+     * @returns {Promise<{status: 'refused', message: string}|{talismans: Array<Object>, power: number, slots: number,
+     *   rankingId: *}>}
+     */
+    async _coreContext() {
+        const result = this._result;
+        const actionHrid = result?.actionHrid || this._q('action')?.value || this._actionHrid;
+        const gameData = dataManager.getInitClientData?.();
+        const type = gameData?.actionDetailMap?.[actionHrid]?.type;
+        if (!type) return { status: 'refused', message: 'No action selected: pick one in the Optimizer first.' };
+        const { context, source, talismans } = this._gearContextFor(type);
+        const belt = context?.equipment?.get?.(BELT_LOCATION);
+        const slots = getBeltSlotCount(belt, gameData.itemDetailMap);
+        if (!belt?.itemHrid || slots === 0) {
+            return { status: 'refused', message: `${source.label} has no Talisman Belt. Put one on first.` };
+        }
+        if (!Array.isArray(talismans)) {
+            return { status: 'refused', message: `The talismans of ${source.label} could not be read.` };
+        }
+        return {
+            talismans: talismans.filter(
+                (t) => Number.isInteger(t?.slotIndex) && t.slotIndex >= 1 && t.slotIndex <= slots
+            ),
+            power: getTalismanPower(belt, gameData.itemDetailMap, gameData.enhancementLevelTotalBonusMultiplierTable),
+            slots,
+            gearKey: source.key,
+        };
     }
 
     async _runBelts(current, metricKey) {
