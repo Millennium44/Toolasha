@@ -96,6 +96,8 @@ class ActionFilter {
         this.unregisterHandlers = [];
         this.currentTitleElement = null; // Track which title we're attached to
         this.refreshButton = null; // Reference to the manual price refresh button
+        this._headerFit = null; // Inline styles the narrow-screen fit replaced
+        this._onHeaderResize = null;
         this.optimizerButton = null; // "Open in Optimizer" on the controls row
         this._priceRefreshInFlight = false; // Guards against a second click while fetching
         this._updatePricingSelects = null;
@@ -720,6 +722,52 @@ class ActionFilter {
 
         // Find the container for action panels to inject "No results" message
         this.setupNoResultsMessage(titleElement);
+
+        // A narrow screen: the row can be wider than the page, which pushes the skill title off the edge
+        this._fitHeaderRow(titleElement, input);
+        this._onHeaderResize = () => this._fitHeaderRow(titleElement, input);
+        window.addEventListener('resize', this._onHeaderResize);
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => {
+                if (this.currentTitleElement === titleElement) this._fitHeaderRow(titleElement, input);
+            });
+        }
+    }
+
+    /**
+     * Shrink the filter input and the row gap, but only while the title row actually overflows.
+     * Measured rather than keyed to mobile mode, so a narrow desktop window is fixed too and a row that
+     * fits (any desktop) is never touched. The inline styles it replaces are kept and put back by
+     * _restoreHeaderRow (on a re-measure, clearFilter and cleanup).
+     * @param {HTMLElement} titleElement - The title row
+     * @param {HTMLInputElement} input - Our filter input
+     */
+    _fitHeaderRow(titleElement, input) {
+        this._restoreHeaderRow();
+        if (!titleElement.isConnected || titleElement.scrollWidth <= titleElement.clientWidth) return;
+        this._headerFit = {
+            titleElement,
+            input,
+            gap: titleElement.style.gap,
+            flex: input.style.flex,
+            width: input.style.width,
+            minWidth: input.style.minWidth,
+        };
+        titleElement.style.gap = '10px';
+        input.style.flex = '0 1 auto';
+        input.style.width = '130px';
+        input.style.minWidth = '0';
+    }
+
+    /** Put back the inline styles _fitHeaderRow replaced, if it replaced any. */
+    _restoreHeaderRow() {
+        const fit = this._headerFit;
+        if (!fit) return;
+        fit.titleElement.style.gap = fit.gap;
+        fit.input.style.flex = fit.flex;
+        fit.input.style.width = fit.width;
+        fit.input.style.minWidth = fit.minWidth;
+        this._headerFit = null;
     }
 
     /**
@@ -1157,6 +1205,10 @@ class ActionFilter {
             this.refreshButton.remove();
             this.refreshButton = null;
         }
+
+        this._restoreHeaderRow();
+        if (this._onHeaderResize) window.removeEventListener('resize', this._onHeaderResize);
+        this._onHeaderResize = null;
 
         this._closeScrollsMenu?.();
         if (this.scrollsButton && this.scrollsButton.parentElement) {

@@ -147,3 +147,47 @@ describe('Open in Optimizer button', () => {
         expect(buttons()).toHaveLength(1);
     });
 });
+
+describe('header row fit on narrow screens', () => {
+    const sized = (scrollWidth, clientWidth) => {
+        const title = makeTitle();
+        Object.defineProperty(title, 'scrollWidth', { value: scrollWidth, configurable: true });
+        Object.defineProperty(title, 'clientWidth', { value: clientWidth, configurable: true });
+        return title;
+    };
+
+    beforeEach(() => {
+        mocks.settings = { skillingOptimizer: true, actionPanel_showSort: true };
+    });
+
+    afterEach(() => {
+        actionFilter.clearFilter();
+        document.body.innerHTML = '';
+    });
+
+    it('shrinks the input and gap when the row overflows', () => {
+        const title = sized(376, 356);
+        actionFilter.injectFilterInput(title);
+        const input = document.querySelector('#mwi-action-filter');
+        expect(input.style.width).toBe('130px');
+        expect(input.style.flex).toBe('0 1 auto');
+        expect(input.style.minWidth).toBe('0');
+        expect(title.style.gap).toBe('10px');
+    });
+
+    it('leaves a row that fits untouched', () => {
+        const title = sized(600, 600);
+        actionFilter.injectFilterInput(title);
+        const input = document.querySelector('#mwi-action-filter');
+        expect(input.style.width).toBe('200px');
+        expect(title.style.gap).toBe('15px');
+    });
+
+    it('cleanup restores the original inline styles', () => {
+        const title = sized(376, 356);
+        actionFilter.injectFilterInput(title);
+        actionFilter.cleanup();
+        expect(title.style.gap).toBe('15px');
+        expect(actionFilter._headerFit).toBeNull();
+    });
+});
