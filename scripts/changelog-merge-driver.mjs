@@ -12,30 +12,35 @@
  * Usage (from git): node scripts/changelog-merge-driver.mjs %O %A %B %P
  */
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 const [, , base, ours, theirs, pathName = 'CHANGELOG.md'] = process.argv;
 
-let merged;
+// merge-file writes the merged result into `ours` itself: no stdout buffer to overflow (the changelog is over
+// 2 MB, past execFileSync's default 1 MiB, which would have cut the file short). Any error fails the merge
+// rather than accepting a partial result, and git then reports the file as conflicted.
 try {
-    merged = execFileSync('git', ['merge-file', '-p', '--union', ours, base, theirs], { encoding: 'utf8' });
+    execFileSync('git', ['merge-file', '--union', ours, base, theirs], { stdio: ['ignore', 'ignore', 'inherit'] });
 } catch (error) {
-    // merge-file exits with the conflict count; a union merge has none, but take its output either way
-    if (typeof error.stdout !== 'string') {
-        console.error('[changelog-merge-driver] union merge failed:', error.message);
-        process.exit(1);
-    }
-    merged = error.stdout;
+    console.error('[changelog-merge-driver] union merge failed:', error.message);
+    process.exit(1);
 }
 
-let output = merged;
+let merged;
+try {
+    merged = readFileSync(ours, 'utf8');
+} catch (error) {
+    console.error('[changelog-merge-driver] could not read the merged file:', error.message);
+    process.exit(1);
+}
+
 try {
     const prettier = await import('prettier');
     const options = (await prettier.resolveConfig(pathName)) || {};
-    output = await prettier.format(merged, { ...options, filepath: pathName });
+    writeFileSync(ours, await prettier.format(merged, { ...options, filepath: pathName }));
 } catch (error) {
+    // The plain union result is already in place
     console.error('[changelog-merge-driver] Prettier failed, keeping the plain union merge:', error.message);
 }
 
-writeFileSync(ours, output);
 process.exit(0);
