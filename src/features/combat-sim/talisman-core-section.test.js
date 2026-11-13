@@ -302,4 +302,19 @@ describe('the core advisor in the Combat Sim', () => {
         await check();
         expect(section._core.status).toBe('done');
     });
+
+    test('another party member edited after the ranking is not valued with the old rows, and marks the result stale', async () => {
+        const mate = { hrid: '/players/2', equipment: {}, talismans: [], food: [], drinks: [] };
+        host._editor.getEditedDTOs = () => ({ '/players/1': dto, '/players/2': mate });
+        await rank();
+        await check();
+        expect(section._core.status).toBe('done');
+        expect(q('core-stale').style.display).toBe('none');
+        mate.food = [{ hrid: '/items/donut' }];
+        section._refreshStale();
+        expect(q('core-stale').style.display).toBe('block');
+        expect(q('core-stale').textContent).toContain('roster');
+        await check();
+        expect(cores()).toContain('out of date for this gear');
+    });
 });

@@ -93,13 +93,22 @@ export function storedBalanceWeights() {
 }
 
 /**
- * What a build wears, for telling a ranking's gear from the gear now when the build was read live (no editor to
- * compare): gear, talismans, food and drinks.
- * @param {Object|null} dto
+ * What the whole roster wears, for telling a ranking's fight from the fight now: each player's gear, talismans, food,
+ * drinks and abilities (party members change the fight, so the rows measured against it).
+ * @param {Array<Object>|null} dtos
  * @returns {string}
  */
-function buildFingerprint(dto) {
-    return JSON.stringify([dto?.equipment ?? null, dto?.talismans ?? null, dto?.food ?? null, dto?.drinks ?? null]);
+function rosterFingerprint(dtos) {
+    return JSON.stringify(
+        (dtos || []).map((dto) => [
+            dto?.hrid ?? null,
+            dto?.equipment ?? null,
+            dto?.talismans ?? null,
+            dto?.food ?? null,
+            dto?.drinks ?? null,
+            dto?.abilities ?? null,
+        ])
+    );
 }
 
 /** The Upgrade tab's Talisman lines section */
@@ -317,8 +326,16 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             build: now.build,
             // No editor: the build is the live character's, so its gear and slotted talismans are the inputs
             ...(now.build === null ? { live: this._liveGear() } : {}),
+            // Every player of the roster: party members change the fight
+            roster: this._rosterNow(),
             ...(this._q('metric')?.value === 'balanced' ? { 'Balanced weights': storedBalanceWeights() } : {}),
         };
+    }
+
+    /** @returns {string|null} The edited roster's fingerprint (null: no editor, the build is read live) */
+    _rosterNow() {
+        const dtos = this.host._editor?.getEditedDTOs?.();
+        return dtos ? rosterFingerprint(Object.values(dtos)) : null;
     }
 
     /** @returns {Object} The live character's belt and slotted talismans (for a build read live) */
@@ -366,7 +383,11 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         const { playerDTOs } = await this._loadRoster();
         const dto = playerDTOs?.[playerIndex] || null;
         const ready = combatRankingReadiness({ gameData: this._payload(), playerDTO: dto, zoneHrid });
-        if (ready.ok && this._result?.buildFingerprint && this._result.buildFingerprint !== buildFingerprint(dto)) {
+        if (
+            ready.ok &&
+            this._result?.buildFingerprint &&
+            this._result.buildFingerprint !== rosterFingerprint(playerDTOs)
+        ) {
             return {
                 status: 'refused',
                 message: 'The ranking is out of date for this gear. Rank again, then check the cores.',
@@ -440,7 +461,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         const resimCloseCalls = this._resimChecked();
         const { playerDTOs, selfHrid } = await this._loadRoster();
         if (!current()) return null;
-        const buildNow = buildFingerprint(playerDTOs?.[playerIndex]);
+        const buildNow = rosterFingerprint(playerDTOs);
         const result = await runCombatLineRanking(
             {
                 playerDTOs,
