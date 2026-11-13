@@ -2670,3 +2670,35 @@ describe('refined cape transmute line', () => {
         expect(await blockFor(CAPE, 5)).toBeNull();
     });
 });
+
+describe('the craft PROFIT block with simulated tile scrolls', () => {
+    const profit = {
+        itemPrice: { ask: 5000, bid: 4900 },
+        profitPerHour: 3_300_000,
+        profitPerDay: 79_200_000,
+        profitPerAction: 2100,
+        totalMaterialCost: 1,
+    };
+    const draw = (simulated) => {
+        const el = document.createElement('div');
+        el.innerHTML = '<div class="ItemTooltipText_itemTooltipText__x"></div>';
+        tooltipPrices.injectProfitDisplay(el, profit, false, simulated);
+        return el.querySelector('.market-profit-injected');
+    };
+
+    test('marks the Net line and names the scrolls on hover', () => {
+        const block = draw(['Gourmet']);
+        const net = [...block.querySelectorAll('div')].find(
+            (d) => d.children.length === 0 && d.textContent.startsWith('Net:')
+        );
+        expect(net.textContent).toContain('📜');
+        expect(net.getAttribute('title')).toContain('Gourmet');
+    });
+
+    test('with nothing simulated the block is as before', () => {
+        const block = draw([]);
+        expect(block.textContent).toContain('Net:');
+        expect(block.textContent).not.toContain('📜');
+        expect(block.innerHTML).not.toContain('title=');
+    });
+});
