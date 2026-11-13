@@ -343,4 +343,24 @@ describe('adviseCores: every other ending', () => {
         // a is held by the only talisman, so it cannot roll
         expect(r.rows[0].hasMissingPrices).toBe(false);
     });
+
+    test('a combat profit row with an unpriced extra input (costUnpriced, no gainUnreal) counts 0, like the belt advisor', () => {
+        const rows = [row('b', 2), row('c', 100, { costUnpriced: ['Holy Cheese'], significant: false })];
+        const profit = run({ ranking: ranking(rows, { metricKey: 'profit' }) });
+        expect(profit.rows[0].value).toBeCloseTo((1 / 5.1) * 2 * S, 10);
+        expect(profit.rows[0].unrealShare).toBeCloseTo(1 / 5.1, 10);
+        expect(profit.rows[0].best).toMatchObject({ hrid: H('b') });
+        // Rank by DPS: the unpriced input does not matter, the row counts
+        const dps = run({ ranking: ranking(rows, { metricKey: 'dps' }) });
+        expect(dps.rows[0].unrealShare).toBe(0);
+        expect(dps.rows[0].value).toBeGreaterThan(profit.rows[0].value);
+        const xp = run({ ranking: ranking(rows, { metricKey: 'xp' }) });
+        expect(xp.rows[0].unrealShare).toBe(0);
+        expect(xp.rows[0].value).toBeCloseTo(dps.rows[0].value, 10);
+        // Balanced counts it only when profit has weight
+        const weighted = run({ ranking: ranking(rows, { metricKey: 'balanced', balanceWeights: { profit: 1 } }) });
+        expect(weighted.rows[0].unrealShare).toBeGreaterThan(0);
+        const noProfit = run({ ranking: ranking(rows, { metricKey: 'balanced', balanceWeights: { profit: 0 } }) });
+        expect(noProfit.rows[0].unrealShare).toBe(0);
+    });
 });

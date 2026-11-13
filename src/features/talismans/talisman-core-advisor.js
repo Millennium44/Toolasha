@@ -224,7 +224,17 @@ export function adviseCores({ talismans, ranking, power, typeHrid, gameData, pri
     }
 
     const odds = gradeOdds(Math.min(Number(gameData?.talismanInfo?.maxGrade) || 6, MEASURED_ODDS.freshLineGrades.cap));
-    const rowsByHrid = new Map(ranking.rows.map((r) => [r.hrid, r]));
+    // A profit gain resting on an input counted as free is a ceiling, not a gain. The skilling ranking marks it
+    // `gainUnreal`; the combat ranking only lists `costUnpriced`, so it is normalized here as the belt advisor does
+    const profitMatters =
+        ranking.metricKey === 'profit' ||
+        (ranking.metricKey === 'balanced' && (Number(ranking.balanceWeights?.profit) || 0) > 0);
+    const rowsByHrid = new Map(
+        ranking.rows.map((r) => [
+            r.hrid,
+            profitMatters && r.costUnpriced?.length && !r.gainUnreal ? { ...r, gainUnreal: true } : r,
+        ])
+    );
     const pool = talismanLines(detailMap, typeHrid);
     const slots = Number(ranking.slots) || mine.length;
     const nameOf = (hrid) => detailMap[hrid]?.name || hrid;

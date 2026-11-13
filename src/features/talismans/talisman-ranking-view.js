@@ -1678,6 +1678,13 @@ export class TalismanRankingSectionBase {
                 )}</div>`
             );
         }
+        if (profitLike && rows.some((row) => row.unrealShare > 0)) {
+            parts.push(
+                `<div style="color:#ff9800; font-size:11px; margin-bottom:4px;">${escapeHtml(
+                    `${UNPRICED_INPUTS_NOTE}: lines that need more of an unpriced input count 0 here.`
+                )}</div>`
+            );
+        }
         if (rows.every((row) => rateRow(row, CORE_BASIS).kind === 'unpriced')) {
             parts.push(
                 `<div style="color:#ff9800; font-size:11px; margin-bottom:4px;">${escapeHtml(
