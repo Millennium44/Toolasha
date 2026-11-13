@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim models talisman Smite, Shatter, Overkill, Echo and Fortify
+
+On the test server the sim now plays out the five talisman-only effects as measured in game: Smite raises damage to every boss including dungeon minibosses, Shatter adds armor penetration on crits, Overkill carries a killing blow's excess into the next hit, Echo repeats a damage ability at half strength, and Fortify stacks armor and resistances when hit.
+
 ### More profit figures follow your Buy/Sell pricing
 
 The Goal Planner, Enhancing XP/hr profit, the Enhancement Tracker and Loot Log enhancing figures, the Collection optimizer, the Marketplace alchemy sort, house build costs and ROI, consumable cost per day and per HP/MP, guild shrine costs and the Combat Sim food optimizer now use your Buy and Sell dropdowns instead of always the ask or bid.
@@ -48,7 +52,7 @@ A new "Gear only" box on the Best Items Decompose tab hides materials such as lu
 
 ### Combat talismans count in the Combat Sim on the test server
 
-Simulated players now carry their slotted combat talismans, scaled by their belt's Talisman Power: you use your live slots or the chosen loadout's, and party members use the talismans on their shared profile. The editor lists them under the belt. Echo, Smite, Shatter, Fortify and Overkill are not simulated yet.
+Simulated players now carry their slotted combat talismans, scaled by their belt's Talisman Power: you use your live slots or the chosen loadout's, and party members use the talismans on their shared profile. The editor lists them under the belt.
 
 ### Skilling talismans count on the test server
 
