@@ -2198,8 +2198,9 @@ class TooltipPrices {
                       ? formatKMB(Math.round(action.profitPerHour * 24))
                       : '?';
 
-                const taxMark = sellTaxMarker(action.excludeSellTax && !action.hasMissingPrices);
-                const taxTitle = action.excludeSellTax ? ` title="${escapeAttribute(SELL_TAX_EXCLUDED_TOOLTIP)}"` : '';
+                const taxShown = Boolean(action.excludeSellTax) && !action.hasMissingPrices;
+                const taxMark = sellTaxMarker(taxShown);
+                const taxTitle = taxShown ? ` title="${escapeAttribute(SELL_TAX_EXCLUDED_TOOLTIP)}"` : '';
                 html += `<div style="margin-left: 8px;"${taxTitle}>• ${action.actionName}: ${itemsPerHourStr} items/hr | ${profitStr}/hr (${profitDayStr}/day)${taxMark}</div>`;
             }
 

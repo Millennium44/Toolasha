@@ -696,6 +696,7 @@ describe('gathering tooltip and the sell-tax exclusion', () => {
         const el = itemTooltip('Apple');
         tooltipPrices.injectGatheringDisplay(el, await tooltipPrices.findGatheringSources('/items/apple'));
         expect(el.textContent.match(/⚠/g)).toHaveLength(2);
+        expect(el.innerHTML).not.toContain('title=');
     });
 });
 
