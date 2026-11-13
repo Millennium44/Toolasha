@@ -337,6 +337,21 @@ describe('live retest fixes (32030, talisman 3080)', () => {
         expect(game.clicks).toEqual(['keep']);
     });
 
+    test('an orb changed in the picker while the press waits is never spent', () => {
+        game.enableDelay = 120;
+        openWindow(start());
+        pick(0, M('ability_damage'), 3);
+        doButton().click();
+        vi.advanceTimersByTime(60);
+        expect(game.instance.state.selectedOrbHrid).toBe(RESHAPING);
+        // The player picks another orb before Reroll enables
+        game.instance.state.selectedOrbHrid = '/items/reforging_orb';
+        vi.advanceTimersByTime(600);
+        expect(game.clicks).toEqual([]);
+        expect(statusText()).toBe('The orb was changed; press Do next step again');
+        expect(doButton().disabled).toBe(false);
+    });
+
     test('Reroll waits for the window to re-render with the chosen orb (its onClick changes)', () => {
         game.rerenderDelay = 120;
         openWindow(start());

@@ -275,6 +275,10 @@ export function confirmDialogOpen(modal, ownControls = []) {
  */
 export function pressReroll({ modal, instance, advice, names }) {
     const itemHrid = itemFor(advice);
+    // The player may change the picker while the press waits: spend only the orb (and picks) the step chose
+    if (!choiceStillHolds(instance, advice)) {
+        return { status: 'changed', message: 'The orb was changed; press Do next step again' };
+    }
     const button = scanControls(modal, instance).reroll;
     if (!button) return { status: 'notFound', message: "Could not find the game's Reroll button." };
     if (isDisabled(button)) {
@@ -286,6 +290,22 @@ export function pressReroll({ modal, instance, advice, names }) {
     return press(button, 'reroll')
         ? { status: 'sent', label: `rerolled with one ${names.item(itemHrid)}` }
         : { status: 'notFound', message: 'Could not press the game button; press the marked one yourself.' };
+}
+
+/**
+ * Whether the window still holds the orb (and, for Focus, exactly the picks) the step chose.
+ * @param {Object} instance - The window component instance
+ * @param {Object} advice
+ * @returns {boolean}
+ */
+export function choiceStillHolds(instance, advice) {
+    const move = advice?.move;
+    if (!instance || !move) return false;
+    if (instance.state?.selectedOrbHrid !== move.itemHrid) return false;
+    if (move.mode !== REROLL_MODES.typesOnly) return true;
+    const picks = instance.state?.selectedFocusModifierHrids || [];
+    const wanted = move.focusHrids || [];
+    return picks.length === wanted.length && wanted.every((hrid) => picks.includes(hrid));
 }
 
 /**
