@@ -790,9 +790,13 @@ class SkillingSimulatorUI {
         row.style.cssText = 'display: flex; align-items: center; gap: 6px; padding: 2px 0;';
 
         const label = document.createElement('span');
-        label.textContent = SLOT_DISPLAY_NAMES[locationHrid] || locationHrid;
+        // The skill is picked above, so its tool row just says "Tool": "Cheesesmithing Tool" is wider than the label
+        // column and ran into the item button
+        const slotName = SLOT_DISPLAY_NAMES[locationHrid] || locationHrid;
+        label.textContent = locationHrid.endsWith('_tool') ? 'Tool' : slotName;
+        label.title = slotName;
         label.style.cssText =
-            'font-size: 10px; color: rgba(255,255,255,0.35); width: 58px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.04em;';
+            'font-size: 10px; color: rgba(255,255,255,0.35); width: 58px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
         row.appendChild(label);
 
         const nameBtn = document.createElement('button');
