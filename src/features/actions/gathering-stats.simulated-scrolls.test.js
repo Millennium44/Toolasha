@@ -51,6 +51,8 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     scrollSimulator: () => null,
     loadoutSnapshot: () => null,
     scrollPlannerInstance: () => null,
+    guildMemberSkills: () => null,
+    marketUndercutAlerts: () => null,
 }));
 vi.mock('./action-filter.js', () => ({ default: { isFilterHidden: () => false } }));
 vi.mock('./gathering-profit.js', () => ({

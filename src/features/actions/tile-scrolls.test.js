@@ -57,6 +57,8 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     scrollSimulator: () => null,
     loadoutSnapshot: () => null,
     scrollPlannerInstance: () => null,
+    guildMemberSkills: () => null,
+    marketUndercutAlerts: () => null,
 }));
 
 const dataManager = (await import('../../core/data-manager.js')).default;
