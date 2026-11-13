@@ -171,6 +171,17 @@ const EDITOR_ROW_CSS = `
 .mwi-csim-row { padding: 2px 4px; border-radius: 3px; }
 .mwi-csim-row-alt { background: rgba(255, 255, 255, 0.035); }
 .mwi-csim-row:hover { background: rgba(74, 158, 255, 0.12); }
+.mwi-tal-wrap { container-type: inline-size; }
+.mwi-tal-grid { display: grid; grid-template-columns: repeat(var(--tal-cols, 3), minmax(0, 1fr)); gap: 6px; padding: 2px 4px; }
+@container (max-width: 520px) { .mwi-tal-grid { grid-template-columns: minmax(0, 1fr); } }
+.mwi-tal-card { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 4px 5px; border: 1px solid #333; border-radius: 4px; background: rgba(255, 255, 255, 0.03); }
+.mwi-tal-title { color: #888; font-size: 11px; }
+.mwi-tal-line { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 3px; border-radius: 3px; }
+.mwi-tal-line:hover { background: rgba(74, 158, 255, 0.12); }
+.mwi-tal-line select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+.mwi-tal-remove { opacity: 0; }
+.mwi-tal-line:hover .mwi-tal-remove, .mwi-tal-line:focus-within .mwi-tal-remove, .mwi-tal-remove:focus { opacity: 1; }
+@media (hover: none) { .mwi-tal-remove { opacity: 1; } }
 `;
 
 /**
@@ -3111,6 +3122,7 @@ export class SimEditor {
         html += `<button data-talisman-reset ${unchanged ? 'disabled' : ''} style="${btn}${unchanged ? ' opacity:0.5; cursor:default;' : ''}">Reset to Current</button>`;
         html += '</div>';
 
+        html += `<div class="mwi-tal-wrap"><div class="mwi-tal-grid" style="--tal-cols:${Math.min(3, Math.max(1, slots))};">`;
         for (let slot = 1; slot <= slots; slot++) {
             const record = talismanInSlot(dto.talismans, slot);
             const worn = Array.isArray(record?.modifiers) ? record.modifiers : [];
@@ -3119,26 +3131,24 @@ export class SimEditor {
             const locked = worn.some((m) => modifierDetailMap[m?.hrid]?.talismanTypeHrid !== COMBAT_TALISMAN_TYPE);
             const lockNote = 'Skilling talismans are not edited in the Combat Sim';
             const canAdd = !locked && worn.length < limits.linesPerTalisman && lines.some((d) => !used.has(d.hrid));
-            html += editorRowOpen(slot);
-            html += `<span style="color:#888; width:70px; flex-shrink:0; padding-left:8px;">Talisman ${slot}</span>`;
-            html += `<span style="color:${worn.length ? '#888' : '#555'}; flex:1; min-width:0; ${worn.length ? '' : 'font-style:italic;'}">${
-                worn.length ? '' : record ? 'No lines' : 'Empty'
-            }</span>`;
-            html += `<button data-talisman-add="${slot}" ${locked ? `title="${lockNote}" ` : ''}${canAdd ? '' : 'disabled'} style="${btn}${canAdd ? '' : ' opacity:0.5; cursor:default;'}">+ line</button>`;
-            html += '</div>';
+            html += `<div class="mwi-tal-card" data-talisman-card="${slot}">`;
+            html += `<div class="mwi-tal-title">Talisman ${slot}</div>`;
+            if (!worn.length) {
+                html += `<div style="color:#555; font-style:italic; font-size:12px;">${record ? 'No lines' : 'Empty'}</div>`;
+            }
 
             for (const [lineIndex, modifier] of worn.entries()) {
                 const key = `${slot}:${lineIndex}`;
                 const detail = modifierDetailMap[modifier?.hrid];
                 const scaled = scaleTalismanModifier(modifier, modifierDetailMap, power);
-                html += editorRowOpen(slot);
-                html += `<span style="width:70px; flex-shrink:0; padding-left:16px;"></span>`;
-                html += `<select data-talisman-type="${key}"${locked ? ` disabled title="${lockNote}"` : ''} style="${field} flex:1; min-width:0;">`;
+                const lineName = detail?.name || String(modifier?.hrid || '?');
+                html += `<div class="mwi-tal-line">`;
+                html += `<select data-talisman-type="${key}" title="${locked ? lockNote : escapeHtml(lineName)}"${locked ? ' disabled' : ''} style="${field}">`;
                 // The current type is always an option, so a line the combat list does not carry (another talisman
                 // type, or one this build does not know) is kept as it is
                 const options = lines.filter((d) => d.hrid === modifier?.hrid || !used.has(d.hrid));
                 if (!options.some((d) => d.hrid === modifier?.hrid)) {
-                    options.unshift({ hrid: modifier?.hrid, name: detail?.name || String(modifier?.hrid || '?') });
+                    options.unshift({ hrid: modifier?.hrid, name: lineName });
                 }
                 for (const option of options) {
                     html += `<option value="${escapeHtml(option.hrid)}"${option.hrid === modifier?.hrid ? ' selected' : ''}>${escapeHtml(option.name || option.hrid)}</option>`;
@@ -3150,13 +3160,16 @@ export class SimEditor {
                     html += `<option value="${grade}"${grade === shownGrade ? ' selected' : ''}>G${grade}</option>`;
                 }
                 html += '</select>';
-                html += `<span data-talisman-value="${key}" style="color:${GAME_COLORS.textDim}; font-size:11px; min-width:4.5em; text-align:right;">${
+                html += `<span data-talisman-value="${key}" style="color:${GAME_COLORS.textDim}; font-size:11px; min-width:3.6em; text-align:right; white-space:nowrap;">${
                     scaled ? escapeHtml(describeScaledValue(scaled)) : ''
                 }</span>`;
-                html += `<button data-talisman-remove="${key}" title="Remove this line" style="${btn}">&times;</button>`;
+                html += `<button class="mwi-tal-remove" data-talisman-remove="${key}" title="Remove this line" style="${btn}">&times;</button>`;
                 html += '</div>';
             }
+            html += `<button data-talisman-add="${slot}" ${locked ? `title="${lockNote}" ` : ''}${canAdd ? '' : 'disabled'} style="${btn} align-self:center; margin-top:auto;${canAdd ? '' : ' opacity:0.5; cursor:default;'}">+ line</button>`;
+            html += '</div>';
         }
+        html += '</div></div>';
         return html;
     }
 
@@ -3237,8 +3250,9 @@ export class SimEditor {
 
     /** @private */
     _renderEquipmentSection(dto, gameData) {
+        const BELT_SLOT = '/equipment_types/belt';
         const itemDetailMap = gameData.itemDetailMap || {};
-        const slotOrder = [
+        const allSlots = [
             '/equipment_types/head',
             '/equipment_types/body',
             '/equipment_types/legs',
@@ -3272,6 +3286,10 @@ export class SimEditor {
             '/equipment_types/ring': 'Ring',
             '/equipment_types/charm': 'Charm',
         };
+
+        // Belts exist only where the game's data has them; a belt the build already holds still shows
+        const hasBelts = Object.values(itemDetailMap).some((i) => i?.equipmentDetail?.type === BELT_SLOT);
+        const slotOrder = allSlots.filter((s) => s !== BELT_SLOT || hasBelts || dto.equipment[BELT_SLOT]);
 
         let equipRow = 0;
         const equippedCount = slotOrder.filter((s) => dto.equipment[s]).length;
