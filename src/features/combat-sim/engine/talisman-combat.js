@@ -10,7 +10,8 @@ const TARGET_COMBAT = '/talisman_modifier_targets/combat_stat';
 
 /**
  * The talisman-only mechanics: lines that are not a gear stat. They are carried on the player
- * (`player.talismanMechanics`) so a later change can model them, and they do not affect a fight today.
+ * (`player.talismanMechanics`) and the fight models them: Smite and Shatter and Overkill in
+ * `CombatUtilities.processAttack`, Echo and Fortify in the simulator.
  */
 export const TALISMAN_MECHANICS = Object.freeze(['echo', 'smite', 'shatter', 'fortify', 'overkill']);
 
