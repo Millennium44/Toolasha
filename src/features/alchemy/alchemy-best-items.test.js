@@ -267,13 +267,18 @@ vi.mock('../../utils/marketplace-tabs.js', async (importOriginal) => ({
 }));
 
 /** An in-memory storage: key -> value, with the writes kept in order */
-const store = vi.hoisted(() => ({ data: new Map(), writes: [], owner: '1' }));
+const store = vi.hoisted(() => ({ data: new Map(), writes: [], owner: '1', failReads: false }));
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, _store, fallback) => (store.data.has(key) ? store.data.get(key) : fallback),
-        set: async (key, value) => {
-            store.writes.push([key, JSON.parse(JSON.stringify(value))]);
-            store.data.set(key, JSON.parse(JSON.stringify(value)));
+        // null = the read itself failed, as the real tryGet reports it
+        tryGet: async (key) =>
+            store.failReads ? null : { found: store.data.has(key), value: store.data.get(key) ?? null },
+        set: async (key, value, _store, _immediate, options = {}) => {
+            const next = options.fold ? options.fold(store.data.get(key), value) : value;
+            store.writes.push([key, JSON.parse(JSON.stringify(next))]);
+            store.data.set(key, JSON.parse(JSON.stringify(next)));
+            return true;
         },
     },
 }));
@@ -433,6 +438,7 @@ afterEach(() => {
     store.data.clear();
     store.writes = [];
     store.owner = '1';
+    store.failReads = false;
     nav.game = null;
     nav.opened = [];
     nav.tabSelected = [];
@@ -2651,7 +2657,47 @@ describe('remembering the place and hiding rows', () => {
         vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
         await open();
         expect(names()).toEqual(['a', 'c']);
-        expect(bestItems.hidden).toEqual({ coinify: ['/items/b'] });
+        expect(bestItems.hidden.coinify).toEqual(['/items/b']);
+    });
+
+    test('a failed read of the hidden list refuses hides instead of writing over the saved list', async () => {
+        store.data.set(hiddenKey(), { coinify: ['/items/b', '/items/c'] });
+        store.failReads = true;
+        vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
+        await open();
+        expect(bestItems.prefsOwner).toBeNull();
+        hide(0);
+        expect(store.writes).toEqual([]);
+        expect(store.data.get(hiddenKey())).toEqual({ coinify: ['/items/b', '/items/c'] });
+
+        // Once a read works the list loads and hiding is allowed again
+        store.failReads = false;
+        await bestItems.openModal();
+        expect(names()).toEqual(['a']);
+        hide(0);
+        expect(store.data.get(hiddenKey())).toEqual({ coinify: ['/items/b', '/items/c', '/items/a'] });
+    });
+
+    test('a hide keeps what another tab or a sync pull stored behind the open modal', async () => {
+        store.data.set(hiddenKey(), { coinify: ['/items/c'] });
+        vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
+        await open();
+        store.data.set(hiddenKey(), { coinify: ['/items/c', '/items/b'], decompose: ['/items/z'] });
+        hide(0);
+        expect(store.data.get(hiddenKey())).toEqual({
+            coinify: ['/items/c', '/items/b', '/items/a'],
+            decompose: ['/items/z'],
+        });
+        // Memory follows what was stored
+        await vi.waitFor(() => expect(bestItems.isHidden('coinify', '/items/b')).toBe(true));
+    });
+
+    test('lists for types this build does not know are written back untouched', async () => {
+        store.data.set(hiddenKey(), { coinify: [], unrefine: ['/items/q'], future: 'x' });
+        vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
+        await open();
+        hide(0);
+        expect(store.data.get(hiddenKey())).toEqual({ coinify: ['/items/a'], unrefine: ['/items/q'], future: 'x' });
     });
 
     test('a hide made while the saved list was being read is not undone by the read', async () => {
