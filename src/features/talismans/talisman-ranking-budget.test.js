@@ -71,6 +71,10 @@ vi.mock('../../utils/market-data.js', () => ({
             : { price: null, source: null, estimated: false },
 }));
 vi.mock('../../utils/action-context.js', () => ({
+    describeActionContextSource: (type) => ({
+        key: `skill:${type}:Milking ★`,
+        label: 'Milking ★ (the loadout this skill equips)',
+    }),
     resolveActionContext: () => ({
         equipment: new Map([
             ['/item_locations/belt', { itemHrid: '/items/large_talisman_belt', enhancementLevel: 10 }],

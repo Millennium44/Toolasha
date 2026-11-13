@@ -3,14 +3,15 @@
  * Optimizer's actions, the set to aim for, value per orb, and Improve mine. Test server only, behind
  * `skillingOptimizer_talismans` (a sibling of the Optimizer's own `skillingOptimizer` switch).
  *
- * Exact figures, no sim: each line rides on the equipment Map of the gear the action runs with (the loadout the game
- * puts on for it), through the action's own profit and experience math. The controls, table, set box, Improve mine
+ * Exact figures, no sim: each line rides on the equipment Map of the gear the panel shows (the Optimizer's picked
+ * loadout, with its Equipment rows as edited; with none picked, the loadout the game puts on for the action's skill),
+ * through the action's own profit and experience math. The controls, table, set box, Improve mine
  * and Aim for this are shared with the Combat Sim (talisman-ranking-view.js).
  */
 
 import dataManager from '../../core/data-manager.js';
 import { escapeHtml } from '../../utils/html-escape.js';
-import { resolveActionContext } from '../../utils/action-context.js';
+import { describeActionContextSource, resolveActionContext } from '../../utils/action-context.js';
 import {
     RANKABLE_SKILLING_TYPES,
     SKILLING_RANKING_METRICS,
@@ -27,11 +28,12 @@ import {
 } from './talisman-ranking-view.js';
 
 const ACTION_TIP =
-    'The action the lines are ranked for: the actions chosen in the Optimizer, with the gear it runs with.';
+    'The action the lines are ranked for: the actions chosen in the Optimizer, with the gear the header names.';
 
 const SECTION_HELP =
-    'Test server only. Ranks every skilling talisman line by what it adds to the chosen action, with the gear that ' +
-    'action runs with, from the profit and experience math (exact, no sim), and builds the set your belt can hold. ' +
+    'Test server only. Ranks every skilling talisman line by what it adds to the chosen action, with the loadout ' +
+    'picked in the Optimizer (its belt and talismans, its Equipment rows as shown; none picked: the loadout this ' +
+    'skill equips), from the profit and experience math (exact, no sim), and builds the set your belt can hold. ' +
     'Practical sets (the default) cap the grades; Budget sets fit an expected orb cost per talisman.';
 
 /**
@@ -66,7 +68,10 @@ export function rankableActions(skillName, selected) {
 /** The Optimizer's Talismans section */
 export class SkillingTalismanSection extends TalismanRankingSectionBase {
     /**
-     * @param {Object} host - `{getSkill(): string, getSelectedActions(): Set<string>|string[]|null}`
+     * @param {Object} host - `{getSkill(): string, getSelectedActions(): Set<string>|string[]|null,
+     *   getGearContext?(): {key: string, label: string, detail?: string, note?: string, equipment: Map,
+     *   drinks: Array}|null}`. `getGearContext` is the gear the Optimizer shows (a picked loadout, its rows as edited),
+     *   a fresh Map each call; null (or absent) means the skill's own loadout / worn gear.
      */
     constructor(host) {
         super({
@@ -93,6 +98,24 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
             this._refreshStale();
         });
         this.refreshActions();
+    }
+
+    /**
+     * The gear a run would rank on right now, and the words for it: the host's shown gear, else the loadout the game
+     * equips for the skill. Never a mix: a picked loadout's belt is never read from live slots.
+     * @param {string} type - The action's type hrid
+     * @returns {{own: Object|null, key: string, label: string}}
+     */
+    _gearSource(type) {
+        const own = this.host.getGearContext?.() || null;
+        if (own) return { own, key: own.key, label: own.label };
+        const { key, label } = describeActionContextSource(type);
+        return { own: null, key, label };
+    }
+
+    /** The host's gear, picked loadout or its rows, changed: a shown ranking may be for other gear */
+    gearChanged() {
+        this._refreshStale();
     }
 
     /** Fill the action list from the Optimizer's skill and selection (its skill or selection changed) */
@@ -134,13 +157,20 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         const was = this._result?.actionHrid;
         const otherAction = !this._running && was && this._actionHrid && was !== this._actionHrid;
         const otherBudget = !this._running && this._budgetStale();
-        const stale = otherAction || otherBudget;
+        const result = this._result;
+        const otherGear =
+            !this._running &&
+            result?.gearKey &&
+            result.gearKey !== this._gearSource(rankableActions(this.host.getSkill(), null).type).key;
+        const stale = otherAction || otherGear || otherBudget;
         note.style.display = stale ? 'block' : 'none';
         note.textContent = otherAction
             ? 'These figures are for another action. Rank again.'
-            : otherBudget
-              ? 'These figures are for another budget. Rank again.'
-              : '';
+            : otherGear
+              ? `These figures are for ${result.gearLabel}, not the gear the Optimizer shows now. Rank again.`
+              : otherBudget
+                ? 'These figures are for another budget. Rank again.'
+                : '';
     }
 
     async _runRanking(current, orbs) {
@@ -151,17 +181,38 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
             return null;
         }
         this._progress('Valuing every skilling line…');
+        // The gear and the words for it are taken in one call, at the run's start, so the header can only name the
+        // gear the figures used
+        let source = null;
         const result = await runSkillingLineRanking(
             { actionHrid, grade, metricKey, setMode, capGrade, budget },
             {
                 getGameData: () => dataManager.getInitClientData(),
-                resolveContext: resolveActionContext,
+                resolveContext: (type) => {
+                    const picked = this._gearSource(type);
+                    source = picked;
+                    return picked.own
+                        ? { equipment: picked.own.equipment, drinks: picked.own.drinks }
+                        : resolveActionContext(type);
+                },
                 evaluate: evaluateSkillingAction,
                 orbs,
             },
             { abortSignal: () => this._aborted || !current() }
         );
-        return current() ? result : null;
+        if (!current()) return null;
+        if (source) {
+            result.gearKey = source.key;
+            result.gearLabel = source.label;
+            result.gearDetail = source.own?.detail || '';
+            result.gearNote = source.own?.note || '';
+            if (result.status === 'refused' && result.reason === 'no_belt') {
+                result.message = source.own
+                    ? `${source.label} has no Talisman Belt. Pick a loadout that wears one, or put a belt on it.`
+                    : `${source.label} has no Talisman Belt. Put one on first.`;
+            }
+        }
+        return result;
     }
 
     _headerParts(result, metric) {
@@ -169,12 +220,22 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         const beltName = result.belt
             ? `${gameData.itemDetailMap?.[result.belt.itemHrid]?.name || 'Talisman Belt'} +${result.belt.enhancementLevel || 0}`
             : '';
+        const source = result.gearLabel ? `${escapeHtml(result.gearLabel)}: ` : '';
         const header =
             `<b>${escapeHtml(result.actionName || '')}</b> · ranked by ${escapeHtml(metric.label)} at G${result.grade} · ` +
-            `${escapeHtml(beltName)}, Talisman Power ${(result.power * 100).toFixed(1)}%, ${result.slots} slot${result.slots === 1 ? '' : 's'} · ` +
+            `${source}${escapeHtml(beltName)}, Talisman Power ${(result.power * 100).toFixed(1)}%, ${result.slots} slot${result.slots === 1 ? '' : 's'} · ` +
             `exact (skilling math${result.evaluations ? `, ${result.evaluations} evaluations` : ''}, no sampling error), ` +
-            'at live market prices, read as each figure was worked out, with the gear this action runs with as it was at the start.';
+            'at live market prices, read as each figure was worked out, with ' +
+            (result.gearLabel
+                ? `${escapeHtml(result.gearLabel)}${result.gearDetail ? ` (${escapeHtml(result.gearDetail)})` : ''} gear`
+                : 'the gear shown') +
+            ' as it was at the start.';
         const parts = [`<div style="color:#bbb; font-size:11px; margin:2px 0 6px;">${header}</div>`];
+        if (result.gearNote) {
+            parts.push(
+                `<div style="color:#ff9800; font-size:11px; margin-bottom:4px;">${escapeHtml(result.gearNote)}</div>`
+            );
+        }
         if (metric.key === 'profit' && result.hasMissingPrices) {
             parts.push(
                 `<div style="color:#ff9800; font-size:11px; margin-bottom:4px;">Some prices are missing and are left out: profit figures are floors.</div>`

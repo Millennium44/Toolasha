@@ -461,6 +461,17 @@ class LoadoutSnapshot {
     }
 
     /**
+     * The saved loadout `getSnapshotForSkill` wears for this action type (same pick, same gates), or null when the
+     * skill runs on the gear worn now. For labels: which loadout the numbers came from.
+     * @param {string} actionTypeHrid
+     * @returns {Object|null} snapshot entry
+     */
+    findSnapshotForSkill(actionTypeHrid) {
+        const snapshot = this._findSnapshot(actionTypeHrid);
+        return snapshot?.equipment?.length ? snapshot : null;
+    }
+
+    /**
      * Get a Map<itemLocationHrid, item> for the best loadout snapshot matching the given
      * action type. Returns null if no snapshot exists or the feature is disabled.
      * The returned Map has the same format as dataManager.getEquipment().

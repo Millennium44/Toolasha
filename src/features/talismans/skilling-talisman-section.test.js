@@ -53,6 +53,10 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPriceInfo: () => ({ price: null, source: null, estimated: false }),
 }));
 vi.mock('../../utils/action-context.js', () => ({
+    describeActionContextSource: (type) => ({
+        key: `skill:${type}:Milking ★`,
+        label: 'Milking ★ (the loadout this skill equips)',
+    }),
     resolveActionContext: () => ({
         equipment: new Map([
             ['/item_locations/belt', { itemHrid: '/items/large_talisman_belt', enhancementLevel: 10 }],
@@ -215,5 +219,86 @@ describe('the Optimizer selection as the Optimizer keeps it', () => {
         expect(q('estimate').textContent).toContain('No action selected');
         await run();
         expect(text()).toContain('No action selected');
+    });
+});
+
+describe('the section ranks on the gear the Optimizer shows', () => {
+    const beltOf = (level) =>
+        new Map([['/item_locations/belt', { itemHrid: '/items/large_talisman_belt', enhancementLevel: level }]]);
+    let gear;
+    const hostWith = () => {
+        section.detach();
+        container.innerHTML = '';
+        section = new SkillingTalismanSection({
+            getSkill: () => mocks.skill,
+            getSelectedActions: () => mocks.selected,
+            getGearContext: () => gear,
+        });
+        section.mount(container);
+    };
+
+    test('a picked loadout with a belt: ranks on its belt and the header names it', async () => {
+        gear = {
+            key: 'k1',
+            label: 'Woodcutting ★ loadout',
+            detail: 'its belt and talismans',
+            equipment: beltOf(4),
+            drinks: [],
+        };
+        hostWith();
+        await run();
+        expect(text()).toContain('Woodcutting ★ loadout: Large Talisman Belt +4');
+        expect(text()).not.toContain('Large Talisman Belt +10');
+        expect(section._result.gearKey).toBe('k1');
+    });
+
+    test('a picked loadout without a belt is refused by name, never ranked on the live belt', async () => {
+        gear = { key: 'k2', label: 'Smithing loadout', equipment: new Map(), drinks: [] };
+        hostWith();
+        await run();
+        expect(text()).toContain('Smithing loadout has no Talisman Belt');
+        expect(section._result.status).toBe('refused');
+    });
+
+    test('no loadout picked: the skill loadout, named in the header', async () => {
+        gear = null;
+        hostWith();
+        await run();
+        expect(text()).toContain('Milking ★ (the loadout this skill equips): Large Talisman Belt +10');
+    });
+
+    test('the result goes stale when the shown gear changes, and again fresh after a re-rank', async () => {
+        gear = { key: 'a', label: 'Woodcutting ★ loadout', equipment: beltOf(4), drinks: [] };
+        hostWith();
+        await run();
+        expect(q('stale').style.display).toBe('none');
+        gear = { key: 'b', label: 'Woodcutting ★ loadout', equipment: beltOf(4), drinks: [] };
+        section.gearChanged();
+        expect(q('stale').style.display).toBe('block');
+        expect(q('stale').textContent).toContain('Woodcutting ★ loadout');
+        await run();
+        expect(q('stale').style.display).toBe('none');
+    });
+
+    test('the loadout is dropped: stale against the skill loadout', async () => {
+        gear = { key: 'a', label: 'Woodcutting ★ loadout', equipment: beltOf(4), drinks: [] };
+        hostWith();
+        await run();
+        gear = null;
+        section.gearChanged();
+        expect(q('stale').style.display).toBe('block');
+    });
+
+    test('a loadout note (talismans no longer owned) is shown', async () => {
+        gear = {
+            key: 'n',
+            label: 'L loadout',
+            note: '1 of 2 loadout talismans are gone.',
+            equipment: beltOf(4),
+            drinks: [],
+        };
+        hostWith();
+        await run();
+        expect(text()).toContain('1 of 2 loadout talismans are gone.');
     });
 });

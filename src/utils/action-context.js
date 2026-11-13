@@ -55,6 +55,22 @@ export function resolveActionContext(actionTypeHrid) {
 }
 
 /**
+ * Which gear {@link resolveActionContext} puts on for this action type, in words: the loadout it wears, or the gear
+ * worn now. Read in the same tick as the context so a label never names other gear than the numbers used.
+ *
+ * @param {string} actionTypeHrid - e.g. "/action_types/cooking"
+ * @returns {{key: string, label: string}}
+ */
+export function describeActionContextSource(actionTypeHrid) {
+    const snapshot = loadouts().findSnapshotForSkill?.(actionTypeHrid) ?? null;
+    if (!snapshot) return { key: `worn:${actionTypeHrid}`, label: 'The gear you wear now (no loadout for this skill)' };
+    return {
+        key: `skill:${actionTypeHrid}:${snapshot.name}`,
+        label: `${snapshot.name}${snapshot.isDefault ? ' ★' : ''} (the loadout this skill equips)`,
+    };
+}
+
+/**
  * Only the drinks that will actually buff the next action.
  * @param {Array|null} rawDrinks - Slotted drinks
  * @returns {Array} The ones in stock or still running
@@ -135,4 +151,4 @@ export function resolveRunningContext(actionTypeHrid, characterLoadoutID) {
     return resolveLoadoutContext(actionTypeHrid, characterLoadoutID);
 }
 
-export default { resolveActionContext, resolveLoadoutContext, resolveRunningContext };
+export default { resolveActionContext, describeActionContextSource, resolveLoadoutContext, resolveRunningContext };
