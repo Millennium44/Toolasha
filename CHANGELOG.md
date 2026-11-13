@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth "Buy missing supplies" no longer makes the row taller
+
+The button now sits beside the Supplies label instead of on a line of its own, so the Labyrinth's bottom row keeps its normal height.
+
 ### Skilling Optimizer tool label no longer overlaps
 
 The tool row's label now reads "Tool" (hover for the full name) instead of a long "Cheesesmithing Tool" that ran into the item name.
