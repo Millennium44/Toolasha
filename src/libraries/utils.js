@@ -106,6 +106,9 @@ import * as toast from '../utils/toast.js';
 // apply the same bound (see utils/liquidity-cap.js). Needs a matching
 // utilsExternalGlobals entry in rollup.config.js to be deduplicated.
 import * as liquidityCap from '../utils/liquidity-cap.js';
+// Shop entries grouped by item, shared by token valuation and the Craft & Enhance window.
+// Needs a matching utilsExternalGlobals entry in rollup.config.js.
+import * as shopIndex from '../utils/shop-index.js';
 // The Task Shop's gold per token, shared by enhancing input pricing (utils), the task
 // profit figures and the token tooltips. Needs a matching utilsExternalGlobals entry.
 import * as taskShopValue from '../utils/task-shop-value.js';
@@ -315,6 +318,7 @@ toolashaRoot.Utils = {
     scrollBuffValues,
     toast,
     liquidityCap,
+    shopIndex,
     taskShopValue,
     upgradeEnhancement,
     localeDateOrder,

@@ -78,6 +78,9 @@ const coreExternalGlobals = new Map([
 const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/formatters.js')), 'Toolasha.Utils.formatters'],
     [normalize(join(__dirname, 'src/utils/liquidity-cap.js')), 'Toolasha.Utils.liquidityCap'],
+    // Shop entries grouped by item, cached per shop map; read by token valuation (utils) and the
+    // Craft & Enhance window (actions), so one copy keeps one cache
+    [normalize(join(__dirname, 'src/utils/shop-index.js')), 'Toolasha.Utils.shopIndex'],
     [normalize(join(__dirname, 'src/utils/task-shop-value.js')), 'Toolasha.Utils.taskShopValue'],
     [normalize(join(__dirname, 'src/utils/upgrade-enhancement.js')), 'Toolasha.Utils.upgradeEnhancement'],
     // Combat-scroll definitions are consumed by both the actions and sim
