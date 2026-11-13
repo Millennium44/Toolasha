@@ -17,6 +17,8 @@ import {
     SKILLING_TALISMAN_TYPE,
     runSkillingLineRanking,
 } from '../../utils/talisman-line-sets.js';
+import { BELT_LOCATION, talismanBonusesOf } from '../../utils/talisman-bonuses.js';
+import { beltCandidates, runSkillingBeltAdvisor } from './talisman-belt-advisor.js';
 import {
     SELECT_STYLE,
     TalismanRankingSectionBase,
@@ -113,6 +115,7 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
     }
 
     _updateEstimate() {
+        this._updateBeltEstimate();
         const estimate = this._q('estimate');
         if (!estimate || this._running) return;
         const { type, actions } = rankableActions(this.host.getSkill(), this.host.getSelectedActions());
@@ -129,6 +132,7 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
     }
 
     _refreshStale() {
+        this._refreshBeltStale();
         const note = this._q('stale');
         if (!note) return;
         const was = this._result?.actionHrid;
@@ -141,6 +145,59 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
             : otherBudget
               ? 'These figures are for another budget. Rank again.'
               : '';
+    }
+
+    /** What a belt result was valued for, by the words the stale note uses */
+    _beltInputs() {
+        const actionHrid = this._q('action')?.value || this._actionHrid;
+        const type = dataManager.getInitClientData?.()?.actionDetailMap?.[actionHrid]?.type;
+        let gear = null;
+        if (type) {
+            const context = resolveActionContext(type);
+            const belt = context?.equipment?.get?.(BELT_LOCATION);
+            gear = {
+                belt: belt ? [belt.itemHrid, belt.enhancementLevel || 0] : null,
+                talismans: talismanBonusesOf(context?.equipment),
+            };
+        }
+        return { character: dataManager.getCurrentCharacterId(), action: actionHrid || null, gear };
+    }
+
+    _beltEstimateText() {
+        const actionHrid = this._q('action')?.value || this._actionHrid;
+        const gameData = dataManager.getInitClientData?.();
+        const type = gameData?.actionDetailMap?.[actionHrid]?.type;
+        if (!type) return 'No action selected: pick one in the Optimizer first.';
+        if (!RANKABLE_SKILLING_TYPES.includes(type)) return 'Only gathering and production actions are valued.';
+        const belt = resolveActionContext(type)?.equipment?.get?.(BELT_LOCATION);
+        if (!belt?.itemHrid) return 'The gear this action runs with has no Talisman Belt.';
+        const count = beltCandidates(
+            { hrid: belt.itemHrid, enhancementLevel: belt.enhancementLevel || 0 },
+            gameData.itemDetailMap,
+            gameData.enhancementLevelTotalBonusMultiplierTable
+        ).length;
+        return count === 0
+            ? 'No larger belt or higher level to check.'
+            : `No sims: exact figures for ${count} candidate belts.`;
+    }
+
+    async _runBelts(current, metricKey) {
+        const actionHrid = this._q('action')?.value || this._actionHrid;
+        if (!actionHrid) return { status: 'refused', message: 'No action selected: pick one in the Optimizer first.' };
+        this._progress('Valuing every candidate belt…');
+        const result = await runSkillingBeltAdvisor(
+            { actionHrid, metricKey },
+            {
+                getGameData: () => dataManager.getInitClientData(),
+                resolveContext: resolveActionContext,
+                evaluate: evaluateSkillingAction,
+                onProgress: ({ current: done, total, description }) => {
+                    if (current()) this._progress(`${done} / ${total} · ${description}`);
+                },
+            },
+            { abortSignal: () => this._aborted || !current() }
+        );
+        return current() ? result : null;
     }
 
     async _runRanking(current, orbs) {

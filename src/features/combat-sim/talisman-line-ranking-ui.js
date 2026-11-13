@@ -47,6 +47,8 @@ import {
     talismanLines,
     wornTalismans,
 } from './talisman-line-ranking.js';
+import { estimateBeltSims, runCombatBeltAdvisor } from './talisman-belt-run.js';
+import { beltCandidates } from '../talismans/talisman-belt-advisor.js';
 
 /** The settings the Balanced weights are kept in */
 export const BALANCE_WEIGHT_SETTINGS = {
@@ -130,6 +132,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         for (const id of ['#mwi-csim-upgrade-hours', '#mwi-csim-upgrade-player', '#mwi-csim-upgrade-resim']) {
             this._on(this.host.panel?.querySelector(id), 'change', () => {
                 this._updateEstimate();
+                this._updateBeltEstimate();
                 this._refreshStale();
             });
         }
@@ -161,6 +164,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
     onShow() {
         if (!this.root) return;
         this._updateEstimate();
+        this._updateBeltEstimate();
         this._refreshStale();
     }
 
@@ -222,6 +226,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
     }
 
     _refreshStale() {
+        this._refreshBeltStale();
         const note = this._q('stale');
         if (!note) return;
         const changed = this._running ? [] : this._staleInputs(this._result);
@@ -270,6 +275,106 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             console.error('[TalismanLineRanking] Estimate failed:', error);
             estimate.textContent = '';
         }
+    }
+
+    /**
+     * The advisor's machinery a combat run is handed (the ranking's and the belt advisor's alike).
+     * @returns {Object}
+     */
+    _simDeps() {
+        return {
+            buildGameDataPayload,
+            runSimulation,
+            computeMetrics,
+            computeDeltas,
+            rateDeltaNoisePct,
+            significantDeltas,
+            seedSimPriceCache,
+            saleTaxRateOf,
+            concurrency: analysisConcurrency,
+        };
+    }
+
+    /** What a belt result was valued for, by the words the stale note uses */
+    _beltInputs() {
+        const now = this._currentInputs();
+        return {
+            character: now.characterId,
+            player: `${now.playerIndex}:${now.playerHrid}`,
+            zone: now.zoneHrid,
+            tier: now.difficultyTier,
+            hours: now.hours,
+            build: now.build,
+            // No editor: the build is the live character's, so its gear and slotted talismans are the inputs
+            ...(now.build === null ? { live: this._liveGear() } : {}),
+            ...(this._q('metric')?.value === 'balanced' ? { 'Balanced weights': storedBalanceWeights() } : {}),
+        };
+    }
+
+    /** @returns {Object} The live character's belt and slotted talismans (for a build read live) */
+    _liveGear() {
+        const belt = dataManager.getEquipment?.()?.get?.('/item_locations/belt') || null;
+        return {
+            belt: belt ? [belt.itemHrid, belt.enhancementLevel || 0] : null,
+            talismans: dataManager.getSlottedTalismans?.() ?? null,
+        };
+    }
+
+    _beltEstimateText() {
+        const gameData = this._payload();
+        const dtos = this.host._editor?.getEditedDTOs?.();
+        const dto = dtos ? Object.values(dtos)[this.host._upgradePlayerIndex()] : null;
+        if (!dto) return 'Uses the build in Configure.';
+        const { zoneHrid } = this.host._readUpgradeInputs();
+        const ready = combatRankingReadiness({ gameData, playerDTO: dto, zoneHrid });
+        if (!ready.ok) return ready.message;
+        if (wornTalismans(dto.talismans, ready.slots).length === 0) return 'No talisman is slotted on this build.';
+        const count = beltCandidates(
+            { hrid: ready.belt.hrid, enhancementLevel: ready.belt.enhancementLevel || 0 },
+            gameData.itemDetailMap,
+            gameData.enhancementLevelTotalBonusMultiplierTable
+        ).length;
+        return count === 0
+            ? 'No larger belt or higher level to check.'
+            : `Up to ${estimateBeltSims(count)} sims for ${count} candidate belts.`;
+    }
+
+    async _runBelts(current, metricKey) {
+        const { zoneHrid, difficultyTier, hours } = this.host._readUpgradeInputs();
+        const playerIndex = this.host._upgradePlayerIndex();
+        const { playerDTOs, selfHrid } = await this._loadRoster();
+        if (!current()) return null;
+        const result = await runCombatBeltAdvisor(
+            {
+                playerDTOs,
+                playerIndex,
+                selfHrid,
+                zoneHrid,
+                difficultyTier,
+                hours,
+                communityBuffs: getCommunityBuffs(),
+                metricKey,
+                balanceWeights: storedBalanceWeights(),
+            },
+            ({ current: done, total, description }) => {
+                if (!current() || this._aborted) return;
+                this._progress(`${done} / ${total} · ${description}`);
+            },
+            this._simDeps(),
+            { abortSignal: () => this._aborted || !current() }
+        );
+        if (!current()) return null;
+        if (result.status !== 'refused') {
+            const zone = buildGameDataPayload()?.actionDetailMap?.[zoneHrid];
+            const playerName =
+                this.host._editor?.getPlayerInfo?.()?.[playerIndex]?.name ||
+                playerDTOs[playerIndex]?.name ||
+                playerDTOs[playerIndex]?.hrid ||
+                '';
+            result.context = `${zone?.name || zoneHrid} T${difficultyTier}${playerName ? ` for ${playerName}` : ''}`;
+            result.hours = hours;
+        }
+        return result;
     }
 
     async _loadRoster() {
