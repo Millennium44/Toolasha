@@ -122,3 +122,24 @@ describe('loadout check: duplicate Special', () => {
         expect(run(small).map((w) => w.code)).toEqual(['slot']);
     });
 });
+
+describe('one rule for Special', () => {
+    test('a mechanic modifier with no groupHrid is Special everywhere', async () => {
+        const { isSpecialModifierDetail } = await import('./talisman-bonuses.js');
+        const bare = { ...FULL_MODIFIER_DETAILS[H('fortify')], groupHrid: undefined };
+        const map = { ...FULL_MODIFIER_DETAILS, [H('fortify')]: bare };
+        expect(isSpecialModifierDetail(bare)).toBe(true);
+        expect(isSpecialModifierDetail(FULL_MODIFIER_DETAILS[H('critical_damage')])).toBe(false);
+        expect(deadSpecialLines([talisman(1, line('fortify', 2)), talisman(2, line('fortify', 2))], map)).toHaveLength(
+            1
+        );
+        const out = computeTalismanBonuses({
+            talismans: [talisman(1, line('fortify', 2)), talisman(2, line('fortify', 2))],
+            belt: medium,
+            itemDetailMap: BELT_ITEMS,
+            modifierDetailMap: map,
+            enhancementTable: [],
+        });
+        expect(out.combat.fortify).toBeCloseTo(0.01725, 10);
+    });
+});

@@ -353,7 +353,8 @@ describe('runCombatLineRanking', () => {
         expect(result.current.talismans).toEqual(worn);
         // The estimate the section shows before it starts is a ceiling: only 5 lines gain, so 5 copy sims, not 6
         expect(result.sims).toBe(calls.length);
-        expect(calls.length).toBe(estimateCombatRankingSims({ lineCount: 48, slots: 3, hasCurrent: true }) - 1);
+        // Smite is a Special and gets no copies run, so one fewer sim than before
+        expect(calls.length).toBe(estimateCombatRankingSims({ lineCount: 48, slots: 3, hasCurrent: true }) - 2);
         // Practical by default: capped at G3, at most one Special per talisman
         expect(result.setMode).toBe('practical');
         expect(result.rerollTargets.flat().every((t) => t.minGrade === 3)).toBe(true);

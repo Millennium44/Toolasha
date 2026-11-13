@@ -306,13 +306,21 @@ export function combatRankingReadiness({ gameData, playerDTO, zoneHrid }) {
  * slots), the combined check and the current talismans.
  * @param {Object} params
  * @param {number} params.lineCount - Valued lines
+ * @param {number} [params.specialCount] - How many of them are Special lines (left out of the copies runs)
  * @param {number} params.slots
  * @param {boolean} params.hasCurrent - Talismans are worn now
  * @param {number} [params.shortlist]
  * @returns {number}
  */
-export function estimateCombatRankingSims({ lineCount, slots, hasCurrent, shortlist = COPIES_SHORTLIST }) {
-    const copies = slots > 1 ? Math.min(shortlist, lineCount) : 0;
+export function estimateCombatRankingSims({
+    lineCount,
+    slots,
+    hasCurrent,
+    shortlist = COPIES_SHORTLIST,
+    specialCount = 0,
+}) {
+    // A Special line has one copy that counts, so it is never simulated with a copy in every slot
+    const copies = slots > 1 ? Math.min(shortlist, Math.max(0, lineCount - specialCount)) : 0;
     return 1 + lineCount + copies + 1 + (hasCurrent ? 1 : 0);
 }
 
@@ -606,6 +614,7 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
     const worn = wornTalismans(playerDTO.talismans, ready.slots);
     let total = estimateCombatRankingSims({
         lineCount: valued.length,
+        specialCount: valued.filter(isSpecialLine).length,
         slots: ready.slots,
         hasCurrent: worn.length > 0,
     });
@@ -779,10 +788,10 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
     // Copies: the leading lines again with one in every slot, so later copies are valued by what they add
     if (ready.slots > 1) {
         const leaders = sortRows(rows)
-            .filter((r) => r.value > 0)
+            .filter((r) => r.value > 0 && !r.special)
             .sort((a, b) => Number(b.significant) - Number(a.significant) || b.value - a.value)
             .slice(0, COPIES_SHORTLIST);
-        total += leaders.length - Math.min(COPIES_SHORTLIST, valued.length);
+        total += leaders.length - Math.min(COPIES_SHORTLIST, valued.length - valued.filter(isSpecialLine).length);
         const measured = await mapLanes(
             leaders,
             async (row) => {

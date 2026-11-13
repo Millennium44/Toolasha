@@ -62,8 +62,7 @@ export function computeTalismanCombat({ talismans, belt, gameData, modeledStats 
             const scaled = scaleTalismanModifier(modifier, modifierDetailMap, power);
             if (!scaled || scaled.detail.targetHrid !== TARGET_COMBAT) continue;
             const names = (scaled.detail.keys || []).map(talismanStatName);
-            // A mechanic is a Special line whatever the table's group label says
-            const special = isSpecialModifierDetail(scaled.detail) || names.some((n) => TALISMAN_MECHANICS.includes(n));
+            const special = isSpecialModifierDetail(scaled.detail);
             for (const name of names) {
                 const into = TALISMAN_MECHANICS.includes(name)
                     ? result.mechanics
