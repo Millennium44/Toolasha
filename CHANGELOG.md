@@ -10,7 +10,6 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 The Skilling Optimizer's Talismans section now ranks on the loadout chosen in its Loadout dropdown, belt and talismans included, and its header names which loadout it read. With no loadout picked it uses the one the skill equips, as before.
 
-### Labyrinth "Buy missing supplies" no longer makes the row taller
 ### Compact talisman editing in the Combat Sim
 
 The editor's talismans now sit side by side as small cards, one per belt slot, instead of a tall list of full-width rows; on a phone they stack. The Belt row is hidden where the game has no belts.
