@@ -1308,6 +1308,25 @@ describe('routing chat messages', () => {
         expect(tracker.currentRun).not.toBeNull();
     });
 
+    test('a replayed old battle started leaves a restored run with no chat evidence alone', async () => {
+        // No key count seen and no earlier party message: nothing for `predatesCurrentRun` to judge by
+        beTracking({ dungeonHrid: DEN, restored: true });
+        expect(tracker.chatClockOffset()).toBeNull();
+        tracker.onChatMessage(battleStartedFor(LAIR, '2026-08-03T22:00:00.000Z'));
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun).not.toBeNull();
+    });
+
+    test('a battle started with an unreadable stamp leaves the run alone', async () => {
+        beTracking({ dungeonHrid: DEN });
+        tracker.onChatMessage(battleStartedFor(LAIR, 'not a date'));
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+    });
+
     test('a battle started before the run began is about an earlier action and leaves it alone', async () => {
         beTracking({ dungeonHrid: DEN, anchoredAt: '2026-08-04T10:00:02.000Z' });
         tracker.onChatMessage(battleStartedFor(LAIR, '2026-08-04T09:30:00.000Z'));

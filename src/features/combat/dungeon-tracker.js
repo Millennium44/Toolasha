@@ -147,6 +147,9 @@ const COMPLETION_KEY_COUNT_GRACE_MS = 10_000;
  */
 const CHAT_CLOCK_SAMPLES = 20;
 
+/** Allowance for clock skew when a "Battle started" is judged against a run with no chat evidence yet. */
+const SWITCH_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
 /**
  * How old a completion's key count may be and still open the next run.
  *
@@ -1554,6 +1557,14 @@ class DungeonTracker {
             // A solo run is not the party's: this is a party member's own action, posted to the same channel.
             // A paused run is not being fought, and a message stamped before the run began is about an earlier one
             if (this.isSoloRun() || this.isPaused() || this.predatesCurrentRun(timestamp)) return;
+            // `predatesCurrentRun` can say nothing (no key count seen, no chat clock yet: a run just restored
+            // after a reload). A replayed old message must not end a real run then, so fall back to the run's
+            // own start with a generous allowance for clock skew; a stamp we cannot read proves nothing either
+            if (!Number.isFinite(timestamp)) return;
+            if (!Number.isFinite(this.firstKeyCountTimestamp) && this.chatClockOffset() === null) {
+                const start = this.currentRun.startTime;
+                if (Number.isFinite(start) && timestamp < start - SWITCH_CLOCK_SKEW_MS) return;
+            }
 
             let battleHrid = null;
             try {
