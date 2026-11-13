@@ -2774,11 +2774,11 @@ const SIDECAR_MIN_WIDTH = 170;
 const SIDECAR_ROW_SLACK = 16;
 
 /**
- * Whether a skilling challenge row is too narrow for the card and the readout side by side.
+ * Whether a skilling challenge row is too narrow for the wide, three-column readout.
  *
- * Measured from the row and the card, neither of which the readout widens, so the answer does not depend on
- * where the readout currently is. A row that cannot be measured (hidden, not laid out) keeps the layout it
- * has, so a hidden tab never flips the placement.
+ * Every row is stacked (card above readout); only the readout's own layout follows the width. Measured from
+ * the row and the card, neither of which the readout widens, so the answer does not depend on the readout.
+ * A row that cannot be measured (hidden, not laid out) reads as wide.
  *
  * @param {Element} card - The game's card
  * @returns {boolean}
@@ -2788,7 +2788,7 @@ function skillingRowNarrow(card) {
     if (!row) return false;
     const rowWidth = row.clientWidth;
     const cardWidth = card.offsetWidth;
-    if (!(rowWidth > 0 && cardWidth > 0)) return row.dataset?.mwiStacked === '1';
+    if (!(rowWidth > 0 && cardWidth > 0)) return false;
     return rowWidth < cardWidth + SIDECAR_MIN_WIDTH + SIDECAR_ROW_SLACK;
 }
 
@@ -2828,12 +2828,24 @@ function restoreStackedRows(scope) {
 }
 
 /**
- * Markup for the narrow readout: every value stays on one line.
+ * Markup for the stacked readout: every value stays on one line, and anything that is not a label/value row
+ * spans the whole width of the wide grid.
  * @param {string} html - From {@link renderTrialBlock}
+ * @param {boolean} wide - The three-column layout, where a value that still cannot fit is cut with an ellipsis
  * @returns {string}
  */
-function compactTrialHtml(html) {
-    return html.split('data-mwi-value="1" style="').join('data-mwi-value="1" style="white-space:nowrap; ');
+export function compactTrialHtml(html, wide) {
+    const clip = wide ? ' overflow:hidden; text-overflow:ellipsis; min-width:0;' : '';
+    const marked = html
+        .split('data-mwi-value="1" style="')
+        .join(`data-mwi-value="1" style="white-space:nowrap;${clip} `);
+    if (typeof document === 'undefined') return marked;
+    const template = document.createElement('template');
+    template.innerHTML = marked;
+    for (const child of template.content.children) {
+        if (!child.hasAttribute('data-mwi-row')) child.style.gridColumn = '1 / -1';
+    }
+    return template.innerHTML;
 }
 
 export function placeTrialBlock(root, card, block, name = '') {
@@ -2863,42 +2875,32 @@ export function placeTrialBlock(root, card, block, name = '') {
         return 'fight-sidecar';
     }
 
-    // The skilling In Progress challenge row: the readout belongs BESIDE the
-    // card (reported preference), not exiled to its own line — the row has the
-    // width for both as long as the card is protected from shrinking and the
-    // block yields first. The card's flex-shrink is pinned at placement; the
-    // block's own sizing rides its base style, which _placeBlock reapplies.
+    // The skilling In Progress challenge row: always a column, the card centered above the readout. The
+    // row is marked so every other block still climbs out of it (a column is not a "squashing" row). Only
+    // the readout's own layout follows the row's width, and that rides its style, which _placeBlock reapplies.
     const challengeRow = card?.closest?.('[class*="SkillingInstancePanel_challengeArea"]');
     if (challengeRow && root?.contains?.(challengeRow)) {
         card.style.flexShrink = '0';
-        if (skillingRowNarrow(card)) {
-            // Too narrow for both side by side: the row becomes a column and the readout sits under the card.
-            // The row is marked so every other block still climbs out of it
-            if (challengeRow.dataset.mwiStacked !== '1') {
-                challengeRow.dataset.mwiStacked = '1';
-                challengeRow.dataset.mwiStackedDirection = challengeRow.style.flexDirection || '';
-                challengeRow.dataset.mwiStackedJustify = challengeRow.style.justifyContent || '';
-                challengeRow.dataset.mwiStackedPadTop = challengeRow.style.paddingTop || '';
-                challengeRow.dataset.mwiStackedPadBottom = challengeRow.style.paddingBottom || '';
-            }
-            // The card centered in the space above the readout, the readout at the bottom
-            if (card.dataset.mwiStackedMargin === undefined) {
-                card.dataset.mwiStackedMargin = `${card.style.marginTop}|${card.style.marginBottom}`;
-            }
-            card.style.marginTop = 'auto';
-            card.style.marginBottom = 'auto';
-            challengeRow.style.flexDirection = 'column';
-            challengeRow.style.justifyContent = 'flex-start';
-            challengeRow.style.paddingTop = '6px';
-            challengeRow.style.paddingBottom = '4px';
-            block.dataset.mwiPlacement = 'row-stacked';
-            card.insertAdjacentElement('afterend', block);
-            return 'row-stacked';
+        if (challengeRow.dataset.mwiStacked !== '1') {
+            challengeRow.dataset.mwiStacked = '1';
+            challengeRow.dataset.mwiStackedDirection = challengeRow.style.flexDirection || '';
+            challengeRow.dataset.mwiStackedJustify = challengeRow.style.justifyContent || '';
+            challengeRow.dataset.mwiStackedPadTop = challengeRow.style.paddingTop || '';
+            challengeRow.dataset.mwiStackedPadBottom = challengeRow.style.paddingBottom || '';
         }
-        unstackRow(challengeRow);
-        block.dataset.mwiPlacement = 'row-sidecar';
+        // The card centered in the space above the readout, the readout at the bottom
+        if (card.dataset.mwiStackedMargin === undefined) {
+            card.dataset.mwiStackedMargin = `${card.style.marginTop}|${card.style.marginBottom}`;
+        }
+        card.style.marginTop = 'auto';
+        card.style.marginBottom = 'auto';
+        challengeRow.style.flexDirection = 'column';
+        challengeRow.style.justifyContent = 'flex-start';
+        challengeRow.style.paddingTop = '6px';
+        challengeRow.style.paddingBottom = '4px';
+        block.dataset.mwiPlacement = 'row-stacked';
         card.insertAdjacentElement('afterend', block);
-        return 'row-sidecar';
+        return 'row-stacked';
     }
 
     const container = card?.parentElement;
@@ -3016,14 +3018,10 @@ export function blockNearAnchor(block, anchor, root = null) {
     if (block?.parentElement?.classList?.contains(BOX_ROW_CLASS)) {
         return !root || root.contains(block);
     }
-    // A row sidecar lives beside its card by request — adjacency IS its home,
-    // and the escape rule below would evict it from the very row it belongs in
-    // A readout's home flips between beside the card and under it as the row's width changes, so each
-    // reads as displaced once the row has moved to the other
-    const placement = block?.dataset?.mwiPlacement;
-    if (placement === 'row-sidecar' || placement === 'row-stacked') {
-        if (!anchor?.isConnected) return true;
-        return anchor.nextElementSibling === block && skillingRowNarrow(anchor) === (placement === 'row-stacked');
+    // A stacked readout lives right after its card in the challenge column — adjacency IS its home, and the
+    // escape rule below would evict it from the very row it belongs in
+    if (block?.dataset?.mwiPlacement === 'row-stacked') {
+        return !anchor?.isConnected || anchor.nextElementSibling === block;
     }
     // The live fight's sidecar is anchored on the first boss of the wave but
     // lives after the last, so adjacency to the anchor is the wrong test — it
@@ -4928,7 +4926,7 @@ class GuildTrials {
                 // wipes anything set on the element at placement time.
                 const fightGrid = fightMonsterGrid(tile.element);
                 const inSkillingRow = !!tile.element?.closest?.('[class*="SkillingInstancePanel_challengeArea"]');
-                const stackedRow = inSkillingRow && skillingRowNarrow(tile.element);
+                const narrowRow = inSkillingRow && skillingRowNarrow(tile.element);
                 this._placeBlock(root, key, {
                     // The card the block belongs beside, for the re-anchoring
                     // check below — the game tears cards down and remounts
@@ -4936,7 +4934,7 @@ class GuildTrials {
                     anchored: (block) => blockNearAnchor(block, tile.element, root),
                     // Scoped to this tile's encounter: one measurement must
                     // not dress every combat card
-                    html: ((markup) => (stackedRow ? compactTrialHtml(markup) : markup))(
+                    html: ((markup) => (inSkillingRow ? compactTrialHtml(markup, !narrowRow) : markup))(
                         renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
                             participating: ownParticipation(tile.name),
                             phase: tilePhase,
@@ -4956,19 +4954,20 @@ class GuildTrials {
                     // and recomputing it here is what keeps the column right
                     // when a wave boundary changes the boss card count without
                     // displacing the block.
-                    // A narrow skilling row stacks the readout under the card, so the sizing and the spacing
-                    // are the stacked ones, and compact
-                    style: stackedRow
-                        ? 'position:static; display:block; box-sizing:border-box; flex:none; width:100%; ' +
-                          'max-width:100%; min-width:0; align-self:stretch; clear:none; margin:4px 0 0; ' +
-                          'padding:3px 8px; background:rgba(0,0,0,0.25); border-radius:6px; font-size:11px; ' +
-                          'line-height:1.3;'
+                    // A skilling row stacks the readout under the card: three columns when the row is wide, one
+                    // when it is narrow. The layout is in the style, so a width change needs no re-placement
+                    style: inSkillingRow
+                        ? 'position:static; box-sizing:border-box; flex:none; width:100%; max-width:100%; ' +
+                          'min-width:0; align-self:stretch; clear:none; margin:4px 0 0; ' +
+                          'background:rgba(0,0,0,0.25); border-radius:6px; font-size:11px; line-height:1.3;' +
+                          (narrowRow
+                              ? 'display:block; padding:3px 8px;'
+                              : 'display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); column-gap:24px; ' +
+                                'padding:4px 12px;')
                         : 'position:static; display:block; box-sizing:border-box;' +
                           (fightGrid
                               ? fightSidecarStyle(fightSidecarPlacement(fightGrid))
-                              : inSkillingRow
-                                ? 'flex:0 1 300px; min-width:170px; max-width:300px; align-self:center; clear:none;'
-                                : 'clear:both; min-width:min(260px, 100%); max-width:520px;') +
+                              : 'clear:both; min-width:min(260px, 100%); max-width:520px;') +
                           'margin:6px 0 8px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
                           'border-radius:6px; font-size:11px; line-height:1.6;',
                     place: (block) => placeTrialBlock(root, tile.element, block, tile.name),
@@ -5605,7 +5604,7 @@ class GuildTrials {
             // own layout (the payout, the In Progress card readouts) still get
             // the full check, which is what re-places one out of a squashing row.
             const inBoxRow = existing.parentElement?.classList?.contains(BOX_ROW_CLASS);
-            const inRow = ['row-sidecar', 'row-stacked'].includes(existing.dataset?.mwiPlacement);
+            const inRow = existing.dataset?.mwiPlacement === 'row-stacked';
             if (inRow) {
                 // Its home is the challenge row; only the anchor test (adjacency and the row's width) applies
                 if (anchored && !anchored(existing)) withScrollKept(root, () => place(existing));

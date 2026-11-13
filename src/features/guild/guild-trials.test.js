@@ -291,6 +291,7 @@ vi.mock('./guild-xp-tracker.js', () => ({
 const {
     analyseTrial,
     blockNearAnchor,
+    compactTrialHtml,
     breakdownFor,
     fightSidecarColumn,
     fightSidecarPlacement,
@@ -1745,7 +1746,7 @@ describe('placeTrialBlock', () => {
     });
 });
 
-describe('the skilling readout in a narrow challenge row', () => {
+describe('the skilling readout under the card', () => {
     const setWidth = (el, prop, value) => Object.defineProperty(el, prop, { value, configurable: true });
     function layout(rowWidth) {
         document.body.innerHTML =
@@ -1769,110 +1770,104 @@ describe('the skilling readout in a narrow challenge row', () => {
         };
     }
 
-    test('a narrow row stacks under the card, inside the challenge column, never after the battle area', () => {
-        const { root, card, challenge, battle, block } = layout(187);
-        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('row-stacked');
-        expect(card.nextElementSibling).toBe(block);
-        expect(challenge.contains(block)).toBe(true);
-        expect(challenge.style.flexDirection).toBe('column');
-        expect(challenge.style.justifyContent).toBe('flex-start');
-        expect(challenge.style.paddingTop).toBe('6px');
-        expect(challenge.style.paddingBottom).toBe('4px');
-        expect(card.style.marginTop).toBe('auto');
-        expect(card.style.marginBottom).toBe('auto');
-        expect(battle.nextElementSibling).toBeNull();
-        expect(blockNearAnchor(block, card, root)).toBe(true);
-    });
+    for (const [label, width] of [
+        ['narrow', 187],
+        ['wide', 715],
+        ['unmeasured', 0],
+    ]) {
+        test(`a ${label} row is stacked: column, card centered, readout right after it`, () => {
+            const { root, card, challenge, battle, block } = layout(width);
+            expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('row-stacked');
+            expect(card.nextElementSibling).toBe(block);
+            expect(challenge.contains(block)).toBe(true);
+            expect(challenge.style.flexDirection).toBe('column');
+            expect(challenge.style.justifyContent).toBe('flex-start');
+            expect(challenge.style.paddingTop).toBe('6px');
+            expect(challenge.style.paddingBottom).toBe('4px');
+            expect(card.style.marginTop).toBe('auto');
+            expect(card.style.marginBottom).toBe('auto');
+            expect(battle.nextElementSibling).toBeNull();
+            expect(blockNearAnchor(block, card, root)).toBe(true);
+        });
+    }
 
-    test('a wide row keeps the side-by-side sidecar and the game’s direction', () => {
-        const { root, card, challenge, block } = layout(400);
-        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('row-sidecar');
-        expect(card.nextElementSibling).toBe(block);
-        expect(challenge.style.flexDirection).toBe('row');
-        expect(challenge.dataset.mwiStacked).toBeUndefined();
-        expect(blockNearAnchor(block, card, root)).toBe(true);
-    });
-
-    test('an unmeasured row is treated as wide', () => {
-        const { root, card, block } = layout(0);
-        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('row-sidecar');
-    });
-
-    test('the choice flips both ways as the row changes width, and the row and card are restored', () => {
-        const { root, card, challenge, block } = layout(187);
-        card.style.marginTop = '3px';
-        placeTrialBlock(root, card, block, 'Tailoring');
-        expect(blockNearAnchor(block, card, root)).toBe(true);
-        setWidth(challenge, 'clientWidth', 500);
-        expect(blockNearAnchor(block, card, root)).toBe(false);
-        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('row-sidecar');
-        expect(challenge.style.flexDirection).toBe('row');
-        expect(challenge.style.justifyContent).toBe('center');
-        expect(challenge.style.paddingTop).toBe('');
-        expect(card.style.marginTop).toBe('3px');
-        expect(card.style.marginBottom).toBe('');
-        expect(challenge.dataset.mwiStacked).toBeUndefined();
-        expect(blockNearAnchor(block, card, root)).toBe(true);
+    test('a re-render keeps the placement stable, and a width change moves nothing', () => {
+        const { root, card, challenge } = layout(715);
+        let placed = 0;
+        const opts = {
+            html: '<div>x</div>',
+            style: 'width:100%;',
+            anchored: (b) => blockNearAnchor(b, card, root),
+            place: (b) => {
+                placed += 1;
+                return placeTrialBlock(root, card, b, 'Tailoring');
+            },
+        };
+        const block = guildTrials._placeBlock(root, 'tile:flip', opts);
         setWidth(challenge, 'clientWidth', 187);
-        expect(blockNearAnchor(block, card, root)).toBe(false);
-        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('row-stacked');
+        guildTrials._placeBlock(root, 'tile:flip', opts);
+        setWidth(challenge, 'clientWidth', 715);
+        guildTrials._placeBlock(root, 'tile:flip', opts);
+        expect(placed).toBe(1);
+        expect(card.nextElementSibling).toBe(block);
+        expect(challenge.style.flexDirection).toBe('column');
     });
 
-    test('a re-render keeps each placement stable', () => {
-        for (const [width, placement] of [
-            [187, 'row-stacked'],
-            [500, 'row-sidecar'],
-        ]) {
-            const { root, card } = layout(width);
-            let placed = 0;
-            const opts = {
-                html: '<div>x</div>',
-                style: 'width:100%;',
-                anchored: (b) => blockNearAnchor(b, card, root),
-                place: (b) => {
-                    placed += 1;
-                    return placeTrialBlock(root, card, b, 'Tailoring');
-                },
-            };
-            const block = guildTrials._placeBlock(root, `tile:stable-${width}`, opts);
-            guildTrials._placeBlock(root, `tile:stable-${width}`, opts);
-            guildTrials._placeBlock(root, `tile:stable-${width}`, opts);
-            expect(placed).toBe(1);
-            expect(block.dataset.mwiPlacement).toBe(placement);
-        }
-    });
-
-    test('the payout stays above the battle area, never inside the stacked challenge column', () => {
-        const { root, card, challenge, battle, block } = layout(187);
-        placeTrialBlock(root, card, block, 'Tailoring');
-        expect(challenge.dataset.mwiStacked).toBe('1');
-        const wrapper = document.createElement('div');
-        document.body.append(wrapper);
-        wrapper.append(document.getElementById('col'));
-        guildTrials.sectionFolds = {};
-        guildTrials._renderPayout(
-            wrapper,
-            [{ name: 'Tailoring', type: 'skilling', banked: 3, projected: 15, tierKnown: true }],
-            card,
-            { buildersHall: { bonus: 0.2, level: 5, rules: null, source: 'test' }, treasury: { bonus: 0.3, level: 5 } }
+    test('a wide row draws the readout as three columns that clip rather than overflow', () => {
+        const html = compactTrialHtml(
+            '<div data-mwi-row="1"><span data-mwi-value="1" style="color:red;">~T21</span></div><p>note</p>',
+            true
         );
-        const payout = document.querySelector('[data-mwi-block="payout"]');
-        expect(payout).toBeTruthy();
-        expect(challenge.contains(payout)).toBe(false);
-        expect(battle.contains(payout)).toBe(false);
-        expect(payout.nextElementSibling).toBe(battle);
-        root.remove();
+        expect(html).toContain('white-space:nowrap');
+        expect(html).toContain('text-overflow:ellipsis');
+        expect(html).toContain('grid-column: 1 / -1');
+        const narrow = compactTrialHtml(
+            '<div data-mwi-row="1"><span data-mwi-value="1" style="color:red;">x</span></div>',
+            false
+        );
+        expect(narrow).toContain('white-space:nowrap');
+        expect(narrow).not.toContain('ellipsis');
     });
 
-    test('the row is restored when the readout comes down', () => {
-        const { root, card, challenge, block } = layout(187);
+    for (const width of [187, 715]) {
+        test(`the payout stays above the battle area on a ${width}px row, never inside the challenge column`, () => {
+            const { root, card, challenge, battle, block } = layout(width);
+            placeTrialBlock(root, card, block, 'Tailoring');
+            expect(challenge.dataset.mwiStacked).toBe('1');
+            const wrapper = document.createElement('div');
+            document.body.append(wrapper);
+            wrapper.append(document.getElementById('col'));
+            guildTrials.sectionFolds = {};
+            guildTrials._renderPayout(
+                wrapper,
+                [{ name: 'Tailoring', type: 'skilling', banked: 3, projected: 15, tierKnown: true }],
+                card,
+                {
+                    buildersHall: { bonus: 0.2, level: 5, rules: null, source: 'test' },
+                    treasury: { bonus: 0.3, level: 5 },
+                }
+            );
+            const payout = document.querySelector('[data-mwi-block="payout"]');
+            expect(payout).toBeTruthy();
+            expect(challenge.contains(payout)).toBe(false);
+            expect(battle.contains(payout)).toBe(false);
+            expect(payout.nextElementSibling).toBe(battle);
+            root.remove();
+        });
+    }
+
+    test('the row and the card are restored when the readout comes down', () => {
+        const { root, card, challenge, block } = layout(715);
+        card.style.marginTop = '3px';
         placeTrialBlock(root, card, block, 'Tailoring');
         block.dataset.mwiBlock = 'tile:x';
         block.remove();
         restoreFightGrids(document);
         expect(challenge.style.flexDirection).toBe('row');
         expect(challenge.style.justifyContent).toBe('center');
-        expect(card.style.marginTop).toBe('');
+        expect(challenge.style.paddingTop).toBe('');
+        expect(card.style.marginTop).toBe('3px');
+        expect(card.style.marginBottom).toBe('');
         expect(challenge.dataset.mwiStacked).toBeUndefined();
     });
 });
