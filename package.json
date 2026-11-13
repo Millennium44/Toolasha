@@ -28,7 +28,7 @@
         "version:sync": "node scripts/sync-version.js",
         "changelog:stamp": "node scripts/stamp-changelog-version.js",
         "changelog:dedupe": "node scripts/dedupe-release-notes.js",
-        "prepare": "husky",
+        "prepare": "husky && node scripts/setup-merge-driver.mjs",
         "check:requires": "node scripts/check-require-urls.mjs",
         "audit:handlers": "node scripts/audit-game-handlers.mjs"
     },
