@@ -2605,11 +2605,23 @@ export async function openCraftBill(crafts, direct = []) {
         total.count += count;
         totals.set(key, total);
     }
-    const lines = [...totals.values()].map((line) => ({
-        itemHrid: line.itemHrid,
-        count: line.count,
-        ...(line.enhancementLevel > 0 ? { enhancementLevel: line.enhancementLevel } : {}),
-    }));
+    // What the finite action queue has already committed, deducted once per
+    // aggregated line exactly as the panel button does unless "Ignore queued
+    // actions" is on: 10 lumber held for queued crafts is not 10 lumber free
+    // for the keys. The queue map keys a +0 input by hrid and an enhanced one
+    // by `hrid@level`.
+    const ignoreQueue = config.getSetting('actions_missingMaterialsButton_ignoreQueue') || false;
+    const queuedMap = ignoreQueue ? null : calculateQueuedMaterialsForAction(null);
+    const lines = [...totals.values()].map((line) => {
+        const queueKey = line.enhancementLevel > 0 ? `${line.itemHrid}@${line.enhancementLevel}` : line.itemHrid;
+        const queued = queuedMap?.get(queueKey) || 0;
+        return {
+            itemHrid: line.itemHrid,
+            count: line.count,
+            ...(line.enhancementLevel > 0 ? { enhancementLevel: line.enhancementLevel } : {}),
+            ...(queued > 0 ? { queued } : {}),
+        };
+    });
     return openMaterialsList(lines);
 }
 

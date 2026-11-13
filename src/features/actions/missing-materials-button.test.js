@@ -2370,6 +2370,36 @@ describe('a craft bill for several things at once (the dungeon key route)', () =
         expect(document.querySelector(`[data-item-hrid="${LOGS}"]`)?.getAttribute('data-missing-quantity')).toBe('1');
     });
 
+    test('materials the action queue already committed are not counted as free', async () => {
+        state.actionMaterials = [{ itemHrid: LOGS, itemName: 'Cedar Lumber', required: 6, missing: 6 }];
+        state.inventory = [{ itemHrid: LOGS, enhancementLevel: 0, count: 10 }];
+        // Queued crafts will consume all 10 held
+        state.queuedInputs = new Map([[LOGS, 10]]);
+        state.ignoreQueue = false;
+
+        const opening = missingMaterials.openCraftBill([{ actionHrid: '/actions/crafting/entry_key', numActions: 1 }]);
+        await vi.advanceTimersByTimeAsync(600);
+        expect(await opening).toBe(true);
+        expect(document.querySelector(`[data-item-hrid="${LOGS}"]`)?.getAttribute('data-missing-quantity')).toBe('6');
+        state.queuedInputs = new Map();
+    });
+
+    test('"Ignore queued actions" leaves the held stock free for the keys', async () => {
+        state.actionMaterials = [{ itemHrid: LOGS, itemName: 'Cedar Lumber', required: 6, missing: 6 }];
+        state.inventory = [{ itemHrid: LOGS, enhancementLevel: 0, count: 10 }];
+        state.queuedInputs = new Map([[LOGS, 10]]);
+        state.ignoreQueue = true;
+
+        const opening = missingMaterials.openCraftBill([{ actionHrid: '/actions/crafting/entry_key', numActions: 1 }]);
+        await vi.advanceTimersByTimeAsync(600);
+        await opening;
+        // Nothing missing: the 10 held cover the 6, queue ignored
+        const missingAttr = document.querySelector(`[data-item-hrid="${LOGS}"]`)?.getAttribute('data-missing-quantity');
+        expect(missingAttr ?? '0').toBe('0');
+        state.queuedInputs = new Map();
+        state.ignoreQueue = false;
+    });
+
     test('nothing to craft opens nothing', async () => {
         expect(await missingMaterials.openCraftBill([{ actionHrid: '/actions/x', numActions: 0 }])).toBe(false);
         expect(state.calcCalls).toHaveLength(0);
