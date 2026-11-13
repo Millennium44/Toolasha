@@ -2536,6 +2536,10 @@ class CombatSimulator {
      * @returns {Object} The attack result
      */
     _processAttack(source, target, abilityEffect) {
+        // A window that has run out is gone before this hit is mitigated, whether or not its expiry event has fired
+        if (target.fortifyStacks > 0 && target.fortifyExpireTime <= this.simulationTime) {
+            target.removeExpiredBuffs(this.simulationTime);
+        }
         const attackResult = CombatUtilities.processAttack(source, target, abilityEffect, this.taskDamageMode);
         if (attackResult.didHit && target.isPlayer) this._applyFortify(target);
         return attackResult;
@@ -2574,6 +2578,8 @@ class CombatSimulator {
     _processEcho(source, ability, abilityEffect, hitTargets) {
         const echo = source.talismanMechanics?.echo;
         if (!(echo > 0) || hitTargets.length === 0) return;
+        // Thorns or retaliation may have just put the caster down; a dead caster does not echo
+        if (source.combatDetails.currentHitpoints <= 0) return;
         const standing = hitTargets.filter((unit) => unit.combatDetails.currentHitpoints > 0);
         if (standing.length === 0 || !(random() < echo)) return;
         for (const target of standing) {
