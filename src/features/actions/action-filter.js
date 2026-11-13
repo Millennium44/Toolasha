@@ -23,6 +23,10 @@ import {
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { SELL_TAX_EXCLUDED_TOOLTIP } from '../../utils/profit-constants.js';
 import { TILE_SCROLLS_SETTING, listPickerScrolls, onTileScrollsChanged, setPickerScroll } from './tile-scrolls.js';
+import dataManager from '../../core/data-manager.js';
+import { canOpenInOptimizer, openInOptimizer, onOpenerChange } from '../../utils/optimizer-bridge.js';
+import { getIconHref, getSkillHridFromIconHref } from '../../utils/game-lookups.js';
+import { runningAction } from '../../utils/combat-actions.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import actionPanelSort from './action-panel-sort.js';
 import { displayGatheringProfit, displayProductionProfit } from './profit-display.js';
@@ -41,6 +45,32 @@ const ARBITRAGE_OPEN_BUTTON_CLASS = 'mwi-arbitrage-open';
 const CRAFT_ENHANCE_OPEN_BUTTON_CLASS = 'mwi-craft-enhance-open';
 const TITLE_BAR_BUTTON_CLASSES = [ARBITRAGE_OPEN_BUTTON_CLASS, CRAFT_ENHANCE_OPEN_BUTTON_CLASS];
 const CONTROLS_EXPANDED_KEY = 'toolasha_local_actionFilterControlsExpanded';
+
+// Skill display names, the fallback for finding which skill a page is when its icon cannot be read
+const SKILL_TITLE_NAMES = [
+    'Milking',
+    'Foraging',
+    'Woodcutting',
+    'Cheesesmithing',
+    'Crafting',
+    'Tailoring',
+    'Cooking',
+    'Brewing',
+    'Alchemy',
+];
+
+/**
+ * The skill a skill page's title bar belongs to: by its skill icon sprite, and only failing that by name.
+ * @param {HTMLElement|null} titleElement - The page's `GatheringProductionSkillPanel_title`
+ * @returns {string|null} e.g. `/skills/woodcutting`, or null
+ */
+function skillHridForTitle(titleElement) {
+    const fromIcon = getSkillHridFromIconHref(getIconHref(titleElement, 'skills_sprite'));
+    if (fromIcon) return fromIcon;
+    const text = titleElement?.textContent || '';
+    const name = SKILL_TITLE_NAMES.find((candidate) => text.includes(candidate));
+    return name ? `/skills/${name.toLowerCase()}` : null;
+}
 
 class ActionFilter {
     constructor() {
@@ -66,11 +96,16 @@ class ActionFilter {
         this.unregisterHandlers = [];
         this.currentTitleElement = null; // Track which title we're attached to
         this.refreshButton = null; // Reference to the manual price refresh button
+        this._headerFit = null; // Inline styles the narrow-screen fit replaced
+        this._onHeaderResize = null;
+        this._headerObserver = null;
+        this.optimizerButton = null; // "Open in Optimizer" on the controls row
         this._priceRefreshInFlight = false; // Guards against a second click while fetching
         this._updatePricingSelects = null;
         this._updateCraftBtn = null;
         this._updateSellTaxBtn = null;
         this._updateSortBtn = null;
+        this._updateOptimizerBtn = null;
         this._updateScrollsBtn = null;
         this.scrollsButton = null; // The "Scrolls" picker button for simulated scrolls on the tiles
         this._closeScrollsMenu = null; // Closes the open picker menu, if any
@@ -183,6 +218,18 @@ class ActionFilter {
             })
         );
 
+        // The Optimizer restarts on its own schedule (setting flipped, character switched)
+        this.unregisterHandlers.push(
+            onOpenerChange(() => {
+                if (this._updateOptimizerBtn) this._updateOptimizerBtn();
+            })
+        );
+        this.unregisterHandlers.push(
+            config.onSettingChange('skillingOptimizer', () => {
+                if (this._updateOptimizerBtn) this._updateOptimizerBtn();
+            })
+        );
+
         this.unregisterHandlers.push(
             actionPanelSort.onSortModeChange(() => {
                 if (this._updateSortBtn) this._updateSortBtn();
@@ -218,6 +265,7 @@ class ActionFilter {
         this.buyPricingSelect = null;
         this.sellPricingSelect = null;
         this.refreshButton = null;
+        this.optimizerButton = null;
         this.noResultsMessage = null;
         this.controlsToggle = null;
         this.controlsWrapper = null;
@@ -508,6 +556,51 @@ class ActionFilter {
             craftBtn.style.display = 'none';
         }
 
+        // "Open in Optimizer": jumps to the character panel's Optimizer tab on this skill. Beside the
+        // other controls (behind the phone's collapsed row), and shown only while the Optimizer is
+        // running and has a view for this page's skill.
+        const optimizerBtn = document.createElement('button');
+        optimizerBtn.id = 'mwi-action-open-optimizer';
+        optimizerBtn.type = 'button';
+        optimizerBtn.textContent = 'Open in Optimizer';
+        optimizerBtn.title = "Open this skill in the character panel's Optimizer tab";
+        optimizerBtn.style.cssText = `
+            padding: 8px 12px;
+            font-size: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.23);
+            border-radius: 4px;
+            background: transparent;
+            color: inherit;
+            cursor: pointer;
+            font-family: inherit;
+            flex-shrink: 0;
+        `;
+        optimizerBtn.addEventListener('click', async () => {
+            const skillHrid = skillHridForTitle(titleElement);
+            if (!canOpenInOptimizer(skillHrid)) return;
+            // The skill's running action if it is one of this skill's, else the Optimizer picks its first
+            const running = runningAction(dataManager.getCurrentActions?.() ?? []);
+            const actionHrid = running?.actionHrid?.startsWith(`/actions/${skillHrid.slice('/skills/'.length)}/`)
+                ? running.actionHrid
+                : null;
+            try {
+                await openInOptimizer(skillHrid, actionHrid);
+            } catch (error) {
+                console.error('[ActionFilter] Could not open the Optimizer:', error);
+            }
+        });
+        this._updateOptimizerBtn = () => {
+            const show = config.getSetting('skillingOptimizer') && canOpenInOptimizer(skillHridForTitle(titleElement));
+            optimizerBtn.style.display = show ? '' : 'none';
+        };
+        this._updateOptimizerBtn();
+        if (controlsHost) {
+            controlsHost.appendChild(optimizerBtn);
+        } else {
+            (this.craftButton || sellSelect).insertAdjacentElement('afterend', optimizerBtn);
+        }
+        this.optimizerButton = optimizerBtn;
+
         // Manual price refresh. Prices come out of a 15-minute cache, so the
         // profit/hr numbers on every tile can be up to that stale; the only way
         // to freshen them used to be opening the marketplace once per item.
@@ -636,6 +729,70 @@ class ActionFilter {
 
         // Find the container for action panels to inject "No results" message
         this.setupNoResultsMessage(titleElement);
+
+        // A narrow screen: the row can be wider than the page, which pushes the skill title off the edge
+        this._fitHeaderRow(titleElement, input);
+        this._onHeaderResize = () => this._fitHeaderRow(titleElement, input);
+        window.addEventListener('resize', this._onHeaderResize);
+        const refit = () => {
+            if (this.currentTitleElement === titleElement) this._fitHeaderRow(titleElement, input);
+        };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(refit);
+        // Controls Toolasha adds later (refresh, scrolls once profit data loads) change the row's width.
+        // Only child additions and removals are watched, never styles, so the fit itself cannot retrigger it.
+        this._headerObserver?.disconnect();
+        if (typeof MutationObserver === 'function') {
+            this._headerObserver = new MutationObserver(() => {
+                if (typeof requestAnimationFrame === 'function') requestAnimationFrame(refit);
+                else refit();
+            });
+            this._headerObserver.observe(titleElement, { childList: true, subtree: true });
+        }
+    }
+
+    /**
+     * Let the filter input fill the row's free width, but only while the title row actually overflows.
+     * Measured rather than keyed to mobile mode, so a narrow desktop window is fixed too and a row that
+     * fits (any desktop) is never touched. The inline styles it replaces are kept and put back by
+     * _restoreHeaderRow (on a re-measure, clearFilter and cleanup).
+     * @param {HTMLElement} titleElement - The title row
+     * @param {HTMLInputElement} input - Our filter input
+     */
+    _fitHeaderRow(titleElement, input) {
+        this._restoreHeaderRow();
+        if (!titleElement.isConnected || titleElement.scrollWidth <= titleElement.clientWidth) return;
+        const row = titleElement.style;
+        this._headerFit = {
+            titleElement,
+            input,
+            row: {
+                gap: row.gap,
+                width: row.width,
+                marginLeft: row.marginLeft,
+                marginRight: row.marginRight,
+                alignSelf: row.alignSelf,
+            },
+            input_: { flex: input.style.flex, width: input.style.width, minWidth: input.style.minWidth },
+        };
+        // The input takes whatever the row has left. The row stops 26px short of the page because the
+        // game's guide "?" is absolutely positioned at the row's width, just outside its right edge
+        row.gap = '10px';
+        row.width = 'calc(100% - 26px)';
+        row.marginLeft = '0';
+        row.marginRight = 'auto';
+        row.alignSelf = 'flex-start';
+        input.style.flex = '1 1 0';
+        input.style.width = '0';
+        input.style.minWidth = '0';
+    }
+
+    /** Put back the inline styles _fitHeaderRow replaced, if it replaced any. */
+    _restoreHeaderRow() {
+        const fit = this._headerFit;
+        if (!fit) return;
+        Object.assign(fit.titleElement.style, fit.row);
+        Object.assign(fit.input.style, fit.input_);
+        this._headerFit = null;
     }
 
     /**
@@ -1063,10 +1220,22 @@ class ActionFilter {
             this.craftButton = null;
         }
 
+        if (this.optimizerButton && this.optimizerButton.parentElement) {
+            this.optimizerButton.remove();
+        }
+        this.optimizerButton = null;
+        this._updateOptimizerBtn = null;
+
         if (this.refreshButton && this.refreshButton.parentElement) {
             this.refreshButton.remove();
             this.refreshButton = null;
         }
+
+        this._restoreHeaderRow();
+        this._headerObserver?.disconnect();
+        this._headerObserver = null;
+        if (this._onHeaderResize) window.removeEventListener('resize', this._onHeaderResize);
+        this._onHeaderResize = null;
 
         this._closeScrollsMenu?.();
         if (this.scrollsButton && this.scrollsButton.parentElement) {

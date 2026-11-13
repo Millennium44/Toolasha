@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Open in Optimizer from skill pages
+
+Gathering and production skill pages get an Open in Optimizer button (behind the ⋯ controls on phones, in the title bar on desktop) that opens the side panel on the Optimizer set to that skill and action.
+
+### Skill page header fits on phones
+
+On narrow screens the filter box takes only the free width, so the skill title and its ? button no longer push the page into a sideways scroll.
+
 ### Guild trial readout fits on phones
 
 On the In Progress tab the trial readout now sits under the game's card (skilling) or under the bosses (combat), laid out in rows, so nothing is cut off at phone width and the card's progress numbers show in full. The Deadline row is gone, since the game already shows it.
