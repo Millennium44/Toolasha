@@ -2750,6 +2750,21 @@ describe('remembering the place and hiding rows', () => {
             expect(returnTab()).toBeNull();
         });
 
+        test('the tab is still armed on a client whose tabs are not in English', async () => {
+            await open();
+            pickType('decompose');
+            // The strip is found by where it sits, inside the marketplace panel
+            const strip = marketplace();
+            strip.innerHTML = '<button role="tab">市场</button><button role="tab">我的挂单</button>';
+            const panel = document.createElement('div');
+            panel.className = 'MarketplacePanel_marketplacePanel__x1';
+            strip.replaceWith(panel);
+            panel.appendChild(strip);
+            link().click();
+            await vi.waitFor(() => expect(returnTab()).not.toBeNull());
+            expect(returnTab().textContent).toContain('Decompose');
+        });
+
         test('no tab is armed when the game refused the navigation', async () => {
             const tabs = await import('../../utils/marketplace-tabs.js');
             tabs.navigateToMarketplace.mockReturnValueOnce(false);
