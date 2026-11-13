@@ -235,6 +235,8 @@ const DEFAULT_SETTINGS = {
     hiddenChests: [],
     popupPinned: false,
     sortMode: 'luck',
+    // The popup's own row order: null (the drop table's order) or { key, dir }. Not the full panel's sortMode.
+    popupSort: null,
     // Which chests are expanded to their item breakdown. Remembered so a panel
     // reopened later — or after the page reloads — comes back open on the chest
     // you were actually looking at, rather than the collapsed list every panel
@@ -455,6 +457,76 @@ export function worthShowing(items) {
     return (items || []).filter(
         (item) => (item.actualCount || 0) > 0 || (item.expectedCount || 0) >= NEGLIGIBLE_EXPECTED
     );
+}
+
+/**
+ * How an opening item compares with what the drop table owed: actual / expected, or null where there is no
+ * expectation to divide by. An unpriced item compares counts, since it has a drop rate but no value.
+ * @param {Object} item - From `chestPerformance`
+ * @returns {number|null}
+ */
+export function openingRatio(item) {
+    if (item.unpriced) return item.expectedCount > 0 ? item.actualCount / item.expectedCount : null;
+    return item.expectedValue > 0 ? item.actualValue / item.expectedValue : null;
+}
+
+/**
+ * The popup's sortable columns. `read` returns the number to order by, or null where the column has no honest
+ * figure for the row (no price, nothing owed): those rows go last in either direction, never in as a zero.
+ */
+export const POPUP_SORT_COLUMNS = {
+    qty: { label: 'Qty', read: (item) => item.actualCount ?? 0 },
+    value: { label: 'Value', read: (item) => (item.unpriced ? null : item.actualValue) },
+    vs: { label: 'vs exp.', read: (item) => openingRatio(item) },
+    expQty: { label: 'Exp. qty', read: (item) => item.expectedCount ?? 0 },
+    expVal: { label: 'Exp. val', read: (item) => (item.unpriced ? null : item.expectedValue) },
+};
+
+/**
+ * A stored popup sort, or null when it is missing or names a column that no longer exists.
+ * @param {*} sort
+ * @returns {{key: string, dir: 'asc'|'desc'}|null}
+ */
+export function cleanPopupSort(sort) {
+    if (!sort || !Object.hasOwn(POPUP_SORT_COLUMNS, sort.key)) return null;
+    return { key: sort.key, dir: sort.dir === 'asc' ? 'asc' : 'desc' };
+}
+
+/**
+ * What a click on a heading does: a new column starts descending, the active one flips to ascending, and
+ * the active ascending one goes back to the drop table's order.
+ * @param {{key: string, dir: string}|null} current
+ * @param {string} key - The heading clicked
+ * @returns {{key: string, dir: 'asc'|'desc'}|null}
+ */
+export function nextPopupSort(current, key) {
+    if (!current || current.key !== key) return { key, dir: 'desc' };
+    return current.dir === 'desc' ? { key, dir: 'asc' } : null;
+}
+
+/**
+ * The opening's items in the chosen order. Rows with no figure for the column keep their drop-table order at
+ * the end in both directions; ties keep drop-table order too.
+ * @param {Array<Object>} items - Already filtered by `worthShowing`
+ * @param {{key: string, dir: string}|null} sort
+ * @returns {Array<Object>} A new array
+ */
+export function sortOpeningItems(items, sort) {
+    const clean = cleanPopupSort(sort);
+    if (!clean) return [...items];
+    const sign = clean.dir === 'asc' ? 1 : -1;
+    const read = POPUP_SORT_COLUMNS[clean.key].read;
+    const missing = (value) => value === null || value === undefined || Number.isNaN(value);
+    return items
+        .map((item, index) => ({ item, index, value: read(item) }))
+        .sort((a, b) => {
+            const aMissing = missing(a.value);
+            const bMissing = missing(b.value);
+            if (aMissing !== bMissing) return aMissing ? 1 : -1;
+            if (aMissing) return a.index - b.index;
+            return sign * (a.value - b.value) || a.index - b.index;
+        })
+        .map((entry) => entry.item);
 }
 
 /**
@@ -1572,8 +1644,27 @@ class TreasureTracker {
         summary.appendChild(pct);
         body.appendChild(summary);
 
-        body.appendChild(this._openingLabelRow());
-        for (const item of worthShowing(opening.items)) body.appendChild(this._openingRow(item));
+        // Only the rows are redrawn on a sort, so the popup keeps its place, scroll and size
+        const shown = worthShowing(opening.items);
+        const labelRow = this._openingLabelRow(cleanPopupSort(this.settings.popupSort), (key) => {
+            const next = nextPopupSort(cleanPopupSort(this.settings.popupSort), key);
+            this.settings.popupSort = next;
+            this._saveSettings();
+            this._paintOpeningHeadings(labelRow, next);
+            paintRows(next);
+        });
+        body.appendChild(labelRow);
+        const paintRows = (sort) => {
+            for (const old of body.querySelectorAll('[data-role="opening-row"]')) old.remove();
+            let anchor = labelRow;
+            for (const item of sortOpeningItems(shown, sort)) {
+                const row = this._openingRow(item);
+                row.dataset.role = 'opening-row';
+                anchor.after(row);
+                anchor = row;
+            }
+        };
+        paintRows(cleanPopupSort(this.settings.popupSort));
 
         const total = document.createElement('div');
         Object.assign(total.style, {
@@ -1666,7 +1757,7 @@ class TreasureTracker {
      * The column headings of the popup's item rows, once, above the first row. Same grid as the rows.
      * @returns {HTMLElement}
      */
-    _openingLabelRow() {
+    _openingLabelRow(sort = null, onSort = null) {
         const band = document.createElement('div');
         band.dataset.role = 'opening-labels';
         Object.assign(band.style, {
@@ -1680,16 +1771,53 @@ class TreasureTracker {
             marginBottom: '2px',
         });
         // Dropped (Qty, Value, vs exp.), then what the drop table owed (Qty, Value)
-        const labels = ['', 'Qty', 'Value', 'vs exp.', 'Exp. qty', 'Exp. val'];
-        labels.forEach((label, index) => {
-            const span = this._span(label);
+        const columns = [null, 'qty', 'value', 'vs', 'expQty', 'expVal'];
+        const touch = isMobileMode();
+        columns.forEach((key, index) => {
+            const span = this._span(key ? POPUP_SORT_COLUMNS[key].label : '');
             span.style.textAlign = index === 1 ? 'left' : 'right';
+            if (key && onSort) {
+                span.dataset.sortKey = key;
+                span.setAttribute('role', 'button');
+                span.tabIndex = 0;
+                span.style.cursor = 'pointer';
+                span.style.userSelect = 'none';
+                if (touch) span.style.minHeight = `${TOUCH_TARGET - 8}px`;
+                span.addEventListener('click', () => onSort(key));
+                span.addEventListener('keydown', (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        onSort(key);
+                    }
+                });
+            }
             band.appendChild(span);
         });
         band.title =
             'Left of the bar: what dropped, what it was worth, and how that compares with what was owed. ' +
-            'Right of it: what the drop table owed for this opening.';
+            'Right of it: what the drop table owed for this opening.' +
+            (onSort
+                ? ' Click a heading to sort by it; click again to reverse, and once more for the drop-table order.'
+                : '');
+        this._paintOpeningHeadings(band, sort);
         return band;
+    }
+
+    /**
+     * Mark the active heading with an arrow (down is largest first) and leave the others plain.
+     * @param {HTMLElement} band - From `_openingLabelRow`
+     * @param {{key: string, dir: string}|null} sort
+     */
+    _paintOpeningHeadings(band, sort) {
+        for (const span of band.querySelectorAll('[data-sort-key]')) {
+            const key = span.dataset.sortKey;
+            const active = Boolean(sort) && sort.key === key;
+            const label = POPUP_SORT_COLUMNS[key].label;
+            span.textContent = active ? `${sort.dir === 'asc' ? '▴' : '▾'} ${label}` : label;
+            span.style.color = active ? COLORS.text : COLORS.textDim;
+            span.style.fontWeight = active ? '600' : '';
+            span.setAttribute('aria-sort', active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none');
+        }
     }
 
     /**
@@ -1719,13 +1847,7 @@ class TreasureTracker {
         // nothing will price still has a drop rate, and "four when you were owed
         // two and a quarter" is the same fact whether or not the market has an
         // opinion — it is only the *total* it cannot join.
-        const ratio = item.unpriced
-            ? item.expectedCount > 0
-                ? item.actualCount / item.expectedCount
-                : null
-            : item.expectedValue > 0
-              ? item.actualValue / item.expectedValue
-              : null;
+        const ratio = openingRatio(item);
         const verdict = formatReturn(ratio);
 
         const actualCount = this._span(formatLargeNumber(item.actualCount));

@@ -2197,3 +2197,120 @@ describe('placeBesideDialog never covers the game loot dialog', () => {
         });
     });
 });
+
+describe('the popup’s headings sort its rows', () => {
+    const item = (itemHrid, extra) => ({
+        itemHrid,
+        actualCount: 3,
+        actualValue: 300,
+        expectedCount: 2.5,
+        expectedValue: 250,
+        unpriced: false,
+        ...extra,
+    });
+    // Drop-table order: a, b, c (unpriced), d
+    const items = [
+        item('/items/a', { actualCount: 5, actualValue: 100, expectedCount: 9, expectedValue: 900 }),
+        item('/items/b', { actualCount: 2, actualValue: 900, expectedCount: 1, expectedValue: 90 }),
+        item('/items/c', { actualCount: 7, actualValue: 0, expectedCount: 3, expectedValue: 0, unpriced: true }),
+        item('/items/d', { actualCount: 1, actualValue: 500, expectedCount: 4, expectedValue: 500 }),
+    ];
+    const build = () =>
+        treasureTracker._buildPopup(
+            '/items/known',
+            { opened: 1, ratio: 1.1, actualValue: 1500, items },
+            { opened: 3, ratio: 1, actualValue: 900 }
+        );
+    const rowsText = (popup) =>
+        [...popup.querySelectorAll('[data-role="opening-row"]')].map((row) => row.children[1].textContent);
+    const heading = (popup, key) => popup.querySelector(`[data-sort-key="${key}"]`);
+
+    beforeEach(() => {
+        treasureTracker.settings = { ...treasureTracker.settings, popupSort: null, sortMode: 'luck' };
+    });
+    afterEach(() => {
+        treasureTracker._removePopup();
+        treasureTracker.settings = { ...treasureTracker.settings, popupSort: null };
+    });
+
+    test('Value sorts largest first, then smallest first, then back to the drop-table order', () => {
+        const popup = build();
+        expect(rowsText(popup)).toEqual(['5', '2', '7', '1']);
+
+        heading(popup, 'value').click();
+        expect(rowsText(popup)).toEqual(['2', '1', '5', '7']);
+        expect(heading(popup, 'value').textContent).toBe('▾ Value');
+
+        heading(popup, 'value').click();
+        expect(rowsText(popup)).toEqual(['5', '1', '2', '7']);
+        expect(heading(popup, 'value').textContent).toBe('▴ Value');
+
+        heading(popup, 'value').click();
+        expect(rowsText(popup)).toEqual(['5', '2', '7', '1']);
+        expect(heading(popup, 'value').textContent).toBe('Value');
+        expect(treasureTracker.settings.popupSort).toBeNull();
+    });
+
+    test('an unpriced item is last in both directions, not a zero', () => {
+        const popup = build();
+        heading(popup, 'value').click();
+        expect(rowsText(popup).at(-1)).toBe('7');
+        heading(popup, 'value').click();
+        expect(rowsText(popup).at(-1)).toBe('7');
+        heading(popup, 'expVal').click();
+        expect(rowsText(popup).at(-1)).toBe('7');
+    });
+
+    test('Qty sorts by what dropped, and a new heading starts largest first', () => {
+        const popup = build();
+        heading(popup, 'value').click();
+        heading(popup, 'qty').click();
+        expect(rowsText(popup)).toEqual(['7', '5', '2', '1']);
+        expect(heading(popup, 'value').textContent).toBe('Value');
+        expect(heading(popup, 'qty').getAttribute('aria-sort')).toBe('descending');
+    });
+
+    test('vs exp. sorts by actual over expected', () => {
+        const popup = build();
+        heading(popup, 'vs').click();
+        // b 10x, d 1x, a 0.11x, c (unpriced: 7 / 3) 2.33x -> b, c, d, a
+        expect(rowsText(popup)).toEqual(['2', '7', '1', '5']);
+    });
+
+    test('only the rows are redrawn: the popup and its heading band stay the same nodes', () => {
+        const popup = build();
+        const band = popup.querySelector('[data-role="opening-labels"]');
+        const total = band.parentElement.lastElementChild;
+        heading(popup, 'value').click();
+        expect(popup.querySelector('[data-role="opening-labels"]')).toBe(band);
+        expect(band.parentElement.lastElementChild).toBe(total);
+        expect(popup.querySelectorAll('[data-role="opening-row"]').length).toBe(4);
+    });
+
+    test('the choice is remembered by the next popup, and kept apart from the full panel’s sort', () => {
+        let popup = build();
+        heading(popup, 'value').click();
+        treasureTracker._removePopup();
+
+        popup = build();
+        expect(rowsText(popup)).toEqual(['2', '1', '5', '7']);
+        expect(heading(popup, 'value').textContent).toBe('▾ Value');
+        expect(treasureTracker.settings.sortMode).toBe('luck');
+    });
+
+    test('a stored sort naming a column that is gone reads as the drop-table order', () => {
+        treasureTracker.settings = { ...treasureTracker.settings, popupSort: { key: 'toString', dir: 'asc' } };
+        const popup = build();
+        expect(rowsText(popup)).toEqual(['5', '2', '7', '1']);
+    });
+
+    test('headings are buttons you can reach by keyboard, and the band’s tooltip mentions sorting', () => {
+        const popup = build();
+        const value = heading(popup, 'value');
+        expect(value.getAttribute('role')).toBe('button');
+        expect(value.style.cursor).toBe('pointer');
+        value.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        expect(rowsText(popup)).toEqual(['2', '1', '5', '7']);
+        expect(popup.querySelector('[data-role="opening-labels"]').title).toMatch(/sort/i);
+    });
+});
