@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Item tooltip profit follows the sell-tax setting
+
+With "Exclude sell tax" on, the item tooltip's craft Net and Profit lines now drop the tax like the skill tiles do and carry the same ⚠ marker, so a tile and its tooltip agree.
+
+### Tooltip decompose chain picks the best setup per hour
+
+The tooltip's Full decompose chain line now picks each step's catalyst and tea for gold per hour, like Best Items, and its per-item figure describes that same setup. Chain/hr (own stock) in Best Items moves with it.
+
 ### Show hidden brings hidden Best Items rows back
 
 Hidden rows now reappear where they rank, dimmed, with a ↺ to unhide each one, instead of landing below the 100-row cap where they could not be seen. The button also says how many hidden items match your current filters.
