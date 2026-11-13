@@ -130,6 +130,8 @@ function runArmed(actionTypeHrid, scrolls, run) {
  * @returns {{result: T, simulated: string[]}} `simulated` is empty when the figures are the real ones
  */
 export function runWithTileScrolls(actionTypeHrid, run) {
+    // No action type: nothing to arm (and nothing to key a simulation under)
+    if (!actionTypeHrid) return { result: run(), simulated: [] };
     return runArmed(actionTypeHrid, getTileScrolls(actionTypeHrid), run);
 }
 

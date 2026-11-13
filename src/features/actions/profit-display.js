@@ -23,10 +23,10 @@ import {
 import { MARKET_TAX, SELL_TAX_EXCLUDED_WARNING } from '../../utils/profit-constants.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
-import { loadoutSnapshot, scrollSimulator } from '../../utils/bundle-bridge.js';
-import bundledScrollSimulator from '../combat/scroll-simulator.js';
+import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
 import { SCROLL_CHIPS_CLASS, getSimulatedScrollNames, watchForScrollChanges } from './scroll-chips.js';
+import { getChosenScrolls } from './tile-scrolls.js';
 import { isPriceOverridden, isPriceEstimated, getPriceAgeString } from '../../utils/market-data.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 import {
@@ -226,10 +226,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
 
     // Arm scroll simulation before calculations
     const gatheringActionType = dataManager.getActionDetails(actionHrid)?.type;
-    dataManager.setScrollSimulation(
-        gatheringActionType,
-        (scrollSimulator() || bundledScrollSimulator).getScrollSetForActionType(gatheringActionType)
-    );
+    dataManager.setScrollSimulation(gatheringActionType, getChosenScrolls(gatheringActionType));
 
     // finally guarantees the simulation is cleared on every exit path (early returns, exceptions),
     // so phantom scroll buffs never leak into later calculations
@@ -849,10 +846,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
 
     // Arm scroll simulation before calculation
     const productionActionType = dataManager.getActionDetails(actionHrid)?.type;
-    dataManager.setScrollSimulation(
-        productionActionType,
-        (scrollSimulator() || bundledScrollSimulator).getScrollSetForActionType(productionActionType)
-    );
+    dataManager.setScrollSimulation(productionActionType, getChosenScrolls(productionActionType));
 
     // finally guarantees the simulation is cleared on every exit path (early returns, exceptions),
     // so phantom scroll buffs never leak into later calculations
