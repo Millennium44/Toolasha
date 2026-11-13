@@ -9,6 +9,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Loadouts warn about talismans that do nothing on the test server
 
 The Loadouts panel marks the selected loadout with ⚠ when one of its talismans was deleted, sits in a slot its belt does not have, or is the wrong kind (a skilling talisman in a combat loadout, or the reverse); hover for the reason.
+### Crops open their own gathering spot
+
+Items found in several gathering spots (Spaceberry, Star Fruit, Wheat, Sugar, Orange, the coffee beans and others) now link to their own dedicated spot rather than the mixed zone, which yields them faster. This affects "go to action", collection time-to-tier and the market's profit sort.
+
+### Talisman materials priced honestly on the test server
+
+Tester-shop prices no longer count as a belt's purchase cost unless you turn on tester-shop pricing. A craft cost built from an unpriced input (Dragon Leather from Dragon Hide) is flagged as incomplete. Eternal Milk's tooltip counts both its normal and rare drop.
 
 ### Talisman reroll advisor on the test server
 
