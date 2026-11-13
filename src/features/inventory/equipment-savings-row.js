@@ -90,6 +90,7 @@ import {
     ROW_COLORS,
 } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { isTestServer } from '../../utils/game-server.js';
 import { describeEnhancementSource, enhancementParamsFor } from '../enhancement/enhancement-params-source.js';
 // The one enhancement cost model: the shared protect-from sweep, and the shared
 // pricing rules. This card used to carry its own copy of both.
@@ -178,6 +179,11 @@ const SLOTS = [
     'back',
     'belt',
 ];
+
+/** The slots drawn as sections: the belt slot exists on the test server only */
+function drawnSlots() {
+    return isTestServer() ? SLOTS : SLOTS.filter((slot) => slot !== 'belt');
+}
 
 /** A slot's name as a heading */
 const slotLabel = (slot) => slot.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -4861,12 +4867,12 @@ export const equipmentSavingsPanel = createPanel({
             }
             for (const target of plan.targets) list.appendChild(targetCard(target));
         } else {
-            for (const slot of SLOTS) list.appendChild(slotSection(slot, plan.targets));
+            for (const slot of drawnSlots()) list.appendChild(slotSection(slot, plan.targets));
 
             // Anything watched whose slot is not in the list above — a slot the
             // game added, or a piece whose type this does not know. Better an
             // odd section than a target that silently disappears.
-            const stray = plan.targets.filter((target) => !SLOTS.includes(slotOf(target.itemHrid)));
+            const stray = plan.targets.filter((target) => !drawnSlots().includes(slotOf(target.itemHrid)));
             for (const target of stray) list.appendChild(targetCard(target));
         }
 

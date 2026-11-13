@@ -8,6 +8,7 @@ import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { runInBackground } from '../../utils/background-work.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { isTestServer } from '../../utils/game-server.js';
 import {
     missingMaterialsButton,
     dungeonTrackerStorage,
@@ -4550,10 +4551,12 @@ class CombatSimUI {
 
         upgradeContent.appendChild(triggerBar);
         // The Talisman lines section (test server only, filled while its setting is on): see `_syncTalismanRanking`
-        const talismanRankBox = document.createElement('div');
-        talismanRankBox.id = 'mwi-csim-talisman-rank-box';
-        talismanRankBox.style.cssText = 'flex-shrink:0;';
-        upgradeContent.appendChild(talismanRankBox);
+        if (isTestServer()) {
+            const talismanRankBox = document.createElement('div');
+            talismanRankBox.id = 'mwi-csim-talisman-rank-box';
+            talismanRankBox.style.cssText = 'flex-shrink:0;';
+            upgradeContent.appendChild(talismanRankBox);
+        }
         const analysisNote = document.createElement('div');
         analysisNote.id = 'mwi-csim-analysis-note';
         analysisNote.style.cssText = 'display:none; flex-shrink:0; padding:6px 14px 0; color:#ff9800; font-size:12px;';

@@ -141,6 +141,8 @@ const mocks = vi.hoisted(() => ({
     /** `combatSim_talismanLineRanking`, and whether the section may be drawn (test server + talisman tables) */
     talismanRanking: true,
     talismanAvailable: false,
+    /** `isTestServer()` */
+    testServer: true,
     settingChangeCallbacks: new Map(),
     /** The `getSettingValue` mock's `profitCalc_keyPricingMode`, for the pricing quick-settings row */
     keyPricingMode: 'ask',
@@ -626,6 +628,10 @@ vi.mock('../../utils/ability-cost-calculator.js', () => ({
 }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: () => ({}) }));
 // The section itself is tested in talisman-line-ranking-ui.test.js; here only how the panel builds and drops it
+vi.mock('../../utils/game-server.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    isTestServer: () => mocks.testServer,
+}));
 vi.mock('./talisman-line-ranking-ui.js', () => ({
     talismanRankingAvailable: () => mocks.talismanAvailable,
     TalismanLineRankingSection: class {
@@ -18880,8 +18886,20 @@ describe('the Talisman lines section follows its setting and the server', () => 
         ui.destroy();
         mocks.talismanRanking = true;
         mocks.talismanAvailable = false;
+        mocks.testServer = true;
     });
     const drawn = () => ui.panel.querySelector('.mwi-csim-talisman-rank-test');
+
+    test('the empty rank box exists on the test server only', () => {
+        mocks.testServer = true;
+        ui.buildPanel();
+        expect(ui.panel.querySelector('#mwi-csim-talisman-rank-box')).not.toBeNull();
+        ui.destroy();
+        mocks.testServer = false;
+        ui.buildPanel();
+        expect(ui.panel.querySelector('#mwi-csim-talisman-rank-box')).toBeNull();
+        expect(ui._talismanRanking).toBeNull();
+    });
 
     test('live server (no talisman tables): nothing is drawn', () => {
         mocks.talismanAvailable = false;

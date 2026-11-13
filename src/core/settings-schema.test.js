@@ -9,8 +9,9 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import process from 'node:process';
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, vi } from 'vitest';
 import { getSettingDefinition } from './settings-schema.js';
+import { isTestServer } from '../utils/game-server.js';
 
 describe('character card extra auras', () => {
     test('the setting names the external host, equipped slots, cap, and renderer limitation', () => {
@@ -426,5 +427,31 @@ describe('advisor route pricing setting', () => {
         expect(setting.label).toContain('preferred route');
         expect(setting.help).toContain('Cost, ranking and shopping buttons follow that route');
         expect(setting.help).toContain('Rerun the analysis');
+    });
+});
+
+describe('Major Patch 1 settings stay off the live settings UI', () => {
+    const ids = [
+        'skillingOptimizer_talismans',
+        'combatSim_talismanLineRanking',
+        'combatSim_talismanBalanceXp',
+        'combatSim_talismanBalanceProfit',
+        'combatSim_talismanBalanceDps',
+    ];
+
+    test.each(ids)('%s is hidden exactly when this is not the test server, with its default kept', (id) => {
+        const setting = getSettingDefinition(id);
+        expect(setting.hidden).toBe(!isTestServer());
+        expect(setting.default).not.toBeUndefined();
+    });
+    test.each(ids)('%s is shown when the page is on the test server', async (id) => {
+        vi.resetModules();
+        vi.stubGlobal('location', { hostname: 'test.milkywayidle.com' });
+        try {
+            const fresh = await import('./settings-schema.js');
+            expect(fresh.getSettingDefinition(id).hidden).toBe(false);
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
 });
