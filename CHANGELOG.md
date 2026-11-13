@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Skill page tiles can show your simulated scrolls
+
+With scrolls chosen in an action panel's scroll chips, the skill page's action tiles now show Profit/hr, Exp/hr and Eff. XP/hr as if those scrolls were active, marked 📜. A "Scrolls" button in the page header turns it off and on (a setting, on by default).
+
 ### Talisman ranking no longer freezes the game
 
 Building a Budget set in the Combat Sim's Talisman lines locked the game tab for most of a minute while it priced talismans in orbs. That work now runs in short slices, so the game stays responsive; the recommended sets and costs are unchanged.
