@@ -2971,7 +2971,9 @@ class ConsumablesPanel {
     _cycleLabRuns() {
         const steps = [1, 3, 5, 10, 25];
         this._labRuns = steps[(steps.indexOf(this.labRuns) + 1) % steps.length];
-        storage.set('consumablesLabRuns', this._labRuns, 'settings').catch(() => {});
+        // Immediate: the Labyrinth's "Buy missing supplies" reads this from storage, and a debounced write
+        // would hand a press in the next 3 s the old target
+        storage.set('consumablesLabRuns', this._labRuns, 'settings', true).catch(() => {});
         this._render();
     }
 

@@ -67,8 +67,9 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         ready: Promise.resolve(true),
         get: async (key, _name, fallback = null) => store.data[key] ?? fallback,
-        set: async (key, value) => {
+        set: async (key, value, _name, immediate = false) => {
             store.data[key] = value;
+            store.immediate = { ...(store.immediate || {}), [key]: immediate };
             return true;
         },
         delete: async (key) => {
@@ -174,6 +175,25 @@ const resolvedSnapshotEquipment = (snapshot) => {
 // getter left stubbed answers for every test after it.
 afterEach(() => {
     vi.restoreAllMocks();
+});
+
+describe('lab run target', () => {
+    test('cycling the run target writes it immediately, so the supplies button reads the new one at once', async () => {
+        const render = consumablesPanel._render;
+        const runs = consumablesPanel._labRuns;
+        consumablesPanel._render = () => {};
+        try {
+            consumablesPanel._labRuns = 5;
+            consumablesPanel._cycleLabRuns();
+            await Promise.resolve();
+            expect(store.data.consumablesLabRuns).toBe(10);
+            expect(store.immediate.consumablesLabRuns).toBe(true);
+        } finally {
+            consumablesPanel._render = render;
+            consumablesPanel._labRuns = runs;
+            delete store.data.consumablesLabRuns;
+        }
+    });
 });
 
 describe('the panel notices a move of the Buy side', () => {
