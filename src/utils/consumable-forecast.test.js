@@ -56,8 +56,18 @@ describe('an estimated configured price is carried to every figure built on it',
         expect(priced({ priceEstimated: true }).priceEstimated).toBe(true);
         expect(priced({}).priceEstimated).toBe(false);
         expect(forecast({ ...drink, priceValue: null, priceEstimated: true }).priceEstimated).toBe(false);
-        // an entry with no configured price (a key) has no estimate to carry
+        // an entry with no configured price (a key, a party member) ignores the entry flag...
         expect(forecast({ ...drink, priceEstimated: true }).priceEstimated).toBe(false);
+    });
+
+    test('an unconfigured entry priced at a value-map ask is flagged, and its refill too', () => {
+        const member = forecast({ ...drink, inventoryAmount: 0 }, { ask: 50, bid: 45, askEstimated: true });
+        expect(member.priceEstimated).toBe(true);
+        expect(refillFor(member, 86400).estimated).toBe(true);
+        // a listed ask is firm
+        expect(forecast({ ...drink }, { ask: 50, bid: 45, askEstimated: false }).priceEstimated).toBe(false);
+        // the bid side alone being estimated does not mark an ask-priced figure
+        expect(forecast({ ...drink }, { ask: 50, bid: 45, bidEstimated: true }).priceEstimated).toBe(false);
     });
 
     test('refillFor and refillAll count the estimated purchase, not an unneeded or unpriced one', () => {

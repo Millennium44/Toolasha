@@ -80,7 +80,9 @@ export function forecast(entry, prices = null) {
         perDay,
         secondsLeft,
         price,
-        priceEstimated: price !== null && configured && Boolean(entry.priceEstimated),
+        // An entry without a configured figure (party members, keys) is priced at the raw ask, which is an
+        // estimate exactly when that side was filled from the game's market value
+        priceEstimated: price !== null && (configured ? Boolean(entry.priceEstimated) : Boolean(prices?.askEstimated)),
         askPrice,
         costPerDay: !rateKnown || price === null ? null : perDay * price,
         costPerDaySides: { ask: side(prices?.ask), bid: side(prices?.bid) },
