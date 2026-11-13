@@ -164,6 +164,13 @@ push to `main` or merge.
   `bash scripts/land-stack.sh [--push] <pr> ...` does this in `../Toolasha-integ`: it checks each PR (open, CI,
   Codex review or carry-over, no unresolved threads), cherry-picks them in order with `HUSKY=0` (restacking a PR cut from an older head of the PR below it), verifies each
   stacked patch equals its PR head's, runs the full gates, and with `--push` pushes the PR branches atomically, then main (one push for both makes GitHub close the PRs instead of merging them).
+  A PR whose branch has merge commits (Auto-fix merges main into it to clear a changelog conflict) is not
+  cherry-picked: the script merges it with `--no-ff` onto the stack, rebuilds `CHANGELOG.md` as the stack's file plus
+  the PR's own entries (`node scripts/changelog-pr-entries.mjs --pr <ref> [--base origin/main] [--write]`, which also
+  fixes a conflicted changelog by hand: the `union` driver drops blank lines and has attached a body to the wrong
+  heading), checks the merge changed nothing outside `CHANGELOG.md` beyond the PR's own diff against main, and pushes
+  only `main`; the PR head is then contained in `main`, so GitHub marks it merged. Such a PR cannot be stacked on
+  another PR.
 
 ### Briefing another agent
 

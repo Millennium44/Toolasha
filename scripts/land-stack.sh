@@ -8,6 +8,13 @@
 # A PR cut from an OLDER head of that PR (it was rebased or grew commits since) is restacked: only its own
 # commits are replayed onto the parent's current head, and --push force-with-lease's its branch there.
 #
+# A PR whose branch contains merge commits (Auto-fix resolves conflicts by merging main into it) cannot be
+# cherry-picked. It is landed as a real merge instead: `git merge --no-ff refs/pr/<n>` onto the stack, CHANGELOG.md
+# rebuilt as the stack's own file plus the PR's entries (scripts/changelog-pr-entries.mjs, the union driver mangles
+# them), then the same gates. Its branch is not pushed; main's push contains the PR head, so GitHub marks it merged.
+# Its tree outside CHANGELOG.md is checked to be the stack plus exactly the PR's own changes (see
+# check_patch_identity). A merge PR cannot be stacked on another PR, nor another PR on it.
+#
 # Works in the integration worktree ../Toolasha-integ (next to the main checkout), so the main
 # checkout and its dev build stay untouched. Without --push it stops after the full gates and prints
 # the plan. With --push it re-checks that nothing moved, then pushes the PR branches in one atomic push and then main:
@@ -65,6 +72,7 @@ leave_integ_clean() {
     echo "==> Integration worktree had uncommitted changes on exit; restoring tracked files:" >&2
     git -C "$INTEG" diff --stat >&2 || true
     git -C "$INTEG" cherry-pick --abort >/dev/null 2>&1 || true
+    git -C "$INTEG" merge --abort >/dev/null 2>&1 || true
     git -C "$INTEG" checkout -q -- . 2>/dev/null || git -C "$INTEG" reset -q --hard 2>/dev/null || true
 }
 trap leave_integ_clean EXIT
@@ -74,7 +82,8 @@ OWNER="${REPO%%/*}"
 NAME="${REPO##*/}"
 
 # Per-PR state, indexed by PR number.
-declare -A HEAD_SHA BRANCH STACKED_SHA PRE_SHA ENTRIES PARENT PAST_HEADS
+declare -A HEAD_SHA BRANCH STACKED_SHA PRE_SHA ENTRIES PARENT PAST_HEADS MERGE_PR
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Every head a PR has had that GitHub still records: its current head plus both sides of each force push.
 # Cached per PR in PAST_HEADS. Objects that cannot be fetched are dropped. Run inside a checkout.
@@ -166,7 +175,15 @@ check_pr_state() { # <pr>
     BRANCH[$n]="$ref"
     git -C "$INTEG" fetch -q origin "+pull/$n/head:refs/pr/$n"
     [ "$(git -C "$INTEG" rev-parse "refs/pr/$n")" = "$oid" ] || die "PR #$n head moved while fetching; retry"
-    [ -z "$(git -C "$INTEG" rev-list --merges "origin/main..refs/pr/$n")" ] || die "PR #$n contains merge commits"
+    if [ -n "$(git -C "$INTEG" rev-list --merges "origin/main..refs/pr/$n")" ]; then
+        # Landed as a merge, not cherry-picked (see the header)
+        [ -z "${PARENT[$n]:-}" ] || die "PR #$n contains merge commits and is stacked on #${PARENT[$n]}; land it alone"
+        MERGE_PR[$n]=1
+        echo "PR #$n contains merge commits; it will be landed as a merge"
+    fi
+    if [ -n "${PARENT[$n]:-}" ] && [ -n "${MERGE_PR[${PARENT[$n]}]:-}" ]; then
+        die "PR #$n is stacked on #${PARENT[$n]}, which is landed as a merge; land them separately"
+    fi
 }
 
 # --- b. CI ------------------------------------------------------------------------------------------
@@ -279,11 +296,37 @@ pick_commit() { # <commit>
     die "cherry-pick of $1 conflicts in: ${files:-<unknown>}"
 }
 
+# A PR with merge commits: merge its head onto the stack, then make CHANGELOG.md the stack's own file plus the
+# PR's entries. The union driver would keep both sides of the file but mangle it. Run inside the integration worktree.
+merge_pr() { # <pr>
+    local n="$1" out
+    PRE_SHA[$n]="$(git rev-parse HEAD)"
+    if ! git merge --no-ff --no-commit "refs/pr/$n" >/dev/null 2>&1; then
+        local files
+        files="$(git diff --name-only --diff-filter=U)"
+        git merge --abort 2>/dev/null || true
+        die "merging PR #$n onto the stack conflicts in: ${files:-<unknown>}"
+    fi
+    git rev-parse -q --verify MERGE_HEAD >/dev/null || die "PR #$n is already contained in the stack; nothing to merge"
+    # The base is the stack so far (HEAD is unchanged until the commit), so earlier PRs' entries are kept
+    out="$(node "$SCRIPT_DIR/changelog-pr-entries.mjs" --pr "refs/pr/$n" --base HEAD --write)" ||
+        { git merge --abort 2>/dev/null || true; die "could not rebuild CHANGELOG.md for PR #$n: $out"; }
+    ENTRIES[$n]="$(grep -c '^added: ' <<<"$out" || true)"
+    git add CHANGELOG.md
+    HUSKY=0 git commit -q --no-verify -m "Merge pull request #$n: ${BRANCH[$n]}" || die "merge commit failed for PR #$n"
+    STACKED_SHA[$n]="$(git rev-parse HEAD)"
+    echo "PR #$n merged: ${PRE_SHA[$n]:0:9} -> ${STACKED_SHA[$n]:0:9} (${ENTRIES[$n]} changelog entries)"
+}
+
 stack_prs() {
     cd "$INTEG"
     git checkout -q --detach origin/main
     local n mb c commits last
     for n in "${PRS[@]}"; do
+        if [ -n "${MERGE_PR[$n]:-}" ]; then
+            merge_pr "$n"
+            continue
+        fi
         mb="$(range_base "$n")"
         note_restack "$n" "$mb"
         PRE_SHA[$n]="$(git rev-parse HEAD)"
@@ -313,6 +356,18 @@ stack_prs() {
 check_patch_identity() {
     local n mb a b
     for n in "${PRS[@]}"; do
+        if [ -n "${MERGE_PR[$n]:-}" ]; then
+            # What the merge changed on the stack must be what the PR changed relative to main (its own work and
+            # any conflict resolutions in its merge commits), nothing more or less. Patch ids ignore line numbers,
+            # so the stack having moved is fine. Worst case is a false refusal when an earlier PR of this run
+            # touched the same lines; never a false pass.
+            mb="$(git merge-base origin/main "refs/pr/$n")"
+            a="$(patch_id "$mb" "refs/pr/$n" CHANGELOG.md)"
+            b="$(patch_id "${PRE_SHA[$n]}" "${STACKED_SHA[$n]}" CHANGELOG.md)"
+            [ "$a" = "$b" ] || die "PR #$n: the merge changed the stack differently from the PR's own changes outside CHANGELOG.md"
+            echo "PR #$n: merge changes equal the PR's own changes outside CHANGELOG.md"
+            continue
+        fi
         mb="$(range_base "$n")"
         a="$(patch_id "$mb" "refs/pr/$n" CHANGELOG.md)"
         b="$(patch_id "${PRE_SHA[$n]}" "${STACKED_SHA[$n]}" CHANGELOG.md)"
@@ -356,7 +411,11 @@ print_plan() {
     echo
     note "Plan"
     for n in "${PRS[@]}"; do
-        echo "  PR #$n  ${BRANCH[$n]}: ${HEAD_SHA[$n]:0:9} -> ${STACKED_SHA[$n]:0:9}"
+        if [ -n "${MERGE_PR[$n]:-}" ]; then
+            echo "  PR #$n  ${BRANCH[$n]}: merged as ${STACKED_SHA[$n]:0:9} (branch stays at ${HEAD_SHA[$n]:0:9})"
+        else
+            echo "  PR #$n  ${BRANCH[$n]}: ${HEAD_SHA[$n]:0:9} -> ${STACKED_SHA[$n]:0:9}"
+        fi
     done
     echo "  main: ${MAIN_OLD:0:9} -> ${TOP:0:9}"
 }
@@ -374,11 +433,17 @@ push_all() {
     # Two pushes, branches first. A single push that moves the branches and main together makes GitHub
     # CLOSE the PRs instead of marking them merged (seen 2026-11-10 with #907/#908/#886): it has to see each
     # PR head updated before main contains it.
-    local args=(--atomic origin)
+    # A PR landed as a merge keeps its branch: main will contain its head, which is what marks it merged.
+    local args=(--atomic origin) pushed=0
     for n in "${PRS[@]}"; do
+        [ -z "${MERGE_PR[$n]:-}" ] || continue
         args+=("--force-with-lease=refs/heads/${BRANCH[$n]}:${HEAD_SHA[$n]}")
+        pushed=1
     done
-    for n in "${PRS[@]}"; do args+=("${STACKED_SHA[$n]}:refs/heads/${BRANCH[$n]}"); done
+    for n in "${PRS[@]}"; do
+        [ -z "${MERGE_PR[$n]:-}" ] || continue
+        args+=("${STACKED_SHA[$n]}:refs/heads/${BRANCH[$n]}")
+    done
     # A stacked PR targets the branch below it, which main's push never fills, so GitHub would leave it open; and
     # once main holds its commits GitHub refuses to retarget it ("no new commits"). Retarget it now, while it can.
     for n in "${PRS[@]}"; do
@@ -386,8 +451,10 @@ push_all() {
         gh pr edit "$n" --base main >/dev/null || die "could not retarget stacked PR #$n to main; nothing pushed"
         echo "  PR #$n retargeted to main"
     done
-    note "Pushing the PR branches (atomic)"
-    git push "${args[@]}"
+    if [ "$pushed" -eq 1 ]; then
+        note "Pushing the PR branches (atomic)"
+        git push "${args[@]}"
+    fi
     note "Pushing main"
     git push origin "--force-with-lease=refs/heads/main:$MAIN_OLD" "$TOP:refs/heads/main" ||
         die "main push refused (moved?). PR branches already point at the stacked commits; rerun to land them."
