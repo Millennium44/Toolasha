@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Optimizer talisman ranking uses the loadout you picked
+
+The Skilling Optimizer's Talismans section now ranks on the loadout chosen in its Loadout dropdown, belt and talismans included, and its header names which loadout it read. With no loadout picked it uses the one the skill equips, as before.
+
 ### Skilling Optimizer tool label no longer overlaps
 
 The tool row's label now reads "Tool" (hover for the full name) instead of a long "Cheesesmithing Tool" that ran into the item name.
