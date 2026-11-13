@@ -189,6 +189,26 @@ export function toSimTalismans(talismans) {
 }
 
 /**
+ * One scaled line's value as text: `+3.77%` (percent lines in percent).
+ * @param {{detail: Object, value: number}} scaled - From {@link scaleTalismanModifier}
+ * @returns {string}
+ */
+export function describeScaledValue(scaled) {
+    const trim = (n) => String(Number(n.toFixed(2)));
+    const shown = scaled.detail.isPercent ? `${trim(scaled.value * 100)}%` : trim(scaled.value);
+    return `${scaled.value > 0 ? '+' : ''}${shown}`;
+}
+
+/**
+ * One scaled line as text: `Name +value`.
+ * @param {{detail: Object, value: number}} scaled - From {@link scaleTalismanModifier}
+ * @returns {string}
+ */
+export function describeScaledLine(scaled) {
+    return `${scaled.detail.name} ${describeScaledValue(scaled)}`;
+}
+
+/**
  * A sim player's talismans as text lines for display, scaled by the belt it wears: one entry per slotted
  * talisman the belt has room for, each with `Name +value` lines. Empty off the test server and without a belt.
  * @param {Array<Object>|null|undefined} talismans - `dto.talismans`
@@ -210,9 +230,7 @@ export function describeSimTalismans(talismans, belt, itemDetailMap, modifierDet
         for (const modifier of talisman.modifiers || []) {
             const scaled = scaleTalismanModifier(modifier, modifierDetailMap, power);
             if (!scaled) continue;
-            const trim = (n) => String(Number(n.toFixed(2)));
-            const shown = scaled.detail.isPercent ? `${trim(scaled.value * 100)}%` : trim(scaled.value);
-            lines.push(`${scaled.detail.name} ${scaled.value > 0 ? '+' : ''}${shown}`);
+            lines.push(describeScaledLine(scaled));
         }
         out.push({ slotIndex: slot, lines });
     }

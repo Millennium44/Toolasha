@@ -72,6 +72,7 @@ export function buildGameDataPayload() {
         labyrinthCrateDetailMap: clientData.labyrinthCrateDetailMap,
         levelExperienceTable: clientData.levelExperienceTable,
         talismanModifierDetailMap: clientData.talismanModifierDetailMap,
+        talismanInfo: clientData.talismanInfo,
         // Talismans exist on the test server only. The engine runs in a worker, where the host is not visible, so
         // it takes the answer from here: a build saved on the test server fights without talismans on the live one.
         talismansEnabled: isTestServer(),

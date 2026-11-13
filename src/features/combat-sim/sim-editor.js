@@ -45,7 +45,23 @@ import {
 } from '../../utils/shared-profile-status.js';
 import { fetchLoadout, getLoadout, isViewLoadoutAvailable, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
 import { addStyles } from '../../utils/dom.js';
-import { describeSimTalismans } from '../../utils/talisman-bonuses.js';
+import {
+    describeScaledValue,
+    getBeltSlotCount,
+    getTalismanPower,
+    scaleTalismanModifier,
+    toSimTalismans,
+} from '../../utils/talisman-bonuses.js';
+import { COMBAT_TALISMAN_TYPE, talismanLimits, talismanLines } from '../../utils/talisman-line-sets.js';
+import { isTestServer } from '../../utils/game-server.js';
+import {
+    addTalismanLine,
+    removeTalismanLine,
+    setTalismanLineGrade,
+    setTalismanLineType,
+    talismanInSlot,
+    talismanListSignature,
+} from './sim-talisman-edit.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { MAX_TRIGGERS, triggersForStorage } from './trigger-tuning.js';
 import { applyTriggerRows, rowSignature } from './lab-condition-search.js';
@@ -2999,6 +3015,177 @@ export class SimEditor {
         this._wireEditorEvents(editorArea, dto);
     }
 
+    /**
+     * What the talisman rows offer: the game's grade and line limits, and the combat lines a talisman can roll.
+     * @private
+     */
+    _talismanChoices(gameData) {
+        const info = gameData?.talismanInfo ?? dataManager.getInitClientData?.()?.talismanInfo;
+        return {
+            limits: talismanLimits(info),
+            lines: talismanLines(gameData?.talismanModifierDetailMap, COMBAT_TALISMAN_TYPE),
+        };
+    }
+
+    /**
+     * The copy "Reset to Current" restores and the label diffs: the worn loadout's baseline, else the build as loaded.
+     * @private
+     */
+    _talismanReference(playerHrid) {
+        const baseline = this.getLoadoutNameFor(playerHrid) ? this._loadoutBaselineDTOs?.[playerHrid] : null;
+        return baseline || this._originalDTOs?.[playerHrid] || null;
+    }
+
+    /**
+     * The belt's talisman rows, editable: per slot the belt has, up to the game's line limit of lines (type and
+     * grade), each with its value scaled by this belt. Slots the belt lacks are not drawn (and the engine ignores
+     * them); an empty slot offers "+ line". Empty off the test server and without a belt or slots.
+     * @param {Object} dto - Player DTO (its `talismans` is what is edited)
+     * @param {Object} gameData - The game data payload
+     * @param {{hrid: string, enhancementLevel?: number}} belt - The worn belt
+     * @returns {string} HTML
+     * @private
+     */
+    _renderTalismanRows(dto, gameData, belt) {
+        const modifierDetailMap = gameData?.talismanModifierDetailMap;
+        if (!isTestServer() || !modifierDetailMap || !belt?.hrid) return '';
+        const itemDetailMap = gameData.itemDetailMap || {};
+        const beltRef = { itemHrid: belt.hrid, enhancementLevel: belt.enhancementLevel || 0 };
+        const slots = getBeltSlotCount(beltRef, itemDetailMap);
+        if (slots === 0) return '';
+        const power = getTalismanPower(beltRef, itemDetailMap, gameData.enhancementLevelTotalBonusMultiplierTable);
+        const { limits, lines } = this._talismanChoices(gameData);
+        const reference = this._talismanReference(this._activeEditPlayer);
+        const unchanged = talismanListSignature(dto.talismans) === talismanListSignature(reference?.talismans);
+        const btn = `background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;`;
+        const field = `background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:3px; padding:1px 3px; font-size:12px;`;
+
+        let html = editorRowOpen(0);
+        html += `<span style="color:#888; width:70px; flex-shrink:0; padding-left:8px;">Talismans</span>`;
+        html += `<span style="flex:1;"></span>`;
+        html += `<button data-talisman-reset ${unchanged ? 'disabled' : ''} style="${btn}${unchanged ? ' opacity:0.5; cursor:default;' : ''}">Reset to Current</button>`;
+        html += '</div>';
+
+        for (let slot = 1; slot <= slots; slot++) {
+            const record = talismanInSlot(dto.talismans, slot);
+            const worn = Array.isArray(record?.modifiers) ? record.modifiers : [];
+            const used = new Set(worn.map((m) => m?.hrid));
+            const canAdd = worn.length < limits.linesPerTalisman && lines.some((d) => !used.has(d.hrid));
+            html += editorRowOpen(slot);
+            html += `<span style="color:#888; width:70px; flex-shrink:0; padding-left:8px;">Talisman ${slot}</span>`;
+            html += `<span style="color:${worn.length ? '#888' : '#555'}; flex:1; min-width:0; ${worn.length ? '' : 'font-style:italic;'}">${
+                worn.length ? '' : record ? 'No lines' : 'Empty'
+            }</span>`;
+            html += `<button data-talisman-add="${slot}" ${canAdd ? '' : 'disabled'} style="${btn}${canAdd ? '' : ' opacity:0.5; cursor:default;'}">+ line</button>`;
+            html += '</div>';
+
+            for (const [lineIndex, modifier] of worn.entries()) {
+                const key = `${slot}:${lineIndex}`;
+                const detail = modifierDetailMap[modifier?.hrid];
+                const scaled = scaleTalismanModifier(modifier, modifierDetailMap, power);
+                html += editorRowOpen(slot);
+                html += `<span style="width:70px; flex-shrink:0; padding-left:16px;"></span>`;
+                html += `<select data-talisman-type="${key}" style="${field} flex:1; min-width:0;">`;
+                // The current type is always an option, so a line the combat list does not carry (another talisman
+                // type, or one this build does not know) is kept as it is
+                const options = lines.filter((d) => d.hrid === modifier?.hrid || !used.has(d.hrid));
+                if (!options.some((d) => d.hrid === modifier?.hrid)) {
+                    options.unshift({ hrid: modifier?.hrid, name: detail?.name || String(modifier?.hrid || '?') });
+                }
+                for (const option of options) {
+                    html += `<option value="${escapeHtml(option.hrid)}"${option.hrid === modifier?.hrid ? ' selected' : ''}>${escapeHtml(option.name || option.hrid)}</option>`;
+                }
+                html += '</select>';
+                html += `<select data-talisman-grade="${key}" style="${field}">`;
+                const shownGrade = Number.isFinite(Number(modifier?.grade)) ? Math.floor(Number(modifier.grade)) : 1;
+                for (let grade = 1; grade <= Math.max(limits.maxGrade, shownGrade); grade++) {
+                    html += `<option value="${grade}"${grade === shownGrade ? ' selected' : ''}>G${grade}</option>`;
+                }
+                html += '</select>';
+                html += `<span data-talisman-value="${key}" style="color:${GAME_COLORS.textDim}; font-size:11px; min-width:4.5em; text-align:right;">${
+                    scaled ? escapeHtml(describeScaledValue(scaled)) : ''
+                }</span>`;
+                html += `<button data-talisman-remove="${key}" title="Remove this line" style="${btn}">&times;</button>`;
+                html += '</div>';
+            }
+        }
+        return html;
+    }
+
+    /**
+     * Redraw only the talisman rows in place (a line edit, or the belt's level changing their scaling).
+     * @private
+     */
+    _redrawTalismans(box, dto) {
+        const belt = dto.equipment?.['/equipment_types/belt'];
+        const gameData = buildGameDataPayload();
+        box.innerHTML = gameData && belt ? this._renderTalismanRows(dto, gameData, belt) : '';
+    }
+
+    /**
+     * Put the active player's talismans back to the reference copy. The live character follows the game (as the
+     * house, shrines and gear levels do): its reference is what is slotted now, and the build's own copy moves with it
+     * so the label does not read the followed value as an edit.
+     * @private
+     */
+    _resetTalismans(dto) {
+        const playerHrid = this._activeEditPlayer;
+        const original = this._originalDTOs?.[playerHrid];
+        let source = this._talismanReference(playerHrid)?.talismans;
+        if (playerHrid === this._selfHrid && original && !this.getLoadoutNameFor(playerHrid)) {
+            const live = toSimTalismans(dataManager.getSlottedTalismans?.() || []);
+            if (live.length > 0) original.talismans = structuredClone(live);
+            else delete original.talismans;
+            source = original.talismans;
+        }
+        if (Array.isArray(source) && source.length > 0) dto.talismans = structuredClone(source);
+        else delete dto.talismans;
+    }
+
+    /**
+     * Wire the talisman rows once per editor render; the rows themselves are redrawn in place.
+     * @private
+     */
+    _wireTalismanEvents(box, dto) {
+        const edit = (change) => {
+            const gameData = buildGameDataPayload();
+            if (!gameData) return;
+            const { limits, lines } = this._talismanChoices(gameData);
+            const next = change(limits, lines);
+            if (next) dto.talismans = next;
+            this._redrawTalismans(box, dto);
+        };
+        const parse = (value) => String(value).split(':').map(Number);
+        box.addEventListener('change', (event) => {
+            const target = event.target;
+            if (target.dataset.talismanType) {
+                const [slot, index] = parse(target.dataset.talismanType);
+                edit(() => setTalismanLineType(dto.talismans, slot, index, target.value));
+            } else if (target.dataset.talismanGrade) {
+                const [slot, index] = parse(target.dataset.talismanGrade);
+                edit((limits) => setTalismanLineGrade(dto.talismans, slot, index, target.value, limits.maxGrade));
+            }
+        });
+        box.addEventListener('click', (event) => {
+            const button = event.target.closest?.('button');
+            if (!button || button.disabled) return;
+            if (button.dataset.talismanAdd) {
+                const slot = Number(button.dataset.talismanAdd);
+                edit((limits, lines) => {
+                    const used = new Set((talismanInSlot(dto.talismans, slot)?.modifiers || []).map((m) => m?.hrid));
+                    const pick = lines.find((d) => !used.has(d.hrid));
+                    return pick ? addTalismanLine(dto.talismans, slot, pick.hrid, 3, limits) : null;
+                });
+            } else if (button.dataset.talismanRemove) {
+                const [slot, index] = parse(button.dataset.talismanRemove);
+                edit(() => removeTalismanLine(dto.talismans, slot, index));
+            } else if (button.dataset.talismanReset !== undefined) {
+                this._resetTalismans(dto);
+                this._redrawTalismans(box, dto);
+            }
+        });
+    }
+
     /** @private */
     _renderEquipmentSection(dto, gameData) {
         const itemDetailMap = gameData.itemDetailMap || {};
@@ -3073,22 +3260,8 @@ export class SimEditor {
             html += '</div>';
 
             if (slotType === '/equipment_types/belt') {
-                // Read-only: the talismans the belt wears, scaled by this belt (changing the belt rescales them)
-                const worn = describeSimTalismans(
-                    dto.talismans,
-                    { itemHrid: equip.hrid, enhancementLevel: equip.enhancementLevel },
-                    itemDetailMap,
-                    gameData.talismanModifierDetailMap,
-                    gameData.enhancementLevelTotalBonusMultiplierTable
-                );
-                for (const talisman of worn) {
-                    html += editorRowOpen(equipRow++);
-                    html += `<span style="color:#888; width:70px; flex-shrink:0; padding-left:8px;">Talisman ${talisman.slotIndex}</span>`;
-                    html += `<span data-talisman-slot="${talisman.slotIndex}" style="color:#e0e0e0; flex:1; min-width:0;">${escapeHtml(
-                        talisman.lines.join(', ') || 'No lines'
-                    )}</span>`;
-                    html += '</div>';
-                }
+                // The talismans the belt wears: editable, scaled by this belt (changing the belt rescales them)
+                html += `<div data-talisman-section>${this._renderTalismanRows(dto, gameData, equip)}</div>`;
             }
         }
 
@@ -4661,6 +4834,9 @@ export class SimEditor {
             }
         });
 
+        const talismanBox = editorArea.querySelector('[data-talisman-section]');
+        if (talismanBox) this._wireTalismanEvents(talismanBox, dto);
+
         editorArea.querySelectorAll('[data-enhance-slot]').forEach((input) => {
             input.addEventListener('change', () => {
                 const slotType = input.dataset.enhanceSlot;
@@ -4669,6 +4845,8 @@ export class SimEditor {
                 if (dto.equipment[slotType]) {
                     dto.equipment[slotType].enhancementLevel = val;
                 }
+                // The belt's level scales the talisman lines
+                if (slotType === '/equipment_types/belt' && talismanBox) this._redrawTalismans(talismanBox, dto);
             });
         });
 
@@ -5213,6 +5391,10 @@ export class SimEditor {
             if (origVal !== editVal) {
                 changes.push(`CB ${label} ${origVal}\u2192${editVal}`);
             }
+        }
+
+        if (talismanListSignature(original.talismans) !== talismanListSignature(edited.talismans)) {
+            changes.push('Talismans');
         }
 
         if (achievementLabel) changes.push(achievementLabel);
