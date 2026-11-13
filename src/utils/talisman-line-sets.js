@@ -290,6 +290,8 @@ export function buildRecommendedSet(
             significant: Boolean(entry.row.significant),
             special: Boolean(entry.row.special),
             assumedLinear: false,
+            // A gain that rests on a running cost counted as free: marked, never presented as a figure
+            ...(entry.row.costUnpriced?.length ? { costUnpriced: entry.row.costUnpriced } : {}),
         };
         member.copies++;
         member.value += entry.marginal;
