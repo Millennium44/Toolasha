@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.86.1 -->
+
 ### Item tooltip profit follows the sell-tax setting
 
 With "Exclude sell tax" on, the item tooltip's craft Net and Profit lines now drop the tax like the skill tiles do and carry the same ⚠ marker, so a tile and its tooltip agree.
@@ -7563,49 +7565,46 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.86.1](https://github.com/Millennium44/Toolasha/compare/v3.86.0...v3.86.1) (2026-11-13)
 
-
 ### Bug Fixes
 
-* a pull that could not be read back still records the download's baseline ([b6f2b1a](https://github.com/Millennium44/Toolasha/commit/b6f2b1a5b93e64e322d3d4e30e4e56c3b58fcf58))
-* a reused item tooltip redraws its profit when the sell-tax toggle changes ([8ed4a5a](https://github.com/Millennium44/Toolasha/commit/8ed4a5aa5d754c742496d6f71e85459d17e68560))
-* a stopped sync pull puts back only the migration records it cleared ([3712711](https://github.com/Millennium44/Toolasha/commit/3712711d8758b8dda27ea4919d73b9f9f1e744f4))
-* a stopped sync pull restores a migration record only over the map it read ([58a8213](https://github.com/Millennium44/Toolasha/commit/58a8213c49619574dce119c5c013c4cc93109cde))
-* a store sync cannot read whole is reported once, not every interval ([2dc601d](https://github.com/Millennium44/Toolasha/commit/2dc601dc5768f5e2b48e7c78faa0445c30b94fbf))
-* a sync pull taken over while it folds its download imports nothing ([32b617c](https://github.com/Millennium44/Toolasha/commit/32b617ca3726e533f4baa0c34bb2a5788e0eae79))
-* action panels arm only the scrolls the skill can use ([1d4a458](https://github.com/Millennium44/Toolasha/commit/1d4a458f57a9a87d8409d73c588485f17bcf13f7))
-* Best Items chain hovers say both figures pick setups per hour ([c793f87](https://github.com/Millennium44/Toolasha/commit/c793f87ebc0a7e3ad1d1dcc78a0191f7afd833dd))
-* Best Items shows hidden rows in their ranked place and explains the chain figure ([6b2300c](https://github.com/Millennium44/Toolasha/commit/6b2300cd93a112f7bb5e326fd241a25a53f1e041))
-* dungeon tracker adopts only the key counts paired with this dungeon's battle start ([70b7d8b](https://github.com/Millennium44/Toolasha/commit/70b7d8b734df7932c16bb9111f8ba5e581288a48)), closes [#972](https://github.com/Millennium44/Toolasha/issues/972)
-* flag figures built on estimated or partial prices instead of showing them as firm ([f5dd38a](https://github.com/Millennium44/Toolasha/commit/f5dd38a5953b13a0fdabae41d56eb9efc79721bc))
-* food, drink and mana planners leave out items priced only by a partial craft cost ([f71fbba](https://github.com/Millennium44/Toolasha/commit/f71fbba8cde9f3d41be3dde702e4ce792ae02e06))
-* item tooltip craft profit follows the tiles' simulated scrolls ([d844ce1](https://github.com/Millennium44/Toolasha/commit/d844ce1d77b033ce4a3fb60d10218cd1008c5df2))
-* item tooltip follows the sell-tax setting and picks the decompose chain per hour ([ab8de73](https://github.com/Millennium44/Toolasha/commit/ab8de73e9a0516c52b8d54696c88351877b07543))
-* marketplace chain sort re-prices on Iron Cow valuation, cape value and custom price changes ([12d59d5](https://github.com/Millennium44/Toolasha/commit/12d59d5c41b59f8b1991d4bc47d534357f28de28))
-* party members' refill cost is marked when their ask is an estimate ([1605fd9](https://github.com/Millennium44/Toolasha/commit/1605fd96c058fc5a8d72dd739733de1bd391c6e3))
-* philo, tooltip and enhancement displays treat a partial craft cost as unpriced ([afab90f](https://github.com/Millennium44/Toolasha/commit/afab90fa9aa6ed443c8a79d7a5d8950eb5d2bac5))
-* refinement cost and skilling upgrade cost no longer count a partial craft cost as a firm price ([bc97cab](https://github.com/Millennium44/Toolasha/commit/bc97cabeaa43ab5cc152591128363233fd8a05a4))
-* skilling optimizer talismans action list follows the action picker ([d6c5f2d](https://github.com/Millennium44/Toolasha/commit/d6c5f2d4239014ab1e84f9320b40c7f22ecc922d))
-* sync builds no upload from a store listing that came back empty ([a761f51](https://github.com/Millennium44/Toolasha/commit/a761f51978b4ce7b1220083daa3935a4552a4531))
-* sync never uploads or weighs a store it could not read whole, and stands down when overtaken ([c982f28](https://github.com/Millennium44/Toolasha/commit/c982f28951ffdfc0e2c001247c7388cf8d4eb725))
-* sync stops instead of uploading or weighing a store it could not read whole ([b916aa3](https://github.com/Millennium44/Toolasha/commit/b916aa382fc72165c803b6c70f9a553e170fb9bc))
-* talisman ranking counts the upgrade chain XP when its time is charged ([d728ba5](https://github.com/Millennium44/Toolasha/commit/d728ba5318eaefc8a83eacebcd8bb602c70d0e95))
-* tooltip craft profit follows the sell-tax toggle and the chain /hr picks setups per hour ([4002e8d](https://github.com/Millennium44/Toolasha/commit/4002e8d1a0003f09793d7af9c5fec0ac0b72be7f))
-* tooltip craft profit with simulated scrolls also follows the sell-tax toggle ([dd0db86](https://github.com/Millennium44/Toolasha/commit/dd0db86eda05a6d26cce2cae4bd8751fcb77dc4b))
-* upgrade advisor treats a partial craft cost as unpriced on cost and credit sides ([f356ec8](https://github.com/Millennium44/Toolasha/commit/f356ec83df6fae13af96950524b3b34b18a2f131))
-
+- a pull that could not be read back still records the download's baseline ([b6f2b1a](https://github.com/Millennium44/Toolasha/commit/b6f2b1a5b93e64e322d3d4e30e4e56c3b58fcf58))
+- a reused item tooltip redraws its profit when the sell-tax toggle changes ([8ed4a5a](https://github.com/Millennium44/Toolasha/commit/8ed4a5aa5d754c742496d6f71e85459d17e68560))
+- a stopped sync pull puts back only the migration records it cleared ([3712711](https://github.com/Millennium44/Toolasha/commit/3712711d8758b8dda27ea4919d73b9f9f1e744f4))
+- a stopped sync pull restores a migration record only over the map it read ([58a8213](https://github.com/Millennium44/Toolasha/commit/58a8213c49619574dce119c5c013c4cc93109cde))
+- a store sync cannot read whole is reported once, not every interval ([2dc601d](https://github.com/Millennium44/Toolasha/commit/2dc601dc5768f5e2b48e7c78faa0445c30b94fbf))
+- a sync pull taken over while it folds its download imports nothing ([32b617c](https://github.com/Millennium44/Toolasha/commit/32b617ca3726e533f4baa0c34bb2a5788e0eae79))
+- action panels arm only the scrolls the skill can use ([1d4a458](https://github.com/Millennium44/Toolasha/commit/1d4a458f57a9a87d8409d73c588485f17bcf13f7))
+- Best Items chain hovers say both figures pick setups per hour ([c793f87](https://github.com/Millennium44/Toolasha/commit/c793f87ebc0a7e3ad1d1dcc78a0191f7afd833dd))
+- Best Items shows hidden rows in their ranked place and explains the chain figure ([6b2300c](https://github.com/Millennium44/Toolasha/commit/6b2300cd93a112f7bb5e326fd241a25a53f1e041))
+- dungeon tracker adopts only the key counts paired with this dungeon's battle start ([70b7d8b](https://github.com/Millennium44/Toolasha/commit/70b7d8b734df7932c16bb9111f8ba5e581288a48)), closes [#972](https://github.com/Millennium44/Toolasha/issues/972)
+- flag figures built on estimated or partial prices instead of showing them as firm ([f5dd38a](https://github.com/Millennium44/Toolasha/commit/f5dd38a5953b13a0fdabae41d56eb9efc79721bc))
+- food, drink and mana planners leave out items priced only by a partial craft cost ([f71fbba](https://github.com/Millennium44/Toolasha/commit/f71fbba8cde9f3d41be3dde702e4ce792ae02e06))
+- item tooltip craft profit follows the tiles' simulated scrolls ([d844ce1](https://github.com/Millennium44/Toolasha/commit/d844ce1d77b033ce4a3fb60d10218cd1008c5df2))
+- item tooltip follows the sell-tax setting and picks the decompose chain per hour ([ab8de73](https://github.com/Millennium44/Toolasha/commit/ab8de73e9a0516c52b8d54696c88351877b07543))
+- marketplace chain sort re-prices on Iron Cow valuation, cape value and custom price changes ([12d59d5](https://github.com/Millennium44/Toolasha/commit/12d59d5c41b59f8b1991d4bc47d534357f28de28))
+- party members' refill cost is marked when their ask is an estimate ([1605fd9](https://github.com/Millennium44/Toolasha/commit/1605fd96c058fc5a8d72dd739733de1bd391c6e3))
+- philo, tooltip and enhancement displays treat a partial craft cost as unpriced ([afab90f](https://github.com/Millennium44/Toolasha/commit/afab90fa9aa6ed443c8a79d7a5d8950eb5d2bac5))
+- refinement cost and skilling upgrade cost no longer count a partial craft cost as a firm price ([bc97cab](https://github.com/Millennium44/Toolasha/commit/bc97cabeaa43ab5cc152591128363233fd8a05a4))
+- skilling optimizer talismans action list follows the action picker ([d6c5f2d](https://github.com/Millennium44/Toolasha/commit/d6c5f2d4239014ab1e84f9320b40c7f22ecc922d))
+- sync builds no upload from a store listing that came back empty ([a761f51](https://github.com/Millennium44/Toolasha/commit/a761f51978b4ce7b1220083daa3935a4552a4531))
+- sync never uploads or weighs a store it could not read whole, and stands down when overtaken ([c982f28](https://github.com/Millennium44/Toolasha/commit/c982f28951ffdfc0e2c001247c7388cf8d4eb725))
+- sync stops instead of uploading or weighing a store it could not read whole ([b916aa3](https://github.com/Millennium44/Toolasha/commit/b916aa382fc72165c803b6c70f9a553e170fb9bc))
+- talisman ranking counts the upgrade chain XP when its time is charged ([d728ba5](https://github.com/Millennium44/Toolasha/commit/d728ba5318eaefc8a83eacebcd8bb602c70d0e95))
+- tooltip craft profit follows the sell-tax toggle and the chain /hr picks setups per hour ([4002e8d](https://github.com/Millennium44/Toolasha/commit/4002e8d1a0003f09793d7af9c5fec0ac0b72be7f))
+- tooltip craft profit with simulated scrolls also follows the sell-tax toggle ([dd0db86](https://github.com/Millennium44/Toolasha/commit/dd0db86eda05a6d26cce2cae4bd8751fcb77dc4b))
+- upgrade advisor treats a partial craft cost as unpriced on cost and credit sides ([f356ec8](https://github.com/Millennium44/Toolasha/commit/f356ec83df6fae13af96950524b3b34b18a2f131))
 
 ### Documentation
 
-* changelog entries for sync partial-read and takeover fixes ([488b011](https://github.com/Millennium44/Toolasha/commit/488b01113086a8eba97ec7c342b407274575eb26))
-* changelog entries for the 2026-11-13 leftovers and player reports ([500a64f](https://github.com/Millennium44/Toolasha/commit/500a64f6ce47a34e730c1bbd48d615c3e26bcf72))
-* changelog entries for tooltip sell-tax and per-hour chain ([eea547d](https://github.com/Millennium44/Toolasha/commit/eea547da710f0120191de9d1396c8a75dd4b86af))
-* restore the blank line the changelog union merge dropped ([1f831bf](https://github.com/Millennium44/Toolasha/commit/1f831bfae17f44bf591609aceb8e3580fe38cced))
-
+- changelog entries for sync partial-read and takeover fixes ([488b011](https://github.com/Millennium44/Toolasha/commit/488b01113086a8eba97ec7c342b407274575eb26))
+- changelog entries for the 2026-11-13 leftovers and player reports ([500a64f](https://github.com/Millennium44/Toolasha/commit/500a64f6ce47a34e730c1bbd48d615c3e26bcf72))
+- changelog entries for tooltip sell-tax and per-hour chain ([eea547d](https://github.com/Millennium44/Toolasha/commit/eea547da710f0120191de9d1396c8a75dd4b86af))
+- restore the blank line the changelog union merge dropped ([1f831bf](https://github.com/Millennium44/Toolasha/commit/1f831bfae17f44bf591609aceb8e3580fe38cced))
 
 ### Tests
 
-* new tooltip-scroll and chain-XP suites stub every bundle-bridge export the gate requires ([c9f9a0b](https://github.com/Millennium44/Toolasha/commit/c9f9a0b882bb588f640fa397d0d3fb48fb1b036f))
-* pin that a pressed pull that cannot weigh a store writes records with their tombstones ([65e4e57](https://github.com/Millennium44/Toolasha/commit/65e4e5797583d34bf0626837aef8f14612116945))
+- new tooltip-scroll and chain-XP suites stub every bundle-bridge export the gate requires ([c9f9a0b](https://github.com/Millennium44/Toolasha/commit/c9f9a0b882bb588f640fa397d0d3fb48fb1b036f))
+- pin that a pressed pull that cannot weigh a store writes records with their tombstones ([65e4e57](https://github.com/Millennium44/Toolasha/commit/65e4e5797583d34bf0626837aef8f14612116945))
 
 ## [3.86.0](https://github.com/Millennium44/Toolasha/compare/v3.85.0...v3.86.0) (2026-11-13)
 
