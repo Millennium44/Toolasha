@@ -2572,6 +2572,16 @@ function unstackRow(row) {
         child.style.marginTop = top;
         child.style.marginBottom = bottom;
         delete child.dataset.mwiStackedMargin;
+        if (child.dataset.mwiStackedSize !== undefined) {
+            const [width, minWidth] = child.dataset.mwiStackedSize.split('|');
+            child.style.width = width;
+            child.style.minWidth = minWidth;
+            delete child.dataset.mwiStackedSize;
+        }
+    }
+    for (const text of row.querySelectorAll('[data-mwi-stacked-ws]')) {
+        text.style.whiteSpace = text.dataset.mwiStackedWs;
+        delete text.dataset.mwiStackedWs;
     }
     delete row.dataset.mwiStacked;
     delete row.dataset.mwiStackedDirection;
@@ -2652,6 +2662,17 @@ export function placeTrialBlock(root, card, block, name = '') {
         }
         card.style.marginTop = 'auto';
         card.style.marginBottom = 'auto';
+        // The game's card is a fixed width with its overflow hidden, and the progress text ("145,408 / 154,560")
+        // needs more than that: let the card grow to fit its text, and never below the width it came with
+        if (card.dataset.mwiStackedSize === undefined && card.offsetWidth > 0) {
+            card.dataset.mwiStackedSize = `${card.style.width}|${card.style.minWidth}`;
+            card.style.minWidth = `${card.offsetWidth}px`;
+            card.style.width = 'max-content';
+        }
+        for (const text of card.querySelectorAll('[class*="ProgressBar_text"]')) {
+            if (text.dataset.mwiStackedWs === undefined) text.dataset.mwiStackedWs = text.style.whiteSpace || '';
+            text.style.whiteSpace = 'nowrap';
+        }
         challengeRow.style.flexDirection = 'column';
         challengeRow.style.justifyContent = 'flex-start';
         challengeRow.style.paddingTop = '6px';

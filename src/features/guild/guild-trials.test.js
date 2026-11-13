@@ -1716,6 +1716,31 @@ describe('the skilling readout under the card', () => {
         });
     }
 
+    test('the challenge card grows to fit its progress text, the roster card is untouched, and both restore', () => {
+        const { root, card, challenge, block } = layout(715);
+        card.innerHTML = '<div class="ProgressBar_text__t">145,408 / 154,560</div>';
+        card.style.width = '77px';
+        const rosterCard = document.createElement('div');
+        rosterCard.className = 'SkillingInstancePanel_skillingUnit__u';
+        rosterCard.innerHTML = '<div class="ProgressBar_text__t">x</div>';
+        document.getElementById('roster').append(rosterCard);
+        placeTrialBlock(root, card, block, 'Tailoring');
+        expect(card.style.width).toBe('max-content');
+        expect(card.style.minWidth).toBe('77px');
+        expect(card.querySelector('[class*="ProgressBar_text"]').style.whiteSpace).toBe('nowrap');
+        expect(rosterCard.style.width).toBe('');
+        expect(rosterCard.style.minWidth).toBe('');
+        expect(rosterCard.querySelector('[class*="ProgressBar_text"]').style.whiteSpace).toBe('');
+        // a second placement keeps the original, not the grown width
+        placeTrialBlock(root, card, block, 'Tailoring');
+        block.remove();
+        restoreFightGrids(document);
+        expect(card.style.width).toBe('77px');
+        expect(card.style.minWidth).toBe('');
+        expect(card.querySelector('[class*="ProgressBar_text"]').style.whiteSpace).toBe('');
+        expect(challenge.dataset.mwiStacked).toBeUndefined();
+    });
+
     test('the row and the card are restored when the readout comes down', () => {
         const { root, card, challenge, block } = layout(715);
         card.style.marginTop = '3px';
