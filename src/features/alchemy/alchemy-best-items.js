@@ -798,17 +798,24 @@ class AlchemyBestItems {
         }
         const version = this.prefsVersion;
         try {
-            const [type, hidden] = await Promise.all([
-                storage.get(LAST_TYPE_KEY_PREFIX + owner, PREFS_STORE, null),
-                storage.get(HIDDEN_KEY_PREFIX + owner, PREFS_STORE, null),
+            // tryGet says null when the read itself failed, which `get` would report as "nothing saved"
+            const [typeRead, hiddenRead] = await Promise.all([
+                storage.tryGet(LAST_TYPE_KEY_PREFIX + owner, PREFS_STORE),
+                storage.tryGet(HIDDEN_KEY_PREFIX + owner, PREFS_STORE),
             ]);
             if (owner !== currentOwner()) return;
-            this.savedType = isKnownType(type) ? type : null;
+            if (typeRead) this.savedType = isKnownType(typeRead.value) ? typeRead.value : null;
+            // A failed hidden read leaves nothing loaded: hides are refused rather than written over the real list
+            if (!hiddenRead) return;
             if (version === this.prefsVersion) {
+                const stored = hiddenRead.found ? hiddenRead.value : null;
                 const clean = {};
-                for (const alchemyType of ALCHEMY_TYPES) {
-                    const list = hidden && typeof hidden === 'object' ? hidden[alchemyType] : null;
-                    if (Array.isArray(list)) clean[alchemyType] = list.filter((hrid) => typeof hrid === 'string');
+                // Every key is kept, known type or not: this build only reads its own types, but never drops
+                // another build's lists from memory (the write folds into what is stored either way)
+                if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+                    for (const [key, list] of Object.entries(stored)) {
+                        if (Array.isArray(list)) clean[key] = list.filter((hrid) => typeof hrid === 'string');
+                    }
                 }
                 this.hidden = clean;
             }
@@ -841,9 +848,29 @@ class AlchemyBestItems {
         const list = (this.hidden[type] || []).filter((hrid) => hrid !== itemHrid);
         if (hide) list.push(itemHrid);
         this.hidden = { ...this.hidden, [type]: list };
-        this.prefsVersion++;
-        storage.set(HIDDEN_KEY_PREFIX + this.prefsOwner, this.hidden, PREFS_STORE, true);
+        const myVersion = ++this.prefsVersion;
+        const owner = this.prefsOwner;
+        let folded = null;
+        // Write only this change, folded into what is stored when the write lands, so a hide made in another
+        // tab or brought by a sync pull (and lists for types this build does not know) survive
+        const fold = (stored) => {
+            const next = stored && typeof stored === 'object' && !Array.isArray(stored) ? { ...stored } : {};
+            const current = Array.isArray(next[type]) ? next[type].filter((hrid) => hrid !== itemHrid) : [];
+            if (hide) current.push(itemHrid);
+            next[type] = current;
+            folded = next;
+            return next;
+        };
         this.renderTable();
+        Promise.resolve(storage.set(HIDDEN_KEY_PREFIX + owner, this.hidden, PREFS_STORE, true, { fold })).then(
+            (written) => {
+                // Adopt what was really stored, unless the player has acted again or the character changed
+                if (!written || !folded || owner !== this.prefsOwner || owner !== currentOwner()) return;
+                if (this.prefsVersion !== myVersion) return;
+                this.hidden = folded;
+                this.renderTable();
+            }
+        );
     }
 
     /**
