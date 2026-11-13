@@ -12,6 +12,7 @@ import dataManager from '../core/data-manager.js';
 import zoneIndices from '../features/combat/zone-indices.js';
 import loadoutEnhancementDisplay from '../features/combat/loadout-enhancement-display.js';
 import loadoutSnapshot from '../features/combat/loadout-snapshot.js';
+import loadoutTalismanCheck from '../features/combat/loadout-talisman-check.js';
 import combatRecorder from '../features/combat/combat-recorder.js';
 import scrollSimulator from '../features/combat/scroll-simulator.js';
 import scrollSimulatorUI from '../features/combat/scroll-simulator-ui.js';
@@ -140,6 +141,7 @@ toolashaRoot.Combat = {
     zoneIndices,
     loadoutEnhancementDisplay,
     loadoutSnapshot,
+    loadoutTalismanCheck,
     combatRecorder,
     scrollSimulator,
     scrollSimulatorUI,
