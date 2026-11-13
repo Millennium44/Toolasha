@@ -7,6 +7,7 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+    characterId: 'char-1',
     ensureOpen: vi.fn(() => true),
     toast: vi.fn(),
     actions: [
@@ -21,6 +22,12 @@ vi.mock('../../core/config.js', () => ({
 }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 vi.mock('../../utils/character-panel.js', () => ({ ensureCharacterPanelOpen: mocks.ensureOpen }));
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    dataManager: () => ({ getCurrentCharacterId: () => mocks.characterId }),
+    guildMemberSkills: () => null,
+    marketUndercutAlerts: () => null,
+}));
 vi.mock('../../utils/toast.js', () => ({ showToast: mocks.toast }));
 vi.mock('./skilling-optimizer-engine.js', () => ({
     calculateSkillPerformance: () => ({}),
@@ -52,6 +59,7 @@ describe('openForSkill', () => {
         document.body.innerHTML = '';
         ui.cleanup();
         ui.initialize();
+        mocks.characterId = 'char-1';
         mocks.ensureOpen.mockClear();
         mocks.toast.mockClear();
     });
@@ -117,5 +125,28 @@ describe('openForSkill', () => {
         };
         ui.cleanup();
         expect(offeredDuringTeardown).toBe(false);
+    });
+
+    test('cleanup while waiting for the panel abandons the open: no tab, no state written', async () => {
+        mocks.ensureOpen.mockReturnValueOnce(true);
+        const pending = ui.openForSkill('/skills/milking', null);
+        ui.cleanup();
+        mountTabs();
+        expect(await pending).toBe(false);
+        expect(ui.tabBtn).toBeNull();
+        expect(ui.isActive).toBe(false);
+        expect(ui.selectedActionHrids).toBeNull();
+        expect(document.querySelector('.toolasha-skilling-opt-tab')).toBeNull();
+    });
+
+    test('character switch while waiting writes nothing onto the new character', async () => {
+        mocks.ensureOpen.mockReturnValueOnce(true);
+        const pending = ui.openForSkill('/skills/milking', null);
+        mocks.characterId = 'char-2';
+        mountTabs();
+        expect(await pending).toBe(false);
+        expect(ui.isActive).toBe(false);
+        expect(ui.currentSkill).not.toBe('Milking');
+        expect(ui.selectedActionHrids).toBeNull();
     });
 });

@@ -111,6 +111,7 @@ class SkillingSimulatorUI {
         this.tabBtn = null;
         this.panel = null;
         this.isActive = false;
+        this._generation = 0;
         this.watcher = null;
         this.contentParent = null;
 
@@ -238,11 +239,16 @@ class SkillingSimulatorUI {
 
         // Opening the panel mounts the tab strip; the body watcher then injects our tab
         if (!this.tabBtn?.isConnected) this.tabBtn = null;
+        // A disable or character switch while we wait must not be undone by this call afterwards
+        const generation = this._generation;
+        const characterId = this._currentCharacterId();
+        const stale = () => generation !== this._generation || characterId !== this._currentCharacterId();
         const opened = ensureCharacterPanelOpen();
         if (!this.tabBtn) {
-            if (opened) await this._waitForTab();
+            if (opened) await this._waitForTab(stale);
             else this._tryInjectTabButton();
         }
+        if (stale()) return false;
         if (!this.tabBtn) {
             showToast('Open the character panel, then the Optimizer tab: it could not be opened from here.', {
                 kind: 'warn',
@@ -270,12 +276,18 @@ class SkillingSimulatorUI {
      * Wait (bounded) for the character panel's tab strip to mount and take our tab.
      * @returns {Promise<void>}
      */
-    async _waitForTab() {
+    async _waitForTab(stale = () => false) {
         for (let i = 0; i < 20 && !this.tabBtn; i++) {
+            if (stale()) return;
             this._tryInjectTabButton();
             if (this.tabBtn) return;
             await new Promise((resolve) => setTimeout(resolve, 150));
         }
+    }
+
+    /** @returns {string|null} The character this Optimizer is serving right now */
+    _currentCharacterId() {
+        return sharedDataManager()?.getCurrentCharacterId?.() ?? null;
     }
 
     _findContentContainer() {
@@ -2305,6 +2317,8 @@ class SkillingSimulatorUI {
     // -------------------------------------------------------------------------
 
     cleanup() {
+        // Abandons any openForSkill still waiting for the panel to mount
+        this._generation++;
         // First: skill pages stop offering the button before anything it would open is torn down
         this._unregisterOpener?.();
         this._unregisterOpener = null;
