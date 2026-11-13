@@ -363,4 +363,20 @@ describe('the core advisor in the Optimizer', () => {
         await check();
         expect(section._core.status).toBe('done');
     });
+
+    test('a profit ranking with missing output prices says so, and labels the rows as floors', async () => {
+        const base = mocks.gatheringCalculator.calculateGatheringProfit;
+        mocks.gatheringCalculator = {
+            calculateGatheringProfit: async (...args) => ({
+                ...(await base(...args)),
+                hasMissingPrices: true,
+            }),
+        };
+        await rank();
+        await check();
+        expect(section._core.hasMissingPrices).toBe(true);
+        expect(cores()).toContain('Some prices are missing and are left out: profit figures are floors.');
+        expect(cores()).toContain('Some prices are missing: profit is a floor.');
+        expect(cores()).toMatch(/≥\+?\d/);
+    });
 });

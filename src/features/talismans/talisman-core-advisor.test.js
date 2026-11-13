@@ -322,4 +322,25 @@ describe('adviseCores: every other ending', () => {
         mocks.test = false;
         expect(run()).toMatchObject({ status: 'refused', reason: 'live' });
     });
+
+    test('a ranking row with a missing output price makes every row that uses it a floor', () => {
+        const r = run({
+            talismans: [worn(1, ['a']), worn(2, ['b'])],
+            ranking: ranking([row('a', 1), row('b', 2), row('c', 3, { hasMissingPrices: true })], {
+                hasMissingPrices: true,
+            }),
+        });
+        expect(r.hasMissingPrices).toBe(true);
+        // c can roll on both talismans
+        expect(r.rows.every((x) => x.hasMissingPrices)).toBe(true);
+        const clean = run({ ranking: ranking([row('b', 2)]) });
+        expect(clean.hasMissingPrices).toBe(false);
+        expect(clean.rows[0].hasMissingPrices).toBe(false);
+    });
+
+    test('a flagged row that is not in the pool does not flag the row', () => {
+        const r = run({ ranking: ranking([row('b', 2), row('a', 1, { hasMissingPrices: true })]) });
+        // a is held by the only talisman, so it cannot roll
+        expect(r.rows[0].hasMissingPrices).toBe(false);
+    });
 });

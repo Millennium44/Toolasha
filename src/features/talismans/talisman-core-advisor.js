@@ -118,6 +118,7 @@ function valueNextLine({ talisman, others, rowsByHrid, pool, odds, slots }) {
         best: null,
         unvaluedShare: 0,
         unrealShare: 0,
+        missingPrices: false,
         mechanicGain: 0,
         assumedGain: 0,
         rollable: rollable.length,
@@ -131,6 +132,8 @@ function valueNextLine({ talisman, others, rowsByHrid, pool, odds, slots }) {
             continue;
         }
         if (row.gainUnreal) out.unrealShare += pType;
+        // A row measured with an output price missing is a floor: so is any expectation that uses it
+        if (row.hasMissingPrices) out.missingPrices = true;
         const elsewhere = others.filter((t) => (t.modifiers || []).some((m) => m.hrid === detail.hrid)).length;
         for (let g = 1; g <= odds.length; g++) {
             const chance = pType * odds[g - 1];
@@ -244,6 +247,7 @@ export function adviseCores({ talismans, ranking, power, typeHrid, gameData, pri
             rollable: v.rollable,
             unvaluedShare: v.unvaluedShare,
             unrealShare: v.unrealShare,
+            hasMissingPrices: v.missingPrices,
             mechanicShare: v.value > 0 ? v.mechanicGain / v.value : 0,
             assumedShare: v.value > 0 ? v.assumedGain / v.value : 0,
             costs: { [CORE_BASIS]: nextLineCost(info, itemDetailMap, lineNumber, priceInfo) },
@@ -253,6 +257,7 @@ export function adviseCores({ talismans, ranking, power, typeHrid, gameData, pri
         status: 'done',
         rows: sortBeltRows(rows, CORE_BASIS),
         metricKey: ranking.metricKey,
+        hasMissingPrices: Boolean(ranking.hasMissingPrices) || (ranking.unpriced?.length || 0) > 0,
         grade: ranking.grade,
         power,
         slots,

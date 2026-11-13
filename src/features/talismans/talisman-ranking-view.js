@@ -1670,6 +1670,14 @@ export class TalismanRankingSectionBase {
             )}</div>`,
         ];
         const rows = result.rows;
+        const profitLike = metric.key === 'profit' || metric.balanced;
+        if (profitLike && (result.hasMissingPrices || rows.some((row) => row.hasMissingPrices))) {
+            parts.push(
+                `<div style="color:#ff9800; font-size:11px; margin-bottom:4px;">${escapeHtml(
+                    'Some prices are missing and are left out: profit figures are floors.'
+                )}</div>`
+            );
+        }
         if (rows.every((row) => rateRow(row, CORE_BASIS).kind === 'unpriced')) {
             parts.push(
                 `<div style="color:#ff9800; font-size:11px; margin-bottom:4px;">${escapeHtml(
@@ -1692,6 +1700,7 @@ export class TalismanRankingSectionBase {
         const body = rows
             .map((row, index) => {
                 const rate = rateRow(row, CORE_BASIS);
+                const floor = profitLike && row.hasMissingPrices ? '≥' : '';
                 const dim = row.significant === false;
                 const color = dim
                     ? '#777'
@@ -1707,13 +1716,14 @@ export class TalismanRankingSectionBase {
                         : `<span title="${escapeHtml(`${cost.count} × ${formatKMB(cost.unit)}`)}">${formatKMB(rate.cost)}</span>`;
                 const ratioCell =
                     rate.kind === 'ratio'
-                        ? this._ratioText(rate.per100m, metric)
+                        ? `${floor}${this._ratioText(rate.per100m, metric)}`
                         : `<span style="color:#777;" title="${escapeHtml(rate.why || '')}">—</span>`;
                 const notes = [
                     rate.kind === 'unpriced' ? 'Unpriced: no gain per cost.' : '',
                     row.value < 0 ? 'The expected change is negative.' : '',
                     row.value === 0 ? 'No line it can roll is worth anything here.' : '',
                     row.value > 0 && row.significant === false ? 'The gain is within noise.' : '',
+                    floor ? 'Some prices are missing: profit is a floor.' : '',
                     row.mechanicShare > 0 ? 'Leans on mechanic or non-linear lines: rough.' : '',
                     row.assumedShare > 0
                         ? 'Later copies of a line already worn are assumed to add as much as the first.'
@@ -1733,7 +1743,7 @@ export class TalismanRankingSectionBase {
                     `<tr><td style="padding:2px 6px; color:#888;">${index + 1}</td>` +
                     `<td style="padding:2px 6px; color:${dim ? '#999' : '#ddd'};" title="${escapeHtml(lines)}">${escapeHtml(`${row.id != null ? `#${row.id} ` : ''}slot ${row.slotIndex}`)} <span style="color:#777;">(${row.lines.length} line${row.lines.length === 1 ? '' : 's'})</span></td>` +
                     `<td style="text-align:right; padding:2px 6px; color:#ccc;">line ${row.lineNumber}</td>` +
-                    `<td style="text-align:right; padding:2px 6px; color:${color};" title="${escapeHtml(TIP_CORE_GAIN)}">${this._formatValue(row.value, metric)}</td>` +
+                    `<td style="text-align:right; padding:2px 6px; color:${color};" title="${escapeHtml(TIP_CORE_GAIN)}">${floor}${this._formatValue(row.value, metric)}</td>` +
                     `<td style="text-align:right; padding:2px 6px; color:#ccc;" title="${escapeHtml(TIP_CORE_USEFUL)}">${pct(row.pUseful)}</td>` +
                     `<td style="padding:2px 6px; color:#ccc; white-space:nowrap;">${best}</td>` +
                     `<td style="text-align:right; padding:2px 6px; color:#ccc;">${costCell}</td>` +
