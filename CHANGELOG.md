@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Open in Optimizer from skill pages
+
+Gathering and production skill pages get an Open in Optimizer button (behind the ⋯ controls on phones, in the title bar on desktop) that opens the side panel on the Optimizer set to that skill and action.
+
+### Skill page header fits on phones
+
+On narrow screens the filter box takes only the free width, so the skill title and its ? button no longer push the page into a sideways scroll.
+
 <!-- shipped in 3.86.1 -->
 
 ### Item tooltip profit follows the sell-tax setting
