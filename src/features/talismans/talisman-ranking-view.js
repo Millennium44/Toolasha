@@ -23,6 +23,7 @@ import { escapeHtml } from '../../utils/html-escape.js';
 import { GAME_COLORS } from '../../utils/game-look.js';
 import { GATHERING_TYPES } from '../../utils/profit-constants.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
+import { getProductionChainActions } from '../../utils/enhancement-pricing.js';
 import { gatheringProfit, productionProfit } from '../../utils/bundle-bridge.js';
 import { fiberFor } from '../../utils/react-click.js';
 import { orbWeights } from '../../utils/talisman-orb-weights.js';
@@ -197,7 +198,20 @@ export async function evaluateSkillingAction(actionHrid, actionContext) {
     const multiplier = gain?.skillHrid
         ? calculateExperienceMultiplier(gain.skillHrid, action.type, actionContext).totalMultiplier
         : 0;
-    const xpPerHour = (data.actionsPerHour || 0) * (data.efficiencyMultiplier || 1) * (gain?.value || 0) * multiplier;
+    // When the calculator charged the upgrade item's production chain time inside actionsPerHour, the chain's actions
+    // are in the same hour, so what they teach counts too (as Craft & Enhance counts it). Only the ranked skill's XP:
+    // a chain action that teaches another skill adds nothing to this skill's EXP/hr.
+    let xpPerAction = (gain?.value || 0) * multiplier;
+    if (data.upgradeChainCrafted && action.upgradeItemHrid && gain?.skillHrid) {
+        for (const chainHrid of getProductionChainActions(action.upgradeItemHrid)) {
+            const chain = gameData.actionDetailMap[chainHrid];
+            if (chain?.experienceGain?.skillHrid !== gain.skillHrid) continue;
+            xpPerAction +=
+                (chain.experienceGain.value || 0) *
+                calculateExperienceMultiplier(gain.skillHrid, chain.type, actionContext).totalMultiplier;
+        }
+    }
+    const xpPerHour = (data.actionsPerHour || 0) * (data.efficiencyMultiplier || 1) * xpPerAction;
     // Inputs with no price (materials, drinks): the profit counts them as free. Rates are per hour, like the combat
     // sim's running costs, so a line that makes the action spend more of one is told apart from one that does not
     const perHour = (data.actionsPerHour || 0) * (data.efficiencyMultiplier || 1);
