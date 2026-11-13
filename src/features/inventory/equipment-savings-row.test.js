@@ -17,6 +17,7 @@ import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 const game = vi.hoisted(() => ({
     inventory: [],
     equipment: new Map(),
+    testServer: true,
     details: {},
     prices: {},
     actions: {},
@@ -150,6 +151,10 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     // the panel complain that the mock is missing it
     clampPanelToViewport: () => {},
 }));
+vi.mock('../../utils/game-server.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    isTestServer: () => game.testServer,
+}));
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: (itemHrid, enhancementLevel = 0) => game.navigations.push({ itemHrid, enhancementLevel }),
 }));
@@ -272,6 +277,7 @@ const {
 const { flushSavingsWrites, resetAbilityGoals } = await import('../../utils/equipment-savings.js');
 
 beforeEach(() => {
+    game.testServer = true;
     resetSpriteSheetCache();
     game.skills = [];
     game.drinks = [];
@@ -677,6 +683,26 @@ describe('the slot layout', () => {
 
         expect(text()).toContain('Belt:');
         expect(text()).toContain('Large Talisman Belt +2');
+    });
+
+    test('off the test server there is no Belt section', () => {
+        game.testServer = false;
+        unlock();
+
+        expect(text()).not.toContain('Belt:');
+        expect(text()).toContain('Charm:');
+    });
+
+    test('off the test server a watched belt target still shows', () => {
+        game.testServer = false;
+        game.details['/items/large_talisman_belt'] = {
+            name: 'Large Talisman Belt',
+            equipmentDetail: { type: '/equipment_types/belt' },
+        };
+        watchTarget('/items/large_talisman_belt');
+        unlock();
+
+        expect(text()).toContain('Large Talisman Belt');
     });
 
     test('an empty slot reads as empty rather than as missing', () => {

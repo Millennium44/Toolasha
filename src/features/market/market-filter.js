@@ -7,6 +7,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { syncMarketFold } from './market-filter-fold.js';
+import { isTestServer } from '../../utils/game-server.js';
 
 class MarketFilter {
     constructor() {
@@ -248,7 +249,7 @@ class MarketFilter {
             { value: 'hands', label: 'Hands' },
             { value: 'legs', label: 'Legs' },
             { value: 'feet', label: 'Feet' },
-            { value: 'belt', label: 'Belt' },
+            ...(isTestServer() ? [{ value: 'belt', label: 'Belt' }] : []),
             { value: 'neck', label: 'Neck' },
             { value: 'earrings', label: 'Earrings' },
             { value: 'ring', label: 'Ring' },
