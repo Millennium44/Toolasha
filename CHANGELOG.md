@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tooltip gathering profit follows the sell-tax toggle
+
+The Solo gathering rows in an item tooltip now skip the market sell tax when "Exclude sell tax (producing for personal use)" is on, and show the same ⚠ marker as the skill-page tile.
+
 ### Open in Optimizer from skill pages
 
 Gathering and production skill pages get an Open in Optimizer button (behind the ⋯ controls on phones, in the title bar on desktop) that opens the side panel on the Optimizer set to that skill and action.
