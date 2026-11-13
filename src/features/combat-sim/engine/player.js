@@ -121,8 +121,8 @@ class Player extends CombatUnit {
     talismans = [];
 
     /**
-     * The talisman-only mechanics (echo, smite, shatter, fortify, overkill) as scaled values. Carried for a later
-     * change; nothing in the fight reads them yet.
+     * The talisman-only mechanics (echo, smite, shatter, fortify, overkill) as scaled values. Read by
+     * `CombatUtilities.processAttack` and the simulator.
      */
     talismanMechanics = {};
 

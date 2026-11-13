@@ -148,6 +148,39 @@ describe('the local player', () => {
         expect(armorOf(dto)).toBe(10);
     });
 
+    test('the talisman-only mechanics reach the worker player through the structured clone, and not on a live server', () => {
+        wearBelt();
+        const line = (name) => `/talisman_modifiers/${name}`;
+        mocks.slotted = [
+            {
+                slotIndex: 1,
+                talismanTypeHrid: '/talisman_types/combat',
+                modifiers: ['echo', 'smite', 'shatter', 'fortify'].map((name) => ({ hrid: line(name), grade: 6 })),
+            },
+            {
+                slotIndex: 2,
+                talismanTypeHrid: '/talisman_types/combat',
+                modifiers: [{ hrid: line('overkill'), grade: 6 }],
+            },
+        ];
+        // The runner posts the DTO to the worker, which clones it again before building the Player
+        const dto = structuredClone(structuredClone(buildPlayerDTO()));
+        setGameData(buildGameDataPayload());
+        const player = Player.createFromDTO({ ...dto, food: dto.food || [], drinks: dto.drinks || [] });
+        player.updateCombatDetails();
+        // Large belt +0: power 0.2, so each grade-6 value is scaled by 1.2
+        for (const name of ['echo', 'smite', 'shatter', 'fortify', 'overkill']) {
+            const grade6 = COMBAT_MODIFIER_DETAILS[line(name)].gradeValues[5];
+            expect(player.talismanMechanics[name]).toBeCloseTo(grade6 * 1.2, 12);
+        }
+
+        mocks.testServer = false;
+        setGameData(buildGameDataPayload());
+        const live = Player.createFromDTO({ ...dto, food: dto.food || [], drinks: dto.drinks || [] });
+        live.updateCombatDetails();
+        expect(live.talismanMechanics).toEqual({});
+    });
+
     test('a loadout: its own talismanIdMap, resolved against what is owned', () => {
         wearBelt();
         mocks.owned = [

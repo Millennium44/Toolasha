@@ -136,9 +136,13 @@ class CombatUtilities {
      *   monsters the attacker's own `taskMonsterHrids` names) or `everyFight`
      *   (every unit counts as fighting its own task monster, whatever it is
      *   actually swinging at). See `appliesTaskDamage`.
+     * @param {Object} [options] - Talisman mechanics context; absent for an ordinary attack
+     * @param {number} [options.damageScale] - Multiplies the rolled damage before mitigation (an Echo hit: 0.5)
+     * @param {boolean} [options.isEcho] - This is an Echo hit: it leaves thorns, retaliation and life drain to the
+     *   hit it echoes, so none of them is applied twice
      * @returns {Object} Attack result
      */
-    static processAttack(source, target, abilityEffect = null, taskDamageMode = TASK_DAMAGE_OFF) {
+    static processAttack(source, target, abilityEffect = null, taskDamageMode = TASK_DAMAGE_OFF, options = null) {
         const combatStyle = abilityEffect
             ? abilityEffect.combatStyleHrid
             : source.combatDetails.combatStats.combatStyleHrid;
@@ -293,6 +297,7 @@ class CombatUtilities {
         } else {
             damageRoll *= 1 + source.combatDetails.combatStats.abilityDamage;
         }
+        if (options?.damageScale) damageRoll *= options.damageScale;
 
         let damageDone = 0;
         let thornDamageDone = 0;
@@ -301,6 +306,11 @@ class CombatUtilities {
         if (random() < hitChance) {
             didHit = true;
             let penetratedTargetResistance = targetResistance;
+
+            // Shatter (talisman): a critical hit pierces further, by the same amount on the armor or the element it
+            // is dealing. Measured on the test server for physical crits; the elemental case is assumed.
+            const shatter = isCrit ? source.talismanMechanics?.shatter : 0;
+            if (shatter > 0) sourcePenetration += shatter;
 
             if (sourcePenetration > 0 && targetResistance > 0) {
                 penetratedTargetResistance = targetResistance / (1 + sourcePenetration);
@@ -311,12 +321,29 @@ class CombatUtilities {
                 targetDamageTakenRatio = (100 - penetratedTargetResistance) / 100;
             }
 
-            const mitigatedDamage = Math.ceil(targetDamageTakenRatio * damageRoll);
-            damageDone = Math.min(mitigatedDamage, target.combatDetails.currentHitpoints);
+            let mitigatedDamage = Math.ceil(targetDamageTakenRatio * damageRoll);
+
+            // Smite (talisman): a final multiplier on what a boss takes, after crit and mitigation, then floored
+            // (a 1581 boss crit measured 1700 with Smite 0.07548: 1581 * 1.07548 = 1700.3).
+            const smite = target.isBoss === true ? source.talismanMechanics?.smite : 0;
+            if (smite > 0) mitigatedDamage = Math.floor(mitigatedDamage * (1 + smite));
+
+            // Overkill (talisman): what a killing blow carried past the target's last hitpoint is stored, and the
+            // next landed hit adds the stored amount as true damage (no armor or resistance).
+            if (source.overkillStore > 0) {
+                mitigatedDamage += Math.floor(source.overkillStore);
+                source.overkillStore = 0;
+            }
+            const hitpointsBefore = target.combatDetails.currentHitpoints;
+            damageDone = Math.min(mitigatedDamage, hitpointsBefore);
             target.combatDetails.currentHitpoints -= damageDone;
+            const overkill = source.talismanMechanics?.overkill;
+            if (overkill > 0 && hitpointsBefore > 0 && mitigatedDamage > hitpointsBefore) {
+                source.overkillStore = (source.overkillStore || 0) + overkill * (mitigatedDamage - hitpointsBefore);
+            }
         }
 
-        if (targetThornPower > 0.0 && targetResistance > -99.0) {
+        if (!options?.isEcho && targetThornPower > 0.0 && targetResistance > -99.0) {
             let penetratedSourceResistance = sourceResistance;
 
             if (sourceResistance > 0) {
@@ -352,7 +379,7 @@ class CombatUtilities {
         }
 
         let retaliationDamageDone = 0;
-        if (target.combatDetails.combatStats.retaliation > 0) {
+        if (!options?.isEcho && target.combatDetails.combatStats.retaliation > 0) {
             const retaliationHitChance =
                 Math.pow(target.combatDetails.smashAccuracyRating, 1.4) /
                 (Math.pow(target.combatDetails.smashAccuracyRating, 1.4) +
@@ -406,7 +433,7 @@ class CombatUtilities {
         }
 
         let hpDrain = 0;
-        if (abilityEffect && didHit && abilityEffect.hpDrainRatio > 0) {
+        if (!options?.isEcho && abilityEffect && didHit && abilityEffect.hpDrainRatio > 0) {
             const healingAmplify = 1 + source.combatDetails.combatStats.healingAmplify;
             // The game rounds a Life Drain heal UP: 15 of 15 captured casts came
             // back at the ceiling of ratio x damage x amplify. Observation from

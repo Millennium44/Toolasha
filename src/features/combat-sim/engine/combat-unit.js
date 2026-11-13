@@ -23,6 +23,9 @@ export function getCapturedMonsterBuffs() {
     return capturedMonsterBuffs ? [...capturedMonsterBuffs.values()] : [];
 }
 
+/** The buff types Fortify scales: armor and the three elemental resistances */
+const FORTIFY_BUFF_TYPES = ['armor', 'water_resistance', 'nature_resistance', 'fire_resistance'];
+
 class CombatUnit {
     isPlayer;
     /**
@@ -54,6 +57,15 @@ class CombatUnit {
     taskMonsterKills = null;
     /** The Damage Taken a unit's talismans give (negative is less damage taken); set by Player */
     talismanDamageTaken = 0;
+    /**
+     * Overkill (talisman): the true damage the next landed hit adds, built from what killing blows carried past
+     * their target's last hitpoint. Cleared by `reset` (a run start, a labyrinth fight, a wipe restart) and when the
+     * unit dies (`clearTalismanFightState`); it persists across encounters otherwise.
+     */
+    overkillStore = 0;
+    /** Fortify (talisman): current stack count (0-4) and the time its 5 s window ends */
+    fortifyStacks = 0;
+    fortifyExpireTime = 0;
     isStunned = false;
     stunExpireTime = null;
     isBlinded = false;
@@ -579,6 +591,50 @@ class CombatUnit {
         this.updateCombatDetails();
     }
 
+    /**
+     * Set the Fortify buffs: armor and every elemental resistance times `1 + value * stacks` (a ratio boost, so it
+     * scales the unit's own base). One recalculation, like `updateFuryBuffs`; entries written straight to
+     * `combatBuffs` expire through `removeExpiredBuffs`' sourceless branch.
+     *
+     * @param {number} stacks - Stack count (0 clears them)
+     * @param {number} value - The unit's scaled Fortify value
+     * @param {number} currentTime - Simulation time the window starts
+     * @param {number} duration - Window length
+     */
+    setFortifyBuffs(stacks, value, currentTime, duration) {
+        for (const type of FORTIFY_BUFF_TYPES) {
+            const uniqueHrid = '/buff_uniques/talisman_fortify_' + type;
+            if (stacks > 0) {
+                this.combatBuffs[uniqueHrid] = {
+                    uniqueHrid,
+                    typeHrid: '/buff_types/' + type,
+                    ratioBoost: stacks * value,
+                    ratioBoostLevelBonus: 0,
+                    flatBoost: 0,
+                    flatBoostLevelBonus: 0,
+                    startTime: currentTime,
+                    duration,
+                };
+            } else {
+                delete this.combatBuffs[uniqueHrid];
+            }
+        }
+        this.updateCombatDetails();
+    }
+
+    /**
+     * Drop the talisman state that lives only within a life: the Overkill store and the Fortify stacks. Called when
+     * a player dies. A unit without these mechanics is left exactly as it was (no recalculation).
+     */
+    clearTalismanFightState() {
+        this.overkillStore = 0;
+        if (this.fortifyStacks > 0) {
+            this.fortifyStacks = 0;
+            this.fortifyExpireTime = 0;
+            this.setFortifyBuffs(0, 0, 0, 0);
+        }
+    }
+
     addPermanentBuff(buff) {
         if (this.permanentBuffs[buff.typeHrid]) {
             this.permanentBuffs[buff.typeHrid].flatBoost += buff.flatBoost;
@@ -639,6 +695,10 @@ class CombatUnit {
             this.furyAmount = 0;
             this.furyExpireTime = 0;
         }
+        if (this.fortifyStacks > 0 && this.fortifyExpireTime <= currentTime) {
+            this.fortifyStacks = 0;
+            this.fortifyExpireTime = 0;
+        }
 
         this.updateCombatDetails();
     }
@@ -654,6 +714,8 @@ class CombatUnit {
         this.furyAmount = 0;
         this.furyExpireTime = 0;
         this.furyExpirationEvent = null;
+        this.fortifyStacks = 0;
+        this.fortifyExpireTime = 0;
         this.updateCombatDetails();
     }
 
@@ -707,6 +769,7 @@ class CombatUnit {
 
     reset(currentTime = 0) {
         this.clearCCs();
+        this.overkillStore = 0;
 
         if (currentTime === 0 || !this.isPlayer) {
             // First combat start or enemy reset: full reset

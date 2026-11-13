@@ -126,6 +126,11 @@ function snapshotPlayerBuild(player) {
 const ONE_SECOND = 1e9;
 const HOT_TICK_INTERVAL = 5 * ONE_SECOND;
 const DOT_TICK_INTERVAL = 3 * ONE_SECOND;
+/** Fortify (talisman): up to this many stacks, each hit restarting this window for all of them */
+const FORTIFY_MAX_STACKS = 4;
+const FORTIFY_DURATION = 5 * ONE_SECOND;
+/** Echo (talisman): the repeat hit deals this share of the damage */
+const ECHO_DAMAGE_SCALE = 0.5;
 const REGEN_TICK_INTERVAL = 10 * ONE_SECOND;
 
 /**
@@ -268,6 +273,7 @@ class CombatSimulator {
         if (finished.has(unit)) return false;
         finished.add(unit);
         this.recordDeath(unit);
+        if (unit.isPlayer) unit.clearTalismanFightState?.();
         if (!unit.isPlayer) {
             this.simResult.updateTimeSpentAlive(unit.hrid, false, this.simulationTime);
         }
@@ -1123,7 +1129,7 @@ class CombatSimulator {
             // attack so a corpse can never be credited as a fresh death.
             const targetWasAlive = target.combatDetails.currentHitpoints > 0;
 
-            const attackResult = CombatUtilities.processAttack(source, target, null, this.taskDamageMode);
+            const attackResult = this._processAttack(source, target, null);
             if (this.zone.isDungeon && target.isPlayer && attackResult.didHit && attackResult.damageDone > 0) {
                 const log = this.generateCombatLog(source, 'autoAttack', target, attackResult);
                 this.addToWipeLogs(log);
@@ -2220,6 +2226,9 @@ class CombatSimulator {
         }
 
         const avoidTarget = [];
+        // Who this cast struck (not parried), for Echo below
+        const hitTargets = [];
+        let wasParried = false;
 
         let isSkipParry = false;
 
@@ -2234,7 +2243,7 @@ class CombatSimulator {
                 const tempTarget = source;
                 const tempSource = parryTarget;
 
-                const attackResult = CombatUtilities.processAttack(tempSource, tempTarget, null, this.taskDamageMode);
+                const attackResult = this._processAttack(tempSource, tempTarget, null);
 
                 this.simResult.addAttack(
                     tempSource,
@@ -2309,7 +2318,8 @@ class CombatSimulator {
                     break;
                 }
 
-                const attackResult = CombatUtilities.processAttack(source, target, abilityEffect, this.taskDamageMode);
+                const attackResult = this._processAttack(source, target, abilityEffect);
+                hitTargets.push(target);
 
                 if (this.zone.isDungeon && target.isPlayer && attackResult.didHit && attackResult.damageDone > 0) {
                     const log = this.generateCombatLog(source, ability.hrid, target, attackResult);
@@ -2503,11 +2513,84 @@ class CombatSimulator {
             }
 
             if (parryTarget) {
+                wasParried = true;
                 break;
             }
 
             if (abilityEffect.targetType === 'enemy') {
                 break;
+            }
+        }
+
+        if (!wasParried) this._processEcho(source, ability, abilityEffect, hitTargets);
+    }
+
+    /**
+     * One attack, plus the talisman state a landed hit sets off: Fortify stacks on a player who was hit. The only
+     * way the engine resolves an auto attack, a parry or an ability hit.
+     *
+     * @private
+     * @param {Object} source - Attacking unit
+     * @param {Object} target - Defending unit
+     * @param {Object|null} abilityEffect - Ability effect, or null for an auto attack
+     * @returns {Object} The attack result
+     */
+    _processAttack(source, target, abilityEffect) {
+        const attackResult = CombatUtilities.processAttack(source, target, abilityEffect, this.taskDamageMode);
+        if (attackResult.didHit && target.isPlayer) this._applyFortify(target);
+        return attackResult;
+    }
+
+    /**
+     * Fortify (talisman): a landed hit on the wearer adds a stack (up to 4) and restarts the 5 s window; every stack
+     * expires together. Each stack adds the scaled value to armor and the three elemental resistances.
+     *
+     * @private
+     * @param {Object} target - The player who was hit
+     */
+    _applyFortify(target) {
+        const value = target.talismanMechanics?.fortify;
+        if (!(value > 0) || target.combatDetails.currentHitpoints <= 0) return;
+        const now = this.simulationTime;
+        const live = target.fortifyStacks > 0 && target.fortifyExpireTime > now;
+        target.fortifyStacks = Math.min(FORTIFY_MAX_STACKS, (live ? target.fortifyStacks : 0) + 1);
+        target.fortifyExpireTime = now + FORTIFY_DURATION;
+        target.setFortifyBuffs(target.fortifyStacks, value, now, FORTIFY_DURATION);
+        this.eventQueue.addEvent(new CheckBuffExpirationEvent(target.fortifyExpireTime, target));
+    }
+
+    /**
+     * Echo (talisman): a damage cast repeats once, with the Echo chance, as a second hit at half damage on every
+     * target it struck that is still standing. The repeat rolls its own accuracy and crit, goes through the normal
+     * damage path (so Smite, Shatter and Overkill apply), is credited to the same ability, and does not itself echo
+     * or repeat the cast's side effects (stun, DoT, buffs). A cast that killed its target does not echo.
+     *
+     * @private
+     * @param {Object} source - The caster
+     * @param {Object} ability - The ability cast
+     * @param {Object} abilityEffect - Its damage effect
+     * @param {Array<Object>} hitTargets - The units the cast struck
+     */
+    _processEcho(source, ability, abilityEffect, hitTargets) {
+        const echo = source.talismanMechanics?.echo;
+        if (!(echo > 0) || hitTargets.length === 0) return;
+        const standing = hitTargets.filter((unit) => unit.combatDetails.currentHitpoints > 0);
+        if (standing.length === 0 || !(random() < echo)) return;
+        for (const target of standing) {
+            const attackResult = CombatUtilities.processAttack(source, target, abilityEffect, this.taskDamageMode, {
+                damageScale: ECHO_DAMAGE_SCALE,
+                isEcho: true,
+            });
+            this.simResult.addAttack(
+                source,
+                target,
+                ability.hrid,
+                attackResult.didHit ? attackResult.damageDone : 'miss',
+                attackResult.didHit && attackResult.isCrit
+            );
+            if (target.combatDetails.currentHitpoints === 0) {
+                this.eventQueue.clearEventsForUnit(target);
+                this._finalizeDeath(target);
             }
         }
     }
