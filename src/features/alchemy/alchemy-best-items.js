@@ -12,12 +12,22 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { pricesMoved } from '../../utils/price-change.js';
 import { formatKMB, formatWithSeparator, formatPercentage, timeReadable } from '../../utils/formatters.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
-import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import {
+    navigateToMarketplace,
+    insertTabInOrder,
+    removeMaterialTabs,
+    setupMarketplaceCleanupObserver,
+    visibleTabsContainer,
+} from '../../utils/marketplace-tabs.js';
+import { getGameObject } from '../../utils/item-navigation.js';
+import { openAlchemyOnItem, selectAlchemyTab } from '../../utils/alchemy-navigation.js';
+import { createTimerRegistry } from '../../utils/timer-registry.js';
 import {
     CAPE_BASE_VALUE_MIRROR,
     CAPE_BASE_VALUE_SETTING,
@@ -167,6 +177,32 @@ function getPlayerAlchemyLevel() {
     return alchemySkill?.level || 1;
 }
 
+const PREFS_STORE = 'settings';
+/** The alchemy type the player last chose inside the modal, per character */
+const LAST_TYPE_KEY_PREFIX = 'alchemyBestItems_lastType_';
+/** The items the player hid from the table, per character: {coinify: [hrid], decompose: [hrid], ...} */
+const HIDDEN_KEY_PREFIX = 'alchemyBestItems_hidden_';
+/** Owner of the marketplace "Return to Best Items" tab, so clearing it never sweeps another feature's tabs */
+const RETURN_TAB_OWNER = 'alchemy-best-items';
+/** How long after a return trip the table keeps putting the scroll spot back (the table paints more than once) */
+const SCROLL_RESTORE_MS = 3000;
+
+/**
+ * Whose saved choices these are.
+ * @returns {string} Character id, or `'default'` before login
+ */
+function currentOwner() {
+    return dataManager.getCurrentCharacterId?.() || 'default';
+}
+
+/**
+ * @param {*} type - A candidate alchemy type
+ * @returns {boolean} Whether it is one of the tabs this modal ranks
+ */
+function isKnownType(type) {
+    return typeof type === 'string' && ALCHEMY_TYPES.includes(type);
+}
+
 class AlchemyBestItems {
     constructor() {
         this.isInitialized = false;
@@ -193,6 +229,25 @@ class AlchemyBestItems {
         this.inventoryTimer = null;
         this._onInventoryChange = () => this.handleInventoryChange();
         this.currentType = 'coinify';
+        /** The type the player last chose inside the modal; null until one is read or chosen */
+        this.savedType = null;
+        /** Hidden item hrids per alchemy type, for the character in {@link prefsOwner} */
+        this.hidden = {};
+        /** Whose saved choices are in memory; null until they have been read. Hidden is never written before this */
+        this.prefsOwner = null;
+        /** Bumped by every hide/unhide, so a read that was in flight when one happened does not undo it */
+        this.prefsVersion = 0;
+        /** Draw the hidden rows too (dimmed). In memory only */
+        this.showHidden = false;
+        /** Bumped by every openModal and by disable(), so an opening that was overtaken stops after its awaits */
+        this.openToken = 0;
+        /** The scroll spot to put back after a return trip: {type, top, until} */
+        this.pendingScroll = null;
+        /** The marketplace "Return to Best Items" tab, its cleanup observer and its wait token */
+        this.returnTab = null;
+        this.returnObserverStop = null;
+        this.returnToken = 0;
+        this.timers = createTimerRegistry();
         this.itemsSpriteUrl = null;
         this.profitableOnly = false;
         this.searchQuery = '';
@@ -434,6 +489,16 @@ class AlchemyBestItems {
             if (this.modal?.parentNode) this.modal.remove();
             this.modal = null;
             this.cachedRankings = {};
+            // An opening still waiting on storage must not draw into a modal that is gone
+            this.openToken++;
+            this.clearReturnControl();
+            this.timers.clearAll();
+            // The next login (or re-enable) reads the saved choices again, whoever it is for
+            this.prefsOwner = null;
+            this.savedType = null;
+            this.hidden = {};
+            this.showHidden = false;
+            this.pendingScroll = null;
             this.isInitialized = false;
         } catch (error) {
             console.error('[Alchemy Best Items] Disable failed part-way:', error);
@@ -668,12 +733,32 @@ class AlchemyBestItems {
     /**
      * Open the modal with rankings for the current alchemy type
      */
-    async openModal() {
-        this.currentType = this.detectAlchemyType();
+    async openModal(options = {}) {
+        const token = ++this.openToken;
+        const owner = currentOwner();
+        await this.loadPrefs();
+        // Overtaken by a later opening or a disable, or the character changed while storage was read
+        if (token !== this.openToken || owner !== currentOwner()) return;
+
+        // An explicit type (the return trip) wins, then the last type chosen inside the modal, then the
+        // alchemy tab the game is on
+        if (isKnownType(options.type)) this.currentType = options.type;
+        else if (isKnownType(this.savedType)) this.currentType = this.savedType;
+        else this.currentType = this.detectAlchemyType();
+        if (options.scrollTop > 0) {
+            this.pendingScroll = {
+                type: this.currentType,
+                top: options.scrollTop,
+                until: Date.now() + SCROLL_RESTORE_MS,
+            };
+        } else {
+            this.pendingScroll = null;
+        }
 
         // Ensure sprite URL is loaded for catalyst icons
         if (!this.itemsSpriteUrl) {
             this.itemsSpriteUrl = await assetManifest.getSpriteUrl('items');
+            if (token !== this.openToken) return;
         }
 
         if (!this.modal) {
@@ -691,6 +776,184 @@ class AlchemyBestItems {
 
         // Always recalculate on open so tea/gear changes are reflected
         this.loadRankings(this.currentType);
+    }
+
+    /**
+     * Read this character's saved choices (last type, hidden items) into memory.
+     *
+     * The character is captured before the reads and checked after, so a read that resolves after a switch
+     * never lands on the new character. A hide made while the read was in flight is kept: memory wins then.
+     * A read that fails looks the same as nothing saved, so the hidden list is only ever written for an owner
+     * whose read came back, and never from another character's memory.
+     * @returns {Promise<void>}
+     */
+    async loadPrefs() {
+        const owner = currentOwner();
+        if (this.prefsOwner !== null && this.prefsOwner !== owner) {
+            // Another character: nothing of the last one's carries over
+            this.prefsOwner = null;
+            this.savedType = null;
+            this.hidden = {};
+            this.showHidden = false;
+        }
+        const version = this.prefsVersion;
+        try {
+            const [type, hidden] = await Promise.all([
+                storage.get(LAST_TYPE_KEY_PREFIX + owner, PREFS_STORE, null),
+                storage.get(HIDDEN_KEY_PREFIX + owner, PREFS_STORE, null),
+            ]);
+            if (owner !== currentOwner()) return;
+            this.savedType = isKnownType(type) ? type : null;
+            if (version === this.prefsVersion) {
+                const clean = {};
+                for (const alchemyType of ALCHEMY_TYPES) {
+                    const list = hidden && typeof hidden === 'object' ? hidden[alchemyType] : null;
+                    if (Array.isArray(list)) clean[alchemyType] = list.filter((hrid) => typeof hrid === 'string');
+                }
+                this.hidden = clean;
+            }
+            this.prefsOwner = owner;
+        } catch (error) {
+            console.error('[AlchemyBestItems] Loading saved choices failed:', error);
+        }
+    }
+
+    /**
+     * Whether an item is hidden in one alchemy type's table.
+     * @param {string} type - Alchemy type
+     * @param {string} itemHrid - Item hrid
+     * @returns {boolean}
+     */
+    isHidden(type, itemHrid) {
+        if (this.prefsOwner === null || this.prefsOwner !== currentOwner()) return false;
+        return Array.isArray(this.hidden[type]) && this.hidden[type].includes(itemHrid);
+    }
+
+    /**
+     * Hide or unhide an item in one alchemy type's table, save, and redraw. Other types are left alone.
+     * Refused while the saved list is not the current character's (not read yet, or a switch happened).
+     * @param {string} type - Alchemy type
+     * @param {string} itemHrid - Item hrid
+     * @param {boolean} hide - True to hide, false to bring back
+     */
+    setHidden(type, itemHrid, hide) {
+        if (this.prefsOwner === null || this.prefsOwner !== currentOwner() || !isKnownType(type)) return;
+        const list = (this.hidden[type] || []).filter((hrid) => hrid !== itemHrid);
+        if (hide) list.push(itemHrid);
+        this.hidden = { ...this.hidden, [type]: list };
+        this.prefsVersion++;
+        storage.set(HIDDEN_KEY_PREFIX + this.prefsOwner, this.hidden, PREFS_STORE, true);
+        this.renderTable();
+    }
+
+    /**
+     * Remember the type the player picked inside the modal. Only a pick is saved, never the type the game's
+     * own tab suggested, so "nothing chosen yet" still follows the game's tab.
+     * @param {string} type - Alchemy type
+     */
+    saveChosenType(type) {
+        if (!isKnownType(type)) return;
+        this.savedType = type;
+        storage.set(LAST_TYPE_KEY_PREFIX + currentOwner(), type, PREFS_STORE, true);
+    }
+
+    /**
+     * An item name was clicked: go to its marketplace page and leave a way back.
+     * @param {string} itemHrid - Item to open
+     */
+    goToMarketplace(itemHrid) {
+        // Read before leaving: the scroll spot of the table the player was looking at
+        const content = this.modal?.firstElementChild;
+        const ctx = { type: this.currentType, scrollTop: content?.scrollTop || 0 };
+        if (navigateToMarketplace(itemHrid)) this.armReturnControl(ctx);
+    }
+
+    /**
+     * Pin a "Return to Best Items" tab into the marketplace's tab strip, once the strip exists.
+     * Replaces an earlier one. Removed when the player leaves the marketplace, presses it, or on disable().
+     * @param {{type: string, scrollTop: number}} ctx - Where to come back to
+     */
+    async armReturnControl(ctx) {
+        this.clearReturnControl();
+        const token = ++this.returnToken;
+        let container = visibleTabsContainer();
+        for (let i = 0; i < 30 && !container; i++) {
+            await new Promise((resolve) => {
+                this.timers.scheduleTimeout(resolve, 100);
+            });
+            if (token !== this.returnToken) return;
+            container = visibleTabsContainer();
+        }
+        if (token !== this.returnToken || !container) return;
+        const reference = Array.from(container.children).find((tab) => tab.textContent?.includes('My Listings'));
+        if (!reference) return;
+
+        const tab = reference.cloneNode(true);
+        tab.setAttribute('data-mwi-custom-tab', 'true');
+        tab.setAttribute('data-mwi-tab-owner', RETURN_TAB_OWNER);
+        tab.setAttribute('data-mwi-best-items-return', 'true');
+        tab.classList.remove('Mui-selected');
+        tab.setAttribute('aria-selected', 'false');
+        tab.setAttribute('tabindex', '-1');
+        const label = tab.querySelector('[class*="TabsComponent_badge"]') || tab;
+        label.textContent = '';
+        const box = document.createElement('div');
+        box.style.textAlign = 'center';
+        const top = document.createElement('div');
+        top.textContent = '↩ Return';
+        const sub = document.createElement('div');
+        sub.style.cssText = 'font-size: 0.75em; color: #60a5fa;';
+        sub.textContent = `Best Items — ${ctx.type.charAt(0).toUpperCase()}${ctx.type.slice(1)}`;
+        box.appendChild(top);
+        box.appendChild(sub);
+        label.appendChild(box);
+        tab.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.returnToBestItems(ctx);
+        });
+
+        container.style.flexWrap = 'wrap';
+        insertTabInOrder(container, tab, 'return');
+        this.returnTab = tab;
+        // Leaving the marketplace (or another feature's "clear all") retires the tab
+        this.returnObserverStop = setupMarketplaceCleanupObserver(() => this.clearReturnControl(), [tab]);
+    }
+
+    /**
+     * Remove the marketplace return tab and everything watching it.
+     */
+    clearReturnControl() {
+        this.returnToken++;
+        if (this.returnObserverStop) {
+            this.returnObserverStop();
+            this.returnObserverStop = null;
+        }
+        removeMaterialTabs({ owner: RETURN_TAB_OWNER });
+        if (this.returnTab?.parentNode) this.returnTab.remove();
+        this.returnTab = null;
+    }
+
+    /**
+     * The return tab was pressed: open the Alchemy panel on the type the player was on, then the modal.
+     * Navigation only; no game button that spends or sells is pressed.
+     * @param {{type: string, scrollTop: number}} ctx - Where to come back to (copied before the tab goes)
+     */
+    async returnToBestItems(ctx) {
+        const { type, scrollTop } = ctx;
+        const owner = currentOwner();
+        const game = getGameObject();
+        this.clearReturnControl();
+        if (game) {
+            openAlchemyOnItem(game, { itemHrid: null, actionType: type });
+            await selectAlchemyTab(
+                type,
+                (fn, ms) => this.timers.scheduleTimeout(fn, ms),
+                () => owner === currentOwner() && this.isInitialized
+            );
+        }
+        if (owner !== currentOwner() || !this.isInitialized) return;
+        await this.openModal({ type, scrollTop });
     }
 
     closeModal() {
@@ -1079,10 +1342,23 @@ class AlchemyBestItems {
             styleGameButton(tab, 'quiet', true);
             tab.addEventListener('click', () => {
                 this.currentType = type;
+                this.pendingScroll = null;
+                this.saveChosenType(type);
                 this.loadRankings(type);
             });
             controls.appendChild(tab);
         }
+
+        // "Show hidden (N)" — drawn by renderTable only while this tab has hidden items
+        const hiddenToggle = document.createElement('button');
+        hiddenToggle.setAttribute('data-mwi-hidden-toggle', 'true');
+        styleGameButton(hiddenToggle, 'quiet', true);
+        hiddenToggle.style.display = 'none';
+        hiddenToggle.addEventListener('click', () => {
+            this.showHidden = !this.showHidden;
+            this.renderTable();
+        });
+        controls.appendChild(hiddenToggle);
 
         // Spacer
         const spacer = document.createElement('div');
@@ -1384,6 +1660,18 @@ class AlchemyBestItems {
             return primary !== 0 ? primary : b.xpPerHour - a.xpPerHour;
         });
 
+        // Hidden items sit out of the ranking: the rank counts only what is shown, and the cap applies to it.
+        // They are drawn after it, unranked, only while "Show hidden" is on
+        const visibleSorted = sorted.filter((r) => !this.isHidden(this.currentType, r.itemHrid));
+        const hiddenSorted = sorted.filter((r) => this.isHidden(this.currentType, r.itemHrid));
+        if (hiddenSorted.length === 0) this.showHidden = false;
+        const showHidden = this.showHidden;
+        const hiddenToggle = this.modal.querySelector('[data-mwi-hidden-toggle]');
+        if (hiddenToggle) {
+            hiddenToggle.style.display = hiddenSorted.length > 0 ? '' : 'none';
+            hiddenToggle.textContent = showHidden ? 'Hide hidden' : `Show hidden (${hiddenSorted.length})`;
+        }
+
         // Update title
         const title = this.modal.querySelector('[data-mwi-best-title]');
         if (title) {
@@ -1463,15 +1751,37 @@ class AlchemyBestItems {
 
         const playerAlchemyLevel = getPlayerAlchemyLevel();
 
-        for (let i = 0; i < Math.min(sorted.length, maxRows); i++) {
-            const item = sorted[i];
+        const drawn = visibleSorted.slice(0, maxRows).map((item) => ({ item, isHidden: false }));
+        if (showHidden) for (const item of hiddenSorted) drawn.push({ item, isHidden: true });
+
+        for (let i = 0; i < drawn.length; i++) {
+            const { item, isHidden } = drawn[i];
             const row = document.createElement('tr');
             row.style.cssText = 'border-bottom: 1px solid #333;';
+            if (isHidden) {
+                row.setAttribute('data-mwi-best-hidden-row', 'true');
+                row.style.opacity = '0.5';
+            }
 
-            // Rank
+            // Hide / unhide control, then the rank (hidden rows have none)
             const rankTd = document.createElement('td');
-            rankTd.textContent = i + 1;
-            rankTd.style.cssText = 'padding: 4px 8px; text-align: center; color: #888;';
+            rankTd.style.cssText = 'padding: 4px 8px; text-align: center; color: #888; white-space: nowrap;';
+            const hideBtn = document.createElement('span');
+            hideBtn.setAttribute(isHidden ? 'data-mwi-best-unhide' : 'data-mwi-best-hide', 'true');
+            hideBtn.textContent = isHidden ? '\u21ba' : '\u2715';
+            hideBtn.title = isHidden ? 'Show this item in the table again' : 'Hide this item from the table';
+            hideBtn.style.cssText = 'cursor: pointer; margin-right: 6px; color: #777;';
+            const rowType = this.currentType;
+            hideBtn.addEventListener('click', (e) => {
+                // The row's own click opens its breakdown
+                e.stopPropagation();
+                this.setHidden(rowType, item.itemHrid, !isHidden);
+            });
+            rankTd.appendChild(hideBtn);
+            const rankNumber = document.createElement('span');
+            rankNumber.setAttribute('data-mwi-best-rank', 'true');
+            rankNumber.textContent = isHidden ? '' : String(i + 1);
+            rankTd.appendChild(rankNumber);
             row.appendChild(rankTd);
 
             // Name (clickable → marketplace)
@@ -1482,7 +1792,7 @@ class AlchemyBestItems {
             nameLink.style.cssText = 'color: #93c5fd; cursor: pointer; text-decoration: underline;';
             nameLink.addEventListener('click', (e) => {
                 e.stopPropagation();
-                navigateToMarketplace(item.itemHrid);
+                this.goToMarketplace(item.itemHrid);
             });
             nameTd.appendChild(nameLink);
             // The own-stock figure is the tooltip's own-use cost, not this row's single-step price
@@ -1645,15 +1955,37 @@ class AlchemyBestItems {
         if (sorted.length === 0) {
             container.innerHTML =
                 '<div style="color: #888; padding: 20px; text-align: center;">No eligible items found</div>';
+        } else if (drawn.length === 0) {
+            // Every match is hidden: say so, so the empty table is not mistaken for "nothing eligible"
+            container.innerHTML =
+                '<div style="color: #888; padding: 20px; text-align: center;">' +
+                'Every matching item is hidden. Use "Show hidden" to bring some back.</div>';
         } else {
             container.appendChild(table);
-            if (sorted.length > maxRows) {
+            if (visibleSorted.length > maxRows) {
                 const more = document.createElement('div');
                 more.style.cssText = 'color: #888; text-align: center; padding: 8px; font-size: 0.75rem;';
-                more.textContent = `Showing top ${maxRows} of ${sorted.length} items`;
+                more.textContent = `Showing top ${maxRows} of ${visibleSorted.length} items`;
                 container.appendChild(more);
             }
         }
+        this.restoreScroll();
+    }
+
+    /**
+     * After a return trip, put the table back where the player left it. The table is drawn more than once
+     * while it opens (the raw ranking, then the volume-capped one), so this runs on each draw for a few
+     * seconds; a type switch or a new opening cancels it.
+     */
+    restoreScroll() {
+        const pending = this.pendingScroll;
+        if (!pending) return;
+        const content = this.modal?.firstElementChild;
+        if (pending.type !== this.currentType || Date.now() > pending.until || !content) {
+            this.pendingScroll = null;
+            return;
+        }
+        content.scrollTop = pending.top;
     }
 
     /**
@@ -1688,7 +2020,7 @@ class AlchemyBestItems {
         link.style.cssText = 'color: #93c5fd; cursor: pointer; text-decoration: underline;';
         link.addEventListener('click', (e) => {
             e.stopPropagation();
-            navigateToMarketplace(itemHrid);
+            this.goToMarketplace(itemHrid);
         });
         return link;
     }

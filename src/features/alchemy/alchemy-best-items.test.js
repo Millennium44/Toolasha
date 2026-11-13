@@ -131,6 +131,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getSkills: () => game.skills,
         getEquipment: () => new Map(Object.entries(tooltip.worn)),
         getBuffStateVersion: () => game.buffVersion,
+        getCurrentCharacterId: () => store.owner,
         on: (event, cb) => event === 'items_updated' && tooltip.inventoryListeners.push(cb),
         off: (event, cb) => {
             tooltip.inventoryListeners = tooltip.inventoryListeners.filter((c) => c !== cb);
@@ -259,8 +260,34 @@ vi.mock('../../utils/dom-observer-helpers.js', () => ({
     createMutationWatcher: () => () => {},
 }));
 
-vi.mock('../../utils/marketplace-tabs.js', () => ({
-    navigateToMarketplace: vi.fn(),
+// Only the navigation is faked; the tab strip helpers are the real ones, so the return tab is the real tab
+vi.mock('../../utils/marketplace-tabs.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    navigateToMarketplace: vi.fn(() => true),
+}));
+
+/** An in-memory storage: key -> value, with the writes kept in order */
+const store = vi.hoisted(() => ({ data: new Map(), writes: [], owner: '1' }));
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        get: async (key, _store, fallback) => (store.data.has(key) ? store.data.get(key) : fallback),
+        set: async (key, value) => {
+            store.writes.push([key, JSON.parse(JSON.stringify(value))]);
+            store.data.set(key, JSON.parse(JSON.stringify(value)));
+        },
+    },
+}));
+
+const nav = vi.hoisted(() => ({ game: null, opened: [], tabSelected: [] }));
+vi.mock('../../utils/item-navigation.js', () => ({ getGameObject: () => nav.game }));
+vi.mock('../../utils/alchemy-navigation.js', () => ({
+    openAlchemyOnItem: (_game, ctx) => {
+        nav.opened.push(ctx);
+        return true;
+    },
+    selectAlchemyTab: async (type) => {
+        nav.tabSelected.push(type);
+    },
 }));
 
 /**
@@ -402,6 +429,13 @@ afterEach(() => {
     bestItems.itemsSpriteUrl = null;
     if (bestItems.modal?.parentNode) bestItems.modal.remove();
     bestItems.modal = null;
+    bestItems.disable();
+    store.data.clear();
+    store.writes = [];
+    store.owner = '1';
+    nav.game = null;
+    nav.opened = [];
+    nav.tabSelected = [];
     document.body.innerHTML = '';
 });
 
@@ -2453,5 +2487,271 @@ describe('equipmentSignature and talismans', () => {
         const before = bestItems.equipmentSignature();
         game.buffVersion += 1;
         expect(bestItems.equipmentSignature()).not.toBe(before);
+    });
+});
+
+describe('remembering the place and hiding rows', () => {
+    const row = (name, profitPerHour) => ({
+        itemHrid: `/items/${name}`,
+        name,
+        itemLevel: 10,
+        itemPrice: 0,
+        profitPerHour,
+        xpPerHour: 0,
+        catalyst: null,
+        profitData: null,
+    });
+
+    /** Open the modal the way a click on the Best Items tab does, with the rankings stubbed in */
+    async function open(options) {
+        vi.spyOn(bestItems, 'loadRankings').mockImplementation((type) => {
+            bestItems.cachedRankings[type] = [row('a', 300), row('b', 200), row('c', 100)];
+            bestItems.renderTable();
+        });
+        bestItems.itemsSpriteUrl = 'sprite';
+        await bestItems.openModal(options);
+    }
+
+    const names = () =>
+        Array.from(bestItems.modal.querySelectorAll('tbody tr')).map((tr) => tr.children[1].textContent);
+    const ranks = () =>
+        Array.from(bestItems.modal.querySelectorAll('tbody tr')).map(
+            (tr) => tr.querySelector('[data-mwi-best-rank]').textContent
+        );
+    const hiddenKey = (owner = '1') => `alchemyBestItems_hidden_${owner}`;
+    const typeKey = (owner = '1') => `alchemyBestItems_lastType_${owner}`;
+    const toggle = () => bestItems.modal.querySelector('[data-mwi-hidden-toggle]');
+    const hide = (index) => bestItems.modal.querySelectorAll('[data-mwi-best-hide]')[index].click();
+    const pickType = (type) => bestItems.modal.querySelector(`[data-mwi-type-tab="${type}"]`).click();
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    test('with nothing saved it opens on the alchemy tab the game is on', async () => {
+        const detect = vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('transmute');
+        await open();
+        expect(bestItems.currentType).toBe('transmute');
+        expect(detect).toHaveBeenCalled();
+    });
+
+    test('a type chosen in the modal is saved and reopened on, whatever tab the game shows', async () => {
+        vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
+        await open();
+        pickType('decompose');
+        expect(store.data.get(typeKey())).toBe('decompose');
+
+        bestItems.closeModal();
+        await bestItems.openModal();
+        expect(bestItems.currentType).toBe('decompose');
+    });
+
+    test('opening does not save the type the game suggested', async () => {
+        vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('transmute');
+        await open();
+        expect(store.writes).toEqual([]);
+    });
+
+    test('a saved value that is not a known type is ignored', async () => {
+        store.data.set(typeKey(), 'unrefine-all');
+        vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('transmute');
+        await open();
+        expect(bestItems.currentType).toBe('transmute');
+    });
+
+    test("another character's saved type and hidden list do not leak in", async () => {
+        store.data.set(typeKey('1'), 'decompose');
+        store.data.set(hiddenKey('1'), { decompose: ['/items/a'] });
+        vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
+        await open();
+        expect(bestItems.currentType).toBe('decompose');
+        expect(bestItems.isHidden('decompose', '/items/a')).toBe(true);
+
+        store.owner = '2';
+        await bestItems.openModal();
+        expect(bestItems.currentType).toBe('coinify');
+        expect(bestItems.isHidden('decompose', '/items/a')).toBe(false);
+        // A hide made now lands under the new character only, and the first one's list is untouched
+        pickType('decompose');
+        hide(0);
+        expect(store.data.get(hiddenKey('2'))).toEqual({ decompose: ['/items/a'] });
+        expect(store.data.get(hiddenKey('1'))).toEqual({ decompose: ['/items/a'] });
+
+        // A character whose list has not been read yet cannot be written to from another's memory
+        store.owner = '3';
+        expect(bestItems.isHidden('decompose', '/items/a')).toBe(false);
+        bestItems.setHidden('decompose', '/items/b', true);
+        expect(store.data.has(hiddenKey('3'))).toBe(false);
+    });
+
+    test('a hide is per alchemy type', async () => {
+        await open();
+        pickType('coinify');
+        hide(0);
+        expect(names()).toEqual(['b', 'c']);
+        pickType('decompose');
+        expect(names()).toEqual(['a', 'b', 'c']);
+        expect(store.data.get(hiddenKey())).toEqual({ coinify: ['/items/a'] });
+        // A tab click never rewrites the hidden list
+        expect(store.writes.filter(([key]) => key === hiddenKey())).toHaveLength(1);
+    });
+
+    test('hidden rows do not count in the rank numbers, and "Show hidden (N)" counts them', async () => {
+        await open();
+        pickType('coinify');
+        expect(toggle().style.display).toBe('none');
+        hide(0);
+        expect(ranks()).toEqual(['1', '2']);
+        expect(toggle().style.display).toBe('');
+        expect(toggle().textContent).toBe('Show hidden (1)');
+        hide(0);
+        expect(toggle().textContent).toBe('Show hidden (2)');
+    });
+
+    test('Show hidden draws them dimmed after the ranked rows, unranked, with a control to unhide', async () => {
+        await open();
+        pickType('coinify');
+        hide(1);
+        toggle().click();
+        expect(names()).toEqual(['a', 'c', 'b']);
+        expect(ranks()).toEqual(['1', '2', '']);
+        const hiddenRow = bestItems.modal.querySelector('[data-mwi-best-hidden-row]');
+        expect(hiddenRow.style.opacity).toBe('0.5');
+        expect(toggle().textContent).toBe('Hide hidden');
+
+        hiddenRow.querySelector('[data-mwi-best-unhide]').click();
+        expect(names()).toEqual(['a', 'b', 'c']);
+        expect(store.data.get(hiddenKey())).toEqual({ coinify: [] });
+        // Nothing left hidden: the toggle goes and the reveal switches itself off
+        expect(toggle().style.display).toBe('none');
+        expect(bestItems.showHidden).toBe(false);
+    });
+
+    test('hiding every row says so rather than claiming nothing is eligible', async () => {
+        await open();
+        pickType('coinify');
+        hide(0);
+        hide(0);
+        hide(0);
+        const text = bestItems.modal.querySelector('[data-mwi-best-table]').textContent;
+        expect(text).toContain('Every matching item is hidden');
+        expect(toggle().textContent).toBe('Show hidden (3)');
+    });
+
+    test('clicking the hide control does not open the row breakdown', async () => {
+        await open();
+        pickType('coinify');
+        const toggled = vi.spyOn(bestItems, 'toggleBreakdown');
+        hide(0);
+        expect(toggled).not.toHaveBeenCalled();
+    });
+
+    test('a hidden list read from storage is applied on opening, and junk in it is dropped', async () => {
+        store.data.set(hiddenKey(), { coinify: ['/items/b', 7], bogus: ['/items/a'] });
+        vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
+        await open();
+        expect(names()).toEqual(['a', 'c']);
+        expect(bestItems.hidden).toEqual({ coinify: ['/items/b'] });
+    });
+
+    test('a hide made while the saved list was being read is not undone by the read', async () => {
+        vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
+        await open();
+        pickType('coinify');
+        const load = bestItems.loadPrefs();
+        hide(0);
+        await load;
+        expect(bestItems.isHidden('coinify', '/items/a')).toBe(true);
+    });
+
+    describe('the return control on the marketplace', () => {
+        const marketplace = () => {
+            document.body.insertAdjacentHTML(
+                'beforeend',
+                `<div class="MuiTabs-flexContainer" role="tablist">
+                    <button role="tab">Market Listings</button><button role="tab">My Listings</button>
+                </div>`
+            );
+            const strip = document.querySelector('.MuiTabs-flexContainer');
+            // happy-dom does no layout: say the strip is on screen
+            Object.defineProperty(strip, 'offsetParent', { value: document.body });
+            strip.getBoundingClientRect = () => ({ width: 400 });
+            return strip;
+        };
+        const returnTab = () => document.querySelector('[data-mwi-best-items-return]');
+        const link = () => bestItems.modal.querySelector('tbody tr td:nth-child(2) span');
+
+        test('a row click that navigates arms a tab, and pressing it reopens the same type', async () => {
+            nav.game = { id: 'game' };
+            bestItems.isInitialized = true;
+            await open();
+            pickType('transmute');
+            marketplace();
+            link().click();
+            await vi.waitFor(() => expect(returnTab()).not.toBeNull());
+            expect(returnTab().textContent).toContain('Best Items');
+            expect(returnTab().textContent).toContain('Transmute');
+
+            bestItems.closeModal();
+            bestItems.currentType = 'coinify';
+            returnTab().click();
+            await vi.waitFor(() => expect(bestItems.modal.style.display).toBe('flex'));
+            expect(nav.opened).toEqual([{ itemHrid: null, actionType: 'transmute' }]);
+            expect(nav.tabSelected).toEqual(['transmute']);
+            expect(bestItems.currentType).toBe('transmute');
+            // Pressing it spends it
+            expect(returnTab()).toBeNull();
+        });
+
+        test('no tab is armed when the game refused the navigation', async () => {
+            const tabs = await import('../../utils/marketplace-tabs.js');
+            tabs.navigateToMarketplace.mockReturnValueOnce(false);
+            await open();
+            marketplace();
+            link().click();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(returnTab()).toBeNull();
+        });
+
+        test('a second click replaces the tab rather than adding another', async () => {
+            await open();
+            pickType('coinify');
+            marketplace();
+            link().click();
+            await vi.waitFor(() => expect(returnTab()).not.toBeNull());
+            link().click();
+            await vi.waitFor(() => expect(document.querySelectorAll('[data-mwi-best-items-return]')).toHaveLength(1));
+        });
+
+        test('disable() removes the tab and cancels one still waiting for the strip', async () => {
+            await open();
+            pickType('coinify');
+            marketplace();
+            link().click();
+            await vi.waitFor(() => expect(returnTab()).not.toBeNull());
+            bestItems.disable();
+            expect(returnTab()).toBeNull();
+            expect(bestItems.returnObserverStop).toBeNull();
+
+            // A tab still waiting on a strip that never came is cancelled too
+            document.body.innerHTML = '';
+            await open();
+            pickType('coinify');
+            link().click();
+            bestItems.disable();
+            marketplace();
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            expect(returnTab()).toBeNull();
+        });
+
+        test('the scroll spot is put back on the redraw after a return, and a type switch forgets it', async () => {
+            await open();
+            pickType('decompose');
+            await bestItems.openModal({ type: 'decompose', scrollTop: 240 });
+            bestItems.renderTable();
+            expect(bestItems.modal.firstElementChild.scrollTop).toBe(240);
+            pickType('coinify');
+            expect(bestItems.pendingScroll).toBeNull();
+        });
     });
 });
