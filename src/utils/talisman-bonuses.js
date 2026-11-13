@@ -25,6 +25,109 @@ const TARGET_NONCOMBAT = '/talisman_modifier_targets/noncombat_stat';
 const TARGET_COMBAT = '/talisman_modifier_targets/combat_stat';
 const TARGET_BUFF = '/talisman_modifier_targets/buff';
 
+/** The group of the five talisman-only lines (Echo, Fortify, Overkill, Shatter, Smite), from the game data */
+export const SPECIAL_GROUP = '/talisman_modifier_groups/special';
+
+/** The stat names of the five Special lines (what their `keys` feed, first letter lowercased) */
+export const SPECIAL_MECHANIC_STATS = Object.freeze(['echo', 'smite', 'shatter', 'fortify', 'overkill']);
+
+/**
+ * Whether a modifier detail is a Special line: in the Special group, or feeding one of the five mechanic stats
+ * (so a table without group labels still reads right). The one test every reader uses. Measured on the test server (2026-11-13): a second copy of a
+ * Special line on another worn talisman adds nothing (Fortify G2 at power 0.15 reads 0.01725 with one copy or two),
+ * while regular lines on several talismans add up.
+ * @param {Object|null|undefined} detail - A `talismanModifierDetailMap` entry
+ * @returns {boolean}
+ */
+export function isSpecialModifierDetail(detail) {
+    if (!detail) return false;
+    return (
+        detail.groupHrid === SPECIAL_GROUP ||
+        (detail.keys || []).some((key) => SPECIAL_MECHANIC_STATS.includes(talismanStatName(key)))
+    );
+}
+
+/**
+ * The Special lines that count for nothing: a second copy of a Special line on a worn talisman adds nothing, so the
+ * highest grade counts and, at equal grades, the lowest slot (which copy the game counts at equal grades is
+ * unmeasured; the value is the same either way).
+ * @param {Array<Object>} talismans - Records ({slotIndex, modifiers:[{hrid, grade}]})
+ * @param {Object} modifierDetailMap - `talismanModifierDetailMap`
+ * @param {number} [maxSlot] - Slots beyond this are not worn and are ignored
+ * @returns {Array<{slotIndex: number, lineIndex: number, hrid: string, winnerSlot: number}>}
+ */
+export function deadSpecialLines(talismans, modifierDetailMap, maxSlot = Infinity) {
+    if (!Array.isArray(talismans) || !modifierDetailMap) return [];
+    const byHrid = new Map();
+    const ordered = talismans
+        .filter((t) => t && Number.isInteger(t.slotIndex) && t.slotIndex >= 1 && t.slotIndex <= maxSlot)
+        .sort((a, b) => a.slotIndex - b.slotIndex);
+    const seenSlots = new Set();
+    for (const talisman of ordered) {
+        // A second record in one slot is ignored, as the engine ignores it
+        if (seenSlots.has(talisman.slotIndex)) continue;
+        seenSlots.add(talisman.slotIndex);
+        (Array.isArray(talisman.modifiers) ? talisman.modifiers : []).forEach((modifier, lineIndex) => {
+            if (!isSpecialModifierDetail(modifierDetailMap[modifier?.hrid])) return;
+            const grade = Math.floor(Number(modifier.grade));
+            if (!(grade >= 1)) return;
+            const list = byHrid.get(modifier.hrid) || [];
+            list.push({ slotIndex: talisman.slotIndex, lineIndex, hrid: modifier.hrid, grade });
+            byHrid.set(modifier.hrid, list);
+        });
+    }
+    const dead = [];
+    for (const list of byHrid.values()) {
+        if (list.length < 2) continue;
+        let winner = list[0];
+        for (const copy of list) if (copy.grade > winner.grade) winner = copy;
+        for (const copy of list) {
+            if (copy !== winner) {
+                dead.push({
+                    slotIndex: copy.slotIndex,
+                    lineIndex: copy.lineIndex,
+                    hrid: copy.hrid,
+                    winnerSlot: winner.slotIndex,
+                });
+            }
+        }
+    }
+    return dead;
+}
+
+/**
+ * Add scaled lines into per-name totals by the measured stacking rule: regular lines sum, copies of one Special
+ * line count once, at the highest value among them. Keep one instance per result and call `finish` last.
+ * @returns {{add: Function, finish: Function}}
+ */
+export function createLineAccumulator() {
+    // Special line key -> the best copy so far
+    const best = new Map();
+    return {
+        /**
+         * @param {Object} into - The bucket (name -> total) the line adds to
+         * @param {string[]} names - Stat names the line feeds
+         * @param {number} value - The scaled value
+         * @param {boolean} special - Whether the line is a Special line
+         * @param {string} key - The line's identity (its hrid)
+         */
+        add(into, names, value, special, key) {
+            if (!special) {
+                for (const name of names) into[name] = (into[name] || 0) + value;
+                return;
+            }
+            const have = best.get(key);
+            if (!have || value > have.value) best.set(key, { into, names, value });
+        },
+        /** Add the best copy of each Special line into its bucket */
+        finish() {
+            for (const { into, names, value } of best.values()) {
+                for (const name of names) into[name] = (into[name] || 0) + value;
+            }
+        },
+    };
+}
+
 /**
  * @returns {{noncombat: Object, buffs: Object, combat: Object}} A fresh empty result
  */
@@ -102,7 +205,8 @@ export function talismanStatName(key) {
 }
 
 /**
- * Add a talisman list's bonuses up.
+ * Add a talisman list's bonuses up. Regular lines sum across talismans; copies of one Special line count once, at
+ * the highest grade (measured).
  *
  * @param {Object} params
  * @param {Array<Object>} params.talismans - Talisman records ({slotIndex, modifiers:[{hrid, grade}]}). Slots the
@@ -122,6 +226,7 @@ export function computeTalismanBonuses({ talismans, belt, itemDetailMap, modifie
     const slots = getBeltSlotCount(belt, itemDetailMap);
     if (slots === 0) return result;
     const power = getTalismanPower(belt, itemDetailMap, enhancementTable);
+    const accumulator = createLineAccumulator();
 
     for (const talisman of talismans) {
         const slot = talisman?.slotIndex;
@@ -139,12 +244,13 @@ export function computeTalismanBonuses({ talismans, belt, itemDetailMap, modifie
                         ? result.buffs
                         : null;
             if (!into) continue;
-            for (const key of detail.keys || []) {
-                const name = detail.targetHrid === TARGET_BUFF ? key : talismanStatName(key);
-                into[name] = (into[name] || 0) + value;
-            }
+            const names = (detail.keys || []).map((key) =>
+                detail.targetHrid === TARGET_BUFF ? key : talismanStatName(key)
+            );
+            accumulator.add(into, names, value, isSpecialModifierDetail(detail), modifier.hrid);
         }
     }
+    accumulator.finish();
     return result;
 }
 

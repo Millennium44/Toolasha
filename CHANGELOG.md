@@ -14,6 +14,10 @@ Gathering and production skill pages get an Open in Optimizer button (behind the
 
 On narrow screens the filter box takes only the free width, so the skill title and its ? button no longer push the page into a sideways scroll.
 
+### Duplicate Special talisman lines count once
+
+Measured on the test server: a second talisman with the same Special line (Echo, Fortify, Overkill, Shatter, Smite) adds nothing. The Combat Sim, line ranking and sets now count only the best copy, the loadout check flags the extra copy, and the sim editor marks it "no effect".
+
 <!-- shipped in 3.86.1 -->
 
 ### Item tooltip profit follows the sell-tax setting

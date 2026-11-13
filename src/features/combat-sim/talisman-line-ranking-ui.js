@@ -42,6 +42,7 @@ import {
     checkCombatLines,
     combatRankingReadiness,
     estimateCombatRankingSims,
+    isSpecialLine,
     normalizeBalanceWeights,
     runCombatLineRanking,
     talismanLines,
@@ -69,7 +70,8 @@ const SECTION_HELP =
     'Test server only. Ranks every combat talisman line by what it adds to this build, and builds the set your belt ' +
     'can hold (up to 4 lines per talisman, no line twice on one talisman). One sim per line in the zone and tier ' +
     'chosen in Configure, against this build with its talismans off; the set is then checked with one combined sim. ' +
-    'Practical sets (the default) hold at most one Special line per talisman and cap the grades; Budget sets fit an ' +
+    'Practical sets (the default) hold at most one Special line per talisman and cap the grades; a second copy of the ' +
+    'same Special adds nothing (measured), so a set never repeats one. Budget sets fit an ' +
     'expected orb cost per talisman.';
 
 /**
@@ -265,6 +267,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             const { valued } = checkCombatLines(lines, ready.belt, gameData, grade || 6);
             const sims = estimateCombatRankingSims({
                 lineCount: valued.length,
+                specialCount: valued.filter(isSpecialLine).length,
                 slots: ready.slots,
                 hasCurrent: wornTalismans(dto.talismans, ready.slots).length > 0,
             });

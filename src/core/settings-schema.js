@@ -4379,7 +4379,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 hidden: !isTestServer(),
-                help: 'Test server only. Marks the selected loadout in the Loadouts panel when it names a talisman that no longer exists, puts one in a slot its belt does not have, or holds a combat talisman in a skilling loadout (or the reverse). Starting an action re-equips its loadout, talismans included, so these do nothing.',
+                help: 'Test server only. Marks the selected loadout in the Loadouts panel when it names a talisman that no longer exists, puts one in a slot its belt does not have, or holds a combat talisman in a skilling loadout (or the reverse). It also flags a Special line (Echo, Fortify, Overkill, Shatter, Smite) that two slots both carry, since a second copy adds nothing. Starting an action re-equips its loadout, talismans included, so these do nothing.',
             },
             loadoutSnapshot: {
                 id: 'loadoutSnapshot',
