@@ -583,6 +583,11 @@ export async function buildPayloadJSON(scope = 'settings') {
     await assertExternalKeysSaved();
     const allStores = await storage.listStores();
     const ours = allStores.filter(isSyncedStore);
+    // `listStores` answers [] with no connection. The settings store always exists (sync's own records live in
+    // it), so a listing without it is one that failed, and building from it would upload `"stores":{}`
+    if (!ours.includes(SETTINGS_STORE)) {
+        throw new Error("could not list this device's stores (database not available); nothing was synced");
+    }
     const storeNames = scope === 'everything' ? ours : ours.filter((name) => name === SETTINGS_STORE);
     // One view of ownership for the whole build. The stores are read one at a
     // time, and a registration landing between two reads must not leave the

@@ -3452,6 +3452,13 @@ describe('a store read that aborts part way stops the sync before anything is se
         await expect(buildPayloadJSON('everything')).rejects.toThrow(/dungeonRuns/);
     });
 
+    test('nor from a store listing that came back empty, as it does with no connection', async () => {
+        storeState.stores = {};
+
+        await expect(buildPayloadJSON('everything')).rejects.toThrow(/list/);
+        await expect(buildPayloadJSON('settings')).rejects.toThrow(/list/);
+    });
+
     test('nor from a settings store that reads as empty', async () => {
         storeState.shortRead = { store: 'settings', keep: 0 };
 
@@ -3512,7 +3519,35 @@ describe('a store read that aborts part way stops the sync before anything is se
         expect(storeState.stores.settings[RECORD]).toEqual(['actionBarTimeDisplay']);
     });
 
-    test('a pull someone asked for still writes all of a store it could not weigh, as the download wins it anyway', async () => {
+    test('a read that throws after the settings fold puts the key-migration records back', async () => {
+        const RECORD = 'settings_key_migrations_applied_script_settingsMap_abc';
+        storeState.stores.settings[RECORD] = ['actionBarTimeDisplay'];
+        storeState.stores.dungeonRuns = { a0: 1, run1: { kills: 5 } };
+        const baseline = wholeKeyHashes(payloadOf({ dungeonRuns: { a0: 1, run1: { kills: 3 } } }));
+        reconcileKeyMigrationState.mockImplementationOnce(async () => {
+            delete storeState.stores.settings[RECORD];
+        });
+        storeState.getAllThrows = 'dungeonRuns';
+
+        try {
+            await expect(
+                applyPayload(
+                    payloadOf({
+                        settings: { script_settingsMap_abc: { chatCommands: { isTrue: false } } },
+                        dungeonRuns: { a0: 1, run1: { kills: 3 } },
+                    }),
+                    { mode: 'merge', baseline }
+                )
+            ).rejects.toThrow('unreadable store');
+        } finally {
+            storeState.getAllThrows = null;
+        }
+
+        expect(importedPayloads).toHaveLength(0);
+        expect(storeState.stores.settings[RECORD]).toEqual(['actionBarTimeDisplay']);
+    });
+
+    test('a pull someone asked for writes all of a store it could not read whole, as the download wins it anyway', async () => {
         storeState.stores.dungeonRuns = { a0: 1, run1: { kills: 5 } };
         storeState.shortRead = { store: 'dungeonRuns', keep: 1 };
 
