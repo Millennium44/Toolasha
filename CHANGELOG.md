@@ -15,6 +15,9 @@ Test server. Beside Talisman lines in the Combat Sim and the Skilling Optimizer,
 If you have "Simulate missing scroll effects" or the Scroll Planner turned off, the update popup offers each one again, once, with its switch. Nothing is turned on for you.
 
 ### Compact talisman editing in the Combat Sim
+
+The editor's talismans now sit side by side as small cards, one per belt slot, instead of a tall list of full-width rows; on a phone they stack. The Belt row is hidden where the game has no belts.
+
 ### Best Items remembers where you were
 
 Alchemy Best Items now reopens on the last Coinify, Decompose or Transmute tab you picked. After clicking an item to go to the market, a "Best Items" return tab there takes you straight back to the same tab and scroll spot.
