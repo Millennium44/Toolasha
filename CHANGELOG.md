@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Buy missing supplies stocks to your run target
+
+The Labyrinth's "Buy missing supplies" now buys up to the Consumables panel's run target (5 runs unless you changed it), crates included, instead of one run's carry cap, so it no longer says nothing is missing when you are short of that target.
+
 ### Skilling Optimizer tool label no longer overlaps
 
 The tool row's label now reads "Tool" (hover for the full name) instead of a long "Cheesesmithing Tool" that ran into the item name.
