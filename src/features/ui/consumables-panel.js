@@ -3553,7 +3553,15 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         const crafted = [keyRow, player.chestKey && this._craftChestKeys ? player.chestKey : null].filter(
             (entry) => entry && entry.route === 'craft' && !readOnly
         );
-        const buyable = player.forecasts.filter((entry) => !(crafted.includes(entry) && entry.isKey));
+        // On a market route the chest key is restocked like any other row: it
+        // belongs in Buy all and the footer's count and cost, while staying out
+        // of `forecasts` so it never decides "stops in". On the craft route it is
+        // either in the materials bill (the chip on) or left out (the chip off).
+        const buyChestKey = player.chestKey && player.chestKey.route !== 'craft' && !readOnly;
+        const buyable = [
+            ...player.forecasts.filter((entry) => !(crafted.includes(entry) && entry.isKey)),
+            ...(buyChestKey ? [player.chestKey] : []),
+        ];
 
         const soonest = firstToRunOut(player.forecasts);
         // The chest key is costed (it is a run cost, as in the combat stats) but is
