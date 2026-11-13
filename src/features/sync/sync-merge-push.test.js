@@ -2117,6 +2117,36 @@ describe('a store read that aborts part way is never uploaded or recorded (#962)
     });
 });
 
+describe('an edit made after a pull that could not be read back is kept', () => {
+    test('the baseline records the download, so the next merge keeps the edit and sends it', async () => {
+        const { a, b } = await syncedPair();
+        await as(a, async () => {
+            a.db.settings.playerColors = { from: 'v0' };
+            expect((await auto.push()).ok).toBe(true);
+        });
+        await as(b, auto.startup);
+        await as(b, async () => {
+            b.db.settings.playerColors = { from: 'v1' };
+            expect((await auto.push()).ok).toBe(true);
+        });
+        // A takes v1, but its read-back after the import fails
+        world.onRestore = () => {
+            world.shortRead = { store: 'xpHistory', keep: 0 };
+        };
+        expect(await as(a, auto.startup)).toMatchObject({ ok: false, reason: 'unconfirmed-apply' });
+        expect(a.db.settings.playerColors).toEqual({ from: 'v1' });
+        world.onRestore = null;
+        world.shortRead = null;
+
+        // The player edits the key; the next merge must not take the gist's v1 back over it
+        a.db.settings.playerColors = { from: 'v3' };
+        await as(a, auto.startup);
+        expect(a.db.settings.playerColors).toEqual({ from: 'v3' });
+        expect((await as(a, auto.push)).ok).toBe(true);
+        expect(gistStores().settings.playerColors).toEqual({ from: 'v3' });
+    });
+});
+
 describe('a takeover while a pull folds its histories imports nothing (#960)', () => {
     test('the pull stands down before the import: nothing lands, nothing latches, the stamp stays', async () => {
         const { a, b } = await syncedPair();

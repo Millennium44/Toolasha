@@ -2028,7 +2028,14 @@ class SyncManager {
             // The import has landed, but this device could not be read back whole to fingerprint it (see
             // `buildPayloadJSON`). Recording the pull without that fingerprint would remember a state this
             // device may not hold, so the stamp is left alone and the next sync works it out again; the
-            // stores the import latched still need the reload
+            // stores the import latched still need the reload.
+            // The baseline is recorded all the same, as the record below would: it is the download's hashes, not
+            // this device's, and the download did land. Left at the exchange before, a key the player edits now
+            // reads to the next merge as one the gist moved, and the gist's copy is written over the edit
+            const pulledHashes = await phase('hash-keys', () => wholeKeyHashesSliced(payload));
+            if (this._stillOwns(opToken)) {
+                await rememberLocal({ [KEY_BASELINE]: heldAsUnapplied(pulledHashes, mergeHeld) });
+            }
             return this._unconfirmedAfterApply(error, opToken, silent, {
                 latched,
                 latchedKeys,
