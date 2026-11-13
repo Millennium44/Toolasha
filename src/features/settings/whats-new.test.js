@@ -894,7 +894,7 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
         expect(saved().offeredIds).toHaveLength(4);
     });
 
-    test('a record written by this build is read by an older build as offering the plain ids already', async () => {
+    test('a legacy plain-id record is saved with every earlier round, so plain-id readers see it as offered', async () => {
         mocks.stateRead = { found: true, value: state({ offeredIds: [ID] }) };
         await whatsNew.applyPolicy();
 
