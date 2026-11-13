@@ -4284,6 +4284,14 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            loadoutTalismanCheck: {
+                id: 'loadoutTalismanCheck',
+                label: 'Test server: warn when loadout talismans will not work',
+                type: 'checkbox',
+                default: true,
+                hidden: !isTestServer(),
+                help: 'Test server only. Marks the selected loadout in the Loadouts panel when it names a talisman that no longer exists, puts one in a slot its belt does not have, or holds a combat talisman in a skilling loadout (or the reverse). Starting an action re-equips its loadout, talismans included, so these do nothing.',
+            },
             loadoutSnapshot: {
                 id: 'loadoutSnapshot',
                 label: 'Loadout panel: Use saved loadout snapshots in profit calculations',

@@ -1643,6 +1643,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'loadoutTalismanCheck',
+            name: 'Loadout Talisman Check',
+            category: 'Combat',
+            module: Combat.loadoutTalismanCheck,
+            async: false,
+        },
+        {
             key: 'dungeonTracker',
             name: 'Dungeon Tracker',
             category: 'Combat',

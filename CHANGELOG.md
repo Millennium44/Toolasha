@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Loadouts warn about talismans that do nothing on the test server
+
+The Loadouts panel marks the selected loadout with ⚠ when one of its talismans was deleted, sits in a slot its belt does not have, or is the wrong kind (a skilling talisman in a combat loadout, or the reverse); hover for the reason.
+
 ### Talisman reroll advisor on the test server
 
 In the talisman window, pick up to four lines you want and the advisor shows the cheapest next move (which orb, when to lock a line, whether to keep or use a new roll) and how many of each orb it expects to take, using measured reroll odds. It marks the button to press, and "Do next step" presses it for you, one game action per press.
