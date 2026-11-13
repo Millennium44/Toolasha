@@ -137,6 +137,19 @@ describe('Open in Optimizer button', () => {
         expect(open).toHaveBeenLastCalledWith('/skills/woodcutting', null);
     });
 
+    it('follows an Optimizer restart: hidden while it is down, shown again when it re-registers', async () => {
+        await actionFilter.initialize();
+        actionFilter.injectFilterInput(makeTitle());
+        expect(buttons()[0].style.display).toBe('');
+        unregister();
+        expect(buttons()[0].style.display).toBe('none');
+        unregister = registerOptimizerOpener({ supports: () => true, open });
+        expect(buttons()[0].style.display).toBe('');
+        actionFilter.cleanup();
+        unregister();
+        unregister = registerOptimizerOpener({ supports: () => true, open });
+    });
+
     it('re-injecting into the same or a new title leaves exactly one button', () => {
         const first = makeTitle();
         actionFilter.injectFilterInput(first);
@@ -185,6 +198,19 @@ describe('header row fit on narrow screens', () => {
         expect(input.style.width).toBe('200px');
         expect(title.style.gap).toBe('15px');
         expect(title.style.width).toBe('');
+    });
+
+    it('re-fits when a control is added to the title later, and does not loop on its own styling', async () => {
+        const title = sized(376, 356);
+        actionFilter.injectFilterInput(title);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(title.style.width).toBe('calc(100% - 26px)');
+        // Room is now free: a re-measure after a child is added restores the row
+        Object.defineProperty(title, 'scrollWidth', { value: 300, configurable: true });
+        title.appendChild(document.createElement('button'));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(title.style.width).toBe('');
+        expect(document.querySelector('#mwi-action-filter').style.width).toBe('200px');
     });
 
     it('cleanup restores the original inline styles', () => {

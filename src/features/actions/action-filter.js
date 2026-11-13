@@ -24,7 +24,7 @@ import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { SELL_TAX_EXCLUDED_TOOLTIP } from '../../utils/profit-constants.js';
 import { TILE_SCROLLS_SETTING, listPickerScrolls, onTileScrollsChanged, setPickerScroll } from './tile-scrolls.js';
 import dataManager from '../../core/data-manager.js';
-import { canOpenInOptimizer, openInOptimizer } from '../../utils/optimizer-bridge.js';
+import { canOpenInOptimizer, openInOptimizer, onOpenerChange } from '../../utils/optimizer-bridge.js';
 import { getIconHref, getSkillHridFromIconHref } from '../../utils/game-lookups.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
@@ -98,6 +98,7 @@ class ActionFilter {
         this.refreshButton = null; // Reference to the manual price refresh button
         this._headerFit = null; // Inline styles the narrow-screen fit replaced
         this._onHeaderResize = null;
+        this._headerObserver = null;
         this.optimizerButton = null; // "Open in Optimizer" on the controls row
         this._priceRefreshInFlight = false; // Guards against a second click while fetching
         this._updatePricingSelects = null;
@@ -217,6 +218,12 @@ class ActionFilter {
             })
         );
 
+        // The Optimizer restarts on its own schedule (setting flipped, character switched)
+        this.unregisterHandlers.push(
+            onOpenerChange(() => {
+                if (this._updateOptimizerBtn) this._updateOptimizerBtn();
+            })
+        );
         this.unregisterHandlers.push(
             config.onSettingChange('skillingOptimizer', () => {
                 if (this._updateOptimizerBtn) this._updateOptimizerBtn();
@@ -727,10 +734,19 @@ class ActionFilter {
         this._fitHeaderRow(titleElement, input);
         this._onHeaderResize = () => this._fitHeaderRow(titleElement, input);
         window.addEventListener('resize', this._onHeaderResize);
-        if (typeof requestAnimationFrame === 'function') {
-            requestAnimationFrame(() => {
-                if (this.currentTitleElement === titleElement) this._fitHeaderRow(titleElement, input);
+        const refit = () => {
+            if (this.currentTitleElement === titleElement) this._fitHeaderRow(titleElement, input);
+        };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(refit);
+        // Controls Toolasha adds later (refresh, scrolls once profit data loads) change the row's width.
+        // Only child additions and removals are watched, never styles, so the fit itself cannot retrigger it.
+        this._headerObserver?.disconnect();
+        if (typeof MutationObserver === 'function') {
+            this._headerObserver = new MutationObserver(() => {
+                if (typeof requestAnimationFrame === 'function') requestAnimationFrame(refit);
+                else refit();
             });
+            this._headerObserver.observe(titleElement, { childList: true, subtree: true });
         }
     }
 
@@ -1216,6 +1232,8 @@ class ActionFilter {
         }
 
         this._restoreHeaderRow();
+        this._headerObserver?.disconnect();
+        this._headerObserver = null;
         if (this._onHeaderResize) window.removeEventListener('resize', this._onHeaderResize);
         this._onHeaderResize = null;
 

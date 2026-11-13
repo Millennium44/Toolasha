@@ -103,4 +103,19 @@ describe('openForSkill', () => {
         ui.cleanup();
         expect(canOpenInOptimizer('/skills/woodcutting')).toBe(false);
     });
+
+    test('cleanup unregisters the opener before tearing down the tab', async () => {
+        const { canOpenInOptimizer } = await import('../../utils/optimizer-bridge.js');
+        mountTabs();
+        ui._tryInjectTabButton();
+        let offeredDuringTeardown = null;
+        const tab = ui.tabBtn;
+        const realRemove = tab.remove.bind(tab);
+        tab.remove = () => {
+            offeredDuringTeardown = canOpenInOptimizer('/skills/woodcutting');
+            realRemove();
+        };
+        ui.cleanup();
+        expect(offeredDuringTeardown).toBe(false);
+    });
 });

@@ -9,6 +9,27 @@
  */
 
 let opener = null;
+const listeners = new Set();
+
+function notify() {
+    for (const listener of [...listeners]) {
+        try {
+            listener();
+        } catch (error) {
+            console.error('[OptimizerBridge] Listener failed:', error);
+        }
+    }
+}
+
+/**
+ * Be told when the Optimizer registers or unregisters (it restarts on a setting flip or character switch).
+ * @param {function(): void} listener - Called after each change
+ * @returns {function(): void} Unsubscribe
+ */
+export function onOpenerChange(listener) {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+}
 
 /**
  * Called by the Optimizer when it starts.
@@ -19,8 +40,11 @@ let opener = null;
  */
 export function registerOptimizerOpener(handlers) {
     opener = handlers;
+    notify();
     return () => {
-        if (opener === handlers) opener = null;
+        if (opener !== handlers) return;
+        opener = null;
+        notify();
     };
 }
 

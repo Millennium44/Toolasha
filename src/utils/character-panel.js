@@ -9,20 +9,21 @@ import { clickThroughReact } from './react-click.js';
 import { getIconHref } from './game-lookups.js';
 
 const HEADER_SELECTOR = '[class*="Header_header"]';
-// Sprite or aria names of the control that opens the panel: matched on the icon, not on any label
-const TOGGLE_ICON_PATTERN = /chest|inventory|character|menu/i;
+const PANEL_SELECTOR = '[class*="GamePage_characterManagementPanel"]';
+// Toolasha's own Optimizer tab: an element we own, so it is found without reading any displayed text
+const OWN_TAB_SELECTOR = '.toolasha-skilling-opt-tab';
+// Sprite fragments (or aria keys) of the control that opens the panel. Matched whole, on the icon only
+const TOGGLE_ICON_PATTERN = /^(?:[\w-]+\.)?(?:chest|inventory|character)$/i;
 
 /**
- * The character panel's tab strip: the one holding the Loadouts tab (every tab strip shares classes).
+ * The character panel's tab strip, found without its labels (the game may be in another language):
+ * the strip holding Toolasha's own tab, else the first strip inside the game's character panel.
  * @returns {HTMLElement|null}
  */
 export function findCharacterTabList() {
-    for (const list of document.querySelectorAll('[role="tablist"]')) {
-        for (const tab of list.querySelectorAll('[role="tab"]')) {
-            if (tab.textContent.trim().startsWith('Loadouts')) return list;
-        }
-    }
-    return null;
+    const own = document.querySelector(OWN_TAB_SELECTOR)?.closest('[role="tablist"]');
+    if (own) return own;
+    return document.querySelector(PANEL_SELECTOR)?.querySelector('[role="tablist"]') ?? null;
 }
 
 /**
@@ -35,16 +36,15 @@ export function isCharacterPanelOpen() {
 }
 
 /**
- * The header control that opens the panel on a phone, found by its icon.
- * @returns {Element|null}
+ * The header control that opens the panel on a phone, found by its icon's sprite fragment or aria key.
+ * @returns {Element|null} null when no control matches exactly: a guess is never pressed
  */
 function findPanelToggle() {
     const header = document.querySelector(HEADER_SELECTOR);
     for (const control of header?.querySelectorAll('button, [role="button"]') ?? []) {
         const label = control.querySelector('svg')?.getAttribute('aria-label') || '';
-        if (TOGGLE_ICON_PATTERN.test(label) || getIconHref(control, 'misc_sprite')?.match(TOGGLE_ICON_PATTERN)) {
-            return control;
-        }
+        const fragment = (getIconHref(control, 'misc_sprite') || '').split('#')[1] || '';
+        if (TOGGLE_ICON_PATTERN.test(label) || TOGGLE_ICON_PATTERN.test(fragment)) return control;
     }
     return null;
 }
@@ -57,5 +57,6 @@ export function ensureCharacterPanelOpen() {
     if (isCharacterPanelOpen()) return true;
     const toggle = findPanelToggle();
     if (!toggle) return false;
-    return clickThroughReact(toggle) !== 'none';
+    // The game ignores an untrusted click on its own controls
+    return clickThroughReact(toggle, { reactFirst: true }) !== 'none';
 }

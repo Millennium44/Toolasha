@@ -2305,6 +2305,9 @@ class SkillingSimulatorUI {
     // -------------------------------------------------------------------------
 
     cleanup() {
+        // First: skill pages stop offering the button before anything it would open is torn down
+        this._unregisterOpener?.();
+        this._unregisterOpener = null;
         if (this.watcher) {
             // createMutationWatcher returns an unwatch function, not the observer
             this.watcher();
