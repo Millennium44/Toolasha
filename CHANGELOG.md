@@ -9,6 +9,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Edit talismans in the Combat Sim
 
 On the test server, the Combat Sim's player editor now lets you change each belt slot's talisman lines (type and grade, up to four) to try a build before rolling it, with Reset to Current to go back to what you wear.
+### Talisman budget in coins, and hovers on every ranking control
+
+The talisman ranking's Budget / talisman now takes coins with shorthand (200m, 1.5b) and shows the Reforging Orb equivalent beside it; a changed budget marks the result out of date. Every control, option and column in the ranking sections now explains itself on hover.
 
 ### Talisman line ranking in the Combat Sim and Skilling Optimizer
 
