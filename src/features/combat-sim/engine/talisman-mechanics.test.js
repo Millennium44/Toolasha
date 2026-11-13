@@ -409,6 +409,74 @@ function spyProcessAttack() {
     return calls;
 }
 
+/**
+ * A seeded scenario over every branch the mechanics touch, with no mechanic present: crits, a single-target and an
+ * area cast, a life-drain cast, a boss with thorns and retaliation, the monsters' own swings and parries of none.
+ * The pin below was taken on the engine as it stood BEFORE the mechanics were added (HEAD~1 of this change), so
+ * it shows the new code leaves a unit without them exactly where it was, including the next random number.
+ */
+function unmechanicalScenario(mechanics) {
+    const { sim, player } = fightSim({ mechanics, count: 3, hp: 60 });
+    player.combatDetails.combatStats.criticalRate = 0.5;
+    player.combatDetails.combatStats.criticalDamage = 0.5;
+    player.combatDetails.smashAccuracyRating = 100;
+    const [boss, second, third] = sim.enemies;
+    for (const enemy of sim.enemies) enemy.combatDetails.smashEvasionRating = 100;
+    player.combatDetails.smashEvasionRating = 100;
+    boss.isBoss = true;
+    boss.combatDetails.combatStats.physicalThorns = 0.3;
+    boss.combatDetails.combatStats.retaliation = 0.3;
+    boss.combatDetails.smashAccuracyRating = 100;
+    second.combatDetails.smashAccuracyRating = 100;
+    const single = DAMAGE_EFFECT;
+    const area = { ...DAMAGE_EFFECT, targetType: 'allEnemies' };
+    const drain = { ...DAMAGE_EFFECT, hpDrainRatio: 0.5 };
+    seedSimRng(424242);
+    const hp = [];
+    for (let i = 0; i < 80; i++) {
+        for (const enemy of [boss, second, third]) {
+            enemy.combatDetails.currentHitpoints = 60;
+        }
+        player.combatDetails.currentHitpoints = player.combatDetails.maxHitpoints;
+        sim._finalizedDeaths = new WeakSet();
+        sim.processAbilityDamageEffect(player, ABILITY, [single, area, drain][i % 3]);
+        CombatUtilities.processAttack(second, player, null, sim.taskDamageMode);
+        CombatUtilities.processAttack(player, third, null, sim.taskDamageMode);
+        hp.push(
+            player.combatDetails.currentHitpoints,
+            ...[boss, second, third].map((enemy) => enemy.combatDetails.currentHitpoints)
+        );
+    }
+    return {
+        totalDamageDealt: sim.simResult.totalDamageDealt,
+        deaths: sim.simResult.deaths,
+        crits: sim.simResult.crits,
+        hpSum: hp.reduce((sum, value) => sum + value, 0),
+        next: random(),
+    };
+}
+
+describe('a unit without the mechanics fights as it did before they existed', () => {
+    const PRE_CHANGE = {
+        totalDamageDealt: { '/monsters/test_dummy': 1695, player1: 2426 },
+        deaths: { '/monsters/test_dummy': 30 },
+        crits: { player1: 26 },
+        hpSum: 71900,
+        next: 0.2778646817896515,
+    };
+
+    test('the seeded ability, crit, boss, thorns and drain scenario matches the pre-change engine', () => {
+        const got = unmechanicalScenario({});
+        expect(got).toEqual(PRE_CHANGE);
+    });
+
+    test('absent and zero-valued mechanics match the same pin', () => {
+        const base = unmechanicalScenario({});
+        expect(unmechanicalScenario(undefined)).toEqual(base);
+        expect(unmechanicalScenario({ echo: 0, smite: 0, shatter: 0, fortify: 0, overkill: 0 })).toEqual(base);
+    });
+});
+
 describe('Echo', () => {
     test('a non-killing cast echoes about the Echo value of the time, at half damage, rolling its own hit', () => {
         const { sim, player } = fightSim({ mechanics: { echo: 0.168 } });
@@ -485,6 +553,18 @@ describe('Echo', () => {
             sim.processAbilityDamageEffect(player, ABILITY, DAMAGE_EFFECT);
         }
         expect(random()).toBe(after);
+    });
+
+    test('a caster put down by thorns on the cast does not echo', () => {
+        const { sim, player } = fightSim({ mechanics: { echo: 1 } });
+        player.combatDetails.currentHitpoints = 1;
+        sim.enemies[0].combatDetails.combatStats.physicalThorns = 50;
+        sim.enemies[0].combatDetails.defensiveMaxDamage = 1e6;
+        seedSimRng(14);
+        const calls = spyProcessAttack();
+        sim.processAbilityDamageEffect(player, ABILITY, DAMAGE_EFFECT);
+        expect(player.combatDetails.currentHitpoints).toBe(0);
+        expect(calls.filter((c) => c.options?.isEcho)).toHaveLength(0);
     });
 
     test('an area cast rolls once and echoes every target still standing', () => {
@@ -601,6 +681,23 @@ describe('Fortify', () => {
         sim.simulationTime += 6 * ONE_SECOND;
         hit(sim, player);
         expect(player.fortifyStacks).toBe(1);
+    });
+
+    test('a hit arriving after the window, before its expiry event ran, meets base armor', () => {
+        const { sim, player } = fightSim({ mechanics: { fortify: VALUE } });
+        player.combatDetails.maxHitpoints = player.combatDetails.currentHitpoints = 1e9;
+        const base = bases(player);
+        hit(sim, player);
+        hit(sim, player);
+        sim.simulationTime += 5 * ONE_SECOND;
+        const seenArmor = [];
+        vi.spyOn(CombatUtilities, 'processAttack').mockImplementation(() => {
+            seenArmor.push(player.combatDetails.totalArmor);
+            return CombatUtilities.skippedAttackResult();
+        });
+        hit(sim, player);
+        expect(seenArmor).toHaveLength(1);
+        expect(seenArmor[0]).toBeCloseTo(base[0], 9);
     });
 
     test('a miss adds nothing, and a unit without Fortify is left exactly as it was', () => {
@@ -778,7 +875,6 @@ describe('a full seeded fight', () => {
             without.result.totalDamageDealt.player1
         );
         const fortified = fight(['fortify']);
-        expect(fortified.player.fortifyStacks).toBeGreaterThanOrEqual(0);
         expect(JSON.stringify(fortified.result.totalDamageDealt)).not.toBe(
             JSON.stringify(without.result.totalDamageDealt)
         );
