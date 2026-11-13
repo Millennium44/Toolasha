@@ -321,4 +321,12 @@ describe('the core advisor in the Optimizer', () => {
         await check();
         expect(cores()).not.toBe('');
     });
+
+    test('a DOM click on the Check cores button runs the check, as the belt button does', async () => {
+        await rank();
+        q('core-run').click();
+        await vi.waitFor(() => expect(cores()).not.toBe(''));
+        expect(section._core.status).toBe('done');
+        expect(q('core-run').style.display).toBe('');
+    });
 });
