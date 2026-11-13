@@ -90,9 +90,9 @@ export const SORT_MODES = [
             'Buy/Sell price dropdowns: Instant buys at the ask and sells at the bid, Patient buys at the bid and ' +
             'sells at the ask (one tick better with +1 / −1). A price that is only an estimate is never used. ' +
             "Items with an unpriced step show no value and sort last. It differs from the item tooltip's Full " +
-            'decompose chain line on purpose: the tooltip values an item you hold (at its own-use cost, keeping ' +
-            "what you mark) and picks each step's setup for gold per item, while this buys the item at market " +
-            "and picks every setup for the whole chain's gold per hour, so it is the same or higher. " +
+            "decompose chain line on purpose: both pick every setup for the whole chain's gold per hour, but the " +
+            'tooltip values an item you hold (at its own-use cost, keeping what you mark), while this buys the ' +
+            'item at market and sells every output. ' +
             'Chain/hr (own stock) matches the tooltip. A leading ≥ marks a figure with some output or bonus crate content ' +
             "unpriced, counted at zero. In this sort the Profit/hr column shows the chain's own first step.",
     },
@@ -1271,8 +1271,8 @@ class AlchemyBestItems {
             own
                 ? 'Matches the item tooltip. The other chain sort assumes you buy the item at the market price instead.'
                 : `Follows your Buy/Sell dropdowns: buys at the ${sides.buy}, sells outputs at the ${sides.sell}. ` +
-                      "It picks every step's setup for gold per hour, where the item tooltip picks for gold per item, " +
-                      'so it can read higher than the tooltip. For stock you hold, use Chain/hr (own stock).'
+                      "Like the item tooltip it picks every step's setup for gold per hour, but it buys the item at " +
+                      'the market price where the tooltip values an item you hold. For stock you hold, use Chain/hr (own stock).'
         );
         // The market chain never takes the shop's price: say so on the rows whose other figure did
         if (!own && shopPriced)
