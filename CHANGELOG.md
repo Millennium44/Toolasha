@@ -23,6 +23,7 @@ Each Best Items row has a × to hide items you will not do or already bid on, ke
 Click Qty, Value, vs exp., Exp. qty or Exp. val in the chest-opening popup to sort its rows; click again to reverse, a third time for the usual order. The choice is remembered.
 
 ### Labyrinth "Buy missing supplies" no longer makes the row taller
+
 ### Labyrinth "Buy supplies" button takes the Supplies heading's place
 
 The button now replaces the Supplies heading instead of sitting on a line of its own, so the bottom row keeps its normal height and the button stays centered, phones included.
