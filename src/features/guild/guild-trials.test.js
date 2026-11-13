@@ -1745,6 +1745,138 @@ describe('placeTrialBlock', () => {
     });
 });
 
+describe('the skilling readout in a narrow challenge row', () => {
+    const setWidth = (el, prop, value) => Object.defineProperty(el, prop, { value, configurable: true });
+    function layout(rowWidth) {
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__r"><div id="col" style="display:flex; flex-direction:column">' +
+            '<div id="battle" class="SkillingInstancePanel_battleArea__b" style="display:flex; flex-direction:row">' +
+            '<div id="roster">roster</div>' +
+            '<div id="challenge" class="SkillingInstancePanel_challengeArea__c" ' +
+            'style="display:flex; flex-direction:row; justify-content:center">' +
+            '<div id="card" class="SkillingInstancePanel_skillingUnit__u">Tailoring</div>' +
+            '</div></div></div></div>';
+        const card = document.getElementById('card');
+        const challenge = document.getElementById('challenge');
+        setWidth(challenge, 'clientWidth', rowWidth);
+        setWidth(card, 'offsetWidth', 77);
+        return {
+            root: document.querySelector('[class*="GuildPanel_guildPanel"]'),
+            card,
+            challenge,
+            battle: document.getElementById('battle'),
+            block: Object.assign(document.createElement('div'), { className: 'mwi-trial-info' }),
+        };
+    }
+
+    test('a narrow row stacks under the card, inside the challenge column, never after the battle area', () => {
+        const { root, card, challenge, battle, block } = layout(187);
+        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('row-stacked');
+        expect(card.nextElementSibling).toBe(block);
+        expect(challenge.contains(block)).toBe(true);
+        expect(challenge.style.flexDirection).toBe('column');
+        expect(challenge.style.justifyContent).toBe('flex-start');
+        expect(challenge.style.paddingTop).toBe('6px');
+        expect(challenge.style.paddingBottom).toBe('4px');
+        expect(card.style.marginTop).toBe('auto');
+        expect(card.style.marginBottom).toBe('auto');
+        expect(battle.nextElementSibling).toBeNull();
+        expect(blockNearAnchor(block, card, root)).toBe(true);
+    });
+
+    test('a wide row keeps the side-by-side sidecar and the game’s direction', () => {
+        const { root, card, challenge, block } = layout(400);
+        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('row-sidecar');
+        expect(card.nextElementSibling).toBe(block);
+        expect(challenge.style.flexDirection).toBe('row');
+        expect(challenge.dataset.mwiStacked).toBeUndefined();
+        expect(blockNearAnchor(block, card, root)).toBe(true);
+    });
+
+    test('an unmeasured row is treated as wide', () => {
+        const { root, card, block } = layout(0);
+        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('row-sidecar');
+    });
+
+    test('the choice flips both ways as the row changes width, and the row and card are restored', () => {
+        const { root, card, challenge, block } = layout(187);
+        card.style.marginTop = '3px';
+        placeTrialBlock(root, card, block, 'Tailoring');
+        expect(blockNearAnchor(block, card, root)).toBe(true);
+        setWidth(challenge, 'clientWidth', 500);
+        expect(blockNearAnchor(block, card, root)).toBe(false);
+        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('row-sidecar');
+        expect(challenge.style.flexDirection).toBe('row');
+        expect(challenge.style.justifyContent).toBe('center');
+        expect(challenge.style.paddingTop).toBe('');
+        expect(card.style.marginTop).toBe('3px');
+        expect(card.style.marginBottom).toBe('');
+        expect(challenge.dataset.mwiStacked).toBeUndefined();
+        expect(blockNearAnchor(block, card, root)).toBe(true);
+        setWidth(challenge, 'clientWidth', 187);
+        expect(blockNearAnchor(block, card, root)).toBe(false);
+        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('row-stacked');
+    });
+
+    test('a re-render keeps each placement stable', () => {
+        for (const [width, placement] of [
+            [187, 'row-stacked'],
+            [500, 'row-sidecar'],
+        ]) {
+            const { root, card } = layout(width);
+            let placed = 0;
+            const opts = {
+                html: '<div>x</div>',
+                style: 'width:100%;',
+                anchored: (b) => blockNearAnchor(b, card, root),
+                place: (b) => {
+                    placed += 1;
+                    return placeTrialBlock(root, card, b, 'Tailoring');
+                },
+            };
+            const block = guildTrials._placeBlock(root, `tile:stable-${width}`, opts);
+            guildTrials._placeBlock(root, `tile:stable-${width}`, opts);
+            guildTrials._placeBlock(root, `tile:stable-${width}`, opts);
+            expect(placed).toBe(1);
+            expect(block.dataset.mwiPlacement).toBe(placement);
+        }
+    });
+
+    test('the payout stays above the battle area, never inside the stacked challenge column', () => {
+        const { root, card, challenge, battle, block } = layout(187);
+        placeTrialBlock(root, card, block, 'Tailoring');
+        expect(challenge.dataset.mwiStacked).toBe('1');
+        const wrapper = document.createElement('div');
+        document.body.append(wrapper);
+        wrapper.append(document.getElementById('col'));
+        guildTrials.sectionFolds = {};
+        guildTrials._renderPayout(
+            wrapper,
+            [{ name: 'Tailoring', type: 'skilling', banked: 3, projected: 15, tierKnown: true }],
+            card,
+            { buildersHall: { bonus: 0.2, level: 5, rules: null, source: 'test' }, treasury: { bonus: 0.3, level: 5 } }
+        );
+        const payout = document.querySelector('[data-mwi-block="payout"]');
+        expect(payout).toBeTruthy();
+        expect(challenge.contains(payout)).toBe(false);
+        expect(battle.contains(payout)).toBe(false);
+        expect(payout.nextElementSibling).toBe(battle);
+        root.remove();
+    });
+
+    test('the row is restored when the readout comes down', () => {
+        const { root, card, challenge, block } = layout(187);
+        placeTrialBlock(root, card, block, 'Tailoring');
+        block.dataset.mwiBlock = 'tile:x';
+        block.remove();
+        restoreFightGrids(document);
+        expect(challenge.style.flexDirection).toBe('row');
+        expect(challenge.style.justifyContent).toBe('center');
+        expect(card.style.marginTop).toBe('');
+        expect(challenge.dataset.mwiStacked).toBeUndefined();
+    });
+});
+
 describe('_placeBlock re-homes a block stuck in a squashing row', () => {
     // The skilling In Progress layout: a column holds a battleArea row, which
     // holds a challengeArea row, which holds the unit card. A block placed by the
@@ -8229,7 +8361,7 @@ describe('the guild message says a trial is running', () => {
         expect(guildTrials.phase).toBe('completed');
     });
 
-    test('the block draws a deadline, and warns when the projection runs past it', () => {
+    test('the block draws no Deadline row, and warns when the projection runs past the deadline', () => {
         const analysis = analyseTrial(
             {
                 name: 'Trial Badger',
@@ -8249,7 +8381,7 @@ describe('the guild message says a trial is running', () => {
             phase: 'live',
             deadlineMs: 30 * 60_000,
         });
-        expect(roomy).toContain('Deadline');
+        expect(roomy).not.toContain('Deadline');
         expect(roomy).not.toContain('does not clear in time');
 
         const tight = renderTrialBlock(analysis, 5, undefined, {
@@ -8851,7 +8983,7 @@ describe('a fight you are in: the pace is a range until the damage rate has show
             const pairs = [...row.querySelectorAll('[data-payout-pair]')];
             expect(pairs).toHaveLength(4);
             expect(heading().nextElementSibling).toBe(pairs[0]);
-            expect(heading().textContent).toBe('▾Payout');
+            expect(heading().textContent).toBe('▾Payout & tools');
             expect(row.style.flexWrap).toBe('wrap');
             for (const one of pairs) {
                 // the label and value are one flex item, so the pair wraps whole
@@ -8861,27 +8993,19 @@ describe('a fight you are in: the pace is a range until the damage rate has show
             expect(row.contains(block().querySelector('[data-action]'))).toBe(false);
         });
 
-        test('folded: the figures go, the buttons stay, and the heading carries the pace', async () => {
+        test('folded: the figures, the summary and the buttons all go', async () => {
             draw([trial()]);
             await settle();
             heading().click();
             expect(heading().getAttribute('aria-expanded')).toBe('false');
             expect(block().textContent).not.toContain('Guild Points on pace');
             expect(block().textContent).not.toContain('Tokens, if you took part');
-            expect(heading().textContent).toMatch(/Trial payout · [\d,]+ pts on pace · [\d,]+ tokens/);
-            expect(actions()).toEqual(expect.arrayContaining(['record', 'export', 'scoreboard', 'roster', 'ledger']));
+            expect(heading().textContent).toBe('▸Payout & tools');
+            expect(block().textContent).not.toContain('pts on pace');
+            expect(block().querySelector('[data-mwi-controls]')).toBeNull();
+            expect(actions()).toEqual([]);
+            expect(block().style.padding).toBe('2px 10px');
             expect(block().textContent).not.toContain('could not be drawn');
-        });
-
-        test('the summary quotes the figures the open panel draws', async () => {
-            draw([trial()]);
-            await settle();
-            const open = block().textContent;
-            const points = open.match(/Guild Points on pace([\d,]+)/)[1];
-            const tokens = open.match(/Tokens, if you took part([\d,]+)/)[1];
-            heading().click();
-            expect(heading().textContent).toContain(`${points} pts on pace`);
-            expect(heading().textContent).toContain(`${tokens} tokens`);
         });
 
         test('a redraw does not reopen it, and opening again restores the figures', async () => {
@@ -8895,21 +9019,6 @@ describe('a fight you are in: the pace is a range until the damage rate has show
             heading().click();
             expect(heading().getAttribute('aria-expanded')).toBe('true');
             expect(block().textContent).toContain('Guild Points on pace');
-        });
-
-        test('a wide pace folds to the range form', async () => {
-            draw([trial({ projectedRange: { low: 15, high: 21 } })]);
-            await settle();
-            heading().click();
-            expect(heading().textContent).toMatch(/~[\d,]+–[\d,]+ pts on pace · ~[\d,]+–[\d,]+ tokens/);
-        });
-
-        test('no pace yet folds to dashes, not to the banked figure', async () => {
-            draw([trial({ projected: undefined })]);
-            await settle();
-            heading().click();
-            expect(heading().textContent).toContain('— pts on pace · — tokens');
-            expect(actions()).toContain('record');
         });
 
         test('the fold is written down and read back', async () => {

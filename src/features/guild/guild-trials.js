@@ -1272,11 +1272,11 @@ function line(label, value, color = GAME_COLORS.text, title = '') {
     const tip = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
     const text = String(value ?? '');
     return (
-        `<div style="display:grid; grid-template-columns:minmax(0,45%) minmax(0,1fr); align-items:baseline; ` +
-        `column-gap:8px; margin:1px 0;"${tip}>` +
+        `<div data-mwi-row="1" style="display:grid; grid-template-columns:minmax(0,45%) minmax(0,1fr); ` +
+        `align-items:baseline; column-gap:8px; margin:1px 0;"${tip}>` +
         `<span style="color:${GAME_COLORS.textDim}; overflow-wrap:break-word; hyphens:none;">${label}</span>` +
-        `<span style="color:${color}; font-weight:600; text-align:right; overflow-wrap:break-word; ` +
-        `line-height:1.35;">${text}</span></div>`
+        `<span data-mwi-value="1" style="color:${color}; font-weight:600; text-align:right; ` +
+        `overflow-wrap:break-word; line-height:1.35;">${text}</span></div>`
     );
 }
 
@@ -1473,7 +1473,7 @@ function bankedRow(analysis, past = null) {
  * @param {number|null} [options.startsInMs] - Countdown to the scheduled start
  * @param {Object|null} [options.forecast] - From `guild-trial-forecast.js`
  * @param {number|null} [options.deadlineMs] - Milliseconds of the trial's hour left, from
- *   the guild payload's own countdown rather than from a clock on the page
+ *   the guild payload's own countdown rather than from a clock on the page. Judges the clear time; not drawn as a row
  * @returns {string} HTML
  */
 export function renderTrialBlock(
@@ -1743,35 +1743,24 @@ export function renderTrialBlock(
                 );
             }
         }
+        // The hour's remaining time is no longer a row of its own (the game states it), but it still
+        // judges the projection: a clear time past it is the warning
+        const pastDeadline = Number.isFinite(deadlineMs) && analysis.etaMs !== null && analysis.etaMs > deadlineMs;
         rows.push(
             line(
                 analysis.kind === 'combat' ? 'Kill in' : 'Clears in',
                 analysis.etaMs === null ? '—' : formatEta(analysis.etaMs),
-                GOOD,
+                pastDeadline ? WARN : GOOD,
                 `${formatWithSeparator(Math.round(analysis.remaining || 0))} of ${formatWithSeparator(
                     Math.round(analysis.total || 0)
                 )} left${analysis.readingStale ? ` as of ${formatEta(analysis.readingAgeMs)} ago` : ''}.` +
-                    (staleNote ? `\n${staleNote}` : '')
+                    (staleNote ? `\n${staleNote}` : '') +
+                    (pastDeadline
+                        ? `\nThis runs past the ${formatEta(deadlineMs)} left of the trial’s hour: this tier does ` +
+                          'not clear in time.'
+                        : '')
             )
         );
-
-        // The other half of "clears in 17m": whether there is still 17 minutes
-        // to clear it in. The countdown is the guild's own — it rides on
-        // `guild_updated` and needs no clock on the page — and set beside the
-        // projection it turns an estimate into a verdict.
-        if (Number.isFinite(deadlineMs)) {
-            const tight = analysis.etaMs !== null && analysis.etaMs > deadlineMs;
-            rows.push(
-                line(
-                    'Deadline',
-                    formatEta(deadlineMs),
-                    tight ? WARN : DIM,
-                    'Left of the trial’s hour, from the guild’s own countdown rather than from a clock on ' +
-                        'this tab.' +
-                        (tight ? ' The projection above runs past it: this tier does not clear in time.' : '')
-                )
-            );
-        }
     }
 
     if (!analysis.pace && !notMine) {
@@ -2383,6 +2372,9 @@ export function withScrollKept(node, change) {
  * @returns {boolean}
  */
 function isSquashingRow(el) {
+    // A row Toolasha stacked into a column is still the game's squashing row as far as every other block
+    // is concerned: climbing must go on past it, or the payout lands inside the challenge area
+    if (el?.dataset?.mwiStacked === '1') return true;
     if (!el || typeof getComputedStyle !== 'function') return false;
     const style = getComputedStyle(el);
     if (!(style?.display || '').includes('flex')) return false;
@@ -2749,6 +2741,7 @@ export function restoreFightGrids(scope = typeof document === 'undefined' ? null
     for (const grid of scope?.querySelectorAll?.('[data-mwi-fit-cards]') || []) {
         if (!grid.querySelector(`.${CSS_CLASS}[data-mwi-block^="tile:"]`)) restoreFightGrid(grid);
     }
+    restoreStackedRows(scope);
 }
 
 /**
@@ -2776,6 +2769,73 @@ export function fightSidecarStyle(placement) {
     );
 }
 
+/** The narrowest a readout can be beside the card, and the margins around the pair */
+const SIDECAR_MIN_WIDTH = 170;
+const SIDECAR_ROW_SLACK = 16;
+
+/**
+ * Whether a skilling challenge row is too narrow for the card and the readout side by side.
+ *
+ * Measured from the row and the card, neither of which the readout widens, so the answer does not depend on
+ * where the readout currently is. A row that cannot be measured (hidden, not laid out) keeps the layout it
+ * has, so a hidden tab never flips the placement.
+ *
+ * @param {Element} card - The game's card
+ * @returns {boolean}
+ */
+function skillingRowNarrow(card) {
+    const row = card?.closest?.('[class*="SkillingInstancePanel_challengeArea"]');
+    if (!row) return false;
+    const rowWidth = row.clientWidth;
+    const cardWidth = card.offsetWidth;
+    if (!(rowWidth > 0 && cardWidth > 0)) return row.dataset?.mwiStacked === '1';
+    return rowWidth < cardWidth + SIDECAR_MIN_WIDTH + SIDECAR_ROW_SLACK;
+}
+
+/**
+ * Put a stacked challenge row back to the direction the game gave it.
+ * @param {Element} row - The challenge row
+ */
+function unstackRow(row) {
+    if (row?.dataset?.mwiStacked !== '1') return;
+    row.style.flexDirection = row.dataset.mwiStackedDirection || '';
+    row.style.justifyContent = row.dataset.mwiStackedJustify || '';
+    row.style.paddingTop = row.dataset.mwiStackedPadTop || '';
+    row.style.paddingBottom = row.dataset.mwiStackedPadBottom || '';
+    for (const child of row.children) {
+        if (child.dataset?.mwiStackedMargin === undefined) continue;
+        const [top, bottom] = child.dataset.mwiStackedMargin.split('|');
+        child.style.marginTop = top;
+        child.style.marginBottom = bottom;
+        delete child.dataset.mwiStackedMargin;
+    }
+    delete row.dataset.mwiStacked;
+    delete row.dataset.mwiStackedDirection;
+    delete row.dataset.mwiStackedJustify;
+    delete row.dataset.mwiStackedPadTop;
+    delete row.dataset.mwiStackedPadBottom;
+    if (!row.getAttribute('style')) row.removeAttribute('style');
+}
+
+/**
+ * Restore every stacked challenge row that no longer holds a readout.
+ * @param {ParentNode} scope - Where to look
+ */
+function restoreStackedRows(scope) {
+    for (const row of scope?.querySelectorAll?.('[data-mwi-stacked]') || []) {
+        if (!row.querySelector(`.${CSS_CLASS}[data-mwi-block^="tile:"]`)) unstackRow(row);
+    }
+}
+
+/**
+ * Markup for the narrow readout: every value stays on one line.
+ * @param {string} html - From {@link renderTrialBlock}
+ * @returns {string}
+ */
+function compactTrialHtml(html) {
+    return html.split('data-mwi-value="1" style="').join('data-mwi-value="1" style="white-space:nowrap; ');
+}
+
 export function placeTrialBlock(root, card, block, name = '') {
     // Belt and braces over the anchor filter in `readTrialTiles`. The reported
     // failure drew this whole block inside the boss's stat popup, which is
@@ -2783,6 +2843,7 @@ export function placeTrialBlock(root, card, block, name = '') {
     // filter that looks at the card. Placement is the last point at which "this
     // is not the guild panel" can still be said
     if (inFloatingDialog(card)) return 'refused';
+    delete block.dataset.mwiPlacement;
 
     // The live fight: the block is a sidecar in the boss grid rather than a
     // full-width strip below it, so the fight and the forecast are read
@@ -2810,6 +2871,31 @@ export function placeTrialBlock(root, card, block, name = '') {
     const challengeRow = card?.closest?.('[class*="SkillingInstancePanel_challengeArea"]');
     if (challengeRow && root?.contains?.(challengeRow)) {
         card.style.flexShrink = '0';
+        if (skillingRowNarrow(card)) {
+            // Too narrow for both side by side: the row becomes a column and the readout sits under the card.
+            // The row is marked so every other block still climbs out of it
+            if (challengeRow.dataset.mwiStacked !== '1') {
+                challengeRow.dataset.mwiStacked = '1';
+                challengeRow.dataset.mwiStackedDirection = challengeRow.style.flexDirection || '';
+                challengeRow.dataset.mwiStackedJustify = challengeRow.style.justifyContent || '';
+                challengeRow.dataset.mwiStackedPadTop = challengeRow.style.paddingTop || '';
+                challengeRow.dataset.mwiStackedPadBottom = challengeRow.style.paddingBottom || '';
+            }
+            // The card centered in the space above the readout, the readout at the bottom
+            if (card.dataset.mwiStackedMargin === undefined) {
+                card.dataset.mwiStackedMargin = `${card.style.marginTop}|${card.style.marginBottom}`;
+            }
+            card.style.marginTop = 'auto';
+            card.style.marginBottom = 'auto';
+            challengeRow.style.flexDirection = 'column';
+            challengeRow.style.justifyContent = 'flex-start';
+            challengeRow.style.paddingTop = '6px';
+            challengeRow.style.paddingBottom = '4px';
+            block.dataset.mwiPlacement = 'row-stacked';
+            card.insertAdjacentElement('afterend', block);
+            return 'row-stacked';
+        }
+        unstackRow(challengeRow);
         block.dataset.mwiPlacement = 'row-sidecar';
         card.insertAdjacentElement('afterend', block);
         return 'row-sidecar';
@@ -2932,8 +3018,12 @@ export function blockNearAnchor(block, anchor, root = null) {
     }
     // A row sidecar lives beside its card by request — adjacency IS its home,
     // and the escape rule below would evict it from the very row it belongs in
-    if (block?.dataset?.mwiPlacement === 'row-sidecar') {
-        return !anchor?.isConnected || anchor.nextElementSibling === block;
+    // A readout's home flips between beside the card and under it as the row's width changes, so each
+    // reads as displaced once the row has moved to the other
+    const placement = block?.dataset?.mwiPlacement;
+    if (placement === 'row-sidecar' || placement === 'row-stacked') {
+        if (!anchor?.isConnected) return true;
+        return anchor.nextElementSibling === block && skillingRowNarrow(anchor) === (placement === 'row-stacked');
     }
     // The live fight's sidecar is anchored on the first boss of the wave but
     // lives after the last, so adjacency to the anchor is the wrong test — it
@@ -4838,6 +4928,7 @@ class GuildTrials {
                 // wipes anything set on the element at placement time.
                 const fightGrid = fightMonsterGrid(tile.element);
                 const inSkillingRow = !!tile.element?.closest?.('[class*="SkillingInstancePanel_challengeArea"]');
+                const stackedRow = inSkillingRow && skillingRowNarrow(tile.element);
                 this._placeBlock(root, key, {
                     // The card the block belongs beside, for the re-anchoring
                     // check below — the game tears cards down and remounts
@@ -4845,15 +4936,17 @@ class GuildTrials {
                     anchored: (block) => blockNearAnchor(block, tile.element, root),
                     // Scoped to this tile's encounter: one measurement must
                     // not dress every combat card
-                    html: renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
-                        participating: ownParticipation(tile.name),
-                        phase: tilePhase,
-                        startsInMs: status?.startsInMs ?? null,
-                        forecast: this._forecast(tile, analysis, participants, tilePhase, timing),
-                        looseForecast: timing,
-                        deadlineMs: this._trialBudgetMs(tile.kind, now, tile.name),
-                        pastRow: historyRowFor(pastTiers, tile.name),
-                    }),
+                    html: ((markup) => (stackedRow ? compactTrialHtml(markup) : markup))(
+                        renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
+                            participating: ownParticipation(tile.name),
+                            phase: tilePhase,
+                            startsInMs: status?.startsInMs ?? null,
+                            forecast: this._forecast(tile, analysis, participants, tilePhase, timing),
+                            looseForecast: timing,
+                            deadlineMs: this._trialBudgetMs(tile.kind, now, tile.name),
+                            pastRow: historyRowFor(pastTiers, tile.name),
+                        })
+                    ),
                     // Wide enough that a label and a figure fit on one line, and
                     // capped so it cannot stretch a whole panel — the reported
                     // screenshot was this block one card wide and a mile tall
@@ -4863,15 +4956,21 @@ class GuildTrials {
                     // and recomputing it here is what keeps the column right
                     // when a wave boundary changes the boss card count without
                     // displacing the block.
-                    style:
-                        'position:static; display:block; box-sizing:border-box;' +
-                        (fightGrid
-                            ? fightSidecarStyle(fightSidecarPlacement(fightGrid))
-                            : inSkillingRow
-                              ? 'flex:0 1 300px; min-width:170px; max-width:300px; align-self:center; clear:none;'
-                              : 'clear:both; min-width:min(260px, 100%); max-width:520px;') +
-                        'margin:6px 0 8px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
-                        'border-radius:6px; font-size:11px; line-height:1.6;',
+                    // A narrow skilling row stacks the readout under the card, so the sizing and the spacing
+                    // are the stacked ones, and compact
+                    style: stackedRow
+                        ? 'position:static; display:block; box-sizing:border-box; flex:none; width:100%; ' +
+                          'max-width:100%; min-width:0; align-self:stretch; clear:none; margin:4px 0 0; ' +
+                          'padding:3px 8px; background:rgba(0,0,0,0.25); border-radius:6px; font-size:11px; ' +
+                          'line-height:1.3;'
+                        : 'position:static; display:block; box-sizing:border-box;' +
+                          (fightGrid
+                              ? fightSidecarStyle(fightSidecarPlacement(fightGrid))
+                              : inSkillingRow
+                                ? 'flex:0 1 300px; min-width:170px; max-width:300px; align-self:center; clear:none;'
+                                : 'clear:both; min-width:min(260px, 100%); max-width:520px;') +
+                          'margin:6px 0 8px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
+                          'border-radius:6px; font-size:11px; line-height:1.6;',
                     place: (block) => placeTrialBlock(root, tile.element, block, tile.name),
                 });
             }
@@ -5506,8 +5605,11 @@ class GuildTrials {
             // own layout (the payout, the In Progress card readouts) still get
             // the full check, which is what re-places one out of a squashing row.
             const inBoxRow = existing.parentElement?.classList?.contains(BOX_ROW_CLASS);
-            const isSidecar = existing.dataset?.mwiPlacement === 'row-sidecar';
-            if (!inBoxRow && !isSidecar) {
+            const inRow = ['row-sidecar', 'row-stacked'].includes(existing.dataset?.mwiPlacement);
+            if (inRow) {
+                // Its home is the challenge row; only the anchor test (adjacency and the row's width) applies
+                if (anchored && !anchored(existing)) withScrollKept(root, () => place(existing));
+            } else if (!inBoxRow) {
                 const stuckInRow = existing.parentElement && isSquashingRow(existing.parentElement);
                 if (stuckInRow || (anchored && !anchored(existing))) {
                     withScrollKept(root, () => place(existing));
@@ -5769,22 +5871,13 @@ class GuildTrials {
                 )
               : pair('Guild Points banked', exact(banked.guildPoints), GOOD, this._pointsProvenance(trials));
 
-        // Folded, the heading carries the pace in one line, from the figures below. A trial with no pace
-        // yet has nothing to state, which reads as a dash and not as the banked figure it falls back to
+        // Folded, the block is the heading alone: no summary, no buttons
         const collapsed = this._foldsFor().payout === true;
-        const paceKnown = trials.some((trial) => Number.isFinite(trial.projected));
-        const paceFigure = (pick) =>
-            !paceKnown ? '—' : spread ? `~${exact(pick(lowEnd))}–${exact(pick(highEnd))}` : exact(pick(projected));
         const payoutHeading = foldHeading(
             'payout',
-            collapsed
-                ? `Trial payout · ${paceFigure((end) => end.guildPoints)} pts on pace · ` +
-                      `${paceFigure((end) => end.participantTokens)} tokens`
-                : 'Payout',
+            'Payout &amp; tools',
             'The week’s Guild Points banked and on pace, and the tokens that pays. ' +
-                (collapsed
-                    ? 'The summary is the pace and the tokens if you took part.'
-                    : 'Fold it to a one-line summary; the buttons stay.'),
+                (collapsed ? 'Open it for the figures and the buttons.' : 'Fold it to one short line.'),
             collapsed,
             !collapsed
         );
@@ -5915,13 +6008,16 @@ class GuildTrials {
                     ? payoutHeading
                     : `<div data-payout-figures="1" style="display:flex; flex-wrap:wrap; align-items:baseline; ` +
                       `column-gap:18px; row-gap:2px; width:100%;">${payoutHeading}${figures.join('')}</div>` +
-                      (rows.length ? `<div style="width:100%;">${rows.join('')}</div>` : '')) + this._controlsHTML(),
+                      (rows.length ? `<div style="width:100%;">${rows.join('')}</div>` : '')) +
+                // Folded, the block is one short line: the buttons go with the figures
+                (collapsed ? '' : this._controlsHTML()),
             // Flat: the title, the four figures and the buttons flow on one
             // wrapping line instead of stacking half the panel tall — each
             // line() is a self-sizing chip once the container is a wrapping row
             style:
                 'display:flex; flex-wrap:wrap; align-items:center; column-gap:18px; row-gap:2px;' +
-                'margin:8px 0 4px; padding:5px 12px; background:rgba(0,0,0,0.25);' +
+                (collapsed ? 'margin:2px 0; padding:2px 10px;' : 'margin:8px 0 4px; padding:5px 12px;') +
+                'background:rgba(0,0,0,0.25);' +
                 'border-radius:6px; font-size:12px; line-height:1.5;',
             place: (block) => {
                 // Under the game's own status row when there is one. Otherwise
