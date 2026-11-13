@@ -29,6 +29,7 @@ import {
     isSpecialLine,
     lineCopies,
     lineValuesByGrade,
+    newlyUnpricedLineCosts,
     planSet,
     scaleAcrossGrades,
     setOptionsFor,
@@ -63,6 +64,7 @@ export {
     lineCopies,
     lineFeeds,
     lineValuesByGrade,
+    newlyUnpricedLineCosts,
     scaleAcrossGrades,
     skillingStatsRead,
     sortRows,
@@ -329,30 +331,6 @@ export function wornTalismans(talismans, slots) {
             Array.isArray(t.modifiers) &&
             t.modifiers.length > 0
     );
-}
-
-/** A hair of difference between two sampled runs' per-hour spend of an unpriced item is not "more" of it */
-const UNPRICED_MORE_TOLERANCE = 0.02;
-
-/**
- * The running costs (food, drinks, dungeon keys) a line's run counted at zero that the baseline's did not, or spends
- * more of: profit built on them is a ceiling, not a figure (the real spend only lowers it).
- * @param {Object} baseline - `computeMetrics` of the bare baseline
- * @param {Object} measured - `computeMetrics` of the run with the line
- * @returns {string[]} Names of the unpriced running costs the line adds to; empty when it adds none
- */
-export function newlyUnpricedLineCosts(baseline, measured) {
-    const already = new Set(baseline?.unpricedCost || []);
-    const baseRates = baseline?.unpricedCostRates || {};
-    const rates = measured?.unpricedCostRates || {};
-    return (measured?.unpricedCost || []).filter((name) => {
-        if (!already.has(name)) return true;
-        const before = baseRates[name];
-        const after = rates[name];
-        // Unpriced in both runs but spent more of: the extra is free too. An unknown rate cannot clear it
-        if (!Number.isFinite(before) || !Number.isFinite(after)) return true;
-        return after > before * (1 + UNPRICED_MORE_TOLERANCE);
-    });
 }
 
 /** 95% error bar, in standard errors (the upgrade advisor's `SIGNIFICANCE_Z`) */

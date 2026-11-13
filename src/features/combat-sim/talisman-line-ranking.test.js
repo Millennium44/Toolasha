@@ -537,6 +537,61 @@ describe('runSkillingLineRanking', () => {
         expect(result.current.value).toBe(0);
     });
 
+    describe('unpriced inputs', () => {
+        /** Speed lines raise material consumption; the material has no price, so the profit counts it as free */
+        const withFreeInput = (outputsUnpriced) =>
+            vi.fn(async (hrid, ctx) => {
+                const figures = await evaluate(hrid, ctx);
+                const s = talismanBonusesOf(ctx.equipment).noncombat;
+                const speed = (s.milkingSpeed || 0) + (s.skillingSpeed || 0);
+                return {
+                    ...figures,
+                    revenuePerHour: 500,
+                    hasMissingPrices: true,
+                    outputsUnpriced,
+                    unpricedCost: ['Free Bean'],
+                    unpricedCostRates: { 'Free Bean': 60 * (1 + speed) },
+                };
+            });
+        const run = (evalFn) =>
+            runSkillingLineRanking(
+                { actionHrid: '/actions/milking/cow', grade: 6, metricKey: 'profit' },
+                { ...deps(new Map([[BELT_LOCATION, milkingBelt]])), evaluate: evalFn }
+            );
+
+        test('a profit gain that spends more of a free input is a ceiling: marked, not built into the set', async () => {
+            const result = await run(withFreeInput(false));
+            const speed = result.rows.find((r) => r.hrid === '/talisman_modifiers/milking_speed');
+            expect(speed.costUnpriced).toEqual(['Free Bean']);
+            expect(speed.gainUnreal).toBe(true);
+            expect(result.hasUnpricedInputs).toBe(true);
+            // Only an input is missing: not a floor
+            expect(result.hasMissingPrices).toBe(false);
+            expect(result.set?.members.some((m) => m.hrid === speed.hrid) ?? false).toBe(false);
+        });
+
+        test('rating by EXP/hr ignores the unpriced input', async () => {
+            const result = await runSkillingLineRanking(
+                { actionHrid: '/actions/milking/cow', grade: 6, metricKey: 'xp' },
+                { ...deps(new Map([[BELT_LOCATION, milkingBelt]])), evaluate: withFreeInput(false) }
+            );
+            const speed = result.rows.find((r) => r.hrid === '/talisman_modifiers/milking_speed');
+            expect(speed.gainUnreal).toBeFalsy();
+            expect(speed.value).toBeGreaterThan(0);
+        });
+
+        test('a missing output keeps the floor label and its gain', async () => {
+            const result = await run(
+                vi.fn(async (hrid, ctx) => ({ ...(await evaluate(hrid, ctx)), revenuePerHour: 500, hasMissingPrices: true, outputsUnpriced: true }))
+            );
+            expect(result.hasMissingPrices).toBe(true);
+            expect(result.hasUnpricedInputs).toBe(false);
+            const speed = result.rows.find((r) => r.hrid === '/talisman_modifiers/milking_speed');
+            expect(speed.gainUnreal).toBeUndefined();
+            expect(result.set.members.some((m) => m.hrid === speed.hrid)).toBe(true);
+        });
+    });
+
     test('no belt on the action gear: refused', async () => {
         const result = await runSkillingLineRanking(
             { actionHrid: '/actions/milking/cow', grade: 6, metricKey: 'profit' },
