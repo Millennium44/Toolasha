@@ -11,7 +11,17 @@ let currentCharacterId = 'char1';
 
 // What the Houses tile reads: the rooms the character has, and the coins the
 // affordability comparison is against
-const game = vi.hoisted(() => ({ combined: {}, rows: {} }));
+const game = vi.hoisted(() => ({ combined: {}, rows: {}, settingListeners: {} }));
+
+vi.mock('../../core/config.js', () => ({
+    default: {
+        Z_FLOATING_PANEL: 1000,
+        getSettingValue: (_key, fallback) => fallback,
+        onSettingChange: (key, callback) => {
+            (game.settingListeners[key] ||= []).push(callback);
+        },
+    },
+}));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -65,6 +75,7 @@ vi.mock('../../core/storage.js', () => ({
 }));
 
 const {
+    housesPanel,
     nextLevelCost,
     affordableUpgrades,
     setRoomTracked,
@@ -328,5 +339,35 @@ describe('the Houses tile summarises its own inputs', () => {
         setRoomTracked('/house_rooms/gym', false);
         expect(version()).not.toBe(before);
         setRoomTracked('/house_rooms/gym', true);
+    });
+});
+
+describe('the Houses tile follows the pricing settings', () => {
+    const version = () => game.rows.houses.version();
+    const KEYS = ['profitCalc_pricingMode', 'profitCalc_patientTickBuy', 'profitCalc_patientTickSell'];
+
+    afterEach(() => {
+        game.combined = {};
+        housesPanel.panel = null;
+    });
+
+    test.each(KEYS)('a change of %s re-counts the tile and redraws an open panel', (key) => {
+        game.combined = { characterHouseRoomMap: { '/house_rooms/dojo': { level: 2 } } };
+        const before = version();
+        const render = vi.spyOn(housesPanel, '_render').mockImplementation(() => {});
+        housesPanel.panel = {};
+        try {
+            expect(game.settingListeners[key]).toHaveLength(1);
+            game.settingListeners[key][0]('hybrid');
+            expect(render).toHaveBeenCalledTimes(1);
+            expect(version()).not.toBe(before);
+
+            // A closed panel has nothing to redraw
+            housesPanel.panel = null;
+            game.settingListeners[key][0]('optimistic');
+            expect(render).toHaveBeenCalledTimes(1);
+        } finally {
+            render.mockRestore();
+        }
     });
 });

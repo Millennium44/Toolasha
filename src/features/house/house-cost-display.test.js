@@ -787,3 +787,26 @@ describe('the list has no scroll position of its own to carry across a redraw', 
         expect(after.scrollTop).toBe(0);
     });
 });
+
+describe('pricing setting listeners', () => {
+    const KEYS = ['profitCalc_pricingMode', 'profitCalc_patientTickBuy', 'profitCalc_patientTickSell'];
+
+    test.each(KEYS)('a change of %s redraws an open modal, and not once the feature is disabled', async (key) => {
+        const { default: config } = await import('../../core/config.js');
+        const refresh = vi.spyOn(houseCostDisplay, 'refresh').mockImplementation(() => {});
+        try {
+            houseCostDisplay.initialize();
+            expect(houseCostDisplay.isInitialized).toBe(true);
+            config._notifySettingChange(key, 'hybrid');
+            expect(refresh).toHaveBeenCalledTimes(1);
+
+            houseCostDisplay.disable();
+            expect(houseCostDisplay.isInitialized).toBe(false);
+            config._notifySettingChange(key, 'optimistic');
+            expect(refresh).toHaveBeenCalledTimes(1);
+        } finally {
+            refresh.mockRestore();
+            houseCostDisplay.disable();
+        }
+    });
+});
