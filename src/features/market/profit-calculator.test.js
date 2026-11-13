@@ -508,6 +508,8 @@ describe('calculateProfit — upgrade-item crafting chain time', () => {
 
         // 20s action + 30s chain, not the bare 20s the null-price branch used to leave
         expect(result.actionTime).toBeCloseTo(50, 6);
+        // The chain time is inside the action time, and the result says so
+        expect(result.upgradeChainCrafted).toBe(true);
     });
 
     test('an upgrade item cheaper on the market than to craft is bought, so no chain time', async () => {
@@ -517,6 +519,7 @@ describe('calculateProfit — upgrade-item crafting chain time', () => {
         const result = await profitCalculator.calculateProfit('/items/upgraded');
 
         expect(result.actionTime).toBeCloseTo(20, 6);
+        expect(result.upgradeChainCrafted).toBe(false);
     });
 
     test('guild action speed shortens the crafting chain like it shortens the action', async () => {

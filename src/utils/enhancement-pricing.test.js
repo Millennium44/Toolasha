@@ -80,6 +80,7 @@ const {
     getProductionCost,
     getProductionCostDetailed,
     getProductionChainTime,
+    getProductionChainActions,
     TRAINEE_SHOP_PRICE,
 } = await import('./enhancement-pricing.js');
 
@@ -482,5 +483,47 @@ describe('a refined untradable cape is its refinement stones alone', () => {
             expect(getProductionCostDetailed(REFINED, 'ask').partial).toBe(true);
             spy.mockRestore();
         }
+    });
+});
+
+describe('getProductionChainActions', () => {
+    function chain() {
+        game.items['/items/chain_x'] = { name: 'X' };
+        game.items['/items/chain_y'] = { name: 'Y' };
+        game.items['/items/chain_ore'] = { name: 'Ore' };
+        game.prices['/items/chain_ore:0'] = { ask: 250, bid: 240 };
+        game.actions['/actions/make_chain_x'] = {
+            type: '/action_types/crafting',
+            baseTimeCost: 10e9,
+            upgradeItemHrid: '/items/chain_y',
+            inputItems: [],
+            outputItems: [{ itemHrid: '/items/chain_x', count: 1 }],
+        };
+        game.actions['/actions/make_chain_y'] = {
+            type: '/action_types/crafting',
+            baseTimeCost: 5e9,
+            inputItems: [{ itemHrid: '/items/chain_ore', count: 2 }],
+            outputItems: [{ itemHrid: '/items/chain_y', count: 1 }],
+        };
+        game.buffVersion++;
+        game.apiVersion++;
+    }
+
+    test('lists the same actions the chain time adds up, down through a crafted upgrade item', () => {
+        chain();
+        expect(getProductionChainActions('/items/chain_x')).toEqual(['/actions/make_chain_x', '/actions/make_chain_y']);
+        expect(getProductionChainTime('/items/chain_x')).toBe(15);
+    });
+
+    test('an upgrade item that is cheaper to buy ends the chain, as it does for the time', () => {
+        chain();
+        game.prices['/items/chain_y:0'] = { ask: 100, bid: 90 };
+        game.apiVersion++;
+        expect(getProductionChainActions('/items/chain_x')).toEqual(['/actions/make_chain_x']);
+        expect(getProductionChainTime('/items/chain_x')).toBe(10);
+    });
+
+    test('an item nothing produces has no chain', () => {
+        expect(getProductionChainActions('/items/nothing_makes_this')).toEqual([]);
     });
 });

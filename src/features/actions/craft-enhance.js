@@ -26,6 +26,7 @@ import marketAPI from '../../api/marketplace.js';
 import profitCalculator from '../market/profit-calculator.js';
 import { quoteDirectEnhancement } from '../combat-sim/direct-enhancement-cost.js';
 import { getAutoDetectedParams } from '../../utils/enhancement-config.js';
+import { getProductionChainActions } from '../../utils/enhancement-pricing.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { getItemPriceInfo } from '../../utils/market-data.js';
@@ -326,15 +327,26 @@ export function rankCraftEnhance({
                 );
             }
 
-            const xp = calculateExpPerHour(recipe.actionHrid);
+            // The crafting XP of one action. When the calculator charged the upgrade item's production chain time,
+            // the chain's actions are inside the same hour, so what they teach is counted too. One chain action
+            // whose XP cannot be read leaves the whole figure unknown, never a partial one.
+            const chainActions = profit.upgradeChainCrafted
+                ? getProductionChainActions(recipe.action.upgradeItemHrid)
+                : [];
+            const xpPerAction = [recipe.actionHrid, ...chainActions].map(
+                (actionHrid) => calculateExpPerHour(actionHrid)?.modifiedXP
+            );
+            const xpKnown = xpPerAction.every((value) => Number.isFinite(value));
             const perUnit = (Number(profit.outputAmount) || 1) * (1 + (Number(profit.gourmetBonus) || 0));
-            const craftXpPerUnit = xp && Number.isFinite(xp.modifiedXP) ? xp.modifiedXP / perUnit : null;
+            const craftXpPerUnit = xpKnown ? xpPerAction.reduce((sum, value) => sum + value, 0) / perUnit : null;
 
             const level =
                 dataManager.getSkills()?.find((skill) => skill.skillHrid === recipe.skill.skillHrid)?.level ?? 1;
             const requiredLevel = recipe.action.levelRequirement?.level || 1;
 
             const notes = [];
+            if (!xpKnown)
+                notes.push('The crafting XP of the recipe or its upgrade chain is not known, so it is left out.');
             if (priced.estimated.length > 0) {
                 notes.push('An input is priced from the game value estimate, not a live order.');
             }

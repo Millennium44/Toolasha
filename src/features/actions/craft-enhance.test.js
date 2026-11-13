@@ -22,6 +22,8 @@ const game = vi.hoisted(() => ({
     drinks: [],
     drinkPrices: {},
     fpExtra: '',
+    chain: [],
+    xp: {},
     detected: { enhancingLevel: 100, experienceBonus: 10, toolBonus: 5, speedBonus: 0, guzzlingBonus: 1, teas: {} },
     settings: {},
 }));
@@ -55,9 +57,12 @@ vi.mock('../combat-sim/direct-enhancement-cost.js', () => ({
         return game.enhanceQuotes[itemHrid] ?? null;
     },
 }));
+vi.mock('../../utils/enhancement-pricing.js', () => ({
+    getProductionChainActions: () => game.chain,
+}));
 vi.mock('../../utils/enhancement-config.js', () => ({ getAutoDetectedParams: () => game.detected }));
 vi.mock('../../utils/experience-calculator.js', () => ({
-    calculateExpPerHour: () => ({ modifiedXP: 100 }),
+    calculateExpPerHour: (actionHrid) => (actionHrid in game.xp ? game.xp[actionHrid] : { modifiedXP: 100 }),
 }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPriceInfo: (hrid, { enhancementLevel = 0, side } = {}) =>
@@ -174,6 +179,8 @@ beforeEach(() => {
     game.drinks = [];
     game.drinkPrices = {};
     game.fpExtra = '';
+    game.chain = [];
+    game.xp = {};
 });
 
 describe('which recipes are walked', () => {
@@ -531,5 +538,40 @@ describe('Only craftable now', () => {
         game.recipes[0].action.levelRequirement = { level: 61 };
         const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
         expect(row.levelMet).toBe(false);
+    });
+});
+
+describe('crafting XP when the upgrade chain is crafted', () => {
+    const SWORD_ACTION = '/actions/cheesesmithing/sword';
+
+    test('the chain actions teach inside the same hour, so their XP is counted per unit', async () => {
+        game.profits[SWORD_ACTION].upgradeChainCrafted = true;
+        game.chain = ['/actions/cheesesmithing/blade', '/actions/cheesesmithing/ingot'];
+        game.xp = {
+            '/actions/cheesesmithing/blade': { modifiedXP: 40 },
+            '/actions/cheesesmithing/ingot': { modifiedXP: 10 },
+        };
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        // 100 for the recipe, 40 and 10 down the chain, 3600 / 96 units an hour
+        expect(row.target.craftXpPerHour).toBeCloseTo(150 * (3600 / 96), 6);
+        expect(row.base.craftXpPerHour).toBeCloseTo(150 * 100, 6);
+    });
+
+    test('no chain charged, no chain XP', async () => {
+        game.chain = ['/actions/cheesesmithing/blade'];
+        game.xp = { '/actions/cheesesmithing/blade': { modifiedXP: 40 } };
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(row.base.craftXpPerHour).toBeCloseTo(100 * 100, 6);
+    });
+
+    test('one chain action with unreadable XP leaves the figure unknown, with a note, never partial', async () => {
+        game.profits[SWORD_ACTION].upgradeChainCrafted = true;
+        game.chain = ['/actions/cheesesmithing/blade'];
+        game.xp = { '/actions/cheesesmithing/blade': null };
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(row.base.craftXpPerHour).toBeNull();
+        expect(row.target.craftXpPerHour).toBeNull();
+        expect(row.notes.join(' ')).toContain('crafting XP');
+        expect(row.base.status).toBe('ok');
     });
 });
