@@ -660,6 +660,7 @@ class ActionFilter {
             overflow-y: auto;
             padding: 8px 10px;
             background: #1b1b2b;
+            color: #e7e7f0;
             border: 1px solid ${config.COLOR_ACCENT};
             border-radius: 6px;
             font-size: 14px;
