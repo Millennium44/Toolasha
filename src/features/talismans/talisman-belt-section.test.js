@@ -61,6 +61,10 @@ vi.mock('../../utils/action-context.js', async () => {
     const { BELT_LOCATION, computeTalismanBonuses, attachTalismanBonuses } =
         await import('../../utils/talisman-bonuses.js');
     return {
+        describeActionContextSource: (type) => ({
+            key: `skill:${type}:Milking ★`,
+            label: 'Milking ★ (the loadout this skill equips)',
+        }),
         resolveActionContext: () => {
             const belt = {
                 itemHrid: mocks.belt.hrid,
@@ -94,7 +98,8 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     guildMemberSkills: () => null,
 }));
 
-const { talismanBonusesOf } = await import('../../utils/talisman-bonuses.js');
+const { BELT_LOCATION, attachTalismanBonuses, computeTalismanBonuses, talismanBonusesOf } =
+    await import('../../utils/talisman-bonuses.js');
 const { SkillingTalismanSection } = await import('./skilling-talisman-section.js');
 
 const MILKING = (grade) => ({ hrid: '/talisman_modifiers/milking_speed', grade });
@@ -346,5 +351,68 @@ describe('the belt advisor in the Optimizer', () => {
         mocks.belt = { hrid: '/items/large_talisman_belt', level: 20 };
         await belts();
         expect(results()).not.toContain('Medium Talisman Belt +5');
+    });
+});
+
+describe('the belt advisor follows the gear the Optimizer shows', () => {
+    let gear;
+    const loadoutGear = (key, beltHrid, level) => {
+        const equipment = new Map();
+        if (beltHrid) {
+            const belt = { itemHrid: beltHrid, enhancementLevel: level, itemLocationHrid: BELT_LOCATION };
+            equipment.set(BELT_LOCATION, belt);
+            attachTalismanBonuses(
+                equipment,
+                computeTalismanBonuses({
+                    talismans: [{ slotIndex: 1, modifiers: [MILKING(6)] }],
+                    belt,
+                    itemDetailMap: { ...BELT_ITEMS },
+                    modifierDetailMap: FULL_MODIFIER_DETAILS,
+                    enhancementTable: TALISMAN_ENHANCEMENT_TABLE,
+                })
+            );
+        }
+        return { key, label: 'Woodcutting ★ loadout', equipment, drinks: [] };
+    };
+    const hostWith = () => {
+        section.detach();
+        container.innerHTML = '';
+        section = new SkillingTalismanSection({
+            getSkill: () => mocks.skill,
+            getSelectedActions: () => null,
+            getGearContext: () => gear,
+        });
+        section.mount(container);
+    };
+
+    test('a picked loadout with a belt: belt rows on that loadout, the header names it', async () => {
+        gear = loadoutGear('a', '/items/medium_talisman_belt', 2);
+        hostWith();
+        expect(q('belt-estimate').textContent).toContain('candidate belts');
+        await belts();
+        expect(results()).toContain('Cow · Woodcutting ★ loadout');
+        expect(results()).toContain('Belts against Medium Talisman Belt +2');
+        expect(results()).not.toContain('Belts against Medium Talisman Belt +4');
+        expect(rowsText().some((r) => r.includes('Medium Talisman Belt +3'))).toBe(true);
+    });
+
+    test('a dropdown change marks the belt result out of date', async () => {
+        gear = loadoutGear('a', '/items/medium_talisman_belt', 2);
+        hostWith();
+        await belts();
+        expect(q('belt-stale').style.display).toBe('none');
+        gear = loadoutGear('b', '/items/medium_talisman_belt', 2);
+        section.gearChanged();
+        expect(q('belt-stale').style.display).toBe('block');
+        expect(q('belt-stale').textContent).toContain('gear');
+    });
+
+    test('a picked loadout without a belt is refused by name, not valued on the live belt', async () => {
+        gear = loadoutGear('c', null, 0);
+        hostWith();
+        expect(q('belt-estimate').textContent).toContain('Woodcutting ★ loadout has no Talisman Belt');
+        await belts();
+        expect(results()).toContain('Woodcutting ★ loadout has no Talisman Belt');
+        expect(mocks.evaluations).toBe(0);
     });
 });

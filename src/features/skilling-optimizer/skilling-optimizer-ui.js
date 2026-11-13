@@ -32,6 +32,12 @@ import { loadoutSnapshot, dataManager as sharedDataManager } from '../../utils/b
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 import { maxEnhancementLevel, maxLevel } from '../../utils/game-maximums.js';
+import {
+    BELT_LOCATION,
+    attachTalismanBonuses,
+    resolveLoadoutTalismans,
+    talismanBonusesOf,
+} from '../../utils/talisman-bonuses.js';
 import { SkillingTalismanSection, skillingTalismansAvailable } from '../talismans/skilling-talisman-section.js';
 
 function getLoadoutSnapshot() {
@@ -109,6 +115,8 @@ class SkillingSimulatorUI {
         this.currentMode = 'simulator'; // 'simulator' | 'optimizer'
         this.lastOptimizerResult = null;
         this.optimizerLoadout = null;
+        // Name of the loadout picked in the Simulator's Loadout dropdown (null: none); the Talismans section ranks on it
+        this.simLoadoutName = null;
         this.optimizerSortMode = 'value';
         this.houseSortMode = 'value';
         this.alchemyItemOverride = null;
@@ -512,6 +520,7 @@ class SkillingSimulatorUI {
             this._talismanSection = new SkillingTalismanSection({
                 getSkill: () => this.currentSkill,
                 getSelectedActions: () => this.selectedActionHrids,
+                getGearContext: () => this._talismanGearContext(),
             });
             this._talismanSection.mount(box);
         } else if (this._talismanSection.root) {
@@ -719,14 +728,84 @@ class SkillingSimulatorUI {
             opt.textContent = snap.name + (snap.isDefault ? ' ★' : '');
             select.appendChild(opt);
         }
+        // A rebuilt panel shows the loadout the Talismans section is still ranking on (gone: no loadout)
+        if (this.simLoadoutName && snapshots.some((snap) => snap.name === this.simLoadoutName)) {
+            select.value = this.simLoadoutName;
+        } else {
+            this.simLoadoutName = null;
+        }
+    }
+
+    /** The Talismans section's stale check: the shown gear changed (loadout, a row, a tea) */
+    _notifyTalismans() {
+        this._talismanSection?.gearChanged?.();
+    }
+
+    /**
+     * The gear the Simulator shows, for the Talismans section: the picked loadout's belt and talismans (with its other
+     * slots), the Equipment rows as they stand now over it, and the teas as shown. Null with no loadout picked, outside
+     * the Simulator, or when the loadout is gone: the section then ranks on the skill's own loadout. Never mixes in
+     * live slots. A fresh Map each call.
+     * @returns {{key: string, label: string, detail: string, note: string, equipment: Map, drinks: Array}|null}
+     */
+    _talismanGearContext() {
+        if (this.currentMode !== 'simulator' || !this.simLoadoutName) return null;
+        const store = getLoadoutSnapshot();
+        const snap = store.getAllSnapshots().find((s) => s.name === this.simLoadoutName);
+        if (!snap) return null;
+        // The loadout's own map carries its belt and the talisman bonuses of the talismans it names
+        const loadoutMap = store.equipmentMapOf(snap);
+        const equipment = attachTalismanBonuses(new Map(loadoutMap), talismanBonusesOf(loadoutMap));
+        const rows = [];
+        for (const location of SKILLING_LOCATIONS) {
+            equipment.delete(location);
+            const row = this.equipment.get(location);
+            if (!row?.itemHrid) continue;
+            const enhancementLevel = row.enhancementLevel || 0;
+            equipment.set(location, { itemLocationHrid: location, itemHrid: row.itemHrid, enhancementLevel });
+            rows.push(`${location}=${row.itemHrid}+${enhancementLevel}`);
+        }
+        const belt = equipment.get(BELT_LOCATION);
+        const drinks = this.teas.filter(Boolean).map((itemHrid) => ({ itemHrid }));
+        const named = Object.values(snap.talismanIdMap || {}).filter((id) => id).length;
+        const kept = resolveLoadoutTalismans(
+            snap.talismanIdMap,
+            sharedDataManager()?.getCharacterTalismans?.() || []
+        ).length;
+        return {
+            key: JSON.stringify([
+                'loadout',
+                snap.name,
+                belt ? [belt.itemHrid, belt.enhancementLevel || 0] : null,
+                snap.talismanIdMap || null,
+                rows.sort(),
+                drinks.map((d) => d.itemHrid),
+            ]),
+            label: `${snap.name}${snap.isDefault ? ' ★' : ''} loadout`,
+            detail: 'its belt and talismans, the Equipment rows and teas as shown',
+            note:
+                kept < named
+                    ? `${named - kept} of this loadout's ${named} talismans are not on this character any more and are left out of the worn figure.`
+                    : '',
+            equipment,
+            drinks,
+        };
     }
 
     _loadLoadout(name) {
-        if (!name) return;
+        this.simLoadoutName = name || null;
+        if (!name) {
+            this._notifyTalismans();
+            return;
+        }
         const snap = getLoadoutSnapshot()
             .getAllSnapshots()
             .find((s) => s.name === name);
-        if (!snap) return;
+        if (!snap) {
+            this.simLoadoutName = null;
+            this._notifyTalismans();
+            return;
+        }
 
         // Load equipment
         this.equipment.clear();
@@ -759,6 +838,7 @@ class SkillingSimulatorUI {
             const hrid = this.teas[i];
             this._updateTeaUI(i, refs, hrid);
         }
+        this._notifyTalismans();
     }
 
     // -------------------------------------------------------------------------
@@ -825,6 +905,7 @@ class SkillingSimulatorUI {
             enhInput.value = String(level);
             const existing = this.equipment.get(locationHrid);
             if (existing) existing.enhancementLevel = level;
+            this._notifyTalismans();
         });
 
         const clearBtn = document.createElement('button');
@@ -839,6 +920,7 @@ class SkillingSimulatorUI {
         clearBtn.addEventListener('click', () => {
             this.equipment.delete(locationHrid);
             this._updateSlotUI(locationHrid, { nameBtn, enhInput, clearBtn }, null, 0);
+            this._notifyTalismans();
         });
 
         nameBtn.addEventListener('click', (e) => {
@@ -855,6 +937,7 @@ class SkillingSimulatorUI {
                     this.equipment.delete(locationHrid);
                 }
                 this._updateSlotUI(locationHrid, { nameBtn, enhInput, clearBtn }, hrid, 0);
+                this._notifyTalismans();
             });
         });
 
@@ -927,6 +1010,7 @@ class SkillingSimulatorUI {
         clearBtn.addEventListener('click', () => {
             this.teas[index] = null;
             this._updateTeaUI(index, { nameBtn, clearBtn }, null);
+            this._notifyTalismans();
         });
 
         nameBtn.addEventListener('click', (e) => {
@@ -939,6 +1023,7 @@ class SkillingSimulatorUI {
             this._openItemPicker(nameBtn, drinks, this.teas[index], (hrid) => {
                 this.teas[index] = hrid;
                 this._updateTeaUI(index, { nameBtn, clearBtn }, hrid);
+                this._notifyTalismans();
             });
         });
 
@@ -2174,6 +2259,7 @@ class SkillingSimulatorUI {
         // character would silently diff against the old character's gear.
         this.lastOptimizerResult = null;
         this.optimizerLoadout = null;
+        this.simLoadoutName = null;
         this.alchemyItemOverride = null;
         // The Simulator's own inputs were picked from the departing character's loadouts (gear,
         // drinks) and action list; a new character starts from an empty setup

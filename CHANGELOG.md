@@ -13,6 +13,9 @@ Building a Budget set in the Combat Sim's Talisman lines locked the game tab for
 ### Buy missing supplies stocks to your run target
 
 The Labyrinth's "Buy missing supplies" now buys up to the Consumables panel's run target (5 runs unless you changed it), crates included, instead of one run's carry cap, so it no longer says nothing is missing when you are short of that target.
+### Optimizer talisman ranking uses the loadout you picked
+
+The Skilling Optimizer's Talismans section now ranks on the loadout chosen in its Loadout dropdown, belt and talismans included, and its header names which loadout it read. With no loadout picked it uses the one the skill equips, as before.
 
 ### Belt advisor: which Talisman Belt upgrade is worth buying
 
