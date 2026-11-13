@@ -92,6 +92,16 @@ export function storedBalanceWeights() {
     return normalizeBalanceWeights(out);
 }
 
+/**
+ * What a build wears, for telling a ranking's gear from the gear now when the build was read live (no editor to
+ * compare): gear, talismans, food and drinks.
+ * @param {Object|null} dto
+ * @returns {string}
+ */
+function buildFingerprint(dto) {
+    return JSON.stringify([dto?.equipment ?? null, dto?.talismans ?? null, dto?.food ?? null, dto?.drinks ?? null]);
+}
+
 /** The Upgrade tab's Talisman lines section */
 export class TalismanLineRankingSection extends TalismanRankingSectionBase {
     /**
@@ -356,6 +366,12 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         const { playerDTOs } = await this._loadRoster();
         const dto = playerDTOs?.[playerIndex] || null;
         const ready = combatRankingReadiness({ gameData: this._payload(), playerDTO: dto, zoneHrid });
+        if (ready.ok && this._result?.buildFingerprint && this._result.buildFingerprint !== buildFingerprint(dto)) {
+            return {
+                status: 'refused',
+                message: 'The ranking is out of date for this gear. Rank again, then check the cores.',
+            };
+        }
         if (!ready.ok) return { status: 'refused', message: ready.message };
         if (this._result?.playerHrid && dto.hrid !== this._result.playerHrid) {
             return {
@@ -424,6 +440,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         const resimCloseCalls = this._resimChecked();
         const { playerDTOs, selfHrid } = await this._loadRoster();
         if (!current()) return null;
+        const buildNow = buildFingerprint(playerDTOs?.[playerIndex]);
         const result = await runCombatLineRanking(
             {
                 playerDTOs,
@@ -465,6 +482,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         result.zoneName = gameData?.actionDetailMap?.[zoneHrid]?.name || zoneHrid;
         result.difficultyTier = difficultyTier;
         result.inputs = inputs;
+        result.buildFingerprint = buildNow;
         result.hours = hours;
         result.dungeon = Boolean(gameData?.actionDetailMap?.[zoneHrid]?.combatZoneInfo?.isDungeon);
         result.playerName =

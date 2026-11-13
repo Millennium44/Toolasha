@@ -291,4 +291,15 @@ describe('the core advisor in the Combat Sim', () => {
         expect(cores()).toContain('out of date for this gear');
         expect(section._core.rows).toHaveLength(0);
     });
+
+    test('a build read live (no editor) whose gear changed after the ranking is not valued with the old rows', async () => {
+        host._editor = null;
+        await rank();
+        mocks.roster[0].equipment['/equipment_types/main_hand'] = { hrid: '/items/sword', enhancementLevel: 3 };
+        await check();
+        expect(cores()).toContain('out of date for this gear');
+        await rank();
+        await check();
+        expect(section._core.status).toBe('done');
+    });
 });

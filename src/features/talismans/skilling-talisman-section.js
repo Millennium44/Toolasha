@@ -72,6 +72,25 @@ export function rankableActions(skillName, selected) {
 }
 
 /** The Optimizer's Talismans section */
+/**
+ * What a gear context is, item by item: each slot's item and enhancement level, the drinks, and the worn talismans'
+ * lines. The loadout's name (the gear key) does not change when a tool or a tea does, so a figure that must be for
+ * exactly this gear is compared by this instead.
+ * @param {{equipment: Map, drinks: Array}|null} context
+ * @param {Array<Object>|null} talismans
+ * @returns {string}
+ */
+export function gearFingerprint(context, talismans) {
+    const equipment = [...(context?.equipment?.entries?.() || [])]
+        .map(([location, item]) => [location, item?.itemHrid || null, item?.enhancementLevel || 0])
+        .sort((x, y) => String(x[0]).localeCompare(String(y[0])));
+    const drinks = (context?.drinks || []).map((d) => d?.itemHrid || null);
+    const worn = (talismans || [])
+        .map((t) => [t.slotIndex, (t.modifiers || []).map((m) => [m.hrid, m.grade])])
+        .sort((x, y) => x[0] - y[0]);
+    return JSON.stringify({ equipment, drinks, worn });
+}
+
 export class SkillingTalismanSection extends TalismanRankingSectionBase {
     /**
      * @param {Object} host - `{getSkill(): string, getSelectedActions(): Set<string>|string[]|null,
@@ -262,6 +281,7 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         const picked = this._q('action')?.value || this._actionHrid;
         if (
             (result?.gearKey && result.gearKey !== source.key) ||
+            (result?.gearFingerprint && result.gearFingerprint !== gearFingerprint(context, talismans)) ||
             (picked && result?.actionHrid && picked !== result.actionHrid)
         ) {
             return {
@@ -334,6 +354,7 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         // The gear and the words for it are taken in one call, at the run's start, so the header can only name the
         // gear the figures used
         let source = null;
+        let fingerprint = null;
         const result = await runSkillingLineRanking(
             { actionHrid, grade, metricKey, setMode, capGrade, budget },
             {
@@ -341,6 +362,7 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
                 resolveContext: (type) => {
                     const picked = this._gearContextFor(type);
                     source = picked.source;
+                    fingerprint = gearFingerprint(picked.context, picked.talismans);
                     return picked.context;
                 },
                 evaluate: evaluateSkillingAction,
@@ -351,6 +373,7 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
         if (!current()) return null;
         if (source) {
             result.gearKey = source.key;
+            result.gearFingerprint = fingerprint;
             result.gearLabel = source.label;
             result.gearDetail = source.own?.detail || '';
             result.gearNote = source.own?.note || '';

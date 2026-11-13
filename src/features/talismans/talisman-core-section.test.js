@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
     belt: { hrid: '/items/medium_talisman_belt', level: 4 },
     /** The worn talisman records of the gear (the game's shape; slotIndex is 1-based) */
     worn: [],
+    tool: 0,
+    teas: [],
     prices: {},
     gatheringCalculator: null,
 }));
@@ -74,8 +76,9 @@ vi.mock('../../utils/action-context.js', async () => {
                     BELT_LOCATION,
                     { itemHrid: mocks.belt.hrid, enhancementLevel: mocks.belt.level, itemLocationHrid: BELT_LOCATION },
                 ],
+                ['/item_locations/main_hand', { itemHrid: '/items/milking_tool', enhancementLevel: mocks.tool }],
             ]),
-            drinks: [],
+            drinks: mocks.teas.map((itemHrid) => ({ itemHrid })),
         }),
     };
 });
@@ -118,6 +121,8 @@ beforeEach(() => {
     mocks.characterId = 'c1';
     mocks.belt = { hrid: '/items/medium_talisman_belt', level: 4 };
     mocks.worn = [talisman(1, [MILKING_SPEED]), talisman(2, [MILKING_SPEED, OTHERS[0]])];
+    mocks.tool = 0;
+    mocks.teas = [];
     mocks.prices = {};
     mocks.gatheringCalculator = {
         calculateGatheringProfit: async (_hrid, { actionContext }) => {
@@ -220,7 +225,7 @@ describe('the core advisor in the Optimizer', () => {
         await rank();
         mocks.belt = { hrid: '/items/medium_talisman_belt', level: 6 };
         await check();
-        expect(cores()).toContain('another belt');
+        expect(cores()).toContain('out of date for this gear');
     });
 
     test('a core price moving, or the worn lines changing, marks the figures out of date', async () => {
@@ -343,5 +348,19 @@ describe('the core advisor in the Optimizer', () => {
         const order = [...q('core-controls').parentElement.children].map((el) => el.dataset.role);
         expect(order.indexOf('core-results')).toBeLessThan(order.indexOf('results'));
         expect(order.indexOf('belt-results')).toBeLessThan(order.indexOf('results'));
+    });
+
+    test('a tool or a tea changed after the ranking (same loadout name) is not valued with the old rows', async () => {
+        await rank();
+        mocks.tool = 5;
+        await check();
+        expect(cores()).toContain('out of date for this gear');
+        await rank();
+        mocks.teas = ['/items/efficiency_tea'];
+        await check();
+        expect(cores()).toContain('out of date for this gear');
+        await rank();
+        await check();
+        expect(section._core.status).toBe('done');
     });
 });
