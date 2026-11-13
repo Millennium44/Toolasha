@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial readout fits on phones
+
+On the In Progress tab the trial readout now sits under the game's card (skilling) or under the bosses (combat), laid out in rows, so nothing is cut off at phone width and the card's progress numbers show in full. The Deadline row is gone, since the game already shows it.
+
+### Payout & tools folds away
+
+The payout block is now "Payout & tools": folded, it is a single line, hiding both the figures and the trial buttons.
+
 <!-- shipped in 3.86.1 -->
 
 ### Item tooltip profit follows the sell-tax setting
