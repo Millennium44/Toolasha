@@ -507,6 +507,31 @@ export function redactSettingsStore(entries) {
 let lastLeftOutSummary = null;
 
 /**
+ * Read one whole store of this device's, or throw.
+ *
+ * `storage.getAll` answers `{}` with no connection or a wedged read, and the rows read so far when the
+ * transaction aborts, without saying so. Every sync read of a whole store decides something from what is
+ * missing: a push built from a short read uploads a cut-down store over the gist's complete copy, and a pull
+ * weighed against an empty one reads every local edit as absent and writes the download over it. So a read
+ * that did not walk the store to its end stops the push, merge or pull before anything is written or sent;
+ * the next sync tries again.
+ * @param {string} storeName - Object store name
+ * @returns {Promise<Object>} The store's rows, key → value
+ * @throws {GistError} With kind 'store-unreadable' when the read was not complete: said once a session by an
+ *   automatic sync (see `ONCE_A_SESSION_KINDS`), since a store that stays slow fails every interval the same way
+ */
+async function readWholeStore(storeName) {
+    const read = await storage.getAllChecked(storeName);
+    if (read?.ok && read.rows && typeof read.rows === 'object') return read.rows;
+    console.warn(`[Sync] The ${storeName} store could not be read whole:`, read?.error || 'unknown error');
+    throw new GistError(
+        'store-unreadable',
+        `This device's ${storeName} data could not be read in full, so nothing was synced. Sync tries again ` +
+            'later; reload the page if it keeps happening.'
+    );
+}
+
+/**
  * Displaced keys whose delete failed, retried by the next pull on this page.
  * A reload forgets them; the owning tracker prunes the key at its next save.
  * @type {Map<string, {store: string, key: string}>}
@@ -562,6 +587,15 @@ export async function buildPayloadJSON(scope = 'settings') {
     await assertExternalKeysSaved();
     const allStores = await storage.listStores();
     const ours = allStores.filter(isSyncedStore);
+    // `listStores` answers [] with no connection. The settings store always exists (sync's own records live in
+    // it), so a listing without it is one that failed, and building from it would upload `"stores":{}`
+    if (!ours.includes(SETTINGS_STORE)) {
+        throw new GistError(
+            'store-unreadable',
+            "This device's stores could not be listed (the database is not available), so nothing was synced. " +
+                'Sync tries again later; reload the page if it keeps happening.'
+        );
+    }
     const storeNames = scope === 'everything' ? ours : ours.filter((name) => name === SETTINGS_STORE);
     // One view of ownership for the whole build. The stores are read one at a
     // time, and a registration landing between two reads must not leave the
@@ -582,7 +616,8 @@ export async function buildPayloadJSON(scope = 'settings') {
     let foreignKeys = 0;
     let foreignBytes = 0;
     for (const storeName of storeNames) {
-        const entries = stripExcludedKeys(storeName, await storage.getAll(storeName));
+        // A short read would upload a cut-down store over the gist's whole one: it throws instead
+        const entries = stripExcludedKeys(storeName, await readWholeStore(storeName));
         const partition = partitionOwnedKeys(storeName, entries, ownership.owns);
         foreignKeys += partition.foreignKeys;
         foreignBytes += partition.foreignBytes;
@@ -1208,10 +1243,13 @@ function refoldIfAppeared(fold) {
  *
  * @param {string} json - Payload text as produced by `buildPayloadJSON()`
  * @param {{mode?: 'pull'|'merge', baseline?: Record<string, string>|null, retryHeld?: boolean,
- *   heldKeys?: Array<{store: string, key: string}>|null}} [options] - How settings both sides set are decided,
- *   this device's per-key hashes of the last exchange, whether this pull retries records an earlier one held
- *   back, and which ones: their folds ignore the baseline (every fold does when a retry cannot say which)
- * @returns {Promise<{restored: Record<string, number>, expected: Record<string, number>,
+ *   heldKeys?: Array<{store: string, key: string}>|null, canContinue?: () => boolean}} [options] - How settings
+ *   both sides set are decided, this device's per-key hashes of the last exchange, whether this pull retries
+ *   records an earlier one held back, and which ones: their folds ignore the baseline (every fold does when a
+ *   retry cannot say which); and whether the caller still owns the operation, asked before the restore hold is
+ *   taken and again right before the import writes — false at either returns `{superseded: true}` with nothing
+ *   written
+ * @returns {Promise<{superseded: true}|{restored: Record<string, number>, expected: Record<string, number>,
  *   failed: Array<Object>, complete: boolean, merged: Array<Object>, mergeFailed: Array<Object>,
  *   mergeHeld: Array<Object>, exportedAt: string|null, applied: string}>}
  *   What landed, how many keys each store was asked for (the figure the pull summary
@@ -1219,7 +1257,10 @@ function refoldIfAppeared(fold) {
  *   combined, which were held back because this device's copy could not be read, and
  *   the payload text as actually applied
  */
-export async function applyPayload(json, { mode = 'pull', baseline = null, retryHeld = false, heldKeys = null } = {}) {
+export async function applyPayload(
+    json,
+    { mode = 'pull', baseline = null, retryHeld = false, heldKeys = null, canContinue = () => true } = {}
+) {
     // Each phase is named for the PFormance stall ledger; observation only
     const phase = (name, fn) => syncPhase('pull', name, fn);
     const payload = await phase('parse', () => parsePayloadSliced(json));
@@ -1237,20 +1278,28 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
     assertApplicable(payload);
     const settingsStore = payload?.stores?.[SETTINGS_STORE];
 
+    // A takeover or character switch during the waits above leaves this download to the operation that
+    // replaced it. Outside the `try`, so this call never ends a restore hold it did not take
+    if (!canContinue()) return { superseded: true };
+
     // Land the debounce queue before ANY local reads, including the settings
     // preserved below. Both getAll and tryGet read IndexedDB, so preserving a
     // token or a recent setting before this flush would write its old value
     // back over the queued edit, just like merging a history from a stale base.
-    /** This device's key-migration records, as they were before the pull forgot any */
+    /** This device's key-migration records before the pull forgot any, with the maps they describe as read then */
     let migrationRecords = null;
     /** What the pull wrote and deleted, told to the pull listeners once the restore hold has ended */
     let announcement = null;
     let result;
+    /** Whether `importEverything` was reached: from there its own failure path owns the migration records */
+    let importStarted = false;
     try {
         await storage.beginRestore?.();
 
         if (settingsStore) {
-            const local = await storage.getAll(SETTINGS_STORE);
+            // A short read throws: folded over an empty map, the download would take every setting and
+            // this device's token, and the migration records below would be read as none
+            const local = await readWholeStore(SETTINGS_STORE);
             for (const [key, incoming] of Object.entries(settingsStore)) {
                 if (!key.startsWith('script_settingsMap')) continue;
                 const stampKey = `${SETTING_STAMPS_PREFIX}${key}`;
@@ -1285,9 +1334,15 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             // for exactly the maps that did not bring their own (see
             // reconcileKeyMigrationState), so the next load reconciles what this
             // pull actually landed.
-            migrationRecords = Object.fromEntries(
+            const records = Object.fromEntries(
                 Object.entries(local || {}).filter(([key]) => key.startsWith(MIGRATION_RECORD_PREFIX))
             );
+            const maps = {};
+            for (const key of Object.keys(records)) {
+                const mapKey = mapKeyOfRecord(key);
+                if (mapKey) maps[mapKey] = local[mapKey];
+            }
+            migrationRecords = { records, maps };
             // A map that comes down exactly as this device holds it does not
             // land (see `dropUnchangedKeys`), so its record still matches it
             const landing = Object.keys(settingsStore).filter(
@@ -1378,7 +1433,16 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             payloadKeys[storeName] = Object.keys(stripExcludedKeys(storeName, entries));
         }
 
+        // Last check before the import writes, with no wait between it and the write: everything above (the
+        // local reads, the folds, the weighing) can outlast a takeover or a character switch, and the import
+        // would land the old download under the new session and latch its stores. Nothing has been written
+        // yet but the key-migration records this pull forgot, which go back as they were
+        if (!canContinue()) {
+            await restoreMigrationRecords(migrationRecords);
+            return { superseded: true };
+        }
         let imported;
+        importStarted = true;
         try {
             imported = await phase('write', () =>
                 importEverything(payload, { liveSafeMerge: true, folds: histories.refolds, strictFolds: true })
@@ -1488,6 +1552,11 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             exportedAt: payload?.exportedAt ?? null,
             applied,
         };
+    } catch (error) {
+        // Stopped before anything was imported (a store that could not be read whole, a fold that threw):
+        // the maps the records were forgotten for never landed, so the records go back as they were
+        if (!importStarted) await restoreMigrationRecords(migrationRecords);
+        throw error;
     } finally {
         // `importEverything` ends the hold itself on its way out; this covers
         // a throw between the flush above and reaching it, which would
@@ -1533,26 +1602,53 @@ async function settlePendingWrites() {
 const MIGRATION_RECORD_PREFIX = 'settings_key_migrations_';
 
 /**
+ * The settings map a key-migration record describes: `settings_key_migrations_applied_<map>` and the legacy
+ * `settings_key_migrations_v1_<map>` / `_v2_<map>` flags (see `_clearKeyMigrationState`).
+ * @param {string} recordKey - A key under {@link MIGRATION_RECORD_PREFIX}
+ * @returns {string|null} The map's storage key, or null for a record tied to no map
+ */
+function mapKeyOfRecord(recordKey) {
+    const at = recordKey.indexOf('script_settingsMap', MIGRATION_RECORD_PREFIX.length);
+    return at === -1 ? null : recordKey.slice(at);
+}
+
+/**
  * Put back the key-migration records a pull forgot, when the settings maps
  * they were forgotten for did not land.
  *
- * Written down the bulk path with `bypassRestoreLatch`, because a restore may
- * already have latched the settings store. A failure here is logged, not
- * thrown: the pull has already failed, and its own error is the one to report.
+ * A record goes back only when it is absent and its map is exactly as this pull read it before forgetting it,
+ * checked and written in one transaction. A record still stored is unchanged or newer (a session that took
+ * over, another tab). A map that changed since was landed by something else — the pull that replaced this one,
+ * which forgot the same record on purpose so the next load reconciles that map — and its record stays forgotten:
+ * a migration that runs again on a map already in the new shape mostly finds nothing to do, while one skipped
+ * leaves a map in an older build's shape read as if it were current. A record tied to no map goes back when absent.
  *
- * @param {Record<string, *>|null} records - The records as they were, or null when none were touched
- * @returns {Promise<boolean>} Whether every record is back
+ * Written with `bypassRestoreLatch`, because a restore may already have latched the settings store. A failure
+ * here is logged, not thrown: the pull has already failed, and its own error is the one to report.
+ *
+ * @param {{records: Record<string, *>, maps: Record<string, *>}|null} snapshot - The records as they were and
+ *   their maps as read then, or null when none were touched
+ * @returns {Promise<boolean>} Whether the check-and-restore committed
  */
-async function restoreMigrationRecords(records) {
-    const wanted = records ? Object.keys(records).length : 0;
-    if (wanted === 0) return true;
-    // putAll reports a failed transaction as a short count, not a throw; one retry covers a
-    // transient abort, and a second short write is said plainly because the next load would
-    // re-run those migrations over the player's settings
+async function restoreMigrationRecords(snapshot) {
+    const records = snapshot?.records;
+    if (!records || Object.keys(records).length === 0) return true;
+    const pairs = Object.keys(records).map((key) => [key, mapKeyOfRecord(key)]);
+    const keys = [...new Set(pairs.flat().filter(Boolean))];
+    const restore = (values) => {
+        const back = {};
+        for (const [record, mapKey] of pairs) {
+            if (values[record] != null) continue;
+            if (mapKey && stableStringify(values[mapKey]) !== stableStringify(snapshot.maps[mapKey])) continue;
+            back[record] = records[record];
+        }
+        return Object.keys(back).length > 0 ? back : undefined;
+    };
+    // An aborted transaction answers null; one retry covers a transient abort, and a second failure is said
+    // plainly because the next load would re-run those migrations over the player's settings
     for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-            const written = await storage.putAll(SETTINGS_STORE, records, { bypassRestoreLatch: true });
-            if (written === wanted) return true;
+            if (await storage.updateMany(SETTINGS_STORE, keys, restore, { bypassRestoreLatch: true })) return true;
         } catch (error) {
             console.error('[Sync] Could not put the settings migration records back after a failed pull:', error);
         }
@@ -2197,10 +2293,16 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
         const carried = new Set(Object.keys(entries));
         let local;
         try {
-            local = await storage.getAll(storeName);
+            // A short read throws: weighed against it, the baseline rule would take every missing key as
+            // one this device never held and let the download overwrite it
+            local = await readWholeStore(storeName);
             await slice();
         } catch (error) {
-            // The baseline rule always needed this read; only the comparison is optional
+            // The baseline rule always needed this read; only the comparison is optional. Without a
+            // baseline (a pull someone asked for, or a merge with no exchange on record) `keepMine` never
+            // runs and the download takes every whole key it names anyway, so
+            // writing all of it loses nothing the read would have kept: identical keys are rewritten, and
+            // no local key is deleted for falling out of a window
             if (baseline) throw error;
             console.warn(`[Sync] Could not read ${storeName} to compare; writing all of it:`, error);
             if (!Array.isArray(entries)) {

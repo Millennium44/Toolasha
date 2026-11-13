@@ -13,6 +13,17 @@ With "Exclude sell tax" on, the item tooltip's craft Net and Profit lines now dr
 ### Tooltip decompose chain picks the best setup per hour
 
 The tooltip's Full decompose chain line now picks each step's catalyst and tea for gold per hour, like Best Items, and its per-item figure describes that same setup. Chain/hr (own stock) in Best Items moves with it.
+### Sync never uploads a half-read store
+
+If this device's storage could not be read in full (a stuck or interrupted database read), sync could upload the incomplete copy over the complete one on GitHub, or let a pull overwrite your local edits. It now stops, says so, and tries again on the next sync.
+
+### Sync stands down cleanly when overtaken mid-pull
+
+A pull that another sync or a character switch overtook while it was combining the download no longer writes that download afterward; the next sync picks it up.
+
+### Sync reports an unreadable store once
+
+When this device's storage stays too slow to read in full, automatic sync says so once instead of showing an error every interval, and syncs nothing until the store can be read.
 
 ### Show hidden brings hidden Best Items rows back
 

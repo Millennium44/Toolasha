@@ -1851,6 +1851,20 @@ describe('Storage restore quiescing', () => {
         expect(dataByStore.get('settings').get('toolasha_sync_lastSyncedAt')).toBe('T');
     });
 
+    test('an atomic update is refused on a latched store unless it is restore bookkeeping that says so', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { map: 'v1' } });
+        storage.db = db;
+        storage.finishRestore(['settings']);
+        const mutate = (values) => (values.map === 'v1' ? { record: ['done'] } : undefined);
+
+        expect(await storage.updateMany('settings', ['record', 'map'], mutate)).toBeNull();
+        expect(dataByStore.get('settings').has('record')).toBe(false);
+
+        const outcome = await storage.updateMany('settings', ['record', 'map'], mutate, { bypassRestoreLatch: true });
+        expect(outcome?.written).toEqual(['record']);
+        expect(dataByStore.get('settings').get('record')).toEqual(['done']);
+    });
+
     test('a timer firing mid-restore holds its write instead of racing the restore', async () => {
         // The window the latch cannot cover: after `beginRestore()` has
         // flushed, before `finishRestore()` has latched. A 3-second debounce
