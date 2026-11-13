@@ -167,10 +167,13 @@ push to `main` or merge.
   A PR whose branch has merge commits (Auto-fix merges main into it to clear a changelog conflict) is not
   cherry-picked: the script merges it with `--no-ff` onto the stack, rebuilds `CHANGELOG.md` as the stack's file plus
   the PR's own entries (`node scripts/changelog-pr-entries.mjs --pr <ref> [--base origin/main] [--write]`, which also
-  fixes a conflicted changelog by hand: the `union` driver drops blank lines and has attached a body to the wrong
-  heading), checks the merge changed nothing outside `CHANGELOG.md` beyond the PR's own diff against main, and pushes
+  fixes a conflicted changelog by hand: a union merge has attached a body to the wrong heading), checks the merge changed nothing outside `CHANGELOG.md` beyond the PR's own diff against main, and pushes
   only `main`; the PR head is then contained in `main`, so GitHub marks it merged. Such a PR cannot be stacked on
   another PR.
+- **`CHANGELOG.md` merges** use the `changelog` merge driver (`scripts/changelog-merge-driver.mjs`): a union merge that
+  keeps both sides' entries, then Prettier, so merging `main` into a PR branch no longer needs a "restore the blank
+  line" commit. `npm install` registers it in the clone's git config; without it git falls back to a text merge
+  and the changelog conflicts. Register it by hand with `node scripts/setup-merge-driver.mjs`.
 
 ### Briefing another agent
 
