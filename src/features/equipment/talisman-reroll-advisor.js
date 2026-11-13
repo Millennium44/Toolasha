@@ -60,7 +60,8 @@ export const ADVISOR_HELP = [
         'is unknown. A talisman never holds one type twice (the game keys its lines by type).',
     'Assumed, not measured: Exchange shuffles the unlocked grades uniformly.',
     'Measured: lines from creating a talisman and from cores roll G1-G3 only, whatever the core (396 lines: 57 / 28 / ' +
-        '15%, the Reforging curve cut at G3). Adding lines is not planned: the advice uses the lines the talisman has now.',
+        '15%, the Reforging curve cut at G3). This advice does not plan adding lines: it uses the lines the talisman has now. ' +
+        'The Core advisor (Combat Sim Upgrade tab, Skilling Optimizer Talismans) values the next line of a worn talisman against its cores.',
     'Orbs are weighed by market price when every orb has a live listing, otherwise by the game item value; a coin ' +
         'cost is shown only when every orb the strategy uses has a market price.',
     'Do next step does one game action per click (choosing the orb in the picker first when needed) and then waits ' +
@@ -109,7 +110,7 @@ export function describeAdvice(result, names) {
             duplicate: `Each type can be wanted once: ${mod(build.hrid)} is picked twice.`,
             notInPool: `${mod(build.hrid)} cannot roll on this talisman type.`,
             gradeAboveCap: `${mod(build.hrid)}: grades only go up to G6.`,
-            needsMoreLines: `The talisman has ${names.lineCount} line(s); add lines with talisman cores first.`,
+            needsMoreLines: `The talisman has ${names.lineCount} line(s); add lines with talisman cores first (the Core advisor in the Talismans sections says whether the next line is worth it).`,
         };
         return { move: `Not reachable. ${reasons[build.reason] || ''}`.trim(), detail: [] };
     }

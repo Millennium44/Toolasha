@@ -852,10 +852,11 @@ class SkillingSimulatorUI {
         const belt = equipment.get(BELT_LOCATION);
         const drinks = this.teas.filter(Boolean).map((itemHrid) => ({ itemHrid }));
         const named = Object.values(snap.talismanIdMap || {}).filter((id) => id).length;
-        const kept = resolveLoadoutTalismans(
+        const keptTalismans = resolveLoadoutTalismans(
             snap.talismanIdMap,
             sharedDataManager()?.getCharacterTalismans?.() || []
-        ).length;
+        );
+        const kept = keptTalismans.length;
         return {
             key: JSON.stringify([
                 'loadout',
@@ -873,6 +874,8 @@ class SkillingSimulatorUI {
                     : '',
             equipment,
             drinks,
+            // The loadout's own talisman records (the Map carries their summed bonuses only)
+            talismans: keptTalismans,
         };
     }
 

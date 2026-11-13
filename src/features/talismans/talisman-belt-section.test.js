@@ -61,6 +61,7 @@ vi.mock('../../utils/action-context.js', async () => {
     const { BELT_LOCATION, computeTalismanBonuses, attachTalismanBonuses } =
         await import('../../utils/talisman-bonuses.js');
     return {
+        resolveActionTalismans: () => [],
         describeActionContextSource: (type) => ({
             key: `skill:${type}:Milking ★`,
             label: 'Milking ★ (the loadout this skill equips)',
