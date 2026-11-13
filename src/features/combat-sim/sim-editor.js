@@ -317,6 +317,7 @@ export class SimEditor {
             this._syncAbilityLevelsFromGame(),
             this._syncSkillLevelsFromGame(),
             this._syncEquipmentLevelsFromGame(),
+            this._syncTalismansFromGame(),
         ];
         return moved.some(Boolean);
     }
@@ -3016,6 +3017,40 @@ export class SimEditor {
     }
 
     /**
+     * The live self follows the slotted talismans like houses and shrines: while the edited set equals the build's
+     * own copy, a change in game moves both; once edited it is the user's what-if (Reset to Current brings the live
+     * ones). A worn loadout names its own talismans, so it does not follow.
+     * @returns {boolean} True when the talismans moved
+     * @private
+     */
+    _syncTalismansFromGame() {
+        const targets = this._selfSyncTargets();
+        if (!targets || targets.baseline || typeof dataManager.getSlottedTalismans !== 'function') return false;
+        const { edited, original } = targets;
+        const live = toSimTalismans(dataManager.getSlottedTalismans() || []);
+        if (talismanListSignature(live) === talismanListSignature(original.talismans)) return false;
+        if (talismanListSignature(edited.talismans) !== talismanListSignature(original.talismans)) return false;
+        if (live.length > 0) {
+            original.talismans = structuredClone(live);
+            edited.talismans = structuredClone(live);
+        } else {
+            delete original.talismans;
+            delete edited.talismans;
+        }
+        return true;
+    }
+
+    /**
+     * What the live character wears now, the self row's Reset target; null for any other row or a worn loadout.
+     * @private
+     */
+    _liveTalismansFor(playerHrid) {
+        if (playerHrid !== this._selfHrid || this.getLoadoutNameFor(playerHrid)) return null;
+        if (typeof dataManager.getSlottedTalismans !== 'function') return null;
+        return toSimTalismans(dataManager.getSlottedTalismans() || []);
+    }
+
+    /**
      * What the talisman rows offer: the game's grade and line limits, and the combat lines a talisman can roll.
      * @private
      */
@@ -3056,7 +3091,10 @@ export class SimEditor {
         const power = getTalismanPower(beltRef, itemDetailMap, gameData.enhancementLevelTotalBonusMultiplierTable);
         const { limits, lines } = this._talismanChoices(gameData);
         const reference = this._talismanReference(this._activeEditPlayer);
-        const unchanged = talismanListSignature(dto.talismans) === talismanListSignature(reference?.talismans);
+        const live = this._liveTalismansFor(this._activeEditPlayer);
+        const unchanged =
+            talismanListSignature(dto.talismans) === talismanListSignature(reference?.talismans) &&
+            (!live || talismanListSignature(dto.talismans) === talismanListSignature(live));
         const btn = `background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;`;
         const field = `background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:3px; padding:1px 3px; font-size:12px;`;
 
@@ -3070,13 +3108,16 @@ export class SimEditor {
             const record = talismanInSlot(dto.talismans, slot);
             const worn = Array.isArray(record?.modifiers) ? record.modifiers : [];
             const used = new Set(worn.map((m) => m?.hrid));
-            const canAdd = worn.length < limits.linesPerTalisman && lines.some((d) => !used.has(d.hrid));
+            // A skilling talisman (any line that is not a combat one) is not edited in the Combat Sim
+            const locked = worn.some((m) => modifierDetailMap[m?.hrid]?.talismanTypeHrid !== COMBAT_TALISMAN_TYPE);
+            const lockNote = 'Skilling talismans are not edited in the Combat Sim';
+            const canAdd = !locked && worn.length < limits.linesPerTalisman && lines.some((d) => !used.has(d.hrid));
             html += editorRowOpen(slot);
             html += `<span style="color:#888; width:70px; flex-shrink:0; padding-left:8px;">Talisman ${slot}</span>`;
             html += `<span style="color:${worn.length ? '#888' : '#555'}; flex:1; min-width:0; ${worn.length ? '' : 'font-style:italic;'}">${
                 worn.length ? '' : record ? 'No lines' : 'Empty'
             }</span>`;
-            html += `<button data-talisman-add="${slot}" ${canAdd ? '' : 'disabled'} style="${btn}${canAdd ? '' : ' opacity:0.5; cursor:default;'}">+ line</button>`;
+            html += `<button data-talisman-add="${slot}" ${locked ? `title="${lockNote}" ` : ''}${canAdd ? '' : 'disabled'} style="${btn}${canAdd ? '' : ' opacity:0.5; cursor:default;'}">+ line</button>`;
             html += '</div>';
 
             for (const [lineIndex, modifier] of worn.entries()) {
@@ -3085,7 +3126,7 @@ export class SimEditor {
                 const scaled = scaleTalismanModifier(modifier, modifierDetailMap, power);
                 html += editorRowOpen(slot);
                 html += `<span style="width:70px; flex-shrink:0; padding-left:16px;"></span>`;
-                html += `<select data-talisman-type="${key}" style="${field} flex:1; min-width:0;">`;
+                html += `<select data-talisman-type="${key}"${locked ? ` disabled title="${lockNote}"` : ''} style="${field} flex:1; min-width:0;">`;
                 // The current type is always an option, so a line the combat list does not carry (another talisman
                 // type, or one this build does not know) is kept as it is
                 const options = lines.filter((d) => d.hrid === modifier?.hrid || !used.has(d.hrid));
@@ -3119,7 +3160,8 @@ export class SimEditor {
     _redrawTalismans(box, dto) {
         const belt = dto.equipment?.['/equipment_types/belt'];
         const gameData = buildGameDataPayload();
-        box.innerHTML = gameData && belt ? this._renderTalismanRows(dto, gameData, belt) : '';
+        if (!gameData) return;
+        box.innerHTML = belt ? this._renderTalismanRows(dto, gameData, belt) : '';
     }
 
     /**

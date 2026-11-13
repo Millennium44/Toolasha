@@ -281,6 +281,10 @@ describe('editable belt talismans', () => {
             ),
         ]);
         expect(rows(el)[0].querySelector('option[selected]').value).toBe(SKILLING);
+        // a skilling talisman gets no combat lines and its type is not editable, but it can be graded and emptied
+        expect(rows(el)[0].disabled).toBe(true);
+        expect(el.querySelector('[data-talisman-add="1"]').disabled).toBe(true);
+        expect(el.querySelector('[data-talisman-grade="1:0"]').disabled).toBe(false);
         el.querySelector('[data-talisman-remove="1:1"]').click();
         el.querySelector('[data-talisman-remove="1:0"]').click();
         expect(editor.getEditedDTOs().player1.talismans[0].modifiers).toEqual([]);
@@ -323,6 +327,52 @@ describe('editable belt talismans', () => {
         expect(editor.generateSimLabel('player1')).not.toContain('Talismans');
         // a player who started with none gets none back
         el.querySelector('[data-talisman-add="1"]');
+    });
+
+    test('the live self follows talismans changed in game until they are edited; Reset brings the live ones', () => {
+        const start = worn([{ slotIndex: 1, modifiers: [{ hrid: ARMOR, grade: 2 }] }]);
+        game.slotted = start;
+        const { el, editor } = open([dtoWith('player1', '/items/large_talisman_belt', start)]);
+        editor._selfHrid = 'player1';
+        // not edited: a change in game moves both copies, so it is not read as an edit
+        game.slotted = worn([{ slotIndex: 1, modifiers: [{ hrid: ARMOR, grade: 5 }] }]);
+        expect(editor.getEditedDTOs().player1.talismans[0].modifiers[0].grade).toBe(5);
+        expect(editor.generateSimLabel('player1')).not.toContain('Talismans');
+        // edited: the edit stays, Reset is enabled and brings the live set
+        editor.renderEditor();
+        pick(el.querySelector('[data-talisman-grade="1:0"]'), '3');
+        game.slotted = worn([{ slotIndex: 1, modifiers: [{ hrid: ARMOR, grade: 6 }] }]);
+        expect(editor.getEditedDTOs().player1.talismans[0].modifiers[0].grade).toBe(3);
+        el.querySelector('[data-talisman-reset]').click();
+        expect(editor.getEditedDTOs().player1.talismans[0].modifiers[0].grade).toBe(6);
+    });
+
+    test('Reset is enabled when the live talismans differ from the shown ones even with no edit', () => {
+        const start = worn([{ slotIndex: 1, modifiers: [{ hrid: ARMOR, grade: 2 }] }]);
+        game.slotted = start;
+        const { el, editor } = open([dtoWith('player1', '/items/large_talisman_belt', start)]);
+        editor._selfHrid = 'player1';
+        pick(el.querySelector('[data-talisman-grade="1:0"]'), '4');
+        el.querySelector('[data-talisman-reset]').click();
+        expect(el.querySelector('[data-talisman-reset]').disabled).toBe(true);
+        // game changes while the editor is not synced: the shown set differs from live
+        game.slotted = worn([{ slotIndex: 1, modifiers: [{ hrid: ARMOR, grade: 1 }] }]);
+        editor._redrawTalismans(el.querySelector('[data-talisman-section]'), editor._editedDTOs.player1);
+        expect(el.querySelector('[data-talisman-reset]').disabled).toBe(false);
+    });
+
+    test('a redraw with no game data keeps the rows instead of blanking them', () => {
+        const { el, editor } = open([
+            dtoWith(
+                'player1',
+                '/items/large_talisman_belt',
+                worn([{ slotIndex: 1, modifiers: [{ hrid: ARMOR, grade: 2 }] }])
+            ),
+        ]);
+        const box = el.querySelector('[data-talisman-section]');
+        game.gameData = null;
+        editor._redrawTalismans(box, editor._editedDTOs.player1);
+        expect(box.querySelectorAll('[data-talisman-type]')).toHaveLength(1);
     });
 
     test('a player built with no talismans field loads and resets to none', () => {
