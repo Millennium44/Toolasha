@@ -43,6 +43,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid) => game.prices[hrid] ?? null,
     getItemPrice: (hrid) => game.prices[hrid]?.ask ?? null,
+    getItemPriceInfo: (hrid) => ({ price: game.prices[hrid]?.ask ?? null, estimated: false }),
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/action-context.js', () => ({

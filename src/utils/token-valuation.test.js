@@ -23,7 +23,11 @@ vi.mock('./market-data.js', () => ({
         game.prices[hrid]?.[mode ?? (context === 'profit' ? game.profitSellSide : undefined)] ?? null,
     getItemPriceInfo: (hrid, { mode } = {}) => {
         const price = game.prices[hrid]?.[mode] ?? null;
-        return { price, source: price === null ? null : (game.sources[hrid] ?? 'book'), estimated: false };
+        return {
+            price,
+            source: price === null ? null : (game.sources[hrid] ?? 'book'),
+            estimated: Boolean(game.estimatedHrids?.has(hrid)),
+        };
     },
     getItemPrices: (hrid) => game.prices[hrid] ?? null,
     // The raw book on the side the mode sells on: a custom or estimated figure is no order
@@ -354,8 +358,40 @@ describe('calculateDungeonTokenValueDetail', () => {
 
     test('names the shop line, and agrees with calculateDungeonTokenValue', () => {
         const detail = calculateDungeonTokenValueDetail('/items/chimerical_token', 'profitCalc_pricingMode', null);
-        expect(detail).toEqual({ value: 500, itemHrid: '/items/cape', via: 'shop' });
+        expect(detail).toEqual({ value: 500, itemHrid: '/items/cape', via: 'shop', estimated: false });
         expect(calculateDungeonTokenValue('/items/chimerical_token', 'profitCalc_pricingMode', null)).toBe(500);
+    });
+
+    test('flags the figure as estimated when the shop item is priced from the value map', () => {
+        game.estimatedHrids = new Set(['/items/cape']);
+        try {
+            expect(calculateDungeonTokenValueDetail('/items/chimerical_token', 'profitCalc_pricingMode', null)).toEqual(
+                {
+                    value: 500,
+                    itemHrid: '/items/cape',
+                    via: 'shop',
+                    estimated: true,
+                }
+            );
+            // an instant sale reads real bids only, so it is never an estimate
+            expect(
+                calculateDungeonTokenValueDetail('/items/chimerical_token', 'profitCalc_pricingMode', false)?.estimated
+            ).not.toBe(true);
+        } finally {
+            game.estimatedHrids = null;
+        }
+    });
+
+    test('flags the essence fallback as estimated when the essence price is a stand-in', () => {
+        delete game.prices['/items/cape'];
+        game.estimatedHrids = new Set(['/items/chimerical_essence']);
+        try {
+            expect(
+                calculateDungeonTokenValueDetail('/items/chimerical_token', 'profitCalc_pricingMode', null)?.estimated
+            ).toBe(true);
+        } finally {
+            game.estimatedHrids = null;
+        }
     });
 
     test('says so when the essence is what prices the token', () => {
@@ -364,6 +400,7 @@ describe('calculateDungeonTokenValueDetail', () => {
             value: 80,
             itemHrid: '/items/chimerical_essence',
             via: 'essence',
+            estimated: false,
         });
     });
 });
@@ -446,7 +483,7 @@ describe('shop line indexes', () => {
             '/items/z': { ask: 99999, bid: 1 },
         };
         const first = calculateDungeonTokenValueDetail(TOKEN);
-        expect(first).toEqual({ value: 100, itemHrid: '/items/x', via: 'shop' });
+        expect(first).toEqual({ value: 100, itemHrid: '/items/x', via: 'shop', estimated: false });
         const spy = vi.spyOn(Object, 'values');
         for (let i = 0; i < 20; i++) calculateDungeonTokenValueDetail(TOKEN);
         const scans = spy.mock.calls.filter((c) => c[0] === shop).length;

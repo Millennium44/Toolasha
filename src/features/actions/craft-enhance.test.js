@@ -18,6 +18,7 @@ const game = vi.hoisted(() => ({
     enhanceQuotes: {},
     enhanceCalls: [],
     tokenValue: {},
+    tokenEstimated: false,
     stamp: 1,
     drinks: [],
     drinkPrices: {},
@@ -81,6 +82,15 @@ vi.mock('../../utils/token-valuation.js', () => ({
     DUNGEON_TOKEN_HRIDS: new Set(['/items/sinister_token']),
     shopCosts: (line) => (Array.isArray(line?.costs) ? line.costs : line?.cost ? [line.cost] : []),
     calculateDungeonTokenValue: (hrid) => game.tokenValue[hrid] ?? null,
+    calculateDungeonTokenValueDetail: (hrid) =>
+        game.tokenValue[hrid] > 0
+            ? {
+                  value: game.tokenValue[hrid],
+                  itemHrid: '/items/x',
+                  via: 'shop',
+                  estimated: Boolean(game.tokenEstimated),
+              }
+            : null,
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     calculatePriceAfterTax: (price) => price * 0.96,
@@ -179,6 +189,7 @@ beforeEach(() => {
     game.enhanceQuotes = { '/items/sword': { cost: 1500, seconds: 60, xp: 400, xpKnown: true } };
     game.enhanceCalls = [];
     game.tokenValue = {};
+    game.tokenEstimated = false;
     game.drinks = [];
     game.drinkPrices = {};
     game.fpExtra = '';
@@ -342,6 +353,41 @@ describe('a missing price is carried as missing', () => {
         // 20 tokens x 50 per token, two cloth per purchase, after 4% tax
         expect(row.target.craftCostPerUnit).toBeCloseTo((20 * 50 * 0.96) / 2, 6);
         expect(row.dungeonInputs[0].via).toBe('token');
+    });
+});
+
+describe('a token-valued input resting on a value-map price says so', () => {
+    const setup = () => {
+        game.gameData.shopItemDetailMap = {
+            a: {
+                itemHrid: '/items/shop_cloth',
+                costs: [{ itemHrid: '/items/sinister_token', count: 20 }],
+                outputCount: 2,
+            },
+        };
+        game.recipes = [
+            recipe('sword', {
+                action: { name: 'sword', inputItems: [{ itemHrid: '/items/shop_cloth', count: 1 }] },
+            }),
+        ];
+        game.profits['/actions/cheesesmithing/sword'] = profit('sword', {
+            materialCosts: [{ itemHrid: '/items/shop_cloth', amount: 1, totalCost: 9999, missingPrice: false }],
+        });
+        game.tokenValue = { '/items/sinister_token': 50 };
+    };
+
+    test('flagged, still priced (not rejected), when the token value is an estimate', async () => {
+        setup();
+        game.tokenEstimated = true;
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(row.estimatedInputs).toEqual(['/items/shop_cloth']);
+        expect(row.target.status).not.toBe('unpriced');
+    });
+
+    test('not flagged when the token value is real', async () => {
+        setup();
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(row.estimatedInputs).toEqual([]);
     });
 });
 

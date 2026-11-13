@@ -197,10 +197,12 @@ export function hasDungeonInput(action, index) {
  *   when nothing real prices it
  * @param {(itemHrid: string) => number|null} args.valueToken - After-tax value of one unit bought with
  *   tokens, or null
+ * @param {(itemHrid: string) => boolean} [args.tokenEstimated] - Whether `valueToken`'s figure rests on a
+ *   value-map price (an estimate), so a row valued through tokens says so like a bought input does
  * @returns {{costPerAction: number, unpriced: Array<{itemHrid: string, reason: string}>,
  *   dungeonInputs: Array<Object>, estimated: string[]}} `costPerAction` is meaningful only when `unpriced` is empty
  */
-export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, valueToken }) {
+export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, valueToken, tokenEstimated }) {
     const mode = normalizeOwnedMode(ownedMode);
     const unpriced = [];
     const dungeonInputs = [];
@@ -241,6 +243,7 @@ export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, va
             const best = candidates.reduce((low, next) => (next.unitValue < low.unitValue ? next : low));
             costPerAction += best.unitValue * amount;
             if (best.via === 'buy' && material?.estimatedPrice) estimated.push(material.itemHrid);
+            if (best.via === 'token' && tokenEstimated?.(material.itemHrid)) estimated.push(material.itemHrid);
             dungeonInputs.push({ itemHrid: material.itemHrid, amount, ...best, sunk: false, kind });
             continue;
         }
@@ -258,6 +261,7 @@ export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, va
             continue;
         }
         costPerAction += unitValue * amount;
+        if (via === 'token' && tokenEstimated?.(material.itemHrid)) estimated.push(material.itemHrid);
         dungeonInputs.push({ itemHrid: material.itemHrid, amount, unitValue, sunk: false, via, kind });
     }
 

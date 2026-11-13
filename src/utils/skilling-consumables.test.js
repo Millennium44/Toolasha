@@ -51,6 +51,10 @@ vi.mock('./market-data.js', () => ({
     // The player's Buy side: the book side the profit mode names, read off the same table
     getItemPrice: (hrid, { context, side } = {}) =>
         context === 'profit' && side === 'buy' ? (game.prices[hrid]?.[game.buySide ?? 'ask'] ?? null) : null,
+    getItemPriceInfo: (hrid, { context, side } = {}) => ({
+        price: context === 'profit' && side === 'buy' ? (game.prices[hrid]?.[game.buySide ?? 'ask'] ?? null) : null,
+        estimated: Boolean(game.estimatedBuy?.has(hrid)),
+    }),
 }));
 
 const forecastMod = await import('./consumable-forecast.js');
@@ -291,6 +295,22 @@ describe('every ending', () => {
         expect(forecastMod.costPerDaySides([patient]).ask).toBeCloseTo(perDay * 1000, 3);
     });
 
+    test('a tea on a value-map Buy price is flagged estimated, and so is its refill', () => {
+        runForaging();
+        game.slots = [slot('/items/gathering_tea')];
+        game.inventory = [stack('/items/gathering_tea', 0)];
+        game.prices['/items/gathering_tea'] = { ask: 1000, bid: 900 };
+        game.estimatedBuy = new Set(['/items/gathering_tea']);
+        try {
+            const view = skillingConsumables(FORAGING);
+            expect(view.forecasts[0].priceEstimated).toBe(true);
+            expect(forecastMod.refillAll(view.forecasts, 86400).estimated).toBe(1);
+        } finally {
+            game.estimatedBuy = null;
+        }
+        expect(skillingConsumables(FORAGING).forecasts[0].priceEstimated).toBe(false);
+    });
+
     test('a tea with a listed ask but nothing on the Buy side is unpriced there, never free', () => {
         runForaging();
         game.slots = [slot('/items/gathering_tea')];
@@ -402,7 +422,7 @@ describe('a running activation counts toward the refill, as it counts toward tim
 
     test('a target shorter than the active buff buys nothing', () => {
         const entry = entryFor(0, 5);
-        expect(forecastMod.refillFor(entry, 60)).toEqual({ count: 0, cost: null });
+        expect(forecastMod.refillFor(entry, 60)).toEqual({ count: 0, cost: null, estimated: false });
     });
 
     test('no activation behaves exactly as before', () => {

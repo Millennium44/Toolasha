@@ -49,6 +49,44 @@ describe('forecast: which price a day of it costs', () => {
     });
 });
 
+describe('an estimated configured price is carried to every figure built on it', () => {
+    const priced = (extra) => forecast({ ...drink, priceValue: 40, ...extra });
+
+    test('forecast flags a value-map price, and only when there is a price', () => {
+        expect(priced({ priceEstimated: true }).priceEstimated).toBe(true);
+        expect(priced({}).priceEstimated).toBe(false);
+        expect(forecast({ ...drink, priceValue: null, priceEstimated: true }).priceEstimated).toBe(false);
+        // an entry with no configured price (a key) has no estimate to carry
+        expect(forecast({ ...drink, priceEstimated: true }).priceEstimated).toBe(false);
+    });
+
+    test('refillFor and refillAll count the estimated purchase, not an unneeded or unpriced one', () => {
+        const est = priced({ priceEstimated: true, inventoryAmount: 0 });
+        const firm = priced({ inventoryAmount: 0 });
+        expect(refillFor(est, 3600).estimated).toBe(true);
+        expect(refillFor(firm, 3600).estimated).toBe(false);
+        // nothing to buy: no estimate
+        expect(refillFor(priced({ priceEstimated: true, inventoryAmount: 999 }), 3600).estimated).toBe(false);
+        expect(refillAll([est, firm, est], 3600).estimated).toBe(2);
+    });
+
+    test('costPerDay counts the estimated items it priced', () => {
+        const est = priced({ priceEstimated: true });
+        const firm = priced({});
+        expect(costPerDay([est, firm, forecast({ ...drink, priceValue: null })]).estimated).toBe(1);
+    });
+
+    test('costPerDaySides counts items whose side figure is a value-map stand-in', () => {
+        const mk = (prices) => forecast({ ...drink, priceValue: 40 }, prices);
+        const sides = costPerDaySides([
+            mk({ ask: 50, bid: 45, askEstimated: true, bidEstimated: false }),
+            mk({ ask: 50, bid: 45 }),
+        ]);
+        expect(sides.askEstimated).toBe(1);
+        expect(sides.bidEstimated).toBe(0);
+    });
+});
+
 describe('forecast', () => {
     test('turns a rate per second into a day and a countdown', () => {
         const result = forecast(drink);
@@ -182,7 +220,7 @@ describe('refillFor', () => {
 
     test('an unpriced item still says how many, and nothing about cost', () => {
         const free = forecast({ ...drink, inventoryAmount: 0, pricePerItem: 0 });
-        expect(refillFor(free, 86400)).toEqual({ count: 24, cost: null });
+        expect(refillFor(free, 86400)).toEqual({ count: 24, cost: null, estimated: false });
     });
 
     test('something not being consumed needs nothing, however long the target', () => {
@@ -218,12 +256,18 @@ describe('refillAll', () => {
     });
 
     test('nothing needed costs nothing', () => {
-        expect(refillAll(forecastAll([drink]), 3600)).toEqual({ items: 0, cost: 0, unpriced: 0, unrated: 0 });
+        expect(refillAll(forecastAll([drink]), 3600)).toEqual({
+            items: 0,
+            cost: 0,
+            unpriced: 0,
+            unrated: 0,
+            estimated: 0,
+        });
     });
 
     test('unknown-rate items are excluded from the purchase total and counted separately', () => {
         const list = forecastAll([{ ...drink, consumptionRate: null }]);
-        expect(refillAll(list, 86400)).toEqual({ items: 0, cost: 0, unpriced: 0, unrated: 1 });
+        expect(refillAll(list, 86400)).toEqual({ items: 0, cost: 0, unpriced: 0, unrated: 1, estimated: 0 });
     });
 });
 
@@ -268,6 +312,8 @@ describe('two-sided pricing', () => {
             bidUnpriced: 1,
             askUnknown: 0,
             bidUnknown: 0,
+            askEstimated: 0,
+            bidEstimated: 0,
         });
     });
 
@@ -295,6 +341,8 @@ describe('two-sided pricing', () => {
             bidUnpriced: 1,
             askUnknown: 0,
             bidUnknown: 0,
+            askEstimated: 0,
+            bidEstimated: 0,
         });
     });
 
@@ -307,6 +355,8 @@ describe('two-sided pricing', () => {
             bidUnpriced: 0,
             askUnknown: 0,
             bidUnknown: 0,
+            askEstimated: 0,
+            bidEstimated: 0,
         });
     });
 
@@ -319,6 +369,8 @@ describe('two-sided pricing', () => {
             bidUnpriced: 0,
             askUnknown: 1,
             bidUnknown: 1,
+            askEstimated: 0,
+            bidEstimated: 0,
         });
     });
 
@@ -333,6 +385,8 @@ describe('two-sided pricing', () => {
             bidUnpriced: 0,
             askUnknown: 1,
             bidUnknown: 1,
+            askEstimated: 0,
+            bidEstimated: 0,
         });
     });
 });

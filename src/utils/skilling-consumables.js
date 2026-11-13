@@ -31,7 +31,7 @@
 
 import dataManager from '../core/data-manager.js';
 import { forecast, drinkRatePerDay } from './consumable-forecast.js';
-import { getItemPrice, getItemPrices } from './market-data.js';
+import { getItemPriceInfo, getItemPrices } from './market-data.js';
 import { getDrinkConcentration } from './tea-parser.js';
 import { resolveActionContext } from './action-context.js';
 import { runningAction } from './combat-actions.js';
@@ -48,11 +48,13 @@ const NS_PER_SECOND = 1e9;
 /**
  * One unit on the player's Buy side (profit pricing mode, patient tick, custom price, Iron Cow value).
  * @param {string} itemHrid - Item HRID
- * @returns {number|null} Coins, or null when that side is unpriced
+ * @returns {{price: number|null, estimated: boolean}} Coins (null when that side is unpriced), and whether
+ *   the figure is a stand-in from the official value map rather than a listing or a custom price
  */
 function configuredBuyPrice(itemHrid) {
-    const price = getItemPrice(itemHrid, { context: 'profit', side: 'buy' });
-    return typeof price === 'number' && price > 0 ? price : null;
+    const info = getItemPriceInfo(itemHrid, { context: 'profit', side: 'buy' });
+    const price = typeof info?.price === 'number' && info.price > 0 ? info.price : null;
+    return { price, estimated: price !== null && Boolean(info?.estimated) };
 }
 
 /**
@@ -205,6 +207,7 @@ export function skillingConsumables(actionTypeHrid, { prices = getItemPrices } =
         const held = heldInInventory(inventory, slot.itemHrid);
         const perDay = drinkRatePerDay(details?.consumableDetail?.buffs?.[0]?.duration, concentration.value);
         const price = prices?.(slot.itemHrid) || null;
+        const configured = configuredBuyPrice(slot.itemHrid);
 
         const entry = forecast(
             {
@@ -215,7 +218,8 @@ export function skillingConsumables(actionTypeHrid, { prices = getItemPrices } =
                 consumedPerDay: perDay === null ? null : Math.ceil(perDay),
                 pricePerItem: Number(price?.ask) > 0 ? price.ask : null,
                 // What a day of it costs on the player's Buy side; the raw ask above stays for the instant-buy check
-                priceValue: configuredBuyPrice(slot.itemHrid),
+                priceValue: configured.price,
+                priceEstimated: configured.estimated,
             },
             price
         );

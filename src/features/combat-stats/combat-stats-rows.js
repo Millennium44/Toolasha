@@ -67,13 +67,16 @@ const CACHE_MS = 4000;
  * @param {number|null} amount - Cost at one side of the market
  * @param {number} [unpriced] - Consumed items with no quote at this side
  * @param {number} [unknownRate] - Items without a usable consumption estimate
+ * @param {number} [estimated] - Items priced from the game's value map, not a listing
  * @returns {string}
  */
-function formatConsumableCostSide(amount, unpriced = 0, unknownRate = 0) {
+function formatConsumableCostSide(amount, unpriced = 0, unknownRate = 0, estimated = 0) {
     const total = amount === null ? '—' : formatLargeNumber(Math.round(amount));
-    const notes = [unpriced ? `${unpriced} unpriced` : '', unknownRate ? `${unknownRate} rate unknown` : ''].filter(
-        Boolean
-    );
+    const notes = [
+        unpriced ? `${unpriced} unpriced` : '',
+        unknownRate ? `${unknownRate} rate unknown` : '',
+        estimated ? `${estimated} estimated` : '',
+    ].filter(Boolean);
     return notes.length ? `${total} (${notes.join(', ')})` : total;
 }
 
@@ -655,6 +658,8 @@ registerRow({
             sides.bidUnpriced || 0,
             sides.askUnknown || 0,
             sides.bidUnknown || 0,
+            sides.askEstimated || 0,
+            sides.bidEstimated || 0,
             spriteUrl('items'),
         ].join('|');
     },
@@ -716,8 +721,8 @@ registerRow({
         container.title =
             `${partyName ? `${partyName} runs out first in the party.\n` : ''}` +
             'Total cost per day of the consumables in use:\n' +
-            `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced, sides.askUnknown)}\n` +
-            `Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced, sides.bidUnknown)}\n` +
+            `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced, sides.askUnknown, sides.askEstimated)}\n` +
+            `Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced, sides.bidUnknown, sides.bidEstimated)}\n` +
             'Double-click to open the Consumables panel.';
     },
     // Looked up at click time, not imported: the panel lives in the UI bundle,
@@ -730,12 +735,12 @@ registerRow({
  * a missing quote or an unknown rate is marked in gold on the tile itself (an
  * asterisk, because the line has no room for the words); the words are in the
  * tooltip.
- * @param {{ask: number|null, askUnpriced?: number, askUnknown?: number}} sides
+ * @param {{ask: number|null, askUnpriced?: number, askUnknown?: number, askEstimated?: number}} sides
  * @returns {Object} A `drawLine` segment
  */
 function askSegment(sides) {
     const total = sides.ask === null ? '—' : formatLargeNumber(Math.round(sides.ask));
-    const partial = Boolean(sides.askUnpriced || sides.askUnknown);
+    const partial = Boolean(sides.askUnpriced || sides.askUnknown || sides.askEstimated);
     return {
         text: `Ask ${total}/day${partial ? '*' : ''}`,
         color: partial ? ROW_COLORS.gold : ROW_COLORS.neutral,
@@ -815,11 +820,16 @@ function skillingPayload() {
  * @param {number|null} amount - Cost per day at this side
  * @param {number} unpriced - Teas with no quote at this side
  * @param {number} unknown - Teas without a rate
+ * @param {number} [estimated] - Teas priced from the game's value map, not a listing
  * @returns {string} e.g. `412K/day (1 unpriced)`; `—/day` when nothing could be priced
  */
-function skillingCostText(amount, unpriced, unknown) {
+function skillingCostText(amount, unpriced, unknown, estimated = 0) {
     const total = amount === null ? '—' : formatLargeNumber(Math.round(amount));
-    const notes = [unpriced ? `${unpriced} unpriced` : '', unknown ? `${unknown} rate unknown` : ''].filter(Boolean);
+    const notes = [
+        unpriced ? `${unpriced} unpriced` : '',
+        unknown ? `${unknown} rate unknown` : '',
+        estimated ? `${estimated} estimated` : '',
+    ].filter(Boolean);
     return `${total}/day${notes.length ? ` (${notes.join(', ')})` : ''}`;
 }
 
@@ -845,6 +855,8 @@ function skillingVersion(skill) {
         sides.bidUnpriced || 0,
         sides.askUnknown || 0,
         sides.bidUnknown || 0,
+        sides.askEstimated || 0,
+        sides.bidEstimated || 0,
         spriteUrl('items'),
     ].join('|');
 }
@@ -881,7 +893,7 @@ function renderSkilling(container, skill) {
                 color: runOutColor(soonest),
             },
             {
-                text: `Ask ${skillingCostText(sides.ask, sides.askUnpriced, sides.askUnknown)}`,
+                text: `Ask ${skillingCostText(sides.ask, sides.askUnpriced, sides.askUnknown, sides.askEstimated)}`,
                 color: ROW_COLORS.neutral,
                 push: true,
                 breakable: true,
@@ -895,8 +907,8 @@ function renderSkilling(container, skill) {
     container.title =
         `${view.label} teas: how long your slotted teas last while ${view.label} keeps running, ` +
         `and what a day of them costs at the Ask price. Both assume it runs continuously.\n` +
-        `Ask: ${skillingCostText(sides.ask, sides.askUnpriced, sides.askUnknown)}\n` +
-        `Bid: ${skillingCostText(sides.bid, sides.bidUnpriced, sides.bidUnknown)}\n` +
+        `Ask: ${skillingCostText(sides.ask, sides.askUnpriced, sides.askUnknown, sides.askEstimated)}\n` +
+        `Bid: ${skillingCostText(sides.bid, sides.bidUnpriced, sides.bidUnknown, sides.bidEstimated)}\n` +
         'Double-click to open the Consumables panel.';
 }
 
