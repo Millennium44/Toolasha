@@ -7,6 +7,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ## Unreleased — branch `main`
 
 ### Compact talisman editing in the Combat Sim
+### Best Items remembers where you were
+
+Alchemy Best Items now reopens on the last Coinify, Decompose or Transmute tab you picked. After clicking an item to go to the market, a "Best Items" return tab there takes you straight back to the same tab and scroll spot.
+
+### Hide rows in Best Items
+
+Each Best Items row has a × to hide items you will not do or already bid on, kept separately for each alchemy type; "Show hidden (N)" brings them back with a button to unhide.
+
+### Sort the treasure popup by column
+
+Click Qty, Value, vs exp., Exp. qty or Exp. val in the chest-opening popup to sort its rows; click again to reverse, a third time for the usual order. The choice is remembered.
+
+### Labyrinth "Buy missing supplies" no longer makes the row taller
 
 The editor's talismans now sit side by side as small cards, one per belt slot, instead of a tall list of full-width rows; on a phone they stack. The Belt row is hidden where the game has no belts.
 
