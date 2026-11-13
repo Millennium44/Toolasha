@@ -146,9 +146,9 @@ function createButton() {
         'Open the marketplace on whichever supplies are short of your stock target: the run count set in the ' +
         'Consumables panel (default 5), at the per-run need it plans for, crates included';
     button.style.cssText =
-        'margin: 4px 0 8px 0; padding: 4px 10px; background: rgba(91, 141, 239, 0.15); color: #ffffff; ' +
-        'border: 1px solid rgba(91, 141, 239, 0.4); border-radius: 6px; cursor: pointer; font-size: 12px; ' +
-        'font-weight: 600;';
+        'margin: 0 0 0 8px; padding: 0 8px; line-height: 14px; vertical-align: top; ' +
+        'background: rgba(91, 141, 239, 0.15); color: #ffffff; border: 1px solid rgba(91, 141, 239, 0.4); ' +
+        'border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 600;';
     button.addEventListener('click', () => {
         try {
             handleClick();
@@ -160,7 +160,9 @@ function createButton() {
 }
 
 /**
- * Inject the button after the "Supplies" label, once per rendered panel instance.
+ * Inject the button inline at the end of the "Supplies" label, once per rendered panel instance. On a line of its
+ * own it made the supplies column taller than the floor column beside it, and the whole bottom row grew. It hangs
+ * from a zero-width holder, so the centered label text stays centered over the supplies.
  * @param {Element} grid - The LabyrinthPanel_suppliesGrid element
  */
 export function injectButton(grid) {
@@ -168,7 +170,10 @@ export function injectButton(grid) {
     if (!wrapper || wrapper.querySelector(`.${BUTTON_CLASS}`)) return;
     const label = wrapper.querySelector('[class*="LabyrinthPanel_label"]');
     if (!label) return;
-    label.insertAdjacentElement('afterend', createButton());
+    const holder = document.createElement('span');
+    holder.style.cssText = 'display: inline-block; width: 0; white-space: nowrap; vertical-align: top;';
+    holder.appendChild(createButton());
+    label.appendChild(holder);
 }
 
 let unregister = null;

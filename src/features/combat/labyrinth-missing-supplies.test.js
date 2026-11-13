@@ -158,13 +158,14 @@ describe('labyrinth missing supplies', () => {
         expect(calculateMissingSupplies(oneRun)).toEqual([]);
     });
 
-    test('injectButton puts one button right after the Supplies label', () => {
+    test('injectButton puts one button inline in the Supplies label, not on a row of its own', () => {
         const { wrapper, label, grid } = makeSuppliesBlock();
         injectButton(grid);
         injectButton(grid);
         const buttons = wrapper.querySelectorAll('button');
         expect(buttons).toHaveLength(1);
-        expect(label.nextElementSibling).toBe(buttons[0]);
+        expect(label.contains(buttons[0])).toBe(true);
+        expect(label.nextElementSibling).toBe(grid);
     });
 
     test('pressing the button hands the live shortfall to the shopping list', async () => {
