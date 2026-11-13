@@ -45,6 +45,7 @@ vi.mock('../../utils/profit-helpers.js', () => ({
     // The profit context is where the user's pricing mode applies; without it the resolver falls back to ask
     resolveItemPrice: (hrid, options = {}) => ({
         price: (options.context === 'profit' ? game.profitPrices?.[hrid] : undefined) ?? game.prices[hrid] ?? null,
+        ...(game.partial?.has(hrid) ? { partial: true } : {}),
     }),
 }));
 vi.mock('../../utils/panel-geometry.js', () => ({
@@ -315,6 +316,24 @@ describe('the MP supply section', () => {
 });
 
 describe('mpSupplyPlan', () => {
+    test('a food priced only by a partial craft cost is unpriced, not offered as cheap', () => {
+        game.itemDetailMap = {
+            '/items/star_fruit_gummy': {
+                name: 'Star Fruit Gummy',
+                categoryHrid: '/item_categories/food',
+                consumableDetail: { hitpointRestore: 0, manapointRestore: 280, cooldownDuration: MINUTE_NS },
+            },
+        };
+        game.prices = { '/items/star_fruit_gummy': 900 };
+        expect(mpSupplyPlan(0).candidates).toBe(1);
+        game.partial = new Set(['/items/star_fruit_gummy']);
+        try {
+            expect(mpSupplyPlan(0).candidates).toBe(0);
+        } finally {
+            game.partial = undefined;
+        }
+    });
+
     test('uses base pouch capacity until a battle reports the character slots', () => {
         // A character without a pouch has one food and one drink slot. Before
         // the first battle snapshot, the planner must not assume a maxed pouch.

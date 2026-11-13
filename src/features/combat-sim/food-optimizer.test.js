@@ -154,6 +154,15 @@ describe('buildConsumablePools', () => {
         expect(noQuote.find((e) => e.hrid === '/items/marsberry_cake')).toBeUndefined();
     });
 
+    test('a partial craft cost is no price: the food is left out of the pools', () => {
+        resolveItemPrice.mockImplementation((hrid) =>
+            hrid === '/items/cheese' ? { price: 5, partial: true, production: true } : { price: PRICES[hrid] ?? 0 }
+        );
+        const all = [...buildConsumablePools(foodGameData()).values()].flat().map((e) => e.hrid);
+        expect(all).not.toContain('/items/cheese');
+        expect(all).toContain('/items/marsberry_cake');
+    });
+
     test('records price per restored point', () => {
         const pools = buildConsumablePools(foodGameData());
         const cheese = pools.get('hp_instant').find((e) => e.hrid === '/items/cheese');
