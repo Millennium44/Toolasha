@@ -381,3 +381,36 @@ describe('the belt advisor in the Combat Sim', () => {
         expect(q('belt-results').innerHTML).toBe('');
     });
 });
+
+describe('belt advisor stale inputs and wording', () => {
+    test('with no editor, a change to the live belt or talismans marks the result out of date', async () => {
+        host._editor = null;
+        const dm = (await import('../../core/data-manager.js')).default;
+        dm.getEquipment = () => new Map([['/item_locations/belt', { itemHrid: MEDIUM_4.hrid, enhancementLevel: 4 }]]);
+        dm.getSlottedTalismans = () => [{ slotIndex: 1, modifiers: [crit(6)] }];
+        await belts();
+        expect(q('belt-stale').style.display).toBe('none');
+        dm.getSlottedTalismans = () => [{ slotIndex: 1, modifiers: [crit(1)] }];
+        section._refreshStale();
+        expect(q('belt-stale').style.display).toBe('block');
+        expect(q('belt-stale').textContent).toContain('live');
+        delete dm.getEquipment;
+        delete dm.getSlottedTalismans;
+    });
+
+    test('a zero Enhance cost is not said to be covered by selling your belt', async () => {
+        mocks.prices['/items/medium_talisman_belt@5@buy'] = 2e8;
+        mocks.prices['/items/medium_talisman_belt@4@sell'] = 5e8;
+        await belts();
+        q('belt-cost').value = 'net';
+        q('belt-cost').dispatchEvent(new Event('change'));
+        expect(results()).toContain('Free: selling your belt covers it.');
+        section._belt.rows.forEach((r) => {
+            r.costs.enhance = { price: 0 };
+        });
+        q('belt-cost').value = 'enhance';
+        q('belt-cost').dispatchEvent(new Event('change'));
+        expect(results()).not.toContain('selling your belt covers it');
+        expect(results()).toContain('No cost on this basis.');
+    });
+});

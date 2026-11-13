@@ -305,7 +305,18 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             tier: now.difficultyTier,
             hours: now.hours,
             build: now.build,
+            // No editor: the build is the live character's, so its gear and slotted talismans are the inputs
+            ...(now.build === null ? { live: this._liveGear() } : {}),
             ...(this._q('metric')?.value === 'balanced' ? { 'Balanced weights': storedBalanceWeights() } : {}),
+        };
+    }
+
+    /** @returns {Object} The live character's belt and slotted talismans (for a build read live) */
+    _liveGear() {
+        const belt = dataManager.getEquipment?.()?.get?.('/item_locations/belt') || null;
+        return {
+            belt: belt ? [belt.itemHrid, belt.enhancementLevel || 0] : null,
+            talismans: dataManager.getSlottedTalismans?.() ?? null,
         };
     }
 

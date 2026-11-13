@@ -686,7 +686,7 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
         balanceWeights,
         seed,
     });
-    const baseline = metricsOf(baselineResult);
+    const baseline = metricsOf(baselineResult, hours);
     base.baseline = baseline;
     // Profit built on unpriced drops or consumables counts them at zero: a floor, said with the figures
     base.unpriced = Array.isArray(baseline?.unpriced) ? baseline.unpriced : [];

@@ -108,3 +108,19 @@ describe('close-call re-sims', () => {
         expect(noiseSummary(rows)).toEqual({ measured: 3, withinNoise: 2, mostlyNoise: true });
     });
 });
+
+describe('metrics hours', () => {
+    test('every metrics read, the baseline first, gets the run hours (a result with no simulated time still has rates)', async () => {
+        const seen = [];
+        const d = deps([]);
+        const base = d.computeMetrics;
+        d.computeMetrics = (r, g, p, simHours) => {
+            seen.push(simHours);
+            return base(r);
+        };
+        d.runSimulation = async () => ({ dps: 1000, simulatedTime: 0, deaths: {}, encounters: 10 });
+        await runCombatLineRanking(params(false), null, d);
+        expect(seen.length).toBeGreaterThan(1);
+        expect(seen.every((h) => h === 1)).toBe(true);
+    });
+});

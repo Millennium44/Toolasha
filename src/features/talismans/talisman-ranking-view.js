@@ -1445,7 +1445,7 @@ export class TalismanRankingSectionBase {
                     rate.kind === 'ratio'
                         ? this._ratioText(rate.per100m, metric)
                         : rate.kind === 'free'
-                          ? `<span title="Your current belt's sale pays for this one: no cost to divide by">free</span>`
+                          ? `<span title="${basis === 'net' ? "Your current belt's sale pays for this one: " : 'Nothing to pay on this basis: '}no cost to divide by">free</span>`
                           : `<span style="color:#777;" title="${escapeHtml(rate.why || '')}">—</span>`;
                 const notes = [
                     emptySlotNote(row.emptySlots),
@@ -1453,7 +1453,11 @@ export class TalismanRankingSectionBase {
                     row.noEffect ? 'No effect for these talismans here.' : '',
                     row.deathsRise ? 'Deaths/hr rose beyond its error bar.' : '',
                     row.hasMissingPrices ? 'Some prices are missing: profit is a floor.' : '',
-                    rate.kind === 'free' ? 'Free: selling your belt covers it.' : '',
+                    rate.kind === 'free'
+                        ? basis === 'net'
+                            ? 'Free: selling your belt covers it.'
+                            : 'No cost on this basis.'
+                        : '',
                 ].filter(Boolean);
                 const pct = this.exact
                     ? ''
