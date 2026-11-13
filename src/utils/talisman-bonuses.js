@@ -28,15 +28,23 @@ const TARGET_BUFF = '/talisman_modifier_targets/buff';
 /** The group of the five talisman-only lines (Echo, Fortify, Overkill, Shatter, Smite), from the game data */
 export const SPECIAL_GROUP = '/talisman_modifier_groups/special';
 
+/** The stat names of the five Special lines (what their `keys` feed, first letter lowercased) */
+export const SPECIAL_MECHANIC_STATS = Object.freeze(['echo', 'smite', 'shatter', 'fortify', 'overkill']);
+
 /**
- * Whether a modifier detail is a Special-group line. Measured on the test server (2026-11-13): a second copy of a
+ * Whether a modifier detail is a Special line: in the Special group, or feeding one of the five mechanic stats
+ * (so a table without group labels still reads right). The one test every reader uses. Measured on the test server (2026-11-13): a second copy of a
  * Special line on another worn talisman adds nothing (Fortify G2 at power 0.15 reads 0.01725 with one copy or two),
  * while regular lines on several talismans add up.
  * @param {Object|null|undefined} detail - A `talismanModifierDetailMap` entry
  * @returns {boolean}
  */
 export function isSpecialModifierDetail(detail) {
-    return detail?.groupHrid === SPECIAL_GROUP;
+    if (!detail) return false;
+    return (
+        detail.groupHrid === SPECIAL_GROUP ||
+        (detail.keys || []).some((key) => SPECIAL_MECHANIC_STATS.includes(talismanStatName(key)))
+    );
 }
 
 /**

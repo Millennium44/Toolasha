@@ -111,3 +111,14 @@ describe('sets never repeat a Special', () => {
         expect(worn.filter((h) => h === H('fortify'))).toHaveLength(1);
     });
 });
+
+describe('the copies runs skip Specials', () => {
+    test('estimateCombatRankingSims leaves Specials out of the copies count', async () => {
+        const { estimateCombatRankingSims } = await import('../features/combat-sim/talisman-line-ranking.js');
+        // 1 baseline + 10 lines + min(6, 10 - 5) copies + combined + current
+        expect(estimateCombatRankingSims({ lineCount: 10, specialCount: 5, slots: 3, hasCurrent: true })).toBe(18);
+        expect(estimateCombatRankingSims({ lineCount: 10, slots: 3, hasCurrent: true })).toBe(1 + 10 + 6 + 1 + 1);
+        expect(estimateCombatRankingSims({ lineCount: 4, specialCount: 4, slots: 3, hasCurrent: false })).toBe(6);
+        expect(estimateCombatRankingSims({ lineCount: 10, specialCount: 5, slots: 1, hasCurrent: false })).toBe(12);
+    });
+});

@@ -42,6 +42,7 @@ import {
     checkCombatLines,
     combatRankingReadiness,
     estimateCombatRankingSims,
+    isSpecialLine,
     normalizeBalanceWeights,
     runCombatLineRanking,
     talismanLines,
@@ -266,6 +267,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             const { valued } = checkCombatLines(lines, ready.belt, gameData, grade || 6);
             const sims = estimateCombatRankingSims({
                 lineCount: valued.length,
+                specialCount: valued.filter(isSpecialLine).length,
                 slots: ready.slots,
                 hasCurrent: wornTalismans(dto.talismans, ready.slots).length > 0,
             });
