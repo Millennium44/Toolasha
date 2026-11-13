@@ -14,6 +14,7 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const engine = vi.hoisted(() => ({
+    customVersion: 0,
     // itemHrid → { coinify, decompose, transmute } of profit data or null
     answers: {},
     pricingModes: [],
@@ -143,6 +144,7 @@ vi.mock('../../utils/yield-to-browser.js', () => ({
     },
 }));
 
+vi.mock('../settings/custom-price-overrides.js', () => ({ getCustomPriceVersion: () => engine.customVersion }));
 vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.96 }));
 
 vi.mock('../../utils/market-data.js', () => ({
@@ -223,6 +225,7 @@ beforeEach(() => {
     engine.answers = {};
     engine.pricingModes = [];
     engine.settingListeners = {};
+    engine.customVersion = 0;
     engine.writes = [];
     engine.settings = { marketSort: true, marketSort_mode: 'profit' };
     engine.gatheringProfit = null;
@@ -663,6 +666,43 @@ describe('decompose chain mode', () => {
         // Cleanup lets go of the listeners
         marketSort.disable();
         expect(engine.settingListeners.profitCalc_pricingMode).toHaveLength(0);
+    });
+
+    test('the Iron Cow valuation and the cape base value drop the chain figures, and disable lets go', async () => {
+        twoLevel();
+        const container = buildGrid(['item_a']);
+        marketSort.initialize();
+        marketSort.sortMode = 'decomposeChainPerHour';
+        await marketSort.sortByProfitability();
+        for (const key of ['profitCalc_ironCowValuation', 'untradableCapeBaseValue']) {
+            expect(engine.settingListeners[key]).toHaveLength(1);
+            await marketSort.sortByProfitability();
+            expect(marketSort.profitCache.size).toBeGreaterThan(0);
+            engine.settingListeners[key][0]();
+            expect(marketSort.profitCache.size).toBe(0);
+            expect(badges(container)).toEqual([null]);
+        }
+        marketSort.disable();
+        expect(engine.settingListeners.profitCalc_ironCowValuation).toHaveLength(0);
+        expect(engine.settingListeners.untradableCapeBaseValue).toHaveLength(0);
+    });
+
+    test('a custom price edited since the last sort drops the cached figures on the next sort', async () => {
+        twoLevel();
+        buildGrid(['item_a']);
+        marketSort.initialize();
+        marketSort.sortMode = 'decomposeChainPerHour';
+        await marketSort.sortByProfitability();
+        const first = marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit;
+
+        // Nothing edited: the figure is the cached one, even though the book moved under it
+        engine.bids = { '/items/term_c': 2000 };
+        await marketSort.sortByProfitability();
+        expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit).toBe(first);
+
+        engine.customVersion += 1;
+        await marketSort.sortByProfitability();
+        expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit).toBeGreaterThan(first);
     });
 
     test('a pricing change leaves the production profit badges where they are', async () => {
