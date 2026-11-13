@@ -1545,52 +1545,29 @@ class DungeonTracker {
             }
         }
 
-        // If tracking and dungeonHrid is set, check if this is a different dungeon
+        // A party that switches to another dungeon abandons the run in progress. The message names the
+        // action by `actionHrid` alone (see the capture in `__fixtures__/wire/party-chat.js`).
+        //
+        // Anything short of a clear switch leaves the run alone: ending a real run is the failure that
+        // loses data, while a switch missed here is still caught by the next `new_battle`.
         if (this.isTracking && this.currentRun && this.currentRun.dungeonHrid) {
-            // Parse dungeon name from message to detect dungeon switching
+            // A solo run is not the party's: this is a party member's own action, posted to the same channel.
+            // A paused run is not being fought, and a message stamped before the run began is about an earlier one
+            if (this.isSoloRun() || this.isPaused() || this.predatesCurrentRun(timestamp)) return;
+
+            let battleHrid = null;
             try {
-                const metadata = JSON.parse(message.systemMetadata || '{}');
-                const battleName = metadata.name || '';
-
-                // Extract dungeon HRID from battle name (this is a heuristic)
-                const currentDungeonName =
-                    dungeonTrackerStorage.getDungeonInfo(this.currentRun.dungeonHrid)?.name || '';
-
-                if (battleName && currentDungeonName && !battleName.includes(currentDungeonName)) {
-                    // The new dungeon's battle start can land before its new_battle, whose switch branch
-                    // would otherwise have ended this run as a cancel. A party combat zone that is no
-                    // dungeon proves nothing about the run and ends it unrecorded, as it always has.
-                    this.resetTracking(
-                        this.dungeonHridForBattleName(battleName) ? this.switchCancelAttempt(timestamp) : null
-                    );
-                }
+                battleHrid = JSON.parse(message?.systemMetadata || '{}')?.actionHrid;
             } catch (error) {
                 console.error('[Dungeon Tracker] Error parsing battle started metadata:', error);
+                return;
             }
-        }
-    }
+            // Only another dungeon the game itself knows is a switch; a zone or an unknown action proves nothing
+            if (typeof battleHrid !== 'string' || battleHrid === this.currentRun.dungeonHrid) return;
+            if (!this.isDungeonAction(battleHrid)) return;
 
-    /**
-     * The dungeon a "Battle started" message names, matched against the game's
-     * own dungeon names; the longest match wins, so no name is mistaken for
-     * one it contains.
-     * @param {string} battleName - The message's `name`
-     * @returns {string|null} The dungeon's action HRID, or null when it names none
-     */
-    dungeonHridForBattleName(battleName) {
-        const actionDetailMap = dataManager.getInitClientData?.()?.actionDetailMap;
-        if (!battleName || !actionDetailMap) return null;
-        let best = null;
-        let bestLength = 0;
-        for (const [hrid, details] of Object.entries(actionDetailMap)) {
-            const name = details?.name;
-            if (!name || name.length <= bestLength || !this.isDungeonAction(hrid)) continue;
-            if (battleName.includes(name)) {
-                best = hrid;
-                bestLength = name.length;
-            }
+            this.resetTracking(this.switchCancelAttempt(timestamp));
         }
-        return best;
     }
 
     /**

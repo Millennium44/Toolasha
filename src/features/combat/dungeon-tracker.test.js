@@ -1061,8 +1061,9 @@ describe('pairing key counts with the Battle started before them', () => {
             tracker.onChatMessage({ message: buildPartyBattleStarted(LAIR, T(10), 1) });
             tracker.onChatMessage({ message: buildPartyKeyCount('[Carol - 5]', T(10, 1), 2) });
             await flush();
+            // The party moved to another dungeon, so the run ended; its count is never read as this run's
             expect(tracker.firstKeyCountTimestamp).toBeNull();
-            expect(tracker.currentRun.keyCountsMap).toEqual({});
+            expect(tracker.isTracking).toBe(false);
         });
 
         test('with no Battle started in the buffer still anchors the run', async () => {
@@ -1223,37 +1224,96 @@ describe('routing chat messages', () => {
         }
     );
 
+    /** A party chat message as `chat_message_received` carries it, the "Battle started" in the captured wire shape. */
+    const battleStartedFor = (actionHrid, t = '2026-08-04T10:04:00.000Z') => ({
+        message: buildPartyBattleStarted(actionHrid, t),
+    });
+
     test('a battle started for another dungeon ends the run', async () => {
         beTracking({ dungeonHrid: DEN });
-        tracker.onChatMessage({
-            message: {
-                chan: '/chat_channel_types/party',
-                isSystemMessage: true,
-                m: 'systemChatMessage.partyBattleStarted',
-                t: '2026-08-04T10:04:00.000Z',
-                systemMetadata: JSON.stringify({ name: 'Sinister Circus' }),
-            },
-        });
+        tracker.onChatMessage(battleStartedFor(LAIR));
         await flush();
 
         expect(tracker.isTracking).toBe(false);
+        expect(tracker.currentRun).toBeNull();
     });
 
     test('a battle started for the same dungeon leaves the run alone', async () => {
         beTracking({ dungeonHrid: DEN });
-        tracker.onChatMessage({
-            message: {
-                chan: '/chat_channel_types/party',
-                isSystemMessage: true,
-                m: 'systemChatMessage.partyBattleStarted',
-                t: '2026-08-04T10:04:00.000Z',
-                systemMetadata: JSON.stringify({ name: 'Chimerical Den' }),
-            },
-        });
+        tracker.onChatMessage(battleStartedFor(DEN));
         await flush();
 
         expect(tracker.isTracking).toBe(true);
         expect(tracker.battleStartedTimestamp).toBe(Date.parse('2026-08-04T10:04:00.000Z'));
+    });
+
+    test('a battle started for a combat zone that is no dungeon leaves the run alone', async () => {
+        beTracking({ dungeonHrid: DEN });
+        tracker.onChatMessage(battleStartedFor(FLY));
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+    });
+
+    test('a battle started for an action the game has no details for leaves the run alone', async () => {
+        beTracking({ dungeonHrid: DEN });
+        tracker.onChatMessage(battleStartedFor('/actions/combat/not_in_the_table'));
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+    });
+
+    test.each([
+        ['an empty systemMetadata', undefined],
+        ['metadata with no actionHrid', '{"name":"Sinister Circus"}'],
+        ['a non-string actionHrid', '{"actionHrid":42}'],
+        ['metadata that is not JSON', 'not json'],
+    ])('a battle started with %s leaves the run alone', async (_label, systemMetadata) => {
+        beTracking({ dungeonHrid: DEN });
+        const message = buildPartyBattleStarted(LAIR, '2026-08-04T10:04:00.000Z');
+        if (systemMetadata === undefined) delete message.systemMetadata;
+        else message.systemMetadata = systemMetadata;
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        tracker.onChatMessage({ message });
+        await flush();
+        errorSpy.mockRestore();
+
+        expect(tracker.isTracking).toBe(true);
+    });
+
+    test('a battle started with no run in progress changes nothing', async () => {
+        tracker.onChatMessage(battleStartedFor(LAIR));
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.battleStartedTimestamp).toBe(Date.parse('2026-08-04T10:04:00.000Z'));
+        expect(game.savedRuns).toEqual([]);
+    });
+
+    test("another dungeon's battle started leaves a solo run alone", async () => {
+        beTracking({ dungeonHrid: DEN, partyNames: ['Marketcow'] });
+        tracker.onChatMessage(battleStartedFor(LAIR));
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+    });
+
+    test("another dungeon's battle started leaves a paused run alone", async () => {
+        beTracking({ dungeonHrid: DEN });
+        tracker.currentRun.pausedAt = Date.parse('2026-08-04T10:03:00.000Z');
+        tracker.onChatMessage(battleStartedFor(LAIR));
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun).not.toBeNull();
+    });
+
+    test('a battle started before the run began is about an earlier action and leaves it alone', async () => {
+        beTracking({ dungeonHrid: DEN, anchoredAt: '2026-08-04T10:00:02.000Z' });
+        tracker.onChatMessage(battleStartedFor(LAIR, '2026-08-04T09:30:00.000Z'));
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
     });
 });
 
@@ -4912,7 +4972,6 @@ describe('a start left over from another day', () => {
         tracker.onActionsUpdated({ endCharacterActions: [partyAction(LAIR, { id: 9002 })] });
         tracker.onChatMessage(
             partyMessage('systemChatMessage.partyBattleStarted', '2026-09-27T12:58:10.000Z', {
-                name: 'Sinister Circus',
                 actionHrid: LAIR,
             })
         );
@@ -5645,22 +5704,14 @@ describe('recording failed and canceled runs', () => {
     });
 
     describe('a party switching straight to another dungeon, its battle start seen before the battle', () => {
-        function battleStarted(name, isoTime) {
-            return {
-                message: {
-                    chan: '/chat_channel_types/party',
-                    isSystemMessage: true,
-                    m: 'systemChatMessage.partyBattleStarted',
-                    t: isoTime,
-                    systemMetadata: JSON.stringify({ name }),
-                },
-            };
+        function battleStarted(actionHrid, isoTime) {
+            return { message: buildPartyBattleStarted(actionHrid, isoTime) };
         }
 
         test('the abandoned run is a cancel, ended by the server at the new battle’s start', async () => {
             beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 3 });
 
-            tracker.onChatMessage(battleStarted('Sinister Circus', '2026-08-04T10:04:00.000Z'));
+            tracker.onChatMessage(battleStarted(LAIR, '2026-08-04T10:04:00.000Z'));
             await flush();
             expect(tracker.isTracking).toBe(false);
 
@@ -5678,7 +5729,7 @@ describe('recording failed and canceled runs', () => {
         test('with no server-stamped start, both ends are on the wall clock', async () => {
             beTracking({ keyCountsMap: PARTY, wavesCompleted: 3 });
 
-            tracker.onChatMessage(battleStarted('Sinister Circus', '2026-08-04T10:04:00.000Z'));
+            tracker.onChatMessage(battleStarted(LAIR, '2026-08-04T10:04:00.000Z'));
             await windowCloses();
 
             expect(game.savedRuns).toHaveLength(1);
@@ -5688,20 +5739,20 @@ describe('recording failed and canceled runs', () => {
         test('the same dungeon starting again records nothing and leaves the run alone', async () => {
             beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 3 });
 
-            tracker.onChatMessage(battleStarted('Chimerical Den', '2026-08-04T10:04:00.000Z'));
+            tracker.onChatMessage(battleStarted(DEN, '2026-08-04T10:04:00.000Z'));
             await windowCloses();
 
             expect(tracker.isTracking).toBe(true);
             expect(game.savedRuns).toEqual([]);
         });
 
-        test('a party combat zone that is no dungeon still ends the run, unrecorded', async () => {
+        test('a party combat zone that is no dungeon leaves the run alone', async () => {
             beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 3 });
 
-            tracker.onChatMessage(battleStarted('Fly', '2026-08-04T10:04:00.000Z'));
+            tracker.onChatMessage(battleStarted(FLY, '2026-08-04T10:04:00.000Z'));
             await windowCloses();
 
-            expect(tracker.isTracking).toBe(false);
+            expect(tracker.isTracking).toBe(true);
             expect(game.savedRuns).toEqual([]);
         });
 
@@ -5709,7 +5760,7 @@ describe('recording failed and canceled runs', () => {
             game.recordAttempts = false;
             beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 3 });
 
-            tracker.onChatMessage(battleStarted('Sinister Circus', '2026-08-04T10:04:00.000Z'));
+            tracker.onChatMessage(battleStarted(LAIR, '2026-08-04T10:04:00.000Z'));
             await windowCloses();
 
             expect(tracker.isTracking).toBe(false);
