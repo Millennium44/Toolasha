@@ -14,6 +14,10 @@ On the In Progress tab the trial readout now sits under the game's card (skillin
 
 The payout block is now "Payout & tools": folded, it is a single line, hiding both the figures and the trial buttons.
 
+### Duplicate Special talisman lines count once
+
+Measured on the test server: a second talisman with the same Special line (Echo, Fortify, Overkill, Shatter, Smite) adds nothing. The Combat Sim, line ranking and sets now count only the best copy, the loadout check flags the extra copy, and the sim editor marks it "no effect".
+
 <!-- shipped in 3.86.1 -->
 
 ### Item tooltip profit follows the sell-tax setting

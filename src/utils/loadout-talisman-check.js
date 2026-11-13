@@ -6,7 +6,9 @@
  *  - `deleted`: the id it names is no longer owned (the slot is skipped silently);
  *  - `slot`: the talisman sits in a slot its own belt does not have (a Small belt has one slot);
  *  - `type`: a combat loadout holds a skilling talisman, or a skilling loadout a combat one. The type decides
- *    which kind of action the talisman's lines apply to, so it does nothing for this loadout.
+ *    which kind of action the talisman's lines apply to, so it does nothing for this loadout;
+ *  - `duplicate`: a Special line (Echo, Fortify, Overkill, Shatter, Smite) that another slot of the loadout already
+ *    carries at an equal or higher grade. A second copy adds nothing (measured), so that line does nothing.
  *
  * The same talisman in several loadouts is normal and is not reported.
  *
@@ -16,7 +18,7 @@
 
 import { isTestServer } from './game-server.js';
 import { parseWearable } from './loadout-equipment.js';
-import { BELT_LOCATION } from './talisman-bonuses.js';
+import { BELT_LOCATION, deadSpecialLines } from './talisman-bonuses.js';
 
 export const COMBAT_ACTION_TYPE = '/action_types/combat';
 const TYPE_COMBAT = '/talisman_types/combat';
@@ -24,7 +26,7 @@ const TYPE_SKILLING = '/talisman_types/skilling';
 
 /**
  * @typedef {Object} LoadoutTalismanWarning
- * @property {'deleted'|'slot'|'type'} code
+ * @property {'deleted'|'slot'|'type'|'duplicate'} code
  * @property {number} slot - The loadout slot (1..3)
  * @property {string} text - Why, in a short sentence
  */
@@ -35,9 +37,10 @@ const TYPE_SKILLING = '/talisman_types/skilling';
  * @param {Object|null} params.loadout - A `characterLoadoutMap` entry (`talismanIdMap`, `wearableMap`, `actionTypeHrid`)
  * @param {Array<Object>|null} params.ownedTalismans - `characterData.characterTalismans`; null when not delivered
  * @param {Object} params.itemDetailMap - Item details from init_client_data
+ * @param {Object} [params.modifierDetailMap] - `talismanModifierDetailMap`; without it duplicate Special lines are not checked
  * @returns {LoadoutTalismanWarning[]} Empty off the test server and when all is well
  */
-export function checkLoadoutTalismans({ loadout, ownedTalismans, itemDetailMap }) {
+export function checkLoadoutTalismans({ loadout, ownedTalismans, itemDetailMap, modifierDetailMap }) {
     if (!isTestServer()) return [];
     const idMap = loadout?.talismanIdMap;
     if (!idMap || typeof idMap !== 'object' || !Array.isArray(ownedTalismans)) return [];
@@ -52,6 +55,8 @@ export function checkLoadoutTalismans({ loadout, ownedTalismans, itemDetailMap }
     const otherName = wantedType === TYPE_COMBAT ? 'skilling' : 'combat';
 
     const out = [];
+    // The talismans that will be worn and apply to this loadout: the duplicate check looks only at these
+    const applying = [];
     for (const [slotKey, id] of Object.entries(idMap)) {
         const slot = Number(slotKey);
         if (!Number.isInteger(slot) || slot < 1 || !id) continue;
@@ -75,6 +80,18 @@ export function checkLoadoutTalismans({ loadout, ownedTalismans, itemDetailMap }
                 text: `Slot ${slot}: a ${otherName} talisman does nothing in a ${wantedName} loadout.`,
             });
         }
+        const beltHasSlot = beltSlots === null || slot <= beltSlots;
+        if (beltHasSlot && (type === wantedType || (type !== TYPE_COMBAT && type !== TYPE_SKILLING))) {
+            applying.push({ slotIndex: slot, modifiers: owned.modifiers });
+        }
+    }
+    for (const dead of deadSpecialLines(applying, modifierDetailMap)) {
+        const name = modifierDetailMap?.[dead.hrid]?.name || 'A Special line';
+        out.push({
+            code: 'duplicate',
+            slot: dead.slotIndex,
+            text: `Slot ${dead.slotIndex}: ${name} does nothing here, since slot ${dead.winnerSlot} already carries it at an equal or higher grade (a second copy of a Special line adds nothing).`,
+        });
     }
     return out.sort((a, b) => a.slot - b.slot);
 }

@@ -2,7 +2,7 @@
  * Loadout Talisman Check (test server only)
  *
  * Marks the selected loadout in the game's Loadouts panel when its talismans will not do what the player
- * expects (deleted, a slot the belt lacks, a combat/skilling mismatch). See utils/loadout-talisman-check.js.
+ * expects (deleted, a slot the belt lacks, a combat/skilling mismatch, a duplicate Special line). See utils/loadout-talisman-check.js.
  * The marker sits at the end of the panel's metadata row with the reasons in its hover title. The loadout is
  * found by the name the panel shows, through class-name substrings, never by translated text.
  */
@@ -65,11 +65,15 @@ export function annotate() {
     const name = loadoutName(metadata);
     const map = dataManager.characterData?.characterLoadoutMap;
     if (name && map && typeof map === 'object') {
-        const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap;
+        const initData = dataManager.getInitClientData?.();
+        const itemDetailMap = initData?.itemDetailMap;
+        const modifierDetailMap = initData?.talismanModifierDetailMap;
         const owned = dataManager.hasTalismansLoaded?.() ? dataManager.getCharacterTalismans() : null;
         const lists = Object.values(map)
             .filter((loadout) => loadout && loadout.name === name)
-            .map((loadout) => checkLoadoutTalismans({ loadout, ownedTalismans: owned, itemDetailMap }));
+            .map((loadout) =>
+                checkLoadoutTalismans({ loadout, ownedTalismans: owned, itemDetailMap, modifierDetailMap })
+            );
         warnings = commonWarnings(lists);
     }
 
