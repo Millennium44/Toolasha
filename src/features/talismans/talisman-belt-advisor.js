@@ -33,6 +33,7 @@ import {
 import {
     SKILLING_RANKING_METRICS,
     RANKABLE_SKILLING_TYPES,
+    EXACT_UNPRICED_TOLERANCE,
     newlyUnpricedLineCosts,
 } from '../../utils/talisman-line-sets.js';
 import { calculateDirectEnhancementCost } from '../combat-sim/direct-enhancement-cost.js';
@@ -449,7 +450,8 @@ export async function runSkillingBeltAdvisor(params, deps, options = {}) {
         const figures = noteMissing(await deps.evaluate(actionHrid, { equipment, drinks: context.drinks }));
         if (stopped()) return finish('stopped', rows);
         if (!figures) return finish('stopped', rows, { reason: 'no_figures' });
-        const costUnpriced = newlyUnpricedLineCosts(bare, figures);
+        // Skilling figures are exact: no sampling tolerance, so a small rise in an unpriced input still counts
+        const costUnpriced = newlyUnpricedLineCosts(bare, figures, EXACT_UNPRICED_TOLERANCE);
         const value = read(figures) - bareValue;
         rows.push({
             ...candidate,
