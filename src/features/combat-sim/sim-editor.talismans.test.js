@@ -412,3 +412,80 @@ describe('editable belt talismans', () => {
         }
     });
 });
+
+describe('compact talisman layout', () => {
+    const TWO = [
+        { hrid: ARMOR, grade: 1 },
+        { hrid: HASTE, grade: 2 },
+    ];
+
+    test('a three-slot belt draws three side-by-side columns, a one-slot belt one', () => {
+        const three = open([dtoWith('player1', '/items/large_talisman_belt', null)]);
+        expect(three.el.querySelectorAll('[data-talisman-card]')).toHaveLength(3);
+        expect(three.el.querySelector('.mwi-tal-grid').getAttribute('style')).toContain('--tal-cols:3');
+        document.body.innerHTML = '';
+        const one = open([dtoWith('player1', '/items/small_talisman_belt', null)]);
+        expect(one.el.querySelectorAll('[data-talisman-card]')).toHaveLength(1);
+        expect(one.el.querySelector('.mwi-tal-grid').getAttribute('style')).toContain('--tal-cols:1');
+        expect(one.el.textContent).not.toContain('could not be drawn');
+    });
+
+    test('a line carries its full name in the select title; x and + line edit dto.talismans', () => {
+        const { el, editor } = open([
+            dtoWith(
+                'player1',
+                '/items/large_talisman_belt',
+                worn([
+                    { slotIndex: 1, modifiers: TWO },
+                    { slotIndex: 2, modifiers: [{ hrid: ARMOR, grade: 3 }] },
+                ])
+            ),
+        ]);
+        const card = el.querySelector('[data-talisman-card="1"]');
+        expect(card.querySelectorAll('.mwi-tal-line')).toHaveLength(2);
+        expect(card.querySelector('[data-talisman-type="1:0"]').title).toBe(COMBAT_MODIFIER_DETAILS[ARMOR].name);
+        card.querySelector('[data-talisman-remove="1:0"]').click();
+        expect(editor.getEditedDTOs().player1.talismans[0].modifiers).toEqual([{ hrid: HASTE, grade: 2 }]);
+        el.querySelector('[data-talisman-card="2"] [data-talisman-add="2"]').click();
+        expect(editor.getEditedDTOs().player1.talismans[1].modifiers).toHaveLength(2);
+        // each "+ line" sits inside its own card
+        expect(el.querySelectorAll('[data-talisman-card] [data-talisman-add]')).toHaveLength(3);
+        expect(el.textContent).not.toContain('could not be drawn');
+    });
+
+    test('a skilling talisman card keeps its disabled type select and disabled + line', () => {
+        const { el } = open([
+            dtoWith(
+                'player1',
+                '/items/large_talisman_belt',
+                worn([{ slotIndex: 1, modifiers: [{ hrid: SKILLING, grade: 3 }] }])
+            ),
+        ]);
+        const select = el.querySelector('[data-talisman-type="1:0"]');
+        expect(select.disabled).toBe(true);
+        expect(select.title).toContain('Skilling talismans');
+        expect(el.querySelector('[data-talisman-add="1"]').disabled).toBe(true);
+    });
+});
+
+describe('Belt equipment row', () => {
+    const beltRow = (el) =>
+        [...el.querySelectorAll('[data-equipment-slot]')].find((b) => b.dataset.equipmentSlot === BELT);
+
+    test('is absent where the game has no belt items, present where it does', () => {
+        game.gameData.itemDetailMap = {
+            '/items/test_body': { name: 'Body', equipmentDetail: { type: '/equipment_types/body' } },
+        };
+        expect(beltRow(open([dtoWith('player1', null, null)]).el)).toBeUndefined();
+        document.body.innerHTML = '';
+        game.gameData.itemDetailMap = { ...BELT_ITEMS };
+        expect(beltRow(open([dtoWith('player1', null, null)]).el)).toBeTruthy();
+    });
+
+    test('shows when the build already holds a belt, even with no belt items in the data', () => {
+        game.gameData.itemDetailMap = {};
+        const { el } = open([dtoWith('player1', '/items/large_talisman_belt', null)]);
+        expect(beltRow(el)).toBeTruthy();
+        expect(el.textContent).not.toContain('could not be drawn');
+    });
+});
