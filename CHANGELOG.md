@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Belt advisor: which Talisman Belt upgrade is worth buying
+
+Test server. Beside Talisman lines in the Combat Sim and the Skilling Optimizer, "Check belts" weighs higher levels of your belt and larger belts against their market cost, using the talismans you have slotted (a larger belt's new slots count as empty).
+
+### Scroll chips and Scroll Planner offered once more
+
+If you have "Simulate missing scroll effects" or the Scroll Planner turned off, the update popup offers each one again, once, with its switch. Nothing is turned on for you.
+
 ### Compact talisman editing in the Combat Sim
 
 The editor's talismans now sit side by side as small cards, one per belt slot, instead of a tall list of full-width rows; on a phone they stack. The Belt row is hidden where the game has no belts.
