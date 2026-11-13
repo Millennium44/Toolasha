@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Belt advisor: which Talisman Belt upgrade is worth buying
+
+Test server. Beside Talisman lines in the Combat Sim and the Skilling Optimizer, "Check belts" weighs higher levels of your belt and larger belts against their market cost, using the talismans you have slotted (a larger belt's new slots count as empty).
+
 ### Compact talisman editing in the Combat Sim
 
 The editor's talismans now sit side by side as small cards, one per belt slot, instead of a tall list of full-width rows; on a phone they stack. The Belt row is hidden where the game has no belts.
@@ -25,10 +29,6 @@ Click Qty, Value, vs exp., Exp. qty or Exp. val in the chest-opening popup to so
 ### Labyrinth "Buy supplies" button takes the Supplies heading's place
 
 The button now replaces the Supplies heading instead of sitting on a line of its own, so the bottom row keeps its normal height and the button stays centered, phones included.
-
-### Belt advisor: which Talisman Belt upgrade is worth buying
-
-Test server. Beside Talisman lines in the Combat Sim and the Skilling Optimizer, "Check belts" weighs higher levels of your belt and larger belts against their market cost, using the talismans you have slotted (a larger belt's new slots count as empty).
 
 ### Skilling Optimizer tool label no longer overlaps
 
