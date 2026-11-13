@@ -809,8 +809,8 @@ class TooltipPrices {
         // Use the full item name (includes enhancement suffix e.g. "+3") as the key so
         // that switching to a different item — or a different enhancement level of the same
         // item — clears stale injected content and re-processes.
-        // The scrolls the tiles assume are part of the key: the profit figures differ with them
-        const scrollSignature = tooltipScrollSignature(info.itemHrid);
+        // The scrolls the tiles assume and the sell-tax toggle are part of the key: the profit figures differ with them
+        const scrollSignature = `${tooltipScrollSignature(info.itemHrid)}|tax:${config.getSetting('profitCalc_excludeSellTax') ? 'off' : 'on'}`;
         if (
             tooltipElement.dataset.pricesProcessedItem === itemName &&
             (tooltipElement.dataset.pricesProcessedScrolls ?? '') === scrollSignature

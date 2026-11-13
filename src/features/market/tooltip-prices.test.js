@@ -57,6 +57,7 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_detailedProfitFlat') return settings.flat;
             if (id === 'actionPanel_craftingPlanBuyIntermediates') return false;
             if (id === 'actionPanel_craftingPlanNoProcessing') return false;
+            if (id === 'profitCalc_excludeSellTax') return settings.excludeSellTax ?? true;
             return true;
         },
         getSettingValue: (id, fallback) => {
@@ -439,6 +440,21 @@ describe('routing by classification', () => {
         observerState.handler(el);
         await settle();
         expect(el.querySelectorAll('.market-price-injected')).toHaveLength(1);
+    });
+
+    test('the same popper is processed again after the sell-tax toggle changes', async () => {
+        const el = itemTooltip('Cheese');
+        observerState.handler(el);
+        await settle();
+        const before = el.dataset.pricesProcessedScrolls;
+        settings.excludeSellTax = false;
+        try {
+            await tooltipPrices.handleTooltip(el);
+            expect(el.dataset.pricesProcessedScrolls).not.toBe(before);
+            expect(el.querySelectorAll('.market-price-injected')).toHaveLength(1);
+        } finally {
+            delete settings.excludeSellTax;
+        }
     });
 
     test('an enhanced item is priced at its enhancement level, not as the base item', async () => {
