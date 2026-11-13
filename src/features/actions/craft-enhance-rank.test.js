@@ -20,6 +20,11 @@ import {
     normalizeTargetLevel,
     priceCraftMaterials,
 } from './craft-enhance-rank.js';
+import {
+    DUNGEON_CRAFT_GAME_DATA,
+    GRIFFIN_TUNIC_ACTION,
+    MANTICORE_SHIELD_ACTION,
+} from '../../__fixtures__/wire/dungeon-craft-inputs.js';
 
 /** A small slice of the game's data, in the shapes it emits */
 const gameData = {
@@ -141,6 +146,48 @@ describe('what qualifies a recipe', () => {
         expect(hasDungeonInput({ inputItems: [{ itemHrid: '/items/refined_leather' }] }, index)).toBe(false);
         expect(hasDungeonInput({ inputItems: [], upgradeItemHrid: '/items/griffin_leather' }, index)).toBe(true);
         expect(hasDungeonInput({}, index)).toBe(false);
+    });
+});
+
+describe('the index on real test-server data', () => {
+    const real = buildDungeonInputIndex(DUNGEON_CRAFT_GAME_DATA);
+    const has = (map, name) => map.has(`/items/${name}`);
+
+    test('gear materials inside the chest are drops, the chest-only gems too', () => {
+        for (const name of [
+            'griffin_leather',
+            'manticore_sting',
+            'jackalope_antler',
+            'dodocamel_plume',
+            'griffin_talon',
+        ])
+            expect(has(real.drops, name)).toBe(true);
+        // Reached through the large treasure chest inside the chimerical chest
+        expect(has(real.drops, 'garnet')).toBe(true);
+        expect(has(real.drops, 'chimerical_refinement_shard')).toBe(true);
+        expect(real.drops.get('/items/griffin_leather').dungeons).toEqual(['Chimerical Den']);
+    });
+
+    test('gear a crafting action also makes is not a drop, and coins never are', () => {
+        for (const name of ['griffin_tunic', 'manticore_shield', 'chimerical_chest_key', 'coin'])
+            expect(has(real.drops, name)).toBe(false);
+    });
+
+    test('token-shop lines read in the game shape, with their real token counts', () => {
+        expect(real.tokenShop.get('/items/griffin_leather')).toEqual({
+            tokenHrid: '/items/chimerical_token',
+            tokenCount: 600,
+            outputCount: 1,
+        });
+        expect(real.tokenShop.get('/items/chimerical_quiver').tokenCount).toBe(35000);
+        expect(real.tokenShop.size).toBe(7);
+    });
+
+    test('the real griffin and manticore recipes qualify; one with only holy cheese would not', () => {
+        expect(hasDungeonInput(GRIFFIN_TUNIC_ACTION, real)).toBe(true);
+        expect(hasDungeonInput(MANTICORE_SHIELD_ACTION, real)).toBe(true);
+        expect(dungeonInputKind('/items/holy_cheese', real)).toBeNull();
+        expect(dungeonInputKind('/items/manticore_sting', real)).toEqual({ drop: true, token: true });
     });
 });
 
