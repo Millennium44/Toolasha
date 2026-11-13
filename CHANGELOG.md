@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Core advisor for talismans
+
+The talisman sections in the Combat Sim Upgrade tab and the Skilling Optimizer gain a Core advisor: for each worn talisman with fewer than four lines it shows what the next line from a core is expected to add, the chance it rolls something useful, the best outcome, and the cores' market price. Unpriced cores are shown as such, never as free. Test server only.
+
+### Belt and core results sit under their buttons
+
+The belt advisor's results now appear right under Check belts instead of below the whole line ranking.
+
 <!-- shipped in 3.86.1 -->
 
 ### Item tooltip profit follows the sell-tax setting
