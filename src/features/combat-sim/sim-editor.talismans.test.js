@@ -361,6 +361,22 @@ describe('editable belt talismans', () => {
         expect(el.querySelector('[data-talisman-reset]').disabled).toBe(false);
     });
 
+    test('a what-if set loaded with the live self (Party Finder load) survives the first sync', () => {
+        game.slotted = worn([{ slotIndex: 1, modifiers: [{ hrid: ARMOR, grade: 2 }] }]);
+        const whatIf = dtoWith(
+            'player1',
+            '/items/large_talisman_belt',
+            worn([{ slotIndex: 1, modifiers: [{ hrid: ARMOR, grade: 6 }] }])
+        );
+        const el = document.createElement('div');
+        document.body.append(el);
+        const editor = new SimEditor({ editorEl: el });
+        editor.loadParty([whatIf], ['Me'], { selfIsLive: true });
+        expect(editor.getEditedDTOs().player1.talismans[0].modifiers[0].grade).toBe(6);
+        expect(editor.generateSimLabel('player1')).toContain('Talismans');
+        expect(editor._originalDTOs.player1.talismans[0].modifiers[0].grade).toBe(2);
+    });
+
     test('a redraw with no game data keeps the rows instead of blanking them', () => {
         const { el, editor } = open([
             dtoWith(

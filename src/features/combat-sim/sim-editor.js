@@ -1112,6 +1112,13 @@ export class SimEditor {
      * @private
      */
     _seedLiveBaseline(original) {
+        // The slotted talismans: without this a what-if set loaded with the live self reads as the untouched build
+        // and the first sync overwrites it
+        if (typeof dataManager.getSlottedTalismans === 'function') {
+            const live = toSimTalismans(dataManager.getSlottedTalismans() || []);
+            if (live.length > 0) original.talismans = live;
+            else delete original.talismans;
+        }
         try {
             const rooms = dataManager.getHouseRooms?.();
             if (rooms && typeof rooms.forEach === 'function') {
