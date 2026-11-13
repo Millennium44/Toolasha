@@ -240,7 +240,11 @@ Every brief to a sub-agent carries these lines:
 - **Press game spend and sell buttons through the game's React handler** —
   `clickThroughReact(button, { reactFirst: true })`, never `.click()`. The game ignores untrusted clicks
   on them (the vendor "Confirm Sell For", the task reroll spend buttons). One user press is one game
-  action, with a manual-click fallback.
+  action, with a manual-click fallback. Pass the live host `<button>`, re-found in the DOM at press time,
+  and press after Toolasha's own click handler has returned (next task). After changing client state
+  first (picking an orb), wait for the game to re-render before pressing, since the old handler still holds the old
+  state. Do not build your own synthetic event. The talisman "Do next step" took three live rounds to learn
+  this, and no test with a fake React tree caught it, so live-test any new press before review.
 - **Identify actions, skills and items by icon sprite or React props before their displayed text** — a
   player may run the game in Chinese. `getIconHref` reads both `href` and `xlink:href` (many item icons
   carry only the latter). On hover and mount paths try the cheap English-name match first; the fiber
@@ -279,7 +283,9 @@ builds a mix of two branches.
 
 **The dev-build trap**: gates build `dist/Toolasha-dev.user.js` from whatever branch is checked out, and
 the maintainer's dev loader serves that file. Gating PR branch A then B leaves a dev build with only B.
-Before the maintainer tests live, build from `main` plus every open PR. Never run two git or gates jobs
+Before the maintainer tests live, build from `main` plus every open PR. To load one branch for a live
+check without switching the main checkout, `bash scripts/dev-load-branch.sh <ref>` builds it in
+`../Toolasha-integ` and copies the result into `dist/`. Never run two git or gates jobs
 in one checkout at once.
 
 ## Project Structure (High-Level)
