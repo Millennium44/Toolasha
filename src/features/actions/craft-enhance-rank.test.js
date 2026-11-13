@@ -29,19 +29,25 @@ const gameData = {
             combatZoneInfo: {
                 isDungeon: true,
                 dungeonInfo: {
-                    rewardDropTable: [
-                        { itemHrid: '/items/chimerical_chest' },
-                        { itemHrid: '/items/griffin_leather' },
-                        { itemHrid: '/items/coin' },
-                    ],
+                    rewardDropTable: [{ itemHrid: '/items/chimerical_chest' }, { itemHrid: '/items/coin' }],
                 },
             },
         },
         '/actions/combat/fly': { name: 'Fly', combatZoneInfo: { isDungeon: false, fightInfo: {} } },
+        // An ordinary action: what it makes is a generic material even when a chest also holds it
+        '/actions/foraging/cheese': { name: 'Cheese', outputItems: [{ itemHrid: '/items/cheese', count: 1 }] },
     },
     itemDetailMap: {},
     openableLootDropMap: {
-        '/items/chimerical_chest': [{ itemHrid: '/items/chimerical_essence' }, { itemHrid: '/items/coin' }],
+        '/items/chimerical_chest': [
+            { itemHrid: '/items/chimerical_essence' },
+            { itemHrid: '/items/griffin_leather' },
+            { itemHrid: '/items/cheese' },
+            { itemHrid: '/items/mini_chest' },
+            { itemHrid: '/items/coin' },
+        ],
+        // A chest inside the chest
+        '/items/mini_chest': [{ itemHrid: '/items/tiny_gem' }],
     },
     shopItemDetailMap: {
         a: { itemHrid: '/items/shop_cloth', costs: [{ itemHrid: '/items/sinister_token', count: 30 }], outputCount: 2 },
@@ -67,11 +73,13 @@ const gameData = {
 const index = buildDungeonInputIndex(gameData);
 
 describe('buildDungeonInputIndex', () => {
-    test('a dungeon reward, a chest and the chest contents are drops; coins and ordinary zones are not', () => {
+    test('a dungeon reward chest, its contents and the chests inside it are drops; coins and ordinary zones are not', () => {
         expect([...index.drops.keys()].sort()).toEqual([
             '/items/chimerical_chest',
             '/items/chimerical_essence',
             '/items/griffin_leather',
+            '/items/mini_chest',
+            '/items/tiny_gem',
         ]);
         expect(index.drops.get('/items/griffin_leather').dungeons).toEqual(['Chimerical Den']);
     });
@@ -82,6 +90,33 @@ describe('buildDungeonInputIndex', () => {
             tokenHrid: '/items/sinister_token',
             tokenCount: 30,
             outputCount: 2,
+        });
+    });
+
+    test('a generic material a chest also holds is not a dungeon input: it is bought like any other', () => {
+        expect(index.drops.has('/items/cheese')).toBe(false);
+        expect(dungeonInputKind('/items/cheese', index)).toBeNull();
+    });
+
+    test('a chest that holds itself does not loop', () => {
+        const loop = buildDungeonInputIndex({
+            ...gameData,
+            openableLootDropMap: { '/items/chimerical_chest': [{ itemHrid: '/items/chimerical_chest' }] },
+        });
+        expect([...loop.drops.keys()]).toEqual(['/items/chimerical_chest']);
+    });
+
+    test('a shop line that spells its cost as a single `cost` is read too', () => {
+        const single = buildDungeonInputIndex({
+            ...gameData,
+            shopItemDetailMap: {
+                x: { itemHrid: '/items/lone_cloth', cost: { itemHrid: '/items/sinister_token', count: 9 } },
+            },
+        });
+        expect(single.tokenShop.get('/items/lone_cloth')).toEqual({
+            tokenHrid: '/items/sinister_token',
+            tokenCount: 9,
+            outputCount: 1,
         });
     });
 
@@ -123,6 +158,7 @@ describe('normalizers', () => {
     test('owned mode falls back to market', () => {
         expect(normalizeOwnedMode('sunk')).toBe('sunk');
         expect(normalizeOwnedMode('market')).toBe('market');
+        expect(normalizeOwnedMode('buy')).toBe('buy');
         expect(normalizeOwnedMode('weird')).toBe('market');
         expect(normalizeOwnedMode(undefined)).toBe('market');
     });
@@ -137,6 +173,73 @@ const mat = (itemHrid, amount, price, extra = {}) => ({
     askPrice: price,
     missingPrice: false,
     ...extra,
+});
+
+describe('priceCraftMaterials: buy mode and estimates', () => {
+    const valueToken = (hrid) => ({ '/items/shop_cloth': 480 })[hrid] ?? null;
+
+    test('a dungeon drop is priced at the buy price, untaxed, not at its sale value', () => {
+        const priced = priceCraftMaterials({
+            materials: [mat('/items/griffin_leather', 2, 1000)],
+            index,
+            ownedMode: OWNED_MODES.BUY,
+            valueDrop: () => 960,
+            valueToken,
+        });
+        expect(priced.costPerAction).toBe(2000);
+        expect(priced.dungeonInputs[0]).toEqual(expect.objectContaining({ via: 'buy', unitValue: 1000, sunk: false }));
+    });
+
+    test('a token-shop item takes the cheaper of the buy price and the token route', () => {
+        const dear = priceCraftMaterials({
+            materials: [mat('/items/shop_cloth', 1, 900)],
+            index,
+            ownedMode: OWNED_MODES.BUY,
+            valueToken,
+        });
+        expect(dear.costPerAction).toBe(480);
+        expect(dear.dungeonInputs[0].via).toBe('token');
+        const cheap = priceCraftMaterials({
+            materials: [mat('/items/shop_cloth', 1, 300)],
+            index,
+            ownedMode: OWNED_MODES.BUY,
+            valueToken,
+        });
+        expect(cheap.costPerAction).toBe(300);
+        expect(cheap.dungeonInputs[0].via).toBe('buy');
+    });
+
+    test('no buy price and no token route is unpriced, never 0', () => {
+        const priced = priceCraftMaterials({
+            materials: [mat('/items/griffin_leather', 2, 0, { missingPrice: true })],
+            index,
+            ownedMode: OWNED_MODES.BUY,
+            valueToken,
+        });
+        expect(priced.unpriced).toEqual([{ itemHrid: '/items/griffin_leather', reason: 'dungeon-input' }]);
+        // A token route still prices a shop item whose market price is missing
+        const viaToken = priceCraftMaterials({
+            materials: [mat('/items/shop_cloth', 1, 0, { missingPrice: true })],
+            index,
+            ownedMode: OWNED_MODES.BUY,
+            valueToken,
+        });
+        expect(viaToken.costPerAction).toBe(480);
+    });
+
+    test('an input priced from the value estimate is listed, in ordinary and buy-mode inputs alike', () => {
+        const priced = priceCraftMaterials({
+            materials: [
+                mat('/items/cheese', 1, 5, { estimatedPrice: true }),
+                mat('/items/griffin_leather', 1, 1000, { estimatedPrice: true }),
+                mat('/items/other', 1, 1),
+            ],
+            index,
+            ownedMode: OWNED_MODES.BUY,
+            valueToken,
+        });
+        expect(priced.estimated.sort()).toEqual(['/items/cheese', '/items/griffin_leather']);
+    });
 });
 
 describe('priceCraftMaterials', () => {
@@ -360,6 +463,19 @@ describe('evaluateLevel', () => {
         expect(level.enhanceXpPerHour).toBeCloseTo(1500, 6);
     });
 
+    test('an unpriced drink keeps its own reason, apart from an unpriced input', () => {
+        const level = evaluateLevel({
+            ...base,
+            craftCostPerUnit: null,
+            unpricedInputs: [{ itemHrid: '/items/tea', reason: 'tea' }],
+            level: 0,
+            enhance: null,
+            saleAfterTax: 200,
+        });
+        expect(level.reasons).toEqual(['tea']);
+        expect(level.craftCostPerUnit).toBeNull();
+    });
+
     test('an unpriced +N sale makes the profit null, never sale-less arithmetic', () => {
         const level = evaluateLevel({
             ...base,
@@ -540,6 +656,12 @@ describe('arrangeCraftEnhanceRows', () => {
                 expect(names.slice(-2).sort()).toEqual(['noquote', 'unpricedinput']);
             }
         }
+    });
+
+    test('sorting by +0 places a row by its +0 figure even when its +N is unpriced', () => {
+        const base = arrangeCraftEnhanceRows([noQuote, unpricedInput], { sort: 'base' }).map((r) => r.itemName);
+        // unpricedinput has no priced level at all: it goes behind noquote, whose +0 is priced
+        expect(base).toEqual(['noquote', 'unpricedinput']);
     });
 
     test('ascending puts the worst priced row first', () => {

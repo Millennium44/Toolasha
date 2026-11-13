@@ -19,6 +19,8 @@ const game = vi.hoisted(() => ({
     enhanceCalls: [],
     tokenValue: {},
     stamp: 1,
+    drinks: [],
+    drinkPrices: {},
     detected: { enhancingLevel: 100, experienceBonus: 10, toolBonus: 5, speedBonus: 0, guzzlingBonus: 1, teas: {} },
     settings: {},
 }));
@@ -57,15 +59,23 @@ vi.mock('../../utils/experience-calculator.js', () => ({
     calculateExpPerHour: () => ({ modifiedXP: 100 }),
 }));
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPriceInfo: (hrid, { enhancementLevel = 0 } = {}) =>
-        game.quotes[`${hrid}:${enhancementLevel}`] ?? { price: null, source: null, estimated: false },
+    getItemPriceInfo: (hrid, { enhancementLevel = 0, side } = {}) =>
+        game.quotes[`${hrid}:${enhancementLevel}`] ??
+        (side === 'buy' && hrid in game.drinkPrices
+            ? { price: game.drinkPrices[hrid], source: 'book', estimated: false }
+            : { price: null, source: null, estimated: false }),
+}));
+vi.mock('../../utils/action-context.js', () => ({
+    resolveActionContext: () => ({ equipment: new Map(), drinks: game.drinks }),
 }));
 vi.mock('../../utils/token-valuation.js', () => ({
     DUNGEON_TOKEN_HRIDS: new Set(['/items/sinister_token']),
+    shopCosts: (line) => (Array.isArray(line?.costs) ? line.costs : line?.cost ? [line.cost] : []),
     calculateDungeonTokenValue: (hrid) => game.tokenValue[hrid] ?? null,
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     calculatePriceAfterTax: (price) => price * 0.96,
+    calculateDrinksPerHour: (concentration = 0) => 12 * (1 + concentration),
     outputTaxRate: () => 0.04,
 }));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow === true }));
@@ -75,7 +85,7 @@ vi.mock('./production-arbitrage.js', () => ({
     stateFingerprint: () => `fp${game.stamp}`,
 }));
 
-const { rankCraftEnhance, clearCraftEnhanceCache, craftEnhanceAvailable, saleAfterTaxAt } =
+const { rankCraftEnhance, clearCraftEnhanceCache, craftEnhanceAvailable, saleAfterTaxAt, craftEnhancePriceStamp } =
     await import('./craft-enhance.js');
 
 const skill = { skillHrid: '/skills/cheesesmithing', label: 'Cheesesmithing' };
@@ -113,8 +123,8 @@ function profit(name, extra = {}) {
         teaCosts: [],
         bonusRevenue: { hasMissingPrices: false },
         materialCosts: [
-            { itemHrid: '/items/griffin_leather', amount: 2, totalCost: 2 * 1000, missingPrice: false },
-            { itemHrid: '/items/cheese', amount: 10, totalCost: 10 * 5, missingPrice: false },
+            { itemHrid: '/items/griffin_leather', amount: 2, askPrice: 1000, totalCost: 2 * 1000, missingPrice: false },
+            { itemHrid: '/items/cheese', amount: 10, askPrice: 5, totalCost: 10 * 5, missingPrice: false },
         ],
         ...extra,
     };
@@ -154,6 +164,8 @@ beforeEach(() => {
     game.enhanceQuotes = { '/items/sword': { cost: 1500, seconds: 60, xp: 400, xpKnown: true } };
     game.enhanceCalls = [];
     game.tokenValue = {};
+    game.drinks = [];
+    game.drinkPrices = {};
 });
 
 describe('which recipes are walked', () => {
@@ -276,6 +288,21 @@ describe('a missing price is carried as missing', () => {
         expect(row.target.status).toBe('unpriced');
     });
 
+    test('a token-shop input in the real single-cost shape is read too', async () => {
+        game.gameData.shopItemDetailMap = {
+            a: { itemHrid: '/items/shop_cloth', cost: { itemHrid: '/items/sinister_token', count: 20 } },
+        };
+        game.recipes = [
+            recipe('sword', { action: { name: 'sword', inputItems: [{ itemHrid: '/items/shop_cloth' }] } }),
+        ];
+        game.profits['/actions/cheesesmithing/sword'] = profit('sword', {
+            materialCosts: [{ itemHrid: '/items/shop_cloth', amount: 1, totalCost: 9999, missingPrice: false }],
+        });
+        game.tokenValue = { '/items/sinister_token': 50 };
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(row.target.craftCostPerUnit).toBeCloseTo(20 * 50 * 0.96, 6);
+    });
+
     test('a token-shop input is valued through the token, after tax', async () => {
         game.gameData.shopItemDetailMap = {
             a: {
@@ -365,5 +392,89 @@ describe('availability and quotes', () => {
         expect(saleAfterTaxAt('/items/b', 3)).toBeNull();
         expect(saleAfterTaxAt('/items/c', 3)).toBeNull();
         expect(saleAfterTaxAt('/items/d', 3)).toBeNull();
+    });
+});
+
+describe('enhancing drinks', () => {
+    const concentration = { ...game.detected, guzzlingBonus: 1.5 };
+
+    test('the slotted drinks are charged over the run, one per 300 / (1 + concentration) seconds in every slot', async () => {
+        game.detected = concentration;
+        game.drinks = [{ itemHrid: '/items/tea_a' }, { itemHrid: '/items/tea_b' }, null];
+        game.drinkPrices = { '/items/tea_a': 100, '/items/tea_b': 50 };
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        // 12 x 1.5 = 18 drinks an hour per slot; the run is 60 s
+        const drinks = ((100 + 50) * 18 * 60) / 3600;
+        expect(row.target.enhanceCost).toBeCloseTo(1500 + drinks, 6);
+        game.detected = {
+            enhancingLevel: 100,
+            experienceBonus: 10,
+            toolBonus: 5,
+            speedBonus: 0,
+            guzzlingBonus: 1,
+            teas: {},
+        };
+    });
+
+    test('a drink with no price makes the enhance figure null, never the plan alone', async () => {
+        game.drinks = [{ itemHrid: '/items/tea_a' }, { itemHrid: '/items/tea_gone' }];
+        game.drinkPrices = { '/items/tea_a': 100 };
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(row.target.enhanceCost).toBeNull();
+        expect(row.target.status).toBe('unpriced');
+        expect(row.target.reasons).toEqual(['enhance']);
+        expect(row.base.status).toBe('ok');
+    });
+
+    test('a changed drink slot recomputes', async () => {
+        game.drinkPrices = { '/items/tea_a': 100 };
+        const a = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        game.drinks = [{ itemHrid: '/items/tea_a' }];
+        const b = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(b).not.toBe(a);
+    });
+});
+
+describe('test-server shop quote', () => {
+    test('a quote that does not know its XP (the shop copy price) is no enhancement quote', async () => {
+        game.enhanceQuotes = { '/items/sword': { cost: 8800, seconds: 0, xp: 0, xpKnown: false } };
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(row.target.status).toBe('unpriced');
+        expect(row.target.reasons).toEqual(['enhance']);
+        expect(row.target.enhanceCost).toBeNull();
+    });
+});
+
+describe('buy mode, estimates, teas and the price stamp', () => {
+    test('buy mode prices the dungeon input at the calculator buy price, untaxed', async () => {
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'buy' });
+        // 2 leather at the 1000 buy price (totalCost 2000 / 2) and 10 cheese at 5
+        expect(row.target.craftCostPerUnit).toBeCloseTo(2000 + 50, 6);
+        expect(row.sunkInputs).toEqual([]);
+    });
+
+    test('buy mode with a missing buy price is unpriced, not 0', async () => {
+        game.profits['/actions/cheesesmithing/sword'].materialCosts[0].missingPrice = true;
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'buy' });
+        expect(row.target.status).toBe('unpriced');
+    });
+
+    test('an input priced only from the value estimate is noted, and still priced', async () => {
+        game.profits['/actions/cheesesmithing/sword'].materialCosts[1].estimatedPrice = true;
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(row.target.status).toBe('ok');
+        expect(row.estimatedInputs).toEqual(['/items/cheese']);
+        expect(row.notes.join(' ')).toContain('estimate');
+    });
+
+    test('an unpriced drink has its own reason', async () => {
+        game.profits['/actions/cheesesmithing/sword'].teaCosts = [{ itemHrid: '/items/tea', missingPrice: true }];
+        const [row] = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        expect(row.target.reasons).toEqual(['tea']);
+    });
+
+    test('the price stamp is exposed for staleness checks', () => {
+        game.stamp = 123;
+        expect(craftEnhancePriceStamp()).toBe(123);
     });
 });

@@ -27,9 +27,10 @@ import profitCalculator from '../market/profit-calculator.js';
 import { quoteDirectEnhancement } from '../combat-sim/direct-enhancement-cost.js';
 import { getAutoDetectedParams } from '../../utils/enhancement-config.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { getItemPriceInfo } from '../../utils/market-data.js';
 import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
-import { calculatePriceAfterTax, outputTaxRate } from '../../utils/profit-helpers.js';
+import { calculateDrinksPerHour, calculatePriceAfterTax, outputTaxRate } from '../../utils/profit-helpers.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
 import { productionRecipes, stateFingerprint } from './production-arbitrage.js';
@@ -103,12 +104,63 @@ function tokenRouteValue(index, itemHrid) {
 }
 
 /**
+ * The market data's age stamp. The window compares it with the one its rows were built on to know they are stale.
+ * @returns {number}
+ */
+export function craftEnhancePriceStamp() {
+    return marketAPI.lastFetchTimestamp || 0;
+}
+
+/**
+ * What the enhancing drinks cost an hour, on the same rule the crafting side charges its teas by: one drink per
+ * 300 / (1 + drink concentration) seconds in every slot.
+ *
+ * The detected bench includes the effects of the enhancing teas slotted, so the run has to carry what they cost.
+ * A drink with no price makes the figure unknown (`unpriced`), never free.
+ *
+ * @param {Object} params - From getAutoDetectedParams (`guzzlingBonus` is 1 + drink concentration)
+ * @returns {{costPerHour: number, unpriced: string[], drinks: string[]}}
+ */
+export function enhancingDrinkCost(params) {
+    const slots = (resolveActionContext('/action_types/enhancing')?.drinks || []).filter((drink) => drink?.itemHrid);
+    const perHour = calculateDrinksPerHour(Math.max(0, (Number(params?.guzzlingBonus) || 1) - 1));
+    let costPerHour = 0;
+    const unpriced = [];
+    for (const drink of slots) {
+        const { price } = getItemPriceInfo(drink.itemHrid, { context: 'profit', side: 'buy' });
+        if (price === null || price === undefined || !(price >= 0)) unpriced.push(drink.itemHrid);
+        else costPerHour += price * perHour;
+    }
+    return { costPerHour, unpriced, drinks: slots.map((drink) => drink.itemHrid) };
+}
+
+/**
+ * The enhancement run to rate a row with: the plan's cost plus its drinks, or null when it cannot be priced.
+ *
+ * A quote that does not know its XP is the test server's guaranteed shop copy: its "cost" is the price of the
+ * finished +N piece, which the craft already makes, so it is not an enhancement quote and is refused.
+ *
+ * @param {Object|null} quote - From quoteDirectEnhancement
+ * @param {{costPerHour: number, unpriced: string[]}} drinks - From {@link enhancingDrinkCost}
+ * @returns {Object|null}
+ */
+export function enhanceWithDrinks(quote, drinks) {
+    if (!quote || quote.xpKnown === false) return null;
+    if (drinks.unpriced.length > 0 && quote.seconds > 0) return null;
+    return { ...quote, cost: quote.cost + (drinks.costPerHour * quote.seconds) / 3600 };
+}
+
+/**
  * The enhancing bench, as numbers that move the fingerprint.
  * @param {Object} params - From getAutoDetectedParams
  * @returns {string}
  */
 function benchDigest(params) {
+    const drinks = (resolveActionContext('/action_types/enhancing')?.drinks || []).map(
+        (drink) => drink?.itemHrid || ''
+    );
     return [
+        drinks.join('+'),
         params.enhancingLevel,
         params.toolBonus,
         params.speedBonus,
@@ -186,6 +238,7 @@ export function rankCraftEnhance({
             return hasDungeonInput(recipe.action, index);
         });
 
+        const drinkCost = enhancingDrinkCost(params);
         const enhanceByItem = new Map();
         const rows = [];
 
@@ -237,14 +290,17 @@ export function rankCraftEnhance({
                 taxRate,
             });
             // Tea cost with a missing price understates the craft cost: unpriced, not cheap
-            if (profit.teaCosts?.some((tea) => tea.missingPrice)) {
-                priced.unpriced.push({ itemHrid: '/tea', reason: 'tea' });
+            for (const tea of profit.teaCosts || []) {
+                if (tea.missingPrice) priced.unpriced.push({ itemHrid: tea.itemHrid, reason: 'tea' });
             }
 
             if (!enhanceByItem.has(recipe.itemHrid)) {
                 enhanceByItem.set(
                     recipe.itemHrid,
-                    quoteDirectEnhancement(recipe.itemHrid, 0, targetLevel, gameData, { params })
+                    enhanceWithDrinks(
+                        quoteDirectEnhancement(recipe.itemHrid, 0, targetLevel, gameData, { params }),
+                        drinkCost
+                    )
                 );
             }
 
@@ -257,6 +313,16 @@ export function rankCraftEnhance({
             const requiredLevel = recipe.action.levelRequirement?.level || 1;
 
             const notes = [];
+            if (priced.estimated.length > 0) {
+                notes.push('An input is priced from the game value estimate, not a live order.');
+            }
+            if (enhanceByItem.get(recipe.itemHrid) === null) {
+                notes.push(
+                    drinkCost.unpriced.length > 0
+                        ? 'An enhancing drink has no price, so the enhancement cost is unknown.'
+                        : 'The enhancement run could not be priced.'
+                );
+            }
             if (profit.bonusRevenue?.hasMissingPrices)
                 notes.push('A bonus drop has no price and is left out of the profit.');
 
@@ -297,4 +363,5 @@ export default {
     rankCraftEnhance,
     clearCraftEnhanceCache,
     saleAfterTaxAt,
+    craftEnhancePriceStamp,
 };

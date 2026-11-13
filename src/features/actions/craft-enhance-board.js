@@ -40,6 +40,7 @@ import {
     TARGET_LEVEL_SETTING,
     clearCraftEnhanceCache,
     craftEnhanceAvailable,
+    craftEnhancePriceStamp,
     rankCraftEnhance,
 } from './craft-enhance.js';
 import {
@@ -71,10 +72,17 @@ const GOOD = '#4ade80';
 const BAD = '#f87171';
 const WARN = '#ffb74d';
 
+/** What each owned-drops mode means, for the status line */
+const OWNED_NOTES = {
+    market: 'Dungeon inputs are valued at what they would sell for after tax (you own them).',
+    buy: 'Dungeon inputs are valued at their buy price, untaxed (you buy them); a token-shop item takes the cheaper of that and its token value.',
+    sunk: 'Dungeon inputs are counted at 0 (already owned, sunk).',
+};
+
 const REASON_LABELS = {
     input: 'input unpriced',
     'dungeon-input': 'drop unpriced',
-    tea: 'tea unpriced',
+    tea: 'drink unpriced',
     enhance: 'enhance unpriced',
     sale: 'no sale quote',
     rate: 'no output rate',
@@ -164,7 +172,8 @@ class CraftEnhanceBoard {
         this.generation = 0;
         /** `${itemHrid}:${level}` to a measured volume, `{known, unitsPerDay}` */
         this.volumes = new Map();
-        this.volumePending = new Set();
+        /** `${itemHrid}:${level}` to the token of the lookup in flight, so a stale one cannot clear a newer marker */
+        this.volumePending = new Map();
         /** The target and mode the held rows were costed for; a settings change from elsewhere makes them stale */
         this.rowsKey = null;
     }
@@ -177,6 +186,14 @@ class CraftEnhanceBoard {
     /** The owned-drops mode in force */
     get ownedMode() {
         return normalizeOwnedMode(config.getSettingValue(OWNED_MODE_SETTING, OWNED_MODES.MARKET));
+    }
+
+    /**
+     * What the held rows were costed for: the target, the owned-drops mode and the market data's age.
+     * @returns {string}
+     */
+    currentKey() {
+        return `${this.targetLevel}|${this.ownedMode}|${craftEnhancePriceStamp()}`;
     }
 
     /** Feature-registry entry point */
@@ -294,7 +311,7 @@ class CraftEnhanceBoard {
         if (this.rows || this.computing) return;
         const generation = ++this.generation;
         const isCurrent = () => generation === this.generation;
-        this.rowsKey = `${this.targetLevel}|${this.ownedMode}`;
+        this.rowsKey = this.currentKey();
         this.computing = true;
         this.error = null;
         this.progress = { done: 0, total: 0 };
@@ -341,10 +358,10 @@ class CraftEnhanceBoard {
      * @param {HTMLElement} body - The panel's body
      */
     draw(body) {
-        // The target or the owned-drops mode was changed somewhere else (the settings panel): the rows held are
-        // for the old one
+        // The target or the owned-drops mode was changed somewhere else (the settings panel), or the market data
+        // has refreshed since: the rows held are for the old one
         // (started on a microtask: both paths render the panel, and a render inside a draw would paint twice)
-        if (this.rows && !this.computing && this.rowsKey !== `${this.targetLevel}|${this.ownedMode}`) {
+        if (this.rows && !this.computing && this.rowsKey !== this.currentKey()) {
             queueMicrotask(() => this.recompute());
         } else if (!this.rows && !this.computing && !this.error) {
             queueMicrotask(() => this.ensureRows());
@@ -361,12 +378,9 @@ class CraftEnhanceBoard {
             status.textContent = `The ranking could not be computed: ${this.error.message}`;
             status.style.color = BAD;
         } else {
-            const sunk = this.ownedMode === OWNED_MODES.SUNK;
             status.textContent =
-                (sunk
-                    ? 'Dungeon inputs are counted at 0 (already owned, sunk). '
-                    : 'Dungeon inputs are valued at what they would sell for after tax. ') +
-                'Enhancing uses your own detected bench. A "—" is a price that is missing, never a 0.';
+                `${OWNED_NOTES[this.ownedMode]} ` +
+                'Enhancing uses your own detected bench and counts its drinks. A "—" is a price that is missing, never a 0.';
         }
         body.appendChild(status);
 
@@ -406,23 +420,29 @@ class CraftEnhanceBoard {
 
         controls.appendChild(label('Owned drops:'));
         const owned = this.ownedMode;
-        const market = controlButton(
-            'Sale value',
-            () => this.changeSetting(OWNED_MODE_SETTING, OWNED_MODES.MARKET),
-            owned === OWNED_MODES.MARKET
-        );
-        market.title =
-            'Count each dungeon drop or token-shop input at what it would sell for after tax (the cost of using it)';
-        market.setAttribute('data-ce-owned', OWNED_MODES.MARKET);
-        const sunk = controlButton(
-            'Sunk (0)',
-            () => this.changeSetting(OWNED_MODE_SETTING, OWNED_MODES.SUNK),
-            owned === OWNED_MODES.SUNK
-        );
-        sunk.title =
-            'Count dungeon drops and token-shop inputs you already own at 0. Rows using them are badged "sunk".';
-        sunk.setAttribute('data-ce-owned', OWNED_MODES.SUNK);
-        controls.append(market, sunk);
+        const modes = [
+            [
+                OWNED_MODES.MARKET,
+                'Sale value',
+                'You own them: count each dungeon drop or token-shop input at what it would sell for after tax (the cost of using it)',
+            ],
+            [
+                OWNED_MODES.BUY,
+                'Buy price',
+                'You buy them: count each at the buy side of your pricing mode, with no tax. A token-shop item takes the cheaper of that and its token value.',
+            ],
+            [
+                OWNED_MODES.SUNK,
+                'Sunk (0)',
+                'Already owned and not worth selling: count them at 0. Rows using them are badged "sunk".',
+            ],
+        ];
+        for (const [mode, text, title] of modes) {
+            const button = controlButton(text, () => this.changeSetting(OWNED_MODE_SETTING, mode), owned === mode);
+            button.title = title;
+            button.setAttribute('data-ce-owned', mode);
+            controls.appendChild(button);
+        }
 
         const skillSelect = document.createElement('select');
         skillSelect.classList.add('toolasha-select');
@@ -528,19 +548,31 @@ class CraftEnhanceBoard {
         for (const row of visible.slice(0, VOLUME_ROWS)) {
             const key = `${row.itemHrid}:${level}`;
             if (this.volumes.has(key) || this.volumePending.has(key)) continue;
-            this.volumePending.add(key);
-            itemDailyVolume(row.itemHrid, level)
-                .then((volume) => {
-                    this.volumePending.delete(key);
-                    // A run abandoned since (character switch, new target) leaves this answer unused
-                    if (generation !== this.generation) return;
-                    this.volumes.set(key, volume);
-                    this.redrawTable();
-                })
-                .catch((error) => {
-                    this.volumePending.delete(key);
-                    console.error('[CraftEnhance] Reading volume failed:', error);
-                });
+            const token = {};
+            this.volumePending.set(key, token);
+            this.loadVolume(key, row.itemHrid, level, token, generation);
+        }
+    }
+
+    /**
+     * One volume lookup. Only the lookup that still holds the marker for its key may clear it or store a result.
+     * @param {string} key - `${itemHrid}:${level}`
+     * @param {string} itemHrid - The item
+     * @param {number} level - Enhancement level
+     * @param {Object} token - The marker this lookup set
+     * @param {number} generation - The run this lookup belongs to
+     */
+    async loadVolume(key, itemHrid, level, token, generation) {
+        try {
+            const volume = await itemDailyVolume(itemHrid, level);
+            // A run abandoned since (character switch, new target) leaves this answer unused
+            if (generation !== this.generation || this.volumePending.get(key) !== token) return;
+            this.volumes.set(key, volume);
+            this.redrawTable();
+        } catch (error) {
+            console.error('[CraftEnhance] Reading volume failed:', error);
+        } finally {
+            if (this.volumePending.get(key) === token) this.volumePending.delete(key);
         }
     }
 
@@ -724,10 +756,11 @@ class CraftEnhanceBoard {
         tr.appendChild(volumeCell);
 
         const flags = [...new Set([...t.reasons, ...b.reasons])];
-        const data = cell(flags.map((reason) => REASON_LABELS[reason] || reason).join(', '), {
-            color: flags.length ? WARN : MUTED,
-        });
-        data.setAttribute('data-ce-data', flags.length ? 'unpriced' : 'ok');
+        const labels = flags.map((reason) => REASON_LABELS[reason] || reason);
+        // An input priced from the game's value estimate is usable but not a live order
+        if (row.estimatedInputs?.length) labels.push('price estimated');
+        const data = cell(labels.join(', '), { color: labels.length ? WARN : MUTED });
+        data.setAttribute('data-ce-data', flags.length ? 'unpriced' : row.estimatedInputs?.length ? 'estimated' : 'ok');
         data.title = [
             ...row.notes,
             reasonText(t) ? `+${target}: ${reasonText(t)}` : '',
