@@ -92,6 +92,13 @@ beforeEach(() => {
 });
 
 describe('what the tiles apply', () => {
+    test('an undefined action type still runs the calculation, with nothing simulated', () => {
+        choose(EFFICIENCY);
+        const run = vi.fn(() => 'figures');
+        expect(tiles.runWithTileScrolls(undefined, run)).toEqual({ result: 'figures', simulated: [] });
+        expect(run).toHaveBeenCalledTimes(1);
+    });
+
     test('the chosen scrolls, while both settings are on', () => {
         choose(EFFICIENCY);
         const { result, simulated } = tiles.runWithTileScrolls(MILKING, efficiencyNow);

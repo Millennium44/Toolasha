@@ -186,6 +186,15 @@ describe('the gathering profit section follows the scroll selection', () => {
         expect(panel.querySelectorAll('#mwi-foraging-profit')).toHaveLength(1);
     });
 
+    test('a chosen scroll the skill cannot use is not armed, as on the tiles', async () => {
+        // Gourmet is in the shared default selection but is not usable in foraging (only Efficiency is)
+        await scrollSimulator.saveScrollsForLoadout(null, [EFF, '/buff_types/gourmet']);
+        const panel = makePanel();
+        await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
+
+        expect(game.armed.at(-1)).toEqual([EFF]);
+    });
+
     test('switching simulation off redraws the section with nothing armed', async () => {
         await scrollSimulator.saveScrollsForLoadout(null, [EFF]);
         const panel = makePanel();
