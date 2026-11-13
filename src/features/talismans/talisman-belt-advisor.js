@@ -36,6 +36,7 @@ import {
     newlyUnpricedLineCosts,
 } from '../../utils/talisman-line-sets.js';
 import { calculateDirectEnhancementCost } from '../combat-sim/direct-enhancement-cost.js';
+import { benchNote, enhancementParamsFor } from '../enhancement/enhancement-params-source.js';
 
 /** The equipment type of a Talisman Belt */
 export const BELT_EQUIPMENT_TYPE = '/equipment_types/belt';
@@ -67,7 +68,7 @@ export const COST_BASES = [
     {
         key: 'enhance',
         label: 'Enhance (estimate)',
-        help: 'What it costs to enhance it yourself at your enhancing bench, as the enhancement tooltip estimates it (expected cost, cheapest protection). Your current belt up to the level; a larger belt is bought at +0 first. Not available while Tester-shop pricing is on.',
+        help: 'What enhancing it costs, as the enhancement tooltip estimates it (expected cost, cheapest protection), on the bench that tooltip uses: your own, or Pro rates or your manual simulator stats when those are set, which the result then names. Your current belt up to the level; a larger belt is bought at +0 first. Not available while Tester-shop pricing is on.',
     },
 ];
 
@@ -172,7 +173,7 @@ function proceedsOf(belt, deps) {
  * @param {Object} candidate - From {@link beltCandidates}
  * @param {{hrid: string, enhancementLevel?: number}} current - The belt worn
  * @param {Object} gameData - `itemDetailMap` for the enhancement estimate
- * @param {Object} [deps] - `{priceInfo, afterTax, testerOn, enhanceCost}`; real ones by default
+ * @param {Object} [deps] - `{priceInfo, afterTax, testerOn, enhanceCost, bench}`; real ones by default
  * @returns {{market: {price: number|null, reason?: string}, net: Object, enhance: Object}}
  */
 export function beltCosts(candidate, current, gameData, deps = {}) {
@@ -181,6 +182,15 @@ export function beltCosts(candidate, current, gameData, deps = {}) {
         afterTax: (price) => calculatePriceAfterTax(price),
         testerOn: () => testerShopEnabled(),
         enhanceCost: calculateDirectEnhancementCost,
+        // The bench the estimate above runs on, when it is not the player's own (Pro rates, a manual bench)
+        bench: (hrid) => {
+            try {
+                return benchNote(enhancementParamsFor('advisor', hrid));
+            } catch (error) {
+                console.error('[TalismanBeltAdvisor] Could not name the enhancement bench:', error);
+                return null;
+            }
+        },
         ...deps,
     };
     const label = `${candidate.name} +${candidate.level}`;
@@ -211,7 +221,7 @@ export function beltCosts(candidate, current, gameData, deps = {}) {
         const cost = d.enhanceCost(candidate.hrid, current.enhancementLevel || 0, candidate.level, gameData);
         enhance =
             typeof cost === 'number' && cost >= 0
-                ? { price: cost }
+                ? { price: cost, bench: d.bench(candidate.hrid) || null }
                 : {
                       price: null,
                       reason: 'The enhancement cost cannot be estimated (a material or protection has no price).',
@@ -221,12 +231,12 @@ export function beltCosts(candidate, current, gameData, deps = {}) {
         if (base === null) {
             enhance = { price: null, reason: `No market listing for ${candidate.name} +0 to enhance from.` };
         } else if (candidate.level === 0) {
-            enhance = { price: base };
+            enhance = { price: base, bench: null };
         } else {
             const cost = d.enhanceCost(candidate.hrid, 0, candidate.level, gameData);
             enhance =
                 typeof cost === 'number' && cost >= 0
-                    ? { price: base + cost }
+                    ? { price: base + cost, bench: d.bench(candidate.hrid) || null }
                     : {
                           price: null,
                           reason: 'The enhancement cost cannot be estimated (a material or protection has no price).',
