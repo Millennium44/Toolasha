@@ -5,7 +5,12 @@
  */
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const game = vi.hoisted(() => ({ settings: { marketFilter: true }, items: {} }));
+const game = vi.hoisted(() => ({ settings: { marketFilter: true }, items: {}, testServer: true }));
+
+vi.mock('../../utils/game-server.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    isTestServer: () => game.testServer,
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: (key) => game.settings[key] },
@@ -157,5 +162,26 @@ describe('market filter', () => {
         const reopened = openMarketplace(['cheese', 'wooden_sword', 'iron_sword', 'holy_sword']);
         expect(shown(reopened)).toEqual(['cheese', 'wooden_sword', 'iron_sword', 'holy_sword']);
         expect(document.getElementById('toolasha-level-min').value).toBe('1');
+    });
+});
+
+describe('the Belt slot option', () => {
+    const options = () => Array.from(document.getElementById('toolasha-slot-filter').options).map((o) => o.value);
+
+    afterEach(() => {
+        game.testServer = true;
+    });
+
+    test('is offered on the test server', () => {
+        game.testServer = true;
+        openMarketplace(['cheese']);
+        expect(options()).toContain('belt');
+    });
+
+    test('is not offered on live', () => {
+        game.testServer = false;
+        openMarketplace(['cheese']);
+        expect(options()).not.toContain('belt');
+        expect(options()).toContain('neck');
     });
 });

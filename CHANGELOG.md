@@ -11,8 +11,25 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 The Skilling Optimizer's Talismans section now ranks on the loadout chosen in its Loadout dropdown, belt and talismans included, and its header names which loadout it read. With no loadout picked it uses the one the skill equips, as before.
 
 ### Labyrinth "Buy missing supplies" no longer makes the row taller
+### Compact talisman editing in the Combat Sim
 
-The button now sits beside the Supplies label instead of on a line of its own, so the Labyrinth's bottom row keeps its normal height.
+The editor's talismans now sit side by side as small cards, one per belt slot, instead of a tall list of full-width rows; on a phone they stack. The Belt row is hidden where the game has no belts.
+
+### Best Items remembers where you were
+
+Alchemy Best Items now reopens on the last Coinify, Decompose or Transmute tab you picked. After clicking an item to go to the market, a "Best Items" return tab there takes you straight back to the same tab and scroll spot.
+
+### Hide rows in Best Items
+
+Each Best Items row has a × to hide items you will not do or already bid on, kept separately for each alchemy type; "Show hidden (N)" brings them back with a button to unhide.
+
+### Sort the treasure popup by column
+
+Click Qty, Value, vs exp., Exp. qty or Exp. val in the chest-opening popup to sort its rows; click again to reverse, a third time for the usual order. The choice is remembered.
+
+### Labyrinth "Buy supplies" button takes the Supplies heading's place
+
+The button now replaces the Supplies heading instead of sitting on a line of its own, so the bottom row keeps its normal height and the button stays centered, phones included.
 
 ### Skilling Optimizer tool label no longer overlaps
 
