@@ -33,6 +33,8 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/bundle-bridge.js', () => ({
     gatheringProfit: () => null,
     productionProfit: () => ({ calculateProductionProfit: async () => mocks.profit }),
+    guildMemberSkills: () => null,
+    marketUndercutAlerts: () => null,
 }));
 vi.mock('../../utils/experience-parser.js', () => ({
     // 2x for this skill: a figure that would be 1x if the multiplier were skipped

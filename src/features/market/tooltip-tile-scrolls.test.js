@@ -52,6 +52,8 @@ vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null } }
 vi.mock('../../utils/bundle-bridge.js', () => ({
     scrollSimulator: () => ({ getScrollSetForActionType: () => mocks.chosen }),
     loadoutSnapshot: () => null,
+    guildMemberSkills: () => null,
+    marketUndercutAlerts: () => null,
 }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: {} }));
 vi.mock('../combat/scroll-simulator.js', () => ({ default: { getScrollSetForActionType: () => mocks.chosen } }));
