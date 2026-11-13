@@ -43,6 +43,20 @@ describe('parsing and inserting', () => {
         );
     });
 
+    it('adds an entry whose title an earlier release already used', () => {
+        // An earlier release, below its own shipped marker, already has a "Small display fixes" entry
+        const withOld = (current) =>
+            '# Changelog\n\n## Unreleased — branch `main`\n\n' +
+            current +
+            '<!-- shipped in 9.9.9 -->\n\n### Small display fixes\n\nOld release text.\n\n' +
+            `${MARKER}\n\n- Old flat line, grandfathered.\n`;
+        const base = withOld('### Old\n\nOld body.\n\n');
+        const head = withOld('### Small display fixes\n\nNew text.\n\n### Old\n\nOld body.\n\n');
+        const added = addedEntries(head, base, base);
+        expect(added.map((e) => e.title)).toEqual(['Small display fixes']);
+        expect(parseUnreleasedEntries(head).map((e) => e.title)).toEqual(['Small display fixes', 'Old']);
+    });
+
     it('adds several entries in the PR order', () => {
         const base = changelog([['Old', 'Old body.']]);
         const head = changelog([

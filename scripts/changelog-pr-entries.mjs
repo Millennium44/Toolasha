@@ -78,7 +78,11 @@ export function parseUnreleasedEntries(text) {
             close();
             current = { title: heading[1], lines: [line] };
         } else if (MARKER_RE.test(line)) {
+            // Only the current release: below the first `<!-- shipped in -->` marker are earlier releases,
+            // whose titles may be reused (changelog-format.js clears its title set at each marker), so a new
+            // entry must never be dropped for matching one of them
             close();
+            break;
         } else if (current) {
             current.lines.push(line);
         }
