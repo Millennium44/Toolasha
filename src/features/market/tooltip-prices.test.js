@@ -555,6 +555,45 @@ describe('gathering tooltip prices', () => {
     });
 });
 
+describe('gathering tooltip for an item in both drop tables', () => {
+    test('adds the rare-find roll to the regular one: chance and items per hour', async () => {
+        gatheringState.options = [];
+        gatheringState.actionDetailMap = {
+            '/actions/milking/eternal_holy_cow': {
+                hrid: '/actions/milking/eternal_holy_cow',
+                name: 'Eternal Holy Cow',
+                type: '/action_types/milking',
+                category: '/action_categories/milking/cows',
+                baseTimeCost: 45_000_000_000,
+                experienceGain: { skillHrid: '/skills/milking', value: 108 },
+                dropTable: [
+                    { itemHrid: '/items/holy_milk', dropRate: 1, minCount: 1, maxCount: 1 },
+                    { itemHrid: '/items/eternal_milk', dropRate: 0.1, minCount: 1, maxCount: 1 },
+                ],
+                essenceDropTable: [],
+                rareDropTable: [{ itemHrid: '/items/eternal_milk', dropRate: 0.05, minCount: 1, maxCount: 1 }],
+                inputItems: null,
+                outputItems: null,
+            },
+        };
+        gatheringState.profitData = {
+            profitPerHour: 800,
+            hasMissingPrices: false,
+            efficiencyMultiplier: 2,
+            baseOutputs: [{ itemHrid: '/items/eternal_milk', itemsPerHour: 20 }],
+            // Per base action, before efficiency
+            bonusRevenue: { bonusDrops: [{ type: 'rare_find', itemHrid: '/items/eternal_milk', dropsPerHour: 5 }] },
+        };
+
+        const sources = await tooltipPrices.findGatheringSources('/items/eternal_milk');
+
+        expect(sources.zoneActions).toHaveLength(1);
+        expect(sources.zoneActions[0].dropRate).toBeCloseTo(0.15, 10);
+        // 20 from the regular roll, plus 5 base rare finds repeated twice
+        expect(sources.zoneActions[0].itemsPerHour).toBeCloseTo(30, 10);
+    });
+});
+
 describe('gathering tooltip and the sell-tax exclusion', () => {
     test('values every gathering source as a sale, whatever the personal-use toggle says', async () => {
         gatheringState.options = [];

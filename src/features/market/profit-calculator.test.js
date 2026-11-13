@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     initData: null,
     itemDetails: {},
     resolvedPrices: {},
+    partialPrices: new Set(),
     itemPrices: {},
     marketPrices: {},
     productionCosts: {},
@@ -82,7 +83,12 @@ vi.mock('../../utils/profit-helpers.js', () => ({
     resolveItemPrice: (hrid, options) => {
         const key = options?.enhancementLevel > 0 ? `${hrid}:${options.enhancementLevel}` : hrid;
         return key in mocks.resolvedPrices
-            ? { price: mocks.resolvedPrices[key], custom: false, missing: false }
+            ? {
+                  price: mocks.resolvedPrices[key],
+                  custom: false,
+                  missing: false,
+                  ...(mocks.partialPrices.has(key) ? { estimated: true, production: true, partial: true } : {}),
+              }
             : { price: null, custom: false, missing: true };
     },
 }));
@@ -95,6 +101,7 @@ beforeEach(() => {
     mocks.initData = { actionDetailMap: {}, communityBuffTypeDetailMap: {} };
     mocks.itemDetails = {};
     mocks.resolvedPrices = {};
+    mocks.partialPrices = new Set();
     mocks.itemPrices = {};
     mocks.marketPrices = {};
     mocks.productionCosts = {};
@@ -161,6 +168,19 @@ describe('calculateMaterialCosts', () => {
         );
         expect(costs[0].missingPrice).toBe(true);
         expect(costs[0].totalCost).toBe(0);
+    });
+
+    test('a craft-cost price built with an unpriced input is flagged, not taken as the whole bill', () => {
+        // 500 dragon leather where the leather is a craft of unpriced hide: the cost shown is a lower bound
+        mocks.itemDetails['/items/dragon_leather'] = { name: 'Dragon Leather' };
+        mocks.resolvedPrices['/items/dragon_leather'] = 40;
+        mocks.partialPrices.add('/items/dragon_leather');
+        const costs = profitCalculator.calculateMaterialCosts(
+            { inputItems: [{ itemHrid: '/items/dragon_leather', count: 500 }] },
+            0
+        );
+        expect(costs[0].missingPrice).toBe(true);
+        expect(costs[0].totalCost).toBe(20000);
     });
 
     test('an item with no known details is skipped entirely, not included at zero', () => {

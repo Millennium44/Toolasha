@@ -30,7 +30,7 @@
 import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import { isTestServer } from './game-server.js';
-import { shopEntriesFor } from './shop-index.js';
+import { isTesterShopEntry, shopEntriesFor } from './shop-index.js';
 
 /** The setting that turns the shop on as a price source */
 export const TESTER_SHOP_SETTING = 'pricing_testerShop';
@@ -44,16 +44,7 @@ export const DEFAULT_SHOP_GEAR_LEVEL = 10;
 /** A mirror's live-ish price, for a shop map that does not list one */
 const MIRROR_FALLBACK_PRICE = 10_000_000;
 
-/**
- * Whether a shop entry belongs to the Tester tab.
- * @param {Object} entry - A `shopItemDetailMap` value
- * @param {string} [key] - Its key in the map, for entries that carry no hrid of their own
- * @returns {boolean}
- */
-export function isTesterShopEntry(entry, key = '') {
-    const fields = [entry?.category, entry?.categoryHrid, entry?.shopCategoryHrid, entry?.hrid, key];
-    return fields.some((value) => /tester/i.test(String(value || '')));
-}
+export { isTesterShopEntry };
 
 /**
  * Whether Tester-shop pricing is on: the test server, and the setting.

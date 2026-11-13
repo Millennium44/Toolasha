@@ -155,8 +155,16 @@ export function sellsFromProfitData(profitData) {
         }
     }
 
+    // Bonus-drop rates are per base action (profit-display scales them by efficiency itself), while the
+    // outputs above already are. Gathering and production repeat their bonus rolls with efficiency, so
+    // without this a rare find's units a day were short by the whole efficiency bonus
+    const scalesBonus =
+        !Array.isArray(profitData.dropRevenues) &&
+        (Array.isArray(profitData.baseOutputs) || Boolean(profitData.itemHrid));
+    const repeats = scalesBonus ? Number(profitData.efficiencyMultiplier) : 1;
+    const bonusScale = repeats > 0 ? repeats : 1;
     for (const drop of profitData.bonusRevenue?.bonusDrops || []) {
-        add(drop?.itemHrid, drop?.itemName, drop?.dropsPerHour);
+        add(drop?.itemHrid, drop?.itemName, (Number(drop?.dropsPerHour) || 0) * bonusScale);
     }
 
     return [...sells.values()];

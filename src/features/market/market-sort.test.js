@@ -944,6 +944,27 @@ describe('sort cost per tile', () => {
         expect(scans).toBeLessThanOrEqual(1);
     });
 
+    test('an item a higher-tier action drops as a side product is filed under the action that gathers it', () => {
+        const gameData = {
+            actionDetailMap: {
+                '/actions/milking/eternal_holy_cow': {
+                    type: '/action_types/milking',
+                    baseTimeCost: 45e9,
+                    levelRequirement: { level: 100 },
+                    dropTable: [{ itemHrid: '/items/holy_milk', dropRate: 1, minCount: 1, maxCount: 1 }],
+                },
+                '/actions/milking/holy_cow': {
+                    type: '/action_types/milking',
+                    baseTimeCost: 30e9,
+                    levelRequirement: { level: 80 },
+                    dropTable: [{ itemHrid: '/items/holy_milk', dropRate: 1, minCount: 1, maxCount: 3 }],
+                },
+            },
+        };
+
+        expect(marketSort.findGatheringAction('/items/holy_milk', gameData)).toBe('/actions/milking/holy_cow');
+    });
+
     test('hands the browser a frame when the sort runs long, and ranks exactly as it would without', async () => {
         const container = buildGrid(names);
         engine.answers = Object.fromEntries(

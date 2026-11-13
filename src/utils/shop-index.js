@@ -47,3 +47,14 @@ export function shopEntriesFor(shopMap, itemHrid) {
 export function _resetShopIndex() {
     indexes = new WeakMap();
 }
+
+/**
+ * Whether a shop entry belongs to the Tester tab.
+ * @param {Object} entry - A `shopItemDetailMap` value
+ * @param {string} [key] - Its key in the map, for entries that carry no hrid of their own
+ * @returns {boolean}
+ */
+export function isTesterShopEntry(entry, key = '') {
+    const fields = [entry?.category, entry?.categoryHrid, entry?.shopCategoryHrid, entry?.hrid, key];
+    return fields.some((value) => /tester/i.test(String(value || '')));
+}
