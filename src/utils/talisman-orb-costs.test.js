@@ -5,6 +5,7 @@ import { encodeLines } from './talisman-reroll-solver.js';
 
 const COMBAT = '/talisman_types/combat';
 const H = (key) => `/talisman_modifiers/${key}`;
+const line = (key, grade) => ({ hrid: H(key), grade });
 const weights = {};
 for (const hrid of [...Object.keys(TALISMAN_INFO.rerollInputMap), TALISMAN_INFO.lockInputItemHrid]) {
     weights[hrid] = ORB_ITEMS[hrid].sellPrice;
@@ -166,5 +167,32 @@ describe('freshTalismanCost against a hand enumeration', () => {
             { hrid: H('armor'), minGrade: 1 },
             { hrid: H('critical_damage'), minGrade: 3 },
         ]);
+    });
+});
+
+describe('every cost carries the solver limits', () => {
+    test('a four-line G3 target clamps grades and leaves Mutation out: both said, as an upper bound', async () => {
+        const s = solver();
+        const targets = ['armor', 'critical_damage', 'critical_rate', 'tenacity'].map((k) => ({
+            hrid: H(k),
+            minGrade: 3,
+        }));
+        const fresh = await s.freshCost(COMBAT, targets);
+        expect(fresh.limits.gradeClamped).toBe(true);
+        expect(fresh.limits.clampGrade).toBeLessThan(6);
+        expect(fresh.limits.mutationLeftOut).toBe(true);
+        expect(fresh.upperBound).toBe(true);
+        const owned = await s.ownedCost(
+            talismanRow(1, [line('armor', 1), line('tenacity', 1), line('max_hitpoints', 1), line('hp_regen', 1)]),
+            targets
+        );
+        expect(owned.limits.gradeClamped).toBe(true);
+        expect(owned.upperBound).toBe(true);
+    });
+
+    test('a one-line target is solved exactly: no limits', async () => {
+        const fresh = await solver().freshCost(COMBAT, [{ hrid: H('armor'), minGrade: 3 }]);
+        expect(fresh.limits).toEqual({ gradeClamped: false, clampGrade: 6, mutationLeftOut: false });
+        expect(fresh.upperBound).toBe(false);
     });
 });

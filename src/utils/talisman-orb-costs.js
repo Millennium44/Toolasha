@@ -231,6 +231,22 @@ export class OrbCostSolver {
         return solution ? renamed(solution, sorted) : null;
     }
 
+    /**
+     * The solver's own limits on a solution, as the reroll advisor states them: grades clamped below the top (an
+     * Attunement step down from a clamped line is taken from the clamp, pessimistic) and Mutation left out of a large
+     * state space. Either one makes the cost an upper bound.
+     * @param {Object} solution
+     * @returns {{limits: {gradeClamped: boolean, clampGrade: number, mutationLeftOut: boolean}, upperBound: boolean}}
+     */
+    limitsOf(solution) {
+        const limits = {
+            gradeClamped: Boolean(solution?.problem?.gradeClamped),
+            clampGrade: Number(solution?.problem?.G) || 0,
+            mutationLeftOut: solution?.mutationUsed === false,
+        };
+        return { limits, upperBound: limits.gradeClamped || limits.mutationLeftOut };
+    }
+
     /** Weighted value in reference orbs */
     inOrbs(value) {
         return this.reference?.weight > 0 ? value / this.reference.weight : value;
@@ -246,7 +262,7 @@ export class OrbCostSolver {
         if (!solution) return null;
         const { value, counts } = freshTalismanCost(solution);
         if (!Number.isFinite(value)) return null;
-        return { orbs: this.inOrbs(value), counts, fresh: true };
+        return { orbs: this.inOrbs(value), counts, fresh: true, ...this.limitsOf(solution) };
     }
 
     /**
@@ -260,6 +276,11 @@ export class OrbCostSolver {
         if (!solution) return null;
         const advice = advise(solution, talisman, targets);
         if (!Number.isFinite(advice?.value)) return null;
-        return { orbs: this.inOrbs(advice.value), counts: advice.counts || {}, status: advice.status };
+        return {
+            orbs: this.inOrbs(advice.value),
+            counts: advice.counts || {},
+            status: advice.status,
+            ...this.limitsOf(solution),
+        };
     }
 }

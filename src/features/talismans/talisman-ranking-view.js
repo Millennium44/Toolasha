@@ -196,6 +196,19 @@ export function statText(detail, value) {
     return `${shown < 0 ? '−' : '+'}${String(Number(Math.abs(shown).toFixed(2)))}${detail?.isPercent ? '%' : ''}`;
 }
 
+/**
+ * The note for a cost the solver could only bound from above, or '' for an exact one.
+ * @param {Object|null} limits - `{gradeClamped, clampGrade, mutationLeftOut}`
+ * @returns {string}
+ */
+export function costLimitNote(limits) {
+    if (!limits) return '';
+    const parts = [];
+    if (limits.gradeClamped) parts.push(`grades above G${limits.clampGrade} counted as G${limits.clampGrade}`);
+    if (limits.mutationLeftOut) parts.push('Mutation left out');
+    return parts.length ? `upper bound: ${parts.join('; ')}` : '';
+}
+
 /** Orbs, two significant figures */
 export function orbsText(value) {
     if (!Number.isFinite(value)) return '—';
@@ -750,8 +763,9 @@ export class TalismanRankingSectionBase {
                 const pctCell = exact
                     ? ''
                     : `<td style="text-align:right; padding:2px 6px; color:${color};">${signedPct(row.valuePct)}${Number.isFinite(row.errPct) ? ` <span style="color:#777;">±${row.errPct.toFixed(2)}</span>` : ''}</td>`;
+                const perOrbNote = costLimitNote(row.orbLimits);
                 const perOrbCell = hasPerOrb
-                    ? `<td style="text-align:right; padding:2px 6px; color:#ccc;" title="${escapeHtml(Number.isFinite(row.orbCost) ? `~${orbsText(row.orbCost)} orbs for this line alone` : 'No gain, or no cost')}">${Number.isFinite(row.perOrb) ? this._formatValue(row.perOrb, metric) : ''}</td>`
+                    ? `<td style="text-align:right; padding:2px 6px; color:#ccc;" title="${escapeHtml(Number.isFinite(row.orbCost) ? `~${orbsText(row.orbCost)} orbs for this line alone${perOrbNote ? ` (cost is an ${perOrbNote}, so this is a floor)` : ''}` : 'No gain, or no cost')}">${Number.isFinite(row.perOrb) ? `${perOrbNote ? '≥' : ''}${this._formatValue(row.perOrb, metric)}` : ''}</td>`
                     : '';
                 const gradeCells = row.byGrade
                     .map((v, i) => {
@@ -787,7 +801,10 @@ export class TalismanRankingSectionBase {
         if (!set) {
             let why = `No line adds to ${metric.label} here, so there is no set to recommend.`;
             if (result.setReason === 'budget') {
-                why = `No talisman target fits a budget of ${orbsText(result.budget)} orbs; the cheapest one measured needs ~${orbsText(result.cheapest)}.`;
+                why = `No talisman target fits a budget of ${orbsText(result.budget)} orbs; the cheapest one measured needs ~${result.cheapestIsUpperBound ? 'at most ' : ''}${orbsText(result.cheapest)}.`;
+                if (result.overUpperBound > 0) {
+                    why += ` ${result.overUpperBound} targets over the budget were costed only as an upper bound (the solver's grade clamp or Mutation left out), so they may fit.`;
+                }
             } else if (result.setReason === 'limited') {
                 why = 'The orb solve limit was reached before a target fit the budget.';
             } else if (result.setReason === 'no_orbs') {
@@ -811,7 +828,10 @@ export class TalismanRankingSectionBase {
                     })
                     .join(', ');
                 const cost = t.cost
-                    ? ` <span style="color:#888;" title="Expected orbs from a fresh talisman (its first lines roll G1-G3, as measured)">~${orbsText(t.cost.orbs)} orbs</span>`
+                    ? ` <span style="color:#888;" title="Expected orbs from a fresh talisman (its first lines roll G1-G3, as measured)">~${t.cost.upperBound ? '≤' : ''}${orbsText(t.cost.orbs)} orbs</span>` +
+                      (t.cost.upperBound
+                          ? ` <span style="color:#888;">(${escapeHtml(costLimitNote(t.cost.limits))})</span>`
+                          : '')
                     : '';
                 return `<div style="margin:2px 0;"><span style="color:#888;">Talisman ${t.slotIndex}:</span> ${lines}${cost}</div>`;
             })
@@ -823,7 +843,10 @@ export class TalismanRankingSectionBase {
                 `${set.slotsFilled} of ${set.slots} slots filled: ` +
                     (set.limited
                         ? 'the orb solve limit was reached before the rest could be planned.'
-                        : 'no further target fit the budget.')
+                        : 'no further target fit the budget.') +
+                    (set.overUpperBound > 0
+                        ? ` ${set.overUpperBound} targets over it were costed only as an upper bound, so they may fit.`
+                        : '')
             );
         }
         lines.push(...this._setCheckLines(result, metric));
@@ -903,7 +926,11 @@ export class TalismanRankingSectionBase {
             parts.push(
                 `<div style="font-size:11px; color:#ddd; margin-top:4px; padding:4px 6px; border:1px solid #333; border-radius:4px;">` +
                     `<div><b>Talisman #${escapeHtml(String(option.talisman.id))}</b> <span style="color:#888;">(${escapeHtml(lines)}${option.talisman.slotIndex ? `, slot ${option.talisman.slotIndex}` : ', in the bag'})</span></div>` +
-                    `<div>Aim for ${escapeHtml(targets)}${escapeHtml(noise)}: ${this._formatValue(option.gain, metric)} ${escapeHtml(metric.label)} for ~${orbsText(option.cost.orbs)} orbs (${this._formatValue(option.perOrb, metric)} per orb)</div>` +
+                    `<div>Aim for ${escapeHtml(targets)}${escapeHtml(noise)}: ${this._formatValue(option.gain, metric)} ${escapeHtml(metric.label)} for ~${option.cost.upperBound ? '≤' : ''}${orbsText(option.cost.orbs)} orbs (${this._formatValue(option.perOrb, metric)} per orb)` +
+                    (option.cost.upperBound
+                        ? ` <span style="color:#888;">(${escapeHtml(costLimitNote(option.cost.limits))})</span>`
+                        : '') +
+                    `</div>` +
                     `<button data-role="aim" data-index="${index}" style="${CHIP_BUTTON_STYLE} margin-top:2px;">Aim for this</button> ` +
                     `<span data-role="aim-note" data-index="${index}" style="color:#888;"></span>` +
                     `</div>`

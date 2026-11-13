@@ -304,3 +304,26 @@ describe('Budget: a plan cut short by the solve limit says so', () => {
         expect(plan.set.slotsFilled).toBeLessThan(3);
     });
 });
+
+describe('Budget with upper-bound costs', () => {
+    test('an upper bound over the budget is not taken as fitting, and is counted so the panel can say it may fit', async () => {
+        const orbs = {
+            cancelled: false,
+            limited: false,
+            stopped: () => false,
+            async freshCost(_type, targets) {
+                return { orbs: 5 * targets.length, counts: {}, upperBound: true };
+            },
+        };
+        const plan = await planBudgetSet([row('critical_damage', 30)], {
+            slots: 1,
+            capGrade: 3,
+            budget: 4,
+            typeHrid: '/talisman_types/combat',
+            orbs,
+        });
+        expect(plan).toMatchObject({ set: null, reason: 'budget' });
+        expect(plan.overUpperBound).toBeGreaterThan(0);
+        expect(plan.cheapestIsUpperBound).toBe(true);
+    });
+});
