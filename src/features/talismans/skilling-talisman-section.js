@@ -233,6 +233,8 @@ export class SkillingTalismanSection extends TalismanRankingSectionBase {
                 talismans: talismanBonusesOf(context?.equipment),
                 // The lines themselves: the core advisor values the next line of each
                 worn: (talismans || []).map((t) => [t.slotIndex, (t.modifiers || []).map((m) => [m.hrid, m.grade])]),
+                // Each slot's item and level and the drinks: the loadout's name and key do not change with them
+                fingerprint: gearFingerprint(context, talismans),
             };
         }
         return { character: dataManager.getCurrentCharacterId(), action: actionHrid || null, gear };

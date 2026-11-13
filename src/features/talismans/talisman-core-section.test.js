@@ -379,4 +379,15 @@ describe('the core advisor in the Optimizer', () => {
         expect(cores()).toContain('Some prices are missing: profit is a floor.');
         expect(cores()).toMatch(/≥\+?\d/);
     });
+
+    test('a tool or tea changed under the same loadout name marks the displayed core result stale', async () => {
+        await rank();
+        await check();
+        expect(q('core-stale').style.display).toBe('none');
+        mocks.tool = 7;
+        section._refreshStale();
+        expect(q('core-stale').style.display).toBe('block');
+        await check();
+        expect(cores()).toContain('out of date for this gear');
+    });
 });
