@@ -31,6 +31,28 @@ function gameData() {
     };
 }
 
+// These tests are about the budget (parsing, conversion, labels, stale), not the orb solve, which is slow:
+// a flat cost of 5 orbs per grade step of each target line keeps the set and Improve mine paths real and cheap
+vi.mock('../../utils/talisman-orb-costs.js', async (importOriginal) => {
+    const original = await importOriginal();
+    const cost = (solver, targets, status) => ({
+        orbs: targets.reduce((sum, t) => sum + 5 * t.minGrade, 0),
+        counts: {},
+        fresh: true,
+        status,
+        limits: { gradeClamped: false, clampGrade: 6, mutationLeftOut: false },
+        upperBound: false,
+    });
+    class CheapSolver extends original.OrbCostSolver {
+        async freshCost(_type, targets) {
+            return cost(this, targets);
+        }
+        async ownedCost(_talisman, targets) {
+            return cost(this, targets, 'steps');
+        }
+    }
+    return { ...original, OrbCostSolver: CheapSolver };
+});
 vi.mock('../../utils/game-server.js', async (importOriginal) => ({
     ...(await importOriginal()),
     isTestServer: () => true,
@@ -186,8 +208,7 @@ describe('the budget field', () => {
         expect(section._result.budgetCoins).toBe(15e6);
         expect(text()).toContain('Budget: 15m coins (≈50 orbs) per talisman');
         overrideAllOrbs(500000);
-        await section._onRun();
-        expect(section._result.budget).toBeCloseTo(30, 6);
+        expect(section._readControls().budget).toBeCloseTo(30, 6);
     });
 
     test('invalid text marks the field with the reason and blocks Rank', async () => {
@@ -247,9 +268,8 @@ describe('the budget field', () => {
         type('15m');
         expect(q('stale').style.display).toBe('none');
         // A Practical result has no budget to go stale
-        pick('set-mode', 'practical');
-        await section._onRun();
-        type('30m');
+        section._result = { ...section._result, setMode: 'practical' };
+        type('31m');
         expect(q('stale').style.display).toBe('none');
     });
 
