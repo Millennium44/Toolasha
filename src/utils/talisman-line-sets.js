@@ -182,13 +182,19 @@ export function arrangeTalismans(picks, slots, linesPerTalisman = DEFAULT_LINES_
 const UNPRICED_MORE_TOLERANCE = 0.02;
 
 /**
+ * The tolerance for exact figures (the skilling calculator, not a sampled sim): only floating-point round-off. Any
+ * real rise in an unpriced input's use is a cost counted as free, however small.
+ */
+export const EXACT_UNPRICED_TOLERANCE = 1e-9;
+
+/**
  * The running costs (food, drinks, dungeon keys) a line's run counted at zero that the baseline's did not, or spends
  * more of: profit built on them is a ceiling, not a figure (the real spend only lowers it).
  * @param {Object} baseline - `computeMetrics` of the bare baseline
  * @param {Object} measured - `computeMetrics` of the run with the line
  * @returns {string[]} Names of the unpriced running costs the line adds to; empty when it adds none
  */
-export function newlyUnpricedLineCosts(baseline, measured) {
+export function newlyUnpricedLineCosts(baseline, measured, tolerance = UNPRICED_MORE_TOLERANCE) {
     const already = new Set(baseline?.unpricedCost || []);
     const baseRates = baseline?.unpricedCostRates || {};
     const rates = measured?.unpricedCostRates || {};
@@ -198,7 +204,7 @@ export function newlyUnpricedLineCosts(baseline, measured) {
         const after = rates[name];
         // Unpriced in both runs but spent more of: the extra is free too. An unknown rate cannot clear it
         if (!Number.isFinite(before) || !Number.isFinite(after)) return true;
-        return after > before * (1 + UNPRICED_MORE_TOLERANCE);
+        return after > before * (1 + tolerance);
     });
 }
 
@@ -918,7 +924,7 @@ export async function runSkillingLineRanking(params, deps, options = {}) {
             byGrade.push(read(figures) - bareValue);
             missing = missing || outputMissing(figures);
             // Inputs this line makes the action spend more of, counted as free (as the combat ranking does)
-            for (const name of newlyUnpricedLineCosts(bare, figures)) unpriced.add(name);
+            for (const name of newlyUnpricedLineCosts(bare, figures, EXACT_UNPRICED_TOLERANCE)) unpriced.add(name);
         }
         const costUnpriced = [...unpriced];
         // A profit gain resting on an input counted as free is a ceiling, not a gain: no set or plan builds on it

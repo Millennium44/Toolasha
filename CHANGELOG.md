@@ -9,6 +9,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Optimizer talisman ranking uses the loadout you picked
 
 The Skilling Optimizer's Talismans section now ranks on the loadout chosen in its Loadout dropdown, belt and talismans included, and its header names which loadout it read. With no loadout picked it uses the one the skill equips, as before.
+### Belt advisor: which Talisman Belt upgrade is worth buying
+
+Test server. Beside Talisman lines in the Combat Sim and the Skilling Optimizer, "Check belts" weighs higher levels of your belt and larger belts against their market cost, using the talismans you have slotted (a larger belt's new slots count as empty).
+
+### Scroll chips and Scroll Planner offered once more
+
+If you have "Simulate missing scroll effects" or the Scroll Planner turned off, the update popup offers each one again, once, with its switch. Nothing is turned on for you.
 
 ### Compact talisman editing in the Combat Sim
 
