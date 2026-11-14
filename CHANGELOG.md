@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Buy-all walk presses Buy for you
+
+Like Bulk Sell, the walk's button now alternates between Next and Buy: Next opens the item's buy form with the quantity filled in, and Buy confirms that exact item and quantity for you, once per press.
+
 ### Buy supplies on combat and skill pages, and Consumables panel tabs
 
 - The "Consumables" heading on the combat page and on skill panels is now a "Buy supplies" button, like the Labyrinth's.
