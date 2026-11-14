@@ -1686,7 +1686,7 @@ class AlchemyBestItems {
         const checkProgress = document.createElement('div');
         checkProgress.setAttribute('data-mwi-check-progress', 'true');
         checkProgress.setAttribute('role', 'status');
-        checkProgress.style.cssText = 'display: none; font-size: 0.8rem; opacity: 0.8; margin: 4px 0;';
+        checkProgress.style.cssText = 'display: none; font-size: 0.75rem; color: #aaa; margin: 4px 0;';
         content.appendChild(checkProgress);
 
         // Table container
