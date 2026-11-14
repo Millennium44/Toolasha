@@ -64,6 +64,16 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { showToast } from '../../utils/toast.js';
 import { currentTarget, cycleTarget, loadTarget } from '../../utils/consumable-target.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { clickThroughReact } from '../../utils/react-click.js';
+import { onServerNotice, SALE_REFUSAL_KEYS } from '../../utils/server-notices.js';
+import {
+    MODAL_SELECTOR,
+    isButtonDisabled,
+    modalQuantity,
+    buyFormKind,
+    findBuyConfirmButton,
+    buyModalIdentityProblem,
+} from '../../utils/market-modal.js';
 import {
     forecast,
     forecastAll,
@@ -203,6 +213,12 @@ function formatConsumableCostSide(amount, unpriced = 0, unknownRate = 0, estimat
  */
 const BUY_CHIP_ID = 'toolasha-lab-buy-next';
 const BUY_WIDGET_POSITION_KEY = 'consumablesBuyWidgetPosition';
+/** How often a walk step looks at the game's modal */
+const BUY_STEP_POLL_MS = 200;
+/** How long the form may take to show up after its button was pressed */
+const BUY_FORM_WAIT_MS = 8000;
+/** How long after our confirm press a server refusal is still taken to be the answer to it */
+const BUY_REFUSAL_WINDOW_MS = 10000;
 
 /**
  * How the idle plan's pins treat a value left behind by the pre-scoping build.
@@ -380,6 +396,10 @@ class ConsumablesPanel {
         /** One entry per section with a walkable shortfall, rebuilt every render */
         this._buyQueues = [];
         this._buySource = null;
+        /** The walk's open item: its form, whether the game's confirm may be pressed for it. Null between items. */
+        this._buyStep = null;
+        /** What happened to the last item (closed unbought, skipped), shown until the next one opens */
+        this._buyNote = '';
         /**
          * Bumped on every `reloadIdlePins()` call. The pins are read with two
          * awaited `readScoped` calls, and `character_switched` fires a fresh
@@ -1938,8 +1958,9 @@ class ConsumablesPanel {
      * @param {Object} entry - The forecast being topped up
      * @param {number} count - How many are missing
      * @param {Object|null} [strategy] - From `buyStrategy`, for which form to open
+     * @param {Object|null} [step] - The walk step this open belongs to, if any
      */
-    _buy(entry, count, strategy = null) {
+    _buy(entry, count, strategy = null, step = null) {
         if (!count) return;
         try {
             // Recorded as closed — see `_openShoppingList` for why going
@@ -1947,7 +1968,7 @@ class ConsumablesPanel {
             this.hide();
             this.autofill.setQuantity(count, { itemHrid: entry.itemHrid });
             navigateToMarketplace(entry.itemHrid);
-            this._openRecommendedForm(strategy, entry.itemHrid);
+            this._openRecommendedForm(strategy, entry.itemHrid, step);
         } catch (error) {
             console.error('[ConsumablesPanel] Opening the marketplace failed:', error);
         }
@@ -1964,31 +1985,42 @@ class ConsumablesPanel {
      *
      * @param {Object|null} strategy - From `buyStrategy`
      * @param {string} [itemHrid] - The item, for naming it when the button never shows
+     * @param {Object|null} [step] - The walk step waiting on this form; told when the form is up or
+     *   never comes, so the walk's Buy button only appears for a form that is really standing open
      */
-    _openRecommendedForm(strategy, itemHrid = '') {
+    _openRecommendedForm(strategy, itemHrid = '', step = null) {
         if (!strategy || !config.getSetting('market_consumableBuyOpenRecommended')) return;
         const shortcuts = window.Toolasha?.Market?.marketplaceShortcuts;
         if (!shortcuts) return;
 
         // The navigation itself takes a beat; the shortcuts' own click helpers
         // then poll for the button, so this only has to not fire too early
-        setTimeout(() => {
-            const open =
-                strategy.mode === 'instant'
+        setTimeout(async () => {
+            // The walk was stopped, skipped or moved on during the beat: nothing to open
+            if (step && this._buyStep !== step) return;
+            try {
+                await (strategy.mode === 'instant'
                     ? shortcuts.clickInstantActionButton?.('Buy')
-                    : shortcuts.clickListingButton?.('+ New Buy Listing', 'Button_buy');
-            open?.catch?.((error) => {
+                    : shortcuts.clickListingButton?.('+ New Buy Listing', 'Button_buy'));
+            } catch (error) {
+                // A cancelled search is the player moving on, not a failure
+                if (error?.message === 'Cancelled') {
+                    if (step) this._endBuyStep(step, '');
+                    return;
+                }
                 // No matching button (an empty book's Buy Now has nothing to
                 // take) — the marketplace is open and the quantity is parked,
                 // which is still useful, but say so rather than doing nothing.
-                // A cancelled search is the player moving on, not a failure
-                if (error?.message === 'Cancelled') return;
                 const name = dataManager.getItemDetails?.(itemHrid)?.name || 'this item';
                 const form = strategy.mode === 'instant' ? 'Buy Now' : 'New Buy Listing';
                 showToast(`Could not open ${form} for ${name} — the quantity is filled in, finish it by hand.`, {
                     kind: 'warn',
                 });
-            });
+                // No form, so no Buy button: the walk offers Next
+                if (step) this._endBuyStep(step, '');
+                return;
+            }
+            if (step) this._watchBuyStep(step);
         }, 400);
     }
 
@@ -2038,6 +2070,8 @@ class ConsumablesPanel {
 
     /** Open the queue's next buy form and re-offer the widget for the one after */
     _advanceBuyQueue() {
+        // A form is still standing for the last item: it is that step's button that moves on, not this
+        if (this._buyStep) return;
         const next = this._buyQueue?.shift();
         if (!next) {
             this._syncBuyWidget();
@@ -2059,8 +2093,338 @@ class ConsumablesPanel {
             minSavingCoins: this._buyNumber('market_consumableBuyMinSaving', 0),
             minOrderValue: this._buyNumber('market_consumableBuyMinOrderValue', 0),
         });
-        this._buy({ itemHrid: next.itemHrid }, next.count, strategy);
+        this._buyNote = '';
+        const step = this._beginBuyStep(next, strategy);
+        this._buy({ itemHrid: next.itemHrid }, next.count, strategy, step);
         this._syncBuyWidget();
+    }
+
+    /**
+     * Whether a walk step may offer to press the game's confirm for the form it opens.
+     *
+     * Only when the form is one this panel opens itself (the setting is on and the market bundle's
+     * shortcuts are there), so a step never promises a Buy for a form nobody opened. An Iron Cow has
+     * no market to buy from.
+     * @param {Object|null} strategy - From `buyStrategy`
+     * @returns {boolean}
+     */
+    _buyConfirmAvailable(strategy) {
+        if (!strategy || !config.getSetting('market_consumableBuyOpenRecommended')) return false;
+        if (!window.Toolasha?.Market?.marketplaceShortcuts) return false;
+        const mode = dataManager.getCurrentCharacterGameMode?.();
+        return !(typeof mode === 'string' && mode.includes('ironcow'));
+    }
+
+    /**
+     * Start the step for the item the walk just opened, or null when no form will be opened for it.
+     * @param {{itemHrid: string, count: number}} next - The queued item
+     * @param {Object|null} strategy - From `buyStrategy`
+     * @returns {Object|null} The step, in phase `opening`
+     */
+    _beginBuyStep(next, strategy) {
+        this._stopBuyStepWatch(this._buyStep);
+        this._buyStep = null;
+        if (!this._buyConfirmAvailable(strategy)) return null;
+        const step = {
+            itemHrid: next.itemHrid,
+            name: this._buyItemName(next.itemHrid),
+            count: next.count,
+            mode: strategy.mode === 'instant' ? 'instant' : 'order',
+            // opening -> ready (the form is up for exactly this item) -> sent (our press, or the player's)
+            phase: 'opening',
+            pressed: false,
+            seen: false,
+            seenAt: 0,
+            kind: null,
+            note: '',
+            characterId: currentCharacterId(),
+            deadline: 0,
+            poll: null,
+            nativeStop: null,
+            refusalUnsub: null,
+            refusalTimer: null,
+        };
+        this._buyStep = step;
+        return step;
+    }
+
+    /** @param {string} itemHrid @returns {string} */
+    _buyItemName(itemHrid) {
+        return dataManager.getItemDetails?.(itemHrid)?.name || String(itemHrid).split('/').pop();
+    }
+
+    /** Redraw whichever control is showing: the inline row while the panel is up, else the floating one */
+    _refreshBuyUi() {
+        if (this.panel && !this.minimizeCtl?.collapsed) this._render();
+        else this._syncBuyWidget();
+    }
+
+    /**
+     * The form has been asked for: watch the game's modal until it shows this item's buy form, and
+     * until it goes away again.
+     * @param {Object} step - The walk step
+     */
+    _watchBuyStep(step) {
+        if (this._buyStep !== step || step.poll) return;
+        step.deadline = Date.now() + BUY_FORM_WAIT_MS;
+        step.poll = setInterval(() => this._pollBuyStep(step), BUY_STEP_POLL_MS);
+        this._pollBuyStep(step);
+    }
+
+    /** One look at the modal for a step */
+    _pollBuyStep(step) {
+        if (this._buyStep !== step) {
+            this._stopBuyStepWatch(step);
+            return;
+        }
+        if (step.characterId !== currentCharacterId()) {
+            this._endBuyStep(step, '');
+            return;
+        }
+        const modal = document.querySelector(MODAL_SELECTOR);
+        const problem = buyModalIdentityProblem(modal, step.itemHrid, step.name);
+        if (!problem) {
+            if (!step.seen) {
+                step.seen = true;
+                step.seenAt = Date.now();
+                step.kind = buyFormKind(modal);
+                this._watchNativeBuyConfirm(step);
+            }
+            // Ready once the quantity has been filled in (or a moment has passed, so a form the
+            // player is editing still gets the press-time message instead of waiting forever)
+            if (step.phase === 'opening' && (modalQuantity(modal) === step.count || Date.now() - step.seenAt > 1500)) {
+                step.phase = step.pressed ? 'sent' : 'ready';
+                this._refreshBuyUi();
+            }
+            return;
+        }
+        // The form went away, or another one took its place: this item is dealt with, bought or not
+        if (step.seen) {
+            this._finishBuyStep(step);
+            return;
+        }
+        if (Date.now() > step.deadline) {
+            this._endBuyStep(step, `The buy form for ${step.name} did not open.`, true);
+        }
+    }
+
+    /** The modal closed: the one thing that ends a step */
+    _finishBuyStep(step) {
+        if (step.pressed) this._endBuyStep(step, '');
+        else this._endBuyStep(step, `${step.name} was closed without buying.`, true);
+    }
+
+    /** Stop everything a step is listening to. Idempotent. */
+    _stopBuyStepWatch(step) {
+        if (!step) return;
+        clearInterval(step.poll);
+        step.poll = null;
+        step.nativeStop?.();
+        step.nativeStop = null;
+        this._stopBuyRefusalWatch(step);
+    }
+
+    /**
+     * End a step. The button goes back to Next (or the walk ends when nothing is left). The step's
+     * item counts as dealt with whether or not it was bought, the way Bulk Sell counts a closed modal.
+     * @param {Object} step - The step
+     * @param {string} note - Shown on the walk until the next item opens
+     * @param {boolean} [toast] - Also say it in a toast (an item that was not bought)
+     */
+    _endBuyStep(step, note, toast = false) {
+        this._stopBuyStepWatch(step);
+        if (this._buyStep !== step) return;
+        this._buyStep = null;
+        this._buyNote = note || '';
+        if (toast && note) showToast(note, { kind: 'warn' });
+        this._refreshBuyUi();
+    }
+
+    /** Stop the walk with nothing left standing: no queue, no step */
+    _dropBuyWalk() {
+        this._stopBuyStepWatch(this._buyStep);
+        this._buyStep = null;
+        this._buyNote = '';
+        this._buyQueue = [];
+    }
+
+    /** The ✕: stop the whole walk; the shortfall stays on the panel */
+    _cancelBuyWalk() {
+        this._dropBuyWalk();
+        this._buyWidgetHidden = true;
+    }
+
+    /** Skip: give up on this item's form (closing it) and go back to Next */
+    _skipBuyStep() {
+        const step = this._buyStep;
+        if (!step || step.phase === 'sent') return;
+        const modal = document.querySelector(MODAL_SELECTOR);
+        // Only a form that is this step's is closed; one the player swapped in is theirs
+        if (modal && !buyModalIdentityProblem(modal, step.itemHrid, step.name)) {
+            modal.querySelector('[class*="Modal_closeButton"]')?.click();
+        }
+        this._endBuyStep(step, `Skipped ${step.name}.`);
+    }
+
+    /**
+     * What the walk's one main button says and does right now.
+     * @returns {{label: string, title: string, enabled: boolean, action: 'next'|'confirm'|'none'}}
+     */
+    _buyPrimary() {
+        const step = this._buyStep;
+        if (step) {
+            const qty = formatWithSeparator(step.count);
+            if (step.phase === 'opening') {
+                return {
+                    label: `Opening ${step.name}…`,
+                    title: 'Waiting for the buy form to open.',
+                    enabled: false,
+                    action: 'none',
+                };
+            }
+            if (step.phase === 'sent') {
+                return {
+                    label: step.mode === 'order' ? 'Order sent…' : 'Bought…',
+                    title: 'Confirm sent — waiting for the game to close the form. Nothing more is pressed for this item.',
+                    enabled: false,
+                    action: 'none',
+                };
+            }
+            const verb = step.mode === 'order' ? 'Post buy order' : 'Buy';
+            return {
+                label: `${verb} ${step.name} ×${qty}`,
+                title:
+                    (step.note ? `Can’t confirm: ${step.note}\n` : '') +
+                    'Press the game’s own confirm button for you. Refuses unless the open form is for exactly ' +
+                    'this item and quantity, and presses it once.',
+                enabled: true,
+                action: 'confirm',
+            };
+        }
+        const next = this._buyQueue?.[0];
+        const left = this._buyQueue?.length || 0;
+        return {
+            label: next ? `▶ Next: ${this._buyItemName(next.itemHrid)} (${left} left)` : '▶ Next',
+            title: 'Open this item’s recommended buy form. One press, one form.',
+            enabled: Boolean(next),
+            action: 'next',
+        };
+    }
+
+    /**
+     * The game's confirm button for this step, or why it may not be pressed.
+     *
+     * The whole safety envelope of confirming from the walk: the open modal has to be a buy form for
+     * exactly the item and quantity this step queued, the kind of form it opened, with a confirm
+     * button the game has not disabled. Anything else refuses and says why.
+     * @param {Object} step - The walk step
+     * @returns {{button: HTMLButtonElement}|{why: string}}
+     */
+    _buyConfirmTarget(step) {
+        const modal = document.querySelector(MODAL_SELECTOR);
+        const wrong = buyModalIdentityProblem(modal, step.itemHrid, step.name);
+        if (wrong) return { why: wrong };
+        if (step.kind && buyFormKind(modal) !== step.kind) return { why: 'the buy form changed kind' };
+        const quantity = modalQuantity(modal);
+        if (quantity === null) return { why: 'the modal quantity cannot be read' };
+        if (quantity !== step.count) return { why: `the modal says ${quantity}, not the queued ${step.count}` };
+        const button = findBuyConfirmButton(modal);
+        if (!button) return { why: 'the modal’s own confirm button was not found' };
+        if (isButtonDisabled(button)) {
+            return { why: 'the game’s confirm is disabled (not enough coins, or nothing for sale at this price)' };
+        }
+        return { button };
+    }
+
+    /** The walk button pressed while a step is ready: press the game's confirm, once */
+    _onBuyConfirmClick() {
+        const step = this._buyStep;
+        if (!step || step.phase !== 'ready' || step.pressed) return;
+        if (step.characterId !== currentCharacterId()) {
+            this._endBuyStep(step, '');
+            return;
+        }
+        const target = this._buyConfirmTarget(step);
+        if (target.why) {
+            this._refuseBuyConfirm(step, target.why);
+            return;
+        }
+        // Marked before anything is pressed: a second click lands on a step that is already sent
+        step.pressed = true;
+        step.phase = 'sent';
+        step.note = '';
+        this._watchBuyRefusal(step);
+        this._refreshBuyUi();
+        // After this click handler has returned, on the live button re-found from the DOM: the game
+        // ignores untrusted clicks on its spend buttons, so the press goes through its React handler
+        setTimeout(() => {
+            if (this._buyStep !== step || !step.pressed) return;
+            const again = this._buyConfirmTarget(step);
+            if (again.why) {
+                step.pressed = false;
+                step.phase = 'ready';
+                this._stopBuyRefusalWatch(step);
+                this._refuseBuyConfirm(step, again.why);
+                return;
+            }
+            clickThroughReact(again.button, { reactFirst: true });
+        }, 0);
+    }
+
+    /** Say why a press did nothing, on the button and in a toast */
+    _refuseBuyConfirm(step, why) {
+        step.note = why;
+        showToast(`Not buying ${step.name}: ${why}.`, { kind: 'warn' });
+        this._refreshBuyUi();
+    }
+
+    /**
+     * Notice the player pressing the game's own confirm: that is this step's purchase just as ours is,
+     * so the walk's button must not press a second one. Only marks; the click is never touched.
+     */
+    _watchNativeBuyConfirm(step) {
+        step.nativeStop?.();
+        const onClick = (event) => {
+            if (this._buyStep !== step || step.pressed) return;
+            const modal = event.target?.closest?.(MODAL_SELECTOR);
+            if (!modal) return;
+            const pressed = event.target.closest('button');
+            if (!pressed || pressed !== findBuyConfirmButton(modal) || isButtonDisabled(pressed)) return;
+            if (buyModalIdentityProblem(modal, step.itemHrid, step.name)) return;
+            const quantity = modalQuantity(modal);
+            if (quantity !== null && quantity <= 0) return;
+            step.pressed = true;
+            step.phase = 'sent';
+            step.note = '';
+            this._watchBuyRefusal(step);
+            this._refreshBuyUi();
+        };
+        document.addEventListener('click', onClick, true);
+        step.nativeStop = () => document.removeEventListener('click', onClick, true);
+    }
+
+    /** A server refusal right after the press hands the step back to the player */
+    _watchBuyRefusal(step) {
+        this._stopBuyRefusalWatch(step);
+        step.refusalUnsub = onServerNotice((notice) => {
+            if (this._buyStep !== step || !step.pressed) {
+                this._stopBuyRefusalWatch(step);
+                return;
+            }
+            if (notice.level !== 'error' || !SALE_REFUSAL_KEYS.includes(notice.key)) return;
+            this._stopBuyRefusalWatch(step);
+            step.pressed = false;
+            step.phase = 'ready';
+            this._refuseBuyConfirm(step, `the game refused it (${notice.key.replace('errorNotification.', '')})`);
+        });
+        step.refusalTimer = setTimeout(() => this._stopBuyRefusalWatch(step), BUY_REFUSAL_WINDOW_MS);
+    }
+
+    _stopBuyRefusalWatch(step) {
+        clearTimeout(step.refusalTimer);
+        step.refusalTimer = null;
+        step.refusalUnsub?.();
+        step.refusalUnsub = null;
     }
 
     /**
@@ -2073,7 +2437,8 @@ class ConsumablesPanel {
      * @private
      */
     _syncBuyWidget() {
-        const walking = Boolean(this._buyQueue?.length);
+        // A step still standing counts: the last item has left the queue but its form is open
+        const walking = Boolean(this._buyQueue?.length || this._buyStep);
         const panelShowsControls = Boolean(this.panel && !this.minimizeCtl?.collapsed);
         const needsFloatingControl = walking && !panelShowsControls;
         if (this._buyWidgetHidden || !needsFloatingControl) {
@@ -2104,8 +2469,7 @@ class ConsumablesPanel {
             widget.main.addEventListener('click', () => this._onBuyWidgetClick());
             widget.close.title = 'Stop here — the rest of the shortfall stays on the panel.';
             widget.close.addEventListener('click', () => {
-                this._buyQueue = [];
-                this._buyWidgetHidden = true;
+                this._cancelBuyWalk();
                 this._removeBuyWidget();
             });
             widget.gear.addEventListener('click', () => {
@@ -2125,6 +2489,16 @@ class ConsumablesPanel {
             });
             widget.extras.appendChild(picker);
 
+            // Skip keeps its own slot beside the main button, so an impatient extra click on
+            // Buy can never be the thing that gives up an item one press from bought
+            const skip = document.createElement('button');
+            skip.className = `${BUY_CHIP_ID}-skip`;
+            skip.textContent = 'Skip';
+            skip.title = 'Give up on this item (closing its form) and go back to Next.';
+            styleGameButton(skip, 'quiet', true);
+            skip.addEventListener('click', () => this._skipBuyStep());
+            widget.extras.appendChild(skip);
+
             document.body.appendChild(widget.element);
             this.buyWidget = widget;
             if (this._buySettingsOpen) widget.setSettingsOpen(true);
@@ -2134,9 +2508,11 @@ class ConsumablesPanel {
         const widget = this.buyWidget;
         const next = this._buyQueue?.[0];
         const picker = widget.extras.querySelector(`.${BUY_CHIP_ID}-source`);
+        const skip = widget.extras.querySelector(`.${BUY_CHIP_ID}-skip`);
         const sources = this._buyQueues || [];
-        const walking = Boolean(next);
+        const walking = Boolean(next || this._buyStep);
         picker.style.display = !walking && sources.length > 1 ? '' : 'none';
+        if (skip) skip.style.display = this._buyStep && this._buyStep.phase !== 'sent' ? '' : 'none';
         if (!walking) {
             const signature = sources.map((source) => `${source.label}:${source.queue.length}`).join('|');
             if (picker.dataset.signature !== signature) {
@@ -2158,12 +2534,18 @@ class ConsumablesPanel {
             widget.main.disabled = !chosen;
             return;
         }
-        const itemName = dataManager.getItemDetails?.(next.itemHrid)?.name || next.itemHrid.split('/').pop();
-        widget.main.textContent = `▶ Next: ${itemName} (${this._buyQueue.length} left)`;
-        widget.main.title = 'Open this item’s recommended buy form. One press, one form.';
+        const primary = this._buyPrimary();
+        widget.main.textContent = primary.label;
+        widget.main.title = this._buyNote ? `${this._buyNote}\n${primary.title}` : primary.title;
+        widget.main.disabled = !primary.enabled;
     }
 
     _onBuyWidgetClick() {
+        // A form is standing: the button is that step's Buy (or has nothing to do while it opens or sends)
+        if (this._buyStep) {
+            this._onBuyConfirmClick();
+            return;
+        }
         if (this._buyQueue?.length) {
             this._advanceBuyQueue();
             return;
@@ -2174,7 +2556,7 @@ class ConsumablesPanel {
     }
 
     _renderInlineBuyWalk() {
-        const walking = Boolean(this._buyQueue?.length);
+        const walking = Boolean(this._buyQueue?.length || this._buyStep);
         const sources = this._buyQueues || [];
         if (!walking && !sources.length) return null;
         const row = document.createElement('div');
@@ -2226,18 +2608,41 @@ class ConsumablesPanel {
         });
 
         if (walking) {
+            const step = this._buyStep;
             const next = this._buyQueue[0];
-            const itemName = dataManager.getItemDetails?.(next.itemHrid)?.name || next.itemHrid.split('/').pop();
-            status.textContent = `Next: ${itemName} (${this._buyQueue.length} left)`;
-            nextButton.textContent = '▶ Next';
-            nextButton.title = 'Open this item’s recommended buy form. One press, one form.';
-            nextButton.addEventListener('click', () => this._advanceBuyQueue());
+            const primary = this._buyPrimary();
+            if (step) {
+                status.textContent = `${step.name} ×${formatWithSeparator(step.count)}${
+                    this._buyQueue.length ? ` (${this._buyQueue.length} more after)` : ''
+                }${step.note ? ` — can’t confirm: ${step.note}` : ''}`;
+                status.title = status.textContent;
+                nextButton.textContent = primary.label;
+            } else {
+                const itemName = this._buyItemName(next.itemHrid);
+                status.textContent = `${this._buyNote ? `${this._buyNote} ` : ''}Next: ${itemName} (${
+                    this._buyQueue.length
+                } left)`;
+                nextButton.textContent = '▶ Next';
+            }
+            nextButton.title = primary.title;
+            nextButton.disabled = !primary.enabled;
+            nextButton.addEventListener('click', () => this._onBuyWidgetClick());
             cancel.title = 'Stop the walk; the remaining shortfall stays on the panel.';
             cancel.addEventListener('click', () => {
-                this._buyQueue = [];
-                this._buyWidgetHidden = true;
+                this._cancelBuyWalk();
                 this._render();
             });
+            if (step && step.phase !== 'sent') {
+                const skip = document.createElement('button');
+                skip.className = 'toolasha-consumables-inline-skip';
+                skip.textContent = 'Skip';
+                skip.title = 'Give up on this item (closing its form) and go back to Next.';
+                styleGameButton(skip, 'quiet', true);
+                skip.style.flex = '0 0 auto';
+                skip.addEventListener('click', () => this._skipBuyStep());
+                row.append(status, nextButton, skip, cancel);
+                return row;
+            }
             row.append(status, nextButton, cancel);
             return row;
         }
@@ -2294,7 +2699,7 @@ class ConsumablesPanel {
             widgetCheckboxRow({
                 key: 'market_consumableBuyOpenRecommended',
                 label: 'Open the recommended order form',
-                title: 'Off: a buy opens the item in the marketplace with the quantity parked, and you pick the form.',
+                title: 'Off: a buy opens the item in the marketplace with the quantity parked, and you pick the form. The walk’s Buy button needs this on, since it presses the confirm of the form this opens.',
             })
         );
     }
@@ -4170,6 +4575,9 @@ registerCommand({
 // panel, and recording it as one would write the departing character's
 // arrangement into the arriving character's flags.
 dataManager.on('character_switched', () => {
+    // A walk is the departed character's shortfall and form: nothing of it may press anything for
+    // the arriving one
+    consumablesPanel._dropBuyWalk();
     consumablesPanel.hide({ remember: false });
     consumablesPanel.reloadIdlePins();
     consumablesPanel.restore();

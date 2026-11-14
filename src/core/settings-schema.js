@@ -1969,7 +1969,7 @@ export const settingsGroups = {
                 label: 'Market: Consumables buy links open the recommended order form',
                 type: 'checkbox',
                 default: true,
-                help: "A Buy link in the Consumables panel opens the form its ⚡/⏳ recommendation points at — Buy Now for an instant buy, New Buy Listing for a patient order — with the quantity filled in, the way the Bulk Sell Assistant opens sell forms. Nothing is bought until you confirm the game's own button. Off: the link just opens the item in the marketplace with the quantity parked, as before.",
+                help: "A Buy link in the Consumables panel opens the form its ⚡/⏳ recommendation points at — Buy Now for an instant buy, New Buy Listing for a patient order — with the quantity filled in, the way the Bulk Sell Assistant opens sell forms. Nothing is bought until you confirm: with the game's own confirm button, or, in the Buy all walk, with the walk's Buy button, which presses the game's for you once, only for a press of yours, and only while the open form is for that item and quantity. Off: the link just opens the item in the marketplace with the quantity parked, as before (and the walk has no Buy button).",
             },
             market_bulkSellVendorCheck: {
                 id: 'market_bulkSellVendorCheck',
