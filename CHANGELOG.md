@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Best Items shows its market volume check progress
+
+The alchemy Best Items window now shows "Checking market volume… done / total" while it works out volume-limited rates, so a long Transmute check no longer looks stuck.
+
 ### Tooltip gathering profit follows the sell-tax toggle
 
 The Solo gathering rows in an item tooltip now skip the market sell tax when "Exclude sell tax (producing for personal use)" is on, and show the same ⚠ marker as the skill-page tile.
