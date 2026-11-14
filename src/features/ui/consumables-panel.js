@@ -25,8 +25,8 @@
  *
  * Combat · Labyrinth · Skilling. With no explicit choice the panel follows what is running (a labyrinth
  * run puts it on Labyrinth, a skill on Skilling, anything else on Combat); a chosen tab lasts until the
- * panel closes. `openTab()` is the entry the combat page's and the
- * Labyrinth entry screen's "Buy supplies" buttons use. The Buy-all walk row sits at the top, under the
+ * panel closes. `openTab()` is the entry the "Buy supplies" buttons on the combat page, the
+ * Labyrinth entry screen and the skill panels use. The Buy-all walk row sits at the top, under the
  * tab row, and walks only the shown tab's shortfalls; a walk already under way survives a tab switch.
  *
  * Party members are shown when there are any, because a party run stops when the
@@ -2628,10 +2628,13 @@ class ConsumablesPanel {
      * Show the panel on a tab. Opens it when closed, switches tab when open, never closes it, and
      * un-minimizes a folded panel so the press is seen.
      * @param {'combat'|'labyrinth'|'skilling'} tab
+     * @param {{skill?: string}} [options] - For Skilling: the skill to show (an action type hrid), as if
+     *   picked in its dropdown; ignored when the panel does not offer it
      */
-    openTab(tab) {
+    openTab(tab, { skill = null } = {}) {
         if (!PANEL_TABS.some((entry) => entry.id === tab)) return;
         this._tab = tab;
+        if (tab === 'skilling' && skill && isSkillingActionType(skill)) this._skillPin = skill;
         this.show();
         if (this.minimizeCtl?.collapsed) this.minimizeCtl.setCollapsed(false);
         if (this.panel) this._render({ force: true });

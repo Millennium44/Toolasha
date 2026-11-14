@@ -2990,6 +2990,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Replaces the Consumables heading on the combat page with a button that opens the Consumables panel on its Combat tab: how long your food and drinks last, with a Buy all walk for whatever is short of your target. Nothing is bought until you confirm in the game',
             },
+            skillingBuySuppliesButton: {
+                id: 'skillingBuySuppliesButton',
+                label: 'Skilling: Show "Buy supplies" button',
+                type: 'checkbox',
+                default: true,
+                help: 'Replaces the Consumables heading on a skill’s action panel with a button that opens the Consumables panel on its Skilling tab for that skill: how long your teas last, with a Buy all walk for whatever is short of your target. Nothing is bought until you confirm in the game',
+            },
             labyrinthGridScaleControl: {
                 id: 'labyrinthGridScaleControl',
                 label: 'Labyrinth: Show grid size control',

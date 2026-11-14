@@ -36,6 +36,7 @@ import craftEnhanceBoard from '../features/actions/craft-enhance-board.js';
 import * as craftingPlanCalculator from '../features/crafting-plan/crafting-plan-calculator.js';
 import * as craftArbitrage from '../features/crafting-plan/craft-arbitrage-adapter.js';
 import teaRecommendation from '../features/actions/tea-recommendation.js';
+import skillingBuySupplies from '../features/actions/skilling-buy-supplies.js';
 import inventoryCountDisplay from '../features/actions/inventory-count-display.js';
 import pinnedActionsPage from '../features/actions/pinned-actions-page.js';
 import drinkTimer from '../features/actions/drink-timer.js';
@@ -116,6 +117,7 @@ toolashaRoot.Actions = {
     alchemyCatalystMark,
     alchemyCatalystCheck,
     teaRecommendation,
+    skillingBuySupplies,
     inventoryCountDisplay,
     pinnedActionsPage,
     // Shared so cross-bundle readers (task profit in ui/market, alchemy pin

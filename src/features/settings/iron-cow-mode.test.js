@@ -148,6 +148,7 @@ describe('iron cow mode turns the merged market dropdowns off, not to their defa
         expect(IRON_COW_SETTINGS.has('enhanceSim_protectionMarketplaceButton')).toBe(true);
         expect(IRON_COW_SETTINGS.has('labyrinthMissingSuppliesButton')).toBe(true);
         expect(IRON_COW_SETTINGS.has('combatBuySuppliesButton')).toBe(true);
+        expect(IRON_COW_SETTINGS.has('skillingBuySuppliesButton')).toBe(true);
     });
 });
 

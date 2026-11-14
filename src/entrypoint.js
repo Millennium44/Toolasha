@@ -1883,6 +1883,14 @@ function registerFeatures() {
             liveStop: true,
         },
         {
+            key: 'skillingBuySuppliesButton',
+            name: 'Skilling Buy Supplies Button',
+            category: 'Actions',
+            module: Actions.skillingBuySupplies,
+            async: false,
+            liveStop: true,
+        },
+        {
             // Registered under the control switch, but the module also applies the saved size with the
             // stepper hidden, so the gate is always open and the module reads both settings itself.
             key: 'labyrinthGridScaleControl',

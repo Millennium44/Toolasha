@@ -252,12 +252,13 @@ class TeaRecommendation {
     }
 
     /**
-     * Check if label is "Consumables" and inject buttons
+     * Inject the buttons into a skill panel's Consumables heading
      * @param {HTMLElement} labelElement - The label element
      */
     checkAndInjectButtons(labelElement) {
-        // Only inject on "Consumables" label
-        if (labelElement.textContent.trim() !== 'Consumables') {
+        // Only on the consumables block's own heading: found by position, not by its English text, so
+        // it works in any language and beside the "Buy supplies" button that may stand in for the text
+        if (!/_consumablesContainer/.test(labelElement.parentElement?.className || '')) {
             return;
         }
 

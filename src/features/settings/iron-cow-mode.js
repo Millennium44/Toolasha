@@ -57,6 +57,7 @@ export const IRON_COW_SETTINGS = new Set([
     'enhanceSim_protectionMarketplaceButton',
     'labyrinthMissingSuppliesButton',
     'combatBuySuppliesButton',
+    'skillingBuySuppliesButton',
     // Profit / pricing calculations
     'profitCalc_pricingMode',
     'profitCalc_patientTickBuy',

@@ -631,6 +631,15 @@ describe('the tabs', () => {
         expect(consumablesPanel._tab).toBe('combat');
     });
 
+    test('openTab on Skilling with a skill shows that skill, not the running one', async () => {
+        runForaging();
+        consumablesPanel.openTab('skilling', { skill: '/action_types/combat' });
+        await settled();
+        expect(consumablesPanel._skillPin).toBeNull();
+        consumablesPanel.openTab('skilling', { skill: FORAGING });
+        expect(consumablesPanel._skillPin).toBe(FORAGING);
+    });
+
     test('a folded panel is unfolded by openTab', async () => {
         await open();
         consumablesPanel.minimizeCtl.setCollapsed(true);

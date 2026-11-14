@@ -6,9 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Buy supplies on the combat page, and Consumables panel tabs
+### Buy supplies on combat and skill pages, and Consumables panel tabs
 
-- The combat page's "Consumables" heading is now a "Buy supplies" button, like the Labyrinth's.
+- The "Consumables" heading on the combat page and on skill panels is now a "Buy supplies" button, like the Labyrinth's.
 - Both buttons now open the Consumables panel on their tab; the Labyrinth one no longer goes straight to the marketplace.
 - The panel has Combat, Labyrinth and Skilling tabs, and its Buy all walk sits at the top and walks the shown tab.
 
