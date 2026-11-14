@@ -293,9 +293,10 @@ builds a mix of two branches.
 
 **The dev-build trap**: gates build `dist/Toolasha-dev.user.js` from whatever branch is checked out, and
 the maintainer's dev loader serves that file. Gating PR branch A then B leaves a dev build with only B.
-Before the maintainer tests live, build from `main` plus every open PR. To load one branch for a live
-check without switching the main checkout, `bash scripts/dev-load-branch.sh <ref>` builds it in
-`../Toolasha-integ` and copies the result into `dist/`. Never run two git or gates jobs
+Before the maintainer tests live, build from `main` plus every open PR:
+`bash scripts/dev-load-branch.sh origin/main <pr-branch> ...` merges each branch onto the first ref in its own
+worktree, `../Toolasha-devload` (never `../Toolasha-integ`, so it cannot collide with gates or a landing), and
+copies the build into `dist/`. One ref alone loads that branch. Never run two git or gates jobs
 in one checkout at once.
 
 **The main checkout stays on `main`.** Several chats share it and assume `main`, so a PR branch checked out
