@@ -303,6 +303,7 @@ const {
     renderTrialBlock,
     renderTrialPlayers,
     signedUpMembers,
+    skillingRowNarrow,
     tokenPayoutLine,
     withScrollKept,
 } = await import('./guild-trials.js');
@@ -1751,6 +1752,21 @@ describe('the skilling readout under the card', () => {
             expect(card.style.marginBottom).toBe('auto');
             expect(battle.nextElementSibling).toBeNull();
             expect(blockNearAnchor(block, card, root)).toBe(true);
+        });
+    }
+
+    // Codex P2 on #1009: the breakpoint was card + 170, so a ~300 px row passed as wide and its
+    // three 170 px columns clipped. Stacked, the row needs the three columns and their gaps.
+    for (const [width, narrow] of [
+        [300, true],
+        [573, true],
+        [574, false],
+        [715, false],
+        [0, false],
+    ]) {
+        test(`a ${width || 'unmeasured'} px row ${narrow ? 'is' : 'is not'} narrow for the three-column readout`, () => {
+            const { card } = layout(width);
+            expect(skillingRowNarrow(card)).toBe(narrow);
         });
     }
 

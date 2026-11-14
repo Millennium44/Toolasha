@@ -2606,27 +2606,26 @@ function restorePhoneFight(scope) {
     }
 }
 
-/** The narrowest a readout can be beside the card, and the margins around the pair */
-const SIDECAR_MIN_WIDTH = 170;
-const SIDECAR_ROW_SLACK = 16;
+/** Padding around the stacked readout inside its row */
+const SKILLING_ROW_SLACK = 16;
 
 /**
  * Whether a skilling challenge row is too narrow for the wide, three-column readout.
  *
- * Every row is stacked (card above readout); only the readout's own layout follows the width. Measured from
- * the row and the card, neither of which the readout widens, so the answer does not depend on the readout.
- * A row that cannot be measured (hidden, not laid out) reads as wide.
+ * Every row is stacked (card above readout), so the readout has the row's full width to itself and the card's
+ * width does not matter: the row needs the three columns, their gaps and a little padding, the same measure
+ * `fightAreaNarrow` uses. Measured from the row, which the readout does not widen, so the answer does not
+ * depend on the readout. A row that cannot be measured (hidden, not laid out) reads as wide.
  *
  * @param {Element} card - The game's card
  * @returns {boolean}
  */
-function skillingRowNarrow(card) {
+export function skillingRowNarrow(card) {
     const row = card?.closest?.('[class*="SkillingInstancePanel_challengeArea"]');
     if (!row) return false;
     const rowWidth = row.clientWidth;
-    const cardWidth = card.offsetWidth;
-    if (!(rowWidth > 0 && cardWidth > 0)) return false;
-    return rowWidth < cardWidth + SIDECAR_MIN_WIDTH + SIDECAR_ROW_SLACK;
+    if (!(rowWidth > 0)) return false;
+    return rowWidth < 3 * WIDE_READOUT_COLUMN_PX + 2 * WIDE_READOUT_GAP_PX + SKILLING_ROW_SLACK;
 }
 
 /**
