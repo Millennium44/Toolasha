@@ -181,6 +181,13 @@ const ALLOWLIST = new Map([
         'stateless alchemy item-level lookup; no module state to share',
     ],
     [
+        'src/utils/server-notices.js',
+        // Frozen key lists and a subscribe helper; each subscription keeps its listener in its own closure
+        // and registers on the shared core websocket hook, so a second copy has no state of its own. Bulk
+        // Sell (market bundle) and the Consumables panel's Buy walk (ui bundle) both watch for refusals.
+        'stateless notice normalizing and per-call subscriptions on the core socket hook; no module state',
+    ],
+    [
         'src/utils/token-worth.js',
         // Two constants and two pure arithmetic functions, no imports and no module state. The token
         // tooltip (market bundle) totals a held stack with it and the combat sim (sim bundle) prices scrolls.
