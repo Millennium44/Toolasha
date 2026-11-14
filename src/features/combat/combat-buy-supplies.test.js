@@ -25,21 +25,23 @@ vi.mock('../../utils/bundle-bridge.js', () => ({ consumablesPanel: () => game.pa
 import config from '../../core/config.js';
 import feature, { injectButton, findConsumablesHeading, handleClick } from './combat-buy-supplies.js';
 
-// The combat page's consumables block: a heading, then the grid (hashed class names, like the game's)
+// The combat page's consumables block as the game draws it (2026-11-14, hashed class names):
+// BattlePanel_combatConsumables > BattlePanel_label ("Consumables") + BattlePanel_combatConsumableGrid
 function makeBlock({ heading = 'Consumables' } = {}) {
-    const wrapper = document.createElement('div');
+    const grid = document.createElement('div');
+    grid.className = 'BattlePanel_combatConsumables__3Za2n';
     let label = null;
     if (heading !== null) {
         label = document.createElement('div');
         label.className = 'BattlePanel_label__x1y2z';
         label.textContent = heading;
-        wrapper.appendChild(label);
+        grid.appendChild(label);
     }
-    const grid = document.createElement('div');
-    grid.className = 'BattlePanel_combatConsumables__a1b2c';
-    wrapper.appendChild(grid);
-    document.body.appendChild(wrapper);
-    return { wrapper, label, grid };
+    const slots = document.createElement('div');
+    slots.className = 'BattlePanel_combatConsumableGrid__q9w8e';
+    grid.appendChild(slots);
+    document.body.appendChild(grid);
+    return { wrapper: grid, label, grid, slots };
 }
 
 describe('combat buy supplies button', () => {
@@ -54,39 +56,44 @@ describe('combat buy supplies button', () => {
         document.body.innerHTML = '';
     });
 
-    test('the button sits beside the heading, on its line, and the heading stays as drawn', () => {
-        const { wrapper, label, grid } = makeBlock();
+    test('the button takes the heading’s place, on its line, and the heading is hidden not removed', () => {
+        const { grid, label, slots } = makeBlock();
         injectButton(grid);
         injectButton(grid);
-        const buttons = wrapper.querySelectorAll('button');
+        const buttons = grid.querySelectorAll('button');
         expect(buttons).toHaveLength(1);
         expect(buttons[0].textContent).toBe('Buy supplies');
         expect(buttons[0].title).toContain('Consumables panel');
-        expect(buttons[0].parentElement).toBe(label);
-        expect(label.style.display).toBe('');
-        expect(label.nextElementSibling).toBe(grid);
+        const holder = buttons[0].parentElement;
+        expect(holder.className).toBe(label.className);
+        expect(label.style.display).toBe('none');
+        expect(label.nextElementSibling).toBe(holder);
+        expect(holder.nextElementSibling).toBe(slots);
     });
 
-    test('a heading is found by shape, in any language', () => {
+    test('a heading is found by class, in any language', () => {
         const { grid } = makeBlock({ heading: '消耗品' });
         expect(findConsumablesHeading(grid)?.textContent).toBe('消耗品');
     });
 
-    test('no heading before the grid: the button goes just before the grid', () => {
-        const { wrapper, grid } = makeBlock({ heading: null });
+    test('no heading in the block: the button goes at its top', () => {
+        const { grid, slots } = makeBlock({ heading: null });
         injectButton(grid);
-        const button = wrapper.querySelector('button');
+        const button = grid.querySelector('button');
         expect(button).not.toBeNull();
-        expect(button.nextElementSibling).toBe(grid);
+        expect(button.nextElementSibling).toBe(slots);
     });
 
-    test('a neighbor that is not a short label (icons, long text) is not taken for the heading', () => {
-        const withIcon = makeBlock({ heading: 'x' });
-        withIcon.label.appendChild(document.createElement('svg'));
-        expect(findConsumablesHeading(withIcon.grid)).toBeNull();
-
-        const long = makeBlock({ heading: 'a'.repeat(80) });
-        expect(findConsumablesHeading(long.grid)).toBeNull();
+    test('disable takes the button out and shows the heading again', () => {
+        config.getSetting.mockReturnValue(true);
+        const { grid, label, slots } = makeBlock();
+        feature.initialize();
+        expect(grid.querySelector('button')).not.toBeNull();
+        feature.disable();
+        expect(grid.querySelector('button')).toBeNull();
+        expect(label.style.display).toBe('');
+        expect(label.hasAttribute('data-mwi-combat-supplies-label-hidden')).toBe(false);
+        expect([...grid.children]).toEqual([label, slots]);
     });
 
     test('pressing the button opens the Consumables panel on the Combat tab', () => {

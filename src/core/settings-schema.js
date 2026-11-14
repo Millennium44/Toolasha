@@ -2988,7 +2988,7 @@ export const settingsGroups = {
                 label: 'Combat: Show "Buy supplies" button',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a button beside the Consumables heading on the combat page that opens the Consumables panel on its Combat tab: how long your food and drinks last, with a Buy all walk for whatever is short of your target. Nothing is bought until you confirm in the game',
+                help: 'Replaces the Consumables heading on the combat page with a button that opens the Consumables panel on its Combat tab: how long your food and drinks last, with a Buy all walk for whatever is short of your target. Nothing is bought until you confirm in the game',
             },
             labyrinthGridScaleControl: {
                 id: 'labyrinthGridScaleControl',
