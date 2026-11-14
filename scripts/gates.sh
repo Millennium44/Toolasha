@@ -61,6 +61,14 @@ tests_log=$(mktemp)
 set +e
 node_modules/.bin/vitest run >"$tests_log" 2>&1
 tests_status=$?
+# Vitest itself can die with a segfault (exit 139) before running a test, under load on Windows
+# (2026-11-14, a landing run). That is no test result: run the suite once more rather than fail the gates.
+# A crash after results were printed, or any other failure, is reported as it is.
+if [ "$tests_status" -eq 139 ] && ! grep -qE '^ *(Test Files|Tests) ' "$tests_log"; then
+    echo "Vitest crashed before reporting (exit 139); running the suite once more"
+    node_modules/.bin/vitest run >"$tests_log" 2>&1
+    tests_status=$?
+fi
 set -e
 grep -E '^ *(FAIL|×) |^ *(Test Files|Tests) ' "$tests_log" || true
 if [ "$tests_status" -ne 0 ]; then
