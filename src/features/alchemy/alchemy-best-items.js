@@ -114,6 +114,8 @@ const MARK_MEANING_KEY = 'selfUse_markMeaning';
 
 /** How long inventory churn settles before the own-stock table redraws */
 const INVENTORY_REDRAW_MS = 400;
+/** Longest gap between writes of the market-volume sweep's count (also the delay before it first shows) */
+const CHECK_PROGRESS_INTERVAL_MS = 250;
 /** How long the own-stock sweep works before handing the browser a frame */
 const OWN_STOCK_SLICE_MS = 10;
 
@@ -489,6 +491,7 @@ class AlchemyBestItems {
                 this.alchemyTab.remove();
                 this.alchemyTab = null;
             }
+            this.endCheckProgress(null);
             if (this.modal?.parentNode) this.modal.remove();
             this.modal = null;
             this.cachedRankings = {};
@@ -648,9 +651,10 @@ class AlchemyBestItems {
      * is written by index, matching the ranking `rankings` came in as.
      *
      * @param {Array<Object>} rankings - From {@link calculateRankings}
+     * @param {(done: number, total: number) => void} [onProgress] - Distinct items looked up so far
      * @returns {Promise<Array<Object>>} The rows, bounded where the market binds
      */
-    async withLiquidityCaps(rankings) {
+    async withLiquidityCaps(rankings, onProgress) {
         const list = rankings || [];
         const bounded = new Array(list.length);
 
@@ -660,7 +664,7 @@ class AlchemyBestItems {
                 items.push({ itemHrid: sold.itemHrid, enhancementLevel: sold.enhancementLevel || 0 });
             }
         }
-        await prefetchLiquidity(items);
+        await prefetchLiquidity(items, onProgress);
 
         await Promise.all(
             list.map(async (entry, index) => {
@@ -685,6 +689,53 @@ class AlchemyBestItems {
         );
 
         return bounded;
+    }
+
+    /**
+     * Take ownership of the "Checking market volume…" line for one sweep, blanking any older count.
+     * @param {Object} owner - The sweep's cached rows array (its identity)
+     */
+    startCheckProgress(owner) {
+        this.endCheckProgress(this.checkProgressOwner);
+        this.checkProgressOwner = owner;
+    }
+
+    /**
+     * Record how far a sweep has got. Writes are throttled and never made at once, so a sweep that
+     * finishes at once (every volume already known) never flashes a count.
+     * @param {Object} owner - The sweep reporting
+     * @param {number} done - Distinct items looked up
+     * @param {number} total - Distinct items to look up
+     */
+    reportCheckProgress(owner, done, total) {
+        if (this.checkProgressOwner !== owner) return;
+        this.checkProgressLatest = { done, total };
+        if (this.checkProgressTimer) return;
+        this.checkProgressTimer = setTimeout(() => {
+            this.checkProgressTimer = null;
+            const latest = this.checkProgressLatest;
+            const el = this.modal?.querySelector('[data-mwi-check-progress]');
+            if (!latest || !el || this.checkProgressOwner !== owner) return;
+            el.textContent = `Checking market volume… ${latest.done} / ${latest.total}`;
+            el.style.display = '';
+        }, CHECK_PROGRESS_INTERVAL_MS);
+    }
+
+    /**
+     * Clear the count — only if `owner` still holds the line (null clears whoever does).
+     * @param {Object|null} owner - The sweep that ended
+     */
+    endCheckProgress(owner) {
+        if (owner && this.checkProgressOwner !== owner) return;
+        clearTimeout(this.checkProgressTimer);
+        this.checkProgressTimer = null;
+        this.checkProgressOwner = null;
+        this.checkProgressLatest = null;
+        const el = this.modal?.querySelector('[data-mwi-check-progress]');
+        if (el) {
+            el.textContent = '';
+            el.style.display = 'none';
+        }
     }
 
     /**
@@ -714,11 +765,16 @@ class AlchemyBestItems {
         this.renderTable();
         this.refreshOwnStock();
 
-        return this.withLiquidityCaps(raw)
+        // The sweep can take minutes on a big type: show how far it has got. `pending` is
+        // this sweep's identity, so an older sweep can never write over a newer one's count.
+        this.startCheckProgress(pending);
+
+        return this.withLiquidityCaps(raw, (done, total) => this.reportCheckProgress(pending, done, total))
             .then((bounded) => {
                 // A tab switch, or a reopen, since this sweep started would have
                 // replaced the cached array already — a sweep landing late has
                 // nothing current left to write into.
+                this.endCheckProgress(pending);
                 if (this.cachedRankings[alchemyType] !== pending) return;
                 this.cachedRankings[alchemyType] = bounded;
                 if (this.modal && this.modal.style.display !== 'none' && this.currentType === alchemyType) {
@@ -731,6 +787,7 @@ class AlchemyBestItems {
                 // so a rejection cannot leave the type stuck showing
                 // "checking…" forever: the raw rows settle unbounded.
                 console.error('[AlchemyBestItems] Bounding rankings by market volume failed:', error);
+                this.endCheckProgress(pending);
                 if (this.cachedRankings[alchemyType] !== pending) return;
                 this.cachedRankings[alchemyType] = raw;
                 if (this.modal && this.modal.style.display !== 'none' && this.currentType === alchemyType) {
@@ -998,6 +1055,7 @@ class AlchemyBestItems {
     }
 
     closeModal() {
+        this.endCheckProgress(null);
         if (this.modal) {
             this.modal.style.display = 'none';
         }
@@ -1008,6 +1066,7 @@ class AlchemyBestItems {
      */
     invalidateCache() {
         this.cachedRankings = {};
+        this.endCheckProgress(null);
         this.clearChainCaches();
     }
 
@@ -1622,6 +1681,13 @@ class AlchemyBestItems {
         filterRow.appendChild(lookaheadFilter);
 
         content.appendChild(filterRow);
+
+        // Count of the market-volume sweep, shown only while one is running
+        const checkProgress = document.createElement('div');
+        checkProgress.setAttribute('data-mwi-check-progress', 'true');
+        checkProgress.setAttribute('role', 'status');
+        checkProgress.style.cssText = 'display: none; font-size: 0.8rem; opacity: 0.8; margin: 4px 0;';
+        content.appendChild(checkProgress);
 
         // Table container
         const tableContainer = document.createElement('div');

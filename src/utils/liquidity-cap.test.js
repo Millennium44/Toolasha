@@ -336,6 +336,28 @@ describe('prefetchLiquidity', () => {
         expect(history.calls).toHaveLength(1);
     });
 
+    test('reports distinct items looked up as (done, total), and a throwing callback does not stop it', async () => {
+        const items = ['/items/a', '/items/b', '/items/c'];
+        for (const item of items) history.rows[item] = tradedAt(10);
+        const seen = [];
+
+        await prefetchLiquidity(
+            [...items, '/items/a'].map((itemHrid) => ({ itemHrid })),
+            (done, total) => {
+                seen.push([done, total]);
+                throw new Error('a bad callback');
+            }
+        );
+
+        expect(seen).toEqual([
+            [0, 3],
+            [1, 3],
+            [2, 3],
+            [3, 3],
+        ]);
+        expect(history.calls).toHaveLength(3);
+    });
+
     test('fetches several items concurrently, bounded rather than all at once', async () => {
         // Sized past the concurrency bound so the fan-out has to prove it is
         // bounded, not just that it overlaps at all.

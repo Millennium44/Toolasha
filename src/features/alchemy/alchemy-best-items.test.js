@@ -313,6 +313,8 @@ const liquidity = vi.hoisted(() => ({
     // An item whose check throws, to prove one bad row does not sink the rest
     // of a concurrent sweep.
     failFor: null,
+    // Runs inside the mocked prefetch with its progress callback, so a test can drive the count
+    prefetchHook: null,
 }));
 
 function computeCapResult(goldPerHour, sells) {
@@ -349,7 +351,9 @@ vi.mock('../../utils/liquidity-cap.js', () => ({
     // The real prefetch just warms market-liquidity.js's own cache, which
     // this mock's capProfitRate never consults (it answers straight out of
     // liquidity.throttleByItem) — a no-op here is faithful to that.
-    prefetchLiquidity: async () => {},
+    prefetchLiquidity: async (items, onProgress) => {
+        if (liquidity.prefetchHook) await liquidity.prefetchHook(onProgress);
+    },
     capProfitRate: async ({ goldPerHour, sells }) => {
         liquidity.calls.push({ goldPerHour, sells });
         const itemHrid = sells?.[0]?.itemHrid;
@@ -407,6 +411,7 @@ beforeEach(() => {
     liquidity.hang = false;
     liquidity.pending = [];
     liquidity.failFor = null;
+    liquidity.prefetchHook = null;
     calculator.coinify.mockReset().mockReturnValue(profit());
     calculator.decompose.mockReset().mockReturnValue(profit());
     calculator.transmute.mockReset().mockReturnValue(profit());
@@ -1096,6 +1101,160 @@ describe('loadRankings — painting early, resolving the caps in the background'
 
         expect(bestItems.cachedRankings.coinify).toBe(settled);
         withCapsSpy.mockRestore();
+    });
+});
+
+describe('loadRankings — the market-volume sweep shows how far it has got', () => {
+    const progressText = () => bestItems.modal.querySelector('[data-mwi-check-progress]').textContent;
+    const progressShown = () => bestItems.modal.querySelector('[data-mwi-check-progress]').style.display !== 'none';
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        game.initClientData = {
+            itemDetailMap: {
+                '/items/charm': { name: 'Charm', itemLevel: 10, alchemyDetail: { isCoinifiable: true } },
+            },
+        };
+        calculator.coinify.mockReturnValue(
+            profit({
+                profitPerHour: 1000,
+                dropRevenues: [{ itemHrid: '/items/essence', itemName: 'Essence', dropsPerHour: 5 }],
+            })
+        );
+        bestItems.createModal();
+        bestItems.modal.style.display = 'flex';
+        bestItems.currentType = 'coinify';
+    });
+
+    afterEach(() => {
+        bestItems.endCheckProgress(null);
+        vi.useRealTimers();
+    });
+
+    /** A prefetch that waits on gates the test opens one at a time */
+    function gatedPrefetch() {
+        const gate = { report: null, finish: null };
+        liquidity.prefetchHook = (onProgress) =>
+            new Promise((resolve) => {
+                gate.report = onProgress;
+                gate.finish = resolve;
+                onProgress(0, 340);
+            });
+        return gate;
+    }
+
+    test('the count appears and advances while the sweep runs, then clears on success', async () => {
+        const gate = gatedPrefetch();
+        const load = bestItems.loadRankings('coinify');
+        await vi.advanceTimersByTimeAsync(250);
+        expect(progressText()).toBe('Checking market volume… 0 / 340');
+
+        gate.report(120, 340);
+        await vi.advanceTimersByTimeAsync(250);
+        expect(progressText()).toBe('Checking market volume… 120 / 340');
+
+        gate.finish();
+        await load;
+        expect(progressText()).toBe('');
+        expect(progressShown()).toBe(false);
+    });
+
+    test('writes are throttled: a burst of reports makes one write with the latest figure', async () => {
+        const gate = gatedPrefetch();
+        const load = bestItems.loadRankings('coinify');
+        for (let i = 1; i <= 50; i++) gate.report(i, 340);
+        await vi.advanceTimersByTimeAsync(250);
+        expect(progressText()).toBe('Checking market volume… 50 / 340');
+        gate.finish();
+        await load;
+    });
+
+    test('a sweep that finishes at once never shows a count', async () => {
+        liquidity.prefetchHook = async (onProgress) => {
+            onProgress(0, 3);
+            onProgress(3, 3);
+        };
+        await bestItems.loadRankings('coinify');
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(progressText()).toBe('');
+        expect(progressShown()).toBe(false);
+    });
+
+    test('the count clears when the sweep rejects outright', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        let rejectSweep;
+        const spy = vi.spyOn(bestItems, 'withLiquidityCaps').mockImplementationOnce((raw, onProgress) => {
+            onProgress(40, 340);
+            return new Promise((resolve, reject) => (rejectSweep = reject));
+        });
+        const load = bestItems.loadRankings('coinify');
+        await vi.advanceTimersByTimeAsync(250);
+        expect(progressText()).toBe('Checking market volume… 40 / 340');
+
+        rejectSweep(new Error('no volume'));
+        await load;
+        expect(progressText()).toBe('');
+        expect(progressShown()).toBe(false);
+        expect(bestItems.cachedRankings.coinify.some((row) => row.capPending)).toBe(false);
+        spy.mockRestore();
+        vi.restoreAllMocks();
+    });
+
+    test('a superseded sweep never writes its count over the newer one', async () => {
+        const first = gatedPrefetch();
+        const firstLoad = bestItems.loadRankings('coinify');
+        await vi.advanceTimersByTimeAsync(250);
+        expect(progressText()).toBe('Checking market volume… 0 / 340');
+
+        const second = gatedPrefetch();
+        const secondLoad = bestItems.loadRankings('coinify');
+        expect(progressShown()).toBe(false);
+
+        first.report(300, 340);
+        second.report(7, 20);
+        await vi.advanceTimersByTimeAsync(250);
+        expect(progressText()).toBe('Checking market volume… 7 / 20');
+
+        // The old sweep settling must not clear the newer one's count
+        first.finish();
+        await firstLoad;
+        expect(progressText()).toBe('Checking market volume… 7 / 20');
+
+        second.finish();
+        await secondLoad;
+        expect(progressText()).toBe('');
+    });
+
+    test('switching type mid-sweep and closing the modal both clear the count', async () => {
+        const gate = gatedPrefetch();
+        const load = bestItems.loadRankings('coinify');
+        await vi.advanceTimersByTimeAsync(250);
+        expect(progressShown()).toBe(true);
+
+        bestItems.closeModal();
+        expect(progressShown()).toBe(false);
+        gate.report(5, 340);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(progressText()).toBe('');
+        gate.finish();
+        await load;
+    });
+
+    test('switching to another type replaces the count', async () => {
+        const gate = gatedPrefetch();
+        const load = bestItems.loadRankings('coinify');
+        await vi.advanceTimersByTimeAsync(250);
+        expect(progressShown()).toBe(true);
+
+        liquidity.prefetchHook = async () => {};
+        bestItems.currentType = 'decompose';
+        await bestItems.loadRankings('decompose');
+        expect(progressShown()).toBe(false);
+        gate.report(9, 340);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(progressText()).toBe('');
+        gate.finish();
+        await load;
     });
 });
 

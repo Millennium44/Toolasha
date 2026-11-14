@@ -239,9 +239,12 @@ export function cachedItemVolume(itemHrid, enhancementLevel = 0) {
  * instead of mostly idle between rows, without asking for more of it at once.
  *
  * @param {Array<{itemHrid: string, enhancementLevel?: number}>} items - Items to warm
+ * @param {(done: number, total: number) => void} [onProgress] - Called with `(0, total)` before the
+ *   first lookup and again as each distinct item's lookup finishes, so a caller can show a count
+ *   while a long sweep runs. A throwing callback never stops the sweep.
  * @returns {Promise<void>}
  */
-export async function prefetchLiquidity(items) {
+export async function prefetchLiquidity(items, onProgress) {
     const { dailyVolume } = liquidity();
     const wanted = new Map();
     for (const item of items || []) {
@@ -249,6 +252,18 @@ export async function prefetchLiquidity(items) {
         const enhancementLevel = item.enhancementLevel || 0;
         wanted.set(`${item.itemHrid}:${enhancementLevel}`, { itemHrid: item.itemHrid, enhancementLevel });
     }
+
+    const total = wanted.size;
+    let done = 0;
+    const report = () => {
+        if (typeof onProgress !== 'function') return;
+        try {
+            onProgress(done, total);
+        } catch (error) {
+            console.error('[LiquidityCap] Progress callback failed:', error);
+        }
+    };
+    report();
 
     await runPool([...wanted.values()], PREFETCH_CONCURRENCY, async ({ itemHrid, enhancementLevel }) => {
         try {
@@ -258,6 +273,8 @@ export async function prefetchLiquidity(items) {
             // is a second net, not the one doing the real work.
             console.error(`[LiquidityCap] Prefetching volume for ${itemHrid} failed:`, error);
         }
+        done += 1;
+        report();
     });
 }
 
