@@ -2000,10 +2000,24 @@ class ConsumablesPanel {
         setTimeout(async () => {
             // The walk was stopped, skipped or moved on during the beat: nothing to open
             if (step && this._buyStep !== step) return;
+            const openListing = async () => {
+                if (typeof shortcuts.clickListingButton !== 'function') throw new Error('No listing shortcut');
+                await shortcuts.clickListingButton('+ New Buy Listing', 'Button_buy');
+            };
             try {
-                await (strategy.mode === 'instant'
-                    ? shortcuts.clickInstantActionButton?.('Buy')
-                    : shortcuts.clickListingButton?.('+ New Buy Listing', 'Button_buy'));
+                if (strategy.mode === 'instant') {
+                    try {
+                        await shortcuts.clickInstantActionButton?.('Buy');
+                    } catch (error) {
+                        if (error?.message === 'Cancelled') throw error;
+                        // An empty book has no Buy Now to take: fall back to a buy order, as the
+                        // marketplace shortcuts do. The step reads the form's kind from what opens
+                        if (step && this._buyStep !== step) return;
+                        await openListing();
+                    }
+                } else {
+                    await openListing();
+                }
             } catch (error) {
                 // A cancelled search is the player moving on, not a failure
                 if (error?.message === 'Cancelled') {
@@ -2016,7 +2030,7 @@ class ConsumablesPanel {
                 // Not when the walk was cancelled or the character changed meanwhile
                 if (step && (this._buyStep !== step || step.characterId !== currentCharacterId())) return;
                 const name = dataManager.getItemDetails?.(itemHrid)?.name || 'this item';
-                const form = strategy.mode === 'instant' ? 'Buy Now' : 'New Buy Listing';
+                const form = strategy.mode === 'instant' ? 'Buy Now or a buy listing' : 'New Buy Listing';
                 showToast(`Could not open ${form} for ${name} — the quantity is filled in, finish it by hand.`, {
                     kind: 'warn',
                 });

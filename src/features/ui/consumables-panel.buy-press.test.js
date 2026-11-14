@@ -439,7 +439,7 @@ describe('every other way a step ends', () => {
         expect(mainLabel()).toBe('▶ Next: Star Fruit Gummy (1 left)');
     });
 
-    test('a form that never opens leaves Next, not a Buy with nothing behind it', async () => {
+    test('an empty book with no Buy Now falls back to a buy listing form', async () => {
         shortcuts.clickInstantActionButton = vi.fn(() => Promise.reject(new Error('Timeout waiting')));
         consumablesPanel.show();
         await tick();
@@ -447,7 +447,21 @@ describe('every other way a step ends', () => {
         consumablesPanel.bodyEl.appendChild(consumablesPanel._renderInlineBuyWalk());
         inlineBtn().click();
         await tick(400);
-        expect(toasts()).toContain('Could not open Buy Now for Peach Gummy');
+        expect(shortcuts.clickListingButton).toHaveBeenCalledWith('+ New Buy Listing', 'Button_buy');
+        expect(toasts()).not.toContain('Could not open');
+        expect(gameClicks).toBe(0);
+    });
+
+    test('a form that never opens leaves Next, not a Buy with nothing behind it', async () => {
+        shortcuts.clickInstantActionButton = vi.fn(() => Promise.reject(new Error('Timeout waiting')));
+        shortcuts.clickListingButton = vi.fn(() => Promise.reject(new Error('Timeout waiting')));
+        consumablesPanel.show();
+        await tick();
+        consumablesPanel._registerBuyQueue('Combat', shortfall);
+        consumablesPanel.bodyEl.appendChild(consumablesPanel._renderInlineBuyWalk());
+        inlineBtn().click();
+        await tick(400);
+        expect(toasts()).toContain('Could not open Buy Now or a buy listing for Peach Gummy');
         expect(consumablesPanel._buyStep).toBe(null);
         expect(mainLabel()).toBe('▶ Next: Star Fruit Gummy (1 left)');
         expect(mainEl().disabled).toBe(false);
