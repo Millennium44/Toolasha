@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Buy supplies on the combat page, and Consumables panel tabs
+
+- The combat page's "Consumables" heading is now a "Buy supplies" button, like the Labyrinth's; both open the Consumables panel.
+- The panel has Combat, Labyrinth and Skilling tabs, and its Buy all walk now sits at the top.
+
 ### Skilling trial readout no longer clips on mid-width rows
 
 The skilling challenge readout now switches to one column whenever the row is too narrow for its three columns, instead of squeezing three clipped columns into rows around 300 px wide.
