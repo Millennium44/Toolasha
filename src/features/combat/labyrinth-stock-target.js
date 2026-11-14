@@ -3,8 +3,8 @@
  *
  * How many torches, shrouds, beacons and crates the player keeps stocked for the Labyrinth: a
  * per-run need, times a chosen number of runs, less what the inventory already holds. The
- * Consumables panel's Labyrinth block and the entry screen's "Buy missing supplies" button both
- * size their shortfall here, so the two can never disagree about what is short.
+ * Consumables panel's Labyrinth block sizes its shortfall here (the entry screen's "Buy supplies"
+ * button now just opens that panel on its Labyrinth tab).
  */
 
 import config from '../../core/config.js';

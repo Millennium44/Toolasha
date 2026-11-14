@@ -2978,10 +2978,17 @@ export const settingsGroups = {
             },
             labyrinthMissingSuppliesButton: {
                 id: 'labyrinthMissingSuppliesButton',
-                label: 'Labyrinth: Show "Buy missing supplies" button',
+                label: 'Labyrinth: Show "Buy supplies" button',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a button next to the Supplies section of the Labyrinth entry screen that opens the marketplace on whichever Torch/Shroud/Beacon is short of its carry cap, quantities filled in. Nothing is bought until you confirm in the game',
+                help: 'Replaces the Supplies label on the Labyrinth entry screen with a button that opens the Consumables panel on its Labyrinth tab: what the next runs need against what you hold, with a Buy all walk for the shortfall. Nothing is bought until you confirm in the game',
+            },
+            combatBuySuppliesButton: {
+                id: 'combatBuySuppliesButton',
+                label: 'Combat: Show "Buy supplies" button',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a button beside the Consumables heading on the combat page that opens the Consumables panel on its Combat tab: how long your food and drinks last, with a Buy all walk for whatever is short of your target. Nothing is bought until you confirm in the game',
             },
             labyrinthGridScaleControl: {
                 id: 'labyrinthGridScaleControl',

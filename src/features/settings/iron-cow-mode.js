@@ -53,9 +53,10 @@ export const IRON_COW_SETTINGS = new Set([
     'market_showQueueLength',
     'market_enhanceProfitPerHour',
     'market_volumeStats',
-    // Buttons whose only action is opening the Marketplace
+    // Buy buttons: the marketplace buttons, and the "Buy supplies" buttons that open the buying panel
     'enhanceSim_protectionMarketplaceButton',
     'labyrinthMissingSuppliesButton',
+    'combatBuySuppliesButton',
     // Profit / pricing calculations
     'profitCalc_pricingMode',
     'profitCalc_patientTickBuy',

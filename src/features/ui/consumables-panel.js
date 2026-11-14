@@ -21,6 +21,13 @@
  * is what to buy rather than what to own. The arithmetic is in
  * `utils/consumable-forecast.js`; this module lists, sorts and draws.
  *
+ * ## Tabs
+ *
+ * Combat · Labyrinth · Skilling. With no explicit choice the panel follows what is running (a skill
+ * puts it on Skilling, anything else on Combat). `openTab()` is the entry the combat page's and the
+ * Labyrinth entry screen's "Buy supplies" buttons use. The Buy-all walk row sits at the top, under the
+ * tab row, and walks only the shown tab's shortfalls; a walk already under way survives a tab switch.
+ *
  * Party members are shown when there are any, because a party run stops when the
  * **first** member runs dry, and that member is frequently not you.
  *
@@ -76,7 +83,6 @@ import {
     chestKeyForEntryKey,
 } from '../../utils/dungeon-party-keys.js';
 import {
-    COMBAT_ACTION_TYPE,
     actionTypeLabel,
     isSkillingActionType,
     runningActionTypeHrid,
@@ -329,6 +335,13 @@ const KEY_PRICING_LABELS = {
     craft: 'craft cost',
 };
 
+/** The panel's tabs, in order */
+const PANEL_TABS = [
+    { id: 'combat', label: 'Combat' },
+    { id: 'labyrinth', label: 'Labyrinth' },
+    { id: 'skilling', label: 'Skilling' },
+];
+
 const COLORS = {
     background: GAME_COLORS.background,
     border: GAME_COLORS.border,
@@ -381,6 +394,8 @@ class ConsumablesPanel {
          * may not train, so it is dropped with the idle pins on a switch.
          */
         this._skillPin = null;
+        /** The tab the player chose (combat | labyrinth | skilling), or null to follow what is running. Session-only. */
+        this._tab = null;
         /** Whether the body is narrow enough for two-line item rows; read off its width each render */
         this._narrow = false;
         /**
@@ -606,6 +621,7 @@ class ConsumablesPanel {
         // Synchronously, before the first await: the arriving character is not
         // looking at the departing character's skill
         this._skillPin = null;
+        this._tab = null;
         try {
             const loadoutName = await readScoped('consumablesIdleLoadout', 'settings', null, DISCARD_LEGACY);
             if (started !== this._idlePinsGeneration) return; // A newer switch already started its own read
@@ -2472,7 +2488,6 @@ class ConsumablesPanel {
         // topped up stops being offered — on every pass, swap or no swap,
         // because the buy widget reads these queues rather than the DOM
         this._buyQueues = [];
-        const players = this._players();
 
         // From the live body, not the scratch div (which has no width) and not
         // the viewport: a docked or resized panel can be narrow on a wide screen
@@ -2482,67 +2497,66 @@ class ConsumablesPanel {
             else if (bodyWidth >= WIDE_FROM_PX) this._narrow = false;
         }
 
-        // Which action type this draws: a skill's teas, or (combat, and nothing
-        // running with no pin) the fight the panel has always shown
+        // Which tab this draws, and under Skilling which skill: its slotted teas
         const running = runningActionTypeHrid();
-        const shownType = this._shownActionType(running);
-        const skilling = isSkillingActionType(shownType) ? shownType : null;
-        scratch.appendChild(this._skillPicker(shownType, running));
+        const tab = this._shownTab(running);
+        const skilling = tab === 'skilling' ? this._shownSkill(running) : null;
+        scratch.appendChild(this._tabRow(tab));
+        if (tab === 'skilling') scratch.appendChild(this._skillPicker(skilling, running));
 
         const settings = this._renderInlineBuySettings();
         if (settings) scratch.appendChild(settings);
 
-        if (skilling) {
-            try {
-                scratch.appendChild(this._skillingSection(skilling));
-            } catch (error) {
-                console.error('[ConsumablesPanel] Building the skilling section failed:', error);
-            }
-        }
+        // The Buy-all walk row goes here, above the sections. It reads the queues the sections
+        // register while they build, so it is built after them and put back at this spot.
+        const sectionsStart = scratch.childNodes.length;
 
-        // Before the players, because the readiness card is the pre-run
-        // question and the player sections are the mid-run one — and it has to
-        // draw when there are no players at all, which is exactly the lobby
-        // Not under a skill: a queued dungeon's card is the combat view's question
-        // and reads as this skill's under its heading, like the Labyrinth list below
-        try {
-            const readiness = skilling ? null : this._readinessSection(players);
-            if (readiness) scratch.appendChild(readiness);
-        } catch (error) {
-            console.error('[ConsumablesPanel] Building the dungeon readiness card failed:', error);
-        }
-
-        // A skill's view carries no fight figures: a combat player's food and
-        // drinks must not sit under a Foraging heading
-        if (!skilling && !players.length) {
-            // Nothing measured because nothing is being fought — but what the
-            // next fight will drink is already decided by the default loadout,
-            // and what it will eat by the last sim. Plan from those instead of
-            // shrugging, when the setting allows and either source exists.
-            const idle = config.getSetting('consumables_idleLoadoutPlan') ? this._idleSection() : null;
-            if (idle) {
-                scratch.appendChild(idle);
+        if (tab === 'skilling') {
+            if (skilling) {
+                try {
+                    scratch.appendChild(this._skillingSection(skilling));
+                } catch (error) {
+                    console.error('[ConsumablesPanel] Building the skilling section failed:', error);
+                }
             } else {
-                const empty = document.createElement('div');
-                empty.style.color = COLORS.textDim;
-                empty.textContent = 'No consumable data yet. Fight something with food or drinks equipped.';
-                scratch.appendChild(empty);
+                scratch.appendChild(this._notice('No skills with drink slots yet. Start a skilling action first.'));
             }
-        }
+        } else if (tab === 'labyrinth') {
+            try {
+                const lab = this._labSection();
+                scratch.appendChild(lab || this._notice('No labyrinth supply data yet.'));
+            } catch (error) {
+                console.error('[ConsumablesPanel] Building the labyrinth section failed:', error);
+            }
+        } else {
+            const players = this._players();
 
-        if (!skilling) for (const player of players) scratch.appendChild(this._playerSection(player));
+            // Before the players, because the readiness card is the pre-run
+            // question and the player sections are the mid-run one — and it has to
+            // draw when there are no players at all, which is exactly the lobby
+            try {
+                const readiness = this._readinessSection(players);
+                if (readiness) scratch.appendChild(readiness);
+            } catch (error) {
+                console.error('[ConsumablesPanel] Building the dungeon readiness card failed:', error);
+            }
 
-        // Not under a skill: the Labyrinth shopping list is another activity's
-        // and reads as this skill's under its heading
-        try {
-            const lab = skilling ? null : this._labSection();
-            if (lab) scratch.appendChild(lab);
-        } catch (error) {
-            console.error('[ConsumablesPanel] Building the labyrinth section failed:', error);
+            if (!players.length) {
+                // Nothing measured because nothing is being fought — but what the
+                // next fight will drink is already decided by the default loadout,
+                // and what it will eat by the last sim. Plan from those instead of
+                // shrugging, when the setting allows and either source exists.
+                const idle = config.getSetting('consumables_idleLoadoutPlan') ? this._idleSection() : null;
+                scratch.appendChild(
+                    idle || this._notice('No consumable data yet. Fight something with food or drinks equipped.')
+                );
+            }
+
+            for (const player of players) scratch.appendChild(this._playerSection(player));
         }
 
         const buyOptions = this._renderInlineBuyWalk();
-        if (buyOptions) scratch.appendChild(buyOptions);
+        if (buyOptions) scratch.insertBefore(buyOptions, scratch.childNodes[sectionsStart] || null);
 
         // Not while a dropdown in the panel has focus: replacing its markup closes the open
         // list under the pointer. Every view has one now (the skill picker), and the tick
@@ -2559,32 +2573,105 @@ class ConsumablesPanel {
     }
 
     /**
-     * The action types the picker offers: every skill with drink slots, combat,
-     * and the running one even when the game has stated no slots for it.
+     * The skills the picker offers: every skill with drink slots, and the running
+     * one even when the game has stated no slots for it. Combat is its own tab.
      * @param {string|null} running - The running action type
      * @returns {string[]}
      */
     _pickerTypes(running) {
         const types = new Set(skillingActionTypes());
-        types.add(COMBAT_ACTION_TYPE);
-        if (running) types.add(running);
+        if (isSkillingActionType(running)) types.add(running);
         return sortActionTypes(types);
     }
 
     /**
-     * The action type on screen: the pin when it is still on offer, else the
-     * running one, else null (the combat view, as before).
+     * The tab on screen: the player's choice, else Skilling while a skill runs, else Combat.
      * @param {string|null} running - The running action type
-     * @returns {string|null}
+     * @returns {'combat'|'labyrinth'|'skilling'}
      */
-    _shownActionType(running) {
-        if (this._skillPin && this._pickerTypes(running).includes(this._skillPin)) return this._skillPin;
-        return running || null;
+    _shownTab(running) {
+        if (PANEL_TABS.some((entry) => entry.id === this._tab)) return this._tab;
+        return isSkillingActionType(running) ? 'skilling' : 'combat';
     }
 
     /**
-     * The action-type picker and what is running, worded as the Buff Board's.
-     * @param {string|null} shown - The action type on screen
+     * The skill the Skilling tab draws: the pin when it is still on offer, else the running
+     * skill, else the first skill with drink slots (null when there is none).
+     * @param {string|null} running - The running action type
+     * @returns {string|null}
+     */
+    _shownSkill(running) {
+        const offered = this._pickerTypes(running);
+        if (this._skillPin && offered.includes(this._skillPin)) return this._skillPin;
+        if (isSkillingActionType(running)) return running;
+        return offered[0] || null;
+    }
+
+    /** A dim one-line notice for a tab with nothing to draw. */
+    _notice(message) {
+        const empty = document.createElement('div');
+        empty.style.color = COLORS.textDim;
+        empty.textContent = message;
+        return empty;
+    }
+
+    /**
+     * Show the panel on a tab. Opens it when closed, switches tab when open, never closes it, and
+     * un-minimizes a folded panel so the press is seen.
+     * @param {'combat'|'labyrinth'|'skilling'} tab
+     */
+    openTab(tab) {
+        if (!PANEL_TABS.some((entry) => entry.id === tab)) return;
+        this._tab = tab;
+        this.show();
+        if (this.minimizeCtl?.collapsed) this.minimizeCtl.setCollapsed(false);
+        if (this.panel) this._render({ force: true });
+    }
+
+    /**
+     * The Combat · Labyrinth · Skilling tab row.
+     * @param {string} shown - The tab on screen
+     * @returns {HTMLElement}
+     */
+    _tabRow(shown) {
+        const row = document.createElement('div');
+        row.dataset.tabRow = 'true';
+        Object.assign(row.style, {
+            display: 'flex',
+            gap: '4px',
+            marginBottom: '10px',
+            borderBottom: `1px solid ${COLORS.border}`,
+        });
+        for (const { id, label } of PANEL_TABS) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.dataset.tab = id;
+            button.textContent = label;
+            const active = id === shown;
+            button.setAttribute('aria-pressed', active ? 'true' : 'false');
+            Object.assign(button.style, {
+                background: active ? 'rgba(255,255,255,0.08)' : 'none',
+                border: 'none',
+                borderBottom: `2px solid ${active ? COLORS.dataAccent : 'transparent'}`,
+                color: active ? COLORS.text : COLORS.textDim,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                fontSize: '12px',
+                fontWeight: active ? 'bold' : 'normal',
+                padding: '4px 10px',
+            });
+            button.addEventListener('click', () => {
+                this._tab = id;
+                this._render({ force: true });
+            });
+            row.appendChild(button);
+        }
+        return row;
+    }
+
+    /**
+     * The skill picker and what is running, worded as the Buff Board's.
+     * @param {string|null} shown - The skill on screen
      * @param {string|null} running - The action type being worked on
      * @returns {HTMLElement}
      */
@@ -2604,7 +2691,7 @@ class ConsumablesPanel {
         const select = this._idleSelect(
             options,
             pinned,
-            'Which action type the consumables below are for. Skills show their slotted teas; Combat shows the fight.',
+            'Which skill the teas below are for. "Whatever I am doing" follows the running skill, else the first skill with drink slots.',
             (value) => {
                 this._skillPin = value || null;
             }
@@ -2974,7 +3061,7 @@ class ConsumablesPanel {
     _cycleLabRuns() {
         const steps = [1, 3, 5, 10, 25];
         this._labRuns = steps[(steps.indexOf(this.labRuns) + 1) % steps.length];
-        // Immediate: the Labyrinth's "Buy missing supplies" reads this from storage, and a debounced write
+        // Immediate: readLabStockTarget reads this from storage, and a debounced write
         // would hand a press in the next 3 s the old target
         storage.set('consumablesLabRuns', this._labRuns, 'settings', true).catch(() => {});
         this._render();

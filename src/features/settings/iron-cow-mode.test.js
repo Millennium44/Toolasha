@@ -147,6 +147,7 @@ describe('iron cow mode turns the merged market dropdowns off, not to their defa
     test('marketplace-only buttons are locked off too', () => {
         expect(IRON_COW_SETTINGS.has('enhanceSim_protectionMarketplaceButton')).toBe(true);
         expect(IRON_COW_SETTINGS.has('labyrinthMissingSuppliesButton')).toBe(true);
+        expect(IRON_COW_SETTINGS.has('combatBuySuppliesButton')).toBe(true);
     });
 });
 

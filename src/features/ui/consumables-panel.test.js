@@ -137,6 +137,7 @@ const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(async () => {
     store.data = {};
+    consumablesPanel._tab = null;
     settings.values = {};
     game.items = {};
     game.actionDetail = null;
@@ -1359,6 +1360,10 @@ describe('switching character', () => {
 });
 
 describe('the labyrinth buy all', () => {
+    beforeEach(() => {
+        consumablesPanel._tab = 'labyrinth';
+    });
+
     const SUPPLIES = ['/items/basic_torch', '/items/basic_shroud', '/items/basic_beacon'];
 
     beforeEach(() => {
@@ -1627,6 +1632,10 @@ describe('a sync pull replacing the sim rates under an open panel', () => {
 });
 
 describe('the labyrinth burn trend', () => {
+    beforeEach(() => {
+        consumablesPanel._tab = 'labyrinth';
+    });
+
     const SUPPLIES = ['/items/basic_torch', '/items/basic_shroud', '/items/basic_beacon'];
 
     /**

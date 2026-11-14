@@ -157,6 +157,9 @@ const open = async () => {
 const text = () => consumablesPanel.bodyEl.textContent;
 const skillingSection = () => consumablesPanel.bodyEl.querySelector('[data-skilling-section]');
 const picker = () => consumablesPanel.bodyEl.querySelector('select[data-skill-action-type]');
+const tab = (id) => {
+    consumablesPanel.bodyEl.querySelector(`[data-tab="${id}"]`).click();
+};
 const pick = (value) => {
     const select = picker();
     select.value = value;
@@ -187,6 +190,7 @@ beforeEach(() => {
     game.prices = {};
     game.latest = null;
     consumablesPanel._skillPin = null;
+    consumablesPanel._tab = null;
     consumablesPanel._readinessMemo = null;
     consumablesPanel._profiles = [];
     consumablesPanel._dungeonHistory = [];
@@ -200,14 +204,13 @@ afterEach(() => {
 });
 
 describe('the picker', () => {
-    test('offers whatever I am doing, every skill and combat, and not labyrinth or special', async () => {
+    test('offers whatever I am doing and every skill, and not combat, labyrinth or special', async () => {
         runForaging();
         await open();
 
         const options = [...picker().options].map((option) => [option.value, option.textContent]);
         expect(options).toEqual([
             ['', 'Whatever I am doing'],
-            [COMBAT, 'Combat'],
             [FORAGING, 'Foraging (running)'],
             ['/action_types/woodcutting', 'Woodcutting'],
         ]);
@@ -234,9 +237,26 @@ describe('the picker', () => {
 
     test('a pin for a type that is no longer offered is ignored, not drawn', async () => {
         consumablesPanel._skillPin = '/action_types/brewing';
+        consumablesPanel._tab = 'skilling';
+        await open();
+        expect(skillingSection()?.dataset.skillingSection).not.toBe('/action_types/brewing');
+        expect(picker().value).toBe('');
+    });
+
+    test('with nothing running, Whatever I am doing shows the first skill on offer', async () => {
+        consumablesPanel._tab = 'skilling';
+        await open();
+        expect(skillingSection()?.dataset.skillingSection).toBe(FORAGING);
+        expect(text()).toContain('Nothing running — showing Foraging');
+    });
+
+    test('a skill with no drink slots anywhere and nothing running says so', async () => {
+        game.map = new Map([[COMBAT, []]]);
+        consumablesPanel._tab = 'skilling';
         await open();
         expect(skillingSection()).toBeNull();
-        expect(picker().value).toBe('');
+        expect(text()).toContain('No skills with drink slots yet');
+        expect(text()).not.toContain('could not be drawn');
     });
 
     test('the pin is not stored anywhere', async () => {
@@ -252,8 +272,8 @@ describe('combat is as it was', () => {
     test('nothing running and no pin: the combat empty message, with no skilling section', async () => {
         await open();
         expect(skillingSection()).toBeNull();
+        expect(picker()).toBeNull();
         expect(text()).toContain('No consumable data yet. Fight something with food or drinks equipped.');
-        expect(text()).toContain('Nothing running.');
     });
 
     test('a fight running: the combat player section, no skilling section', async () => {
@@ -269,9 +289,22 @@ describe('combat is as it was', () => {
         game.latest = combatLatest();
         game.slots[FORAGING] = [slot('/items/gathering_tea')];
         await open();
-        pick(COMBAT);
+        expect(skillingSection()).not.toBeNull();
+        tab('combat');
         expect(skillingSection()).toBeNull();
         expect(text()).toContain('Fighter (you)');
+    });
+
+    test('the combat button opens the Combat tab despite a running skill, and the choice is kept', async () => {
+        runForaging();
+        game.latest = combatLatest();
+        game.slots[FORAGING] = [slot('/items/gathering_tea')];
+        consumablesPanel.openTab('combat');
+        await settled();
+        expect(skillingSection()).toBeNull();
+        expect(text()).toContain('Fighter (you)');
+        consumablesPanel._render();
+        expect(skillingSection()).toBeNull();
     });
 });
 
@@ -318,6 +351,7 @@ describe('a skill', () => {
         game.slots[FORAGING] = [slot('/items/gathering_tea', { duration: 90 * 1e9 })];
         game.inventory = [stack('/items/gathering_tea', 7)];
         await open();
+        tab('skilling');
         pick(FORAGING);
 
         const section = skillingSection();
@@ -434,16 +468,16 @@ describe('the dungeon readiness card', () => {
         await open();
         expect(text()).toContain('Dungeon readiness card');
 
-        // Pinned to Combat while a skill runs
+        // Combat tab chosen while a skill runs
         consumablesPanel.hide({ remember: false });
         runForaging();
         game.slots[FORAGING] = [slot('/items/gathering_tea')];
-        consumablesPanel._skillPin = COMBAT;
+        consumablesPanel._tab = 'combat';
         await open();
         expect(text()).toContain('Dungeon readiness card');
 
         consumablesPanel.hide({ remember: false });
-        consumablesPanel._skillPin = null;
+        consumablesPanel._tab = null;
         game.currentActions = [];
         game.latest = null;
         await open();
@@ -468,9 +502,9 @@ describe('the picker dropdown while it is open', () => {
         expect(picker()).toBe(select);
 
         // Choosing from it is the one redraw that must go through
-        pick(COMBAT);
+        pick('/action_types/woodcutting');
         expect(picker()).not.toBe(select);
-        expect(consumablesPanel._skillPin).toBe(COMBAT);
+        expect(consumablesPanel._skillPin).toBe('/action_types/woodcutting');
     });
 
     test('once the picker loses focus the next redraw catches up', async () => {
@@ -490,7 +524,7 @@ describe('the picker dropdown while it is open', () => {
     });
 });
 
-describe('the Labyrinth section', () => {
+describe('the Labyrinth tab', () => {
     const labStub = () =>
         vi.spyOn(consumablesPanel, '_labSection').mockImplementation(() => {
             const section = document.createElement('div');
@@ -498,28 +532,130 @@ describe('the Labyrinth section', () => {
             return section;
         });
 
-    test('is not drawn under a skill heading', async () => {
+    test('is not drawn under a skill or in the combat view, and its section is not even built', async () => {
         runForaging();
         game.slots[FORAGING] = [slot('/items/gathering_tea')];
         const lab = labStub();
         await open();
         expect(skillingSection()).not.toBeNull();
         expect(text()).not.toContain('Labyrinth shopping list');
+        tab('combat');
+        expect(text()).not.toContain('Labyrinth shopping list');
         expect(lab).not.toHaveBeenCalled();
     });
 
-    test('is still drawn in the combat view and with nothing running', async () => {
-        runCombat();
-        game.latest = combatLatest();
+    test('is drawn on its own tab, with a skill running or nothing running', async () => {
+        runForaging();
         labStub();
         await open();
+        tab('labyrinth');
         expect(text()).toContain('Labyrinth shopping list');
 
         consumablesPanel.hide({ remember: false });
         game.currentActions = [];
-        game.latest = null;
+        consumablesPanel._tab = null;
         await open();
+        tab('labyrinth');
         expect(text()).toContain('Labyrinth shopping list');
+    });
+
+    test('with no supply data the tab says so instead of staying blank', async () => {
+        vi.spyOn(consumablesPanel, '_labSection').mockImplementation(() => null);
+        consumablesPanel._tab = 'labyrinth';
+        await open();
+        expect(text()).toContain('No labyrinth supply data yet.');
+        expect(text()).not.toContain('could not be drawn');
+    });
+});
+
+describe('the tabs', () => {
+    test('with no choice, a running skill opens Skilling and anything else opens Combat', async () => {
+        runForaging();
+        await open();
+        expect(skillingSection() || picker()).not.toBeNull();
+        consumablesPanel.hide({ remember: false });
+        game.currentActions = [];
+        await open();
+        expect(picker()).toBeNull();
+        expect(consumablesPanel.bodyEl.querySelector('[data-tab="combat"]').getAttribute('aria-pressed')).toBe('true');
+    });
+
+    test('the choice is dropped on a character switch', async () => {
+        await open();
+        tab('labyrinth');
+        expect(consumablesPanel._tab).toBe('labyrinth');
+        dataManager.emit('character_switched', {});
+        expect(consumablesPanel._tab).toBeNull();
+    });
+
+    test('openTab opens a closed panel, switches an open one, keeps one already on the tab, never closes', async () => {
+        consumablesPanel.openTab('labyrinth');
+        await settled();
+        expect(consumablesPanel.panel).not.toBeNull();
+        expect(consumablesPanel.bodyEl.querySelector('[data-tab="labyrinth"]').getAttribute('aria-pressed')).toBe(
+            'true'
+        );
+
+        consumablesPanel.openTab('combat');
+        expect(consumablesPanel.panel).not.toBeNull();
+        expect(consumablesPanel.bodyEl.querySelector('[data-tab="combat"]').getAttribute('aria-pressed')).toBe('true');
+
+        consumablesPanel.openTab('combat');
+        expect(consumablesPanel.panel).not.toBeNull();
+        expect(consumablesPanel.bodyEl.querySelector('[data-tab="combat"]').getAttribute('aria-pressed')).toBe('true');
+
+        consumablesPanel.openTab('nonsense');
+        expect(consumablesPanel._tab).toBe('combat');
+    });
+
+    test('a folded panel is unfolded by openTab', async () => {
+        await open();
+        consumablesPanel.minimizeCtl.setCollapsed(true);
+        consumablesPanel.openTab('labyrinth');
+        expect(consumablesPanel.minimizeCtl.collapsed).toBe(false);
+    });
+});
+
+describe('the Buy-all walk row', () => {
+    const shortfall = [
+        { itemHrid: '/items/gathering_tea', count: 5 },
+        { itemHrid: '/items/efficiency_tea', count: 5 },
+    ];
+
+    test('sits above the sections, under the tab row and picker', async () => {
+        runForaging();
+        game.slots[FORAGING] = [slot('/items/gathering_tea'), slot('/items/efficiency_tea', { slotIndex: 1 })];
+        game.prices['/items/gathering_tea'] = { ask: 1000, bid: 900 };
+        game.prices['/items/efficiency_tea'] = { ask: 2000, bid: 1800 };
+        await open();
+
+        const walk = consumablesPanel.bodyEl.querySelector('.toolasha-consumables-inline-walk');
+        expect(walk).not.toBeNull();
+        const kids = [...consumablesPanel.bodyEl.children];
+        expect(kids[0].dataset.tabRow).toBe('true');
+        expect(kids.indexOf(walk)).toBeGreaterThan(kids.indexOf(picker().parentElement));
+        expect(kids.indexOf(walk)).toBeLessThan(kids.indexOf(skillingSection()));
+    });
+
+    test('is absent when nothing is short, with no crash', async () => {
+        await open();
+        expect(consumablesPanel.bodyEl.querySelector('.toolasha-consumables-inline-walk')).toBeNull();
+        expect(text()).not.toContain('could not be drawn');
+    });
+
+    test('a walk already running survives a tab switch, and the other tab shows no stale sources', async () => {
+        await open();
+        consumablesPanel._buyQueue = shortfall.slice();
+        consumablesPanel._render({ force: true });
+        expect(consumablesPanel.bodyEl.querySelector('.toolasha-consumables-inline-walk').textContent).toContain(
+            'Next: '
+        );
+        tab('labyrinth');
+        expect(consumablesPanel.bodyEl.querySelector('.toolasha-consumables-inline-walk').textContent).toContain(
+            'Next: '
+        );
+        expect(consumablesPanel._buyQueue).toHaveLength(2);
+        consumablesPanel._buyQueue = [];
     });
 });
 
