@@ -22,7 +22,10 @@ vi.mock('../../core/dom-observer.js', () => ({
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({ consumablesPanel: () => game.panel }));
 
+vi.mock('../../utils/toast.js', () => ({ showToast: vi.fn() }));
+
 import config from '../../core/config.js';
+import { showToast } from '../../utils/toast.js';
 import feature, { injectButton, handleClick } from './labyrinth-missing-supplies.js';
 
 // The entry screen: a wrapper holding the "Supplies" label and the supplies grid.
@@ -75,10 +78,11 @@ describe('labyrinth missing supplies', () => {
         expect(game.openTab).toHaveBeenCalledWith('labyrinth');
     });
 
-    test('pressing before the UI bundle has published the panel does nothing and does not throw', () => {
+    test('pressing before the UI bundle has published the panel says the panel is still loading', () => {
         game.panel = null;
         expect(() => handleClick()).not.toThrow();
         expect(game.openTab).not.toHaveBeenCalled();
+        expect(showToast).toHaveBeenCalledWith(expect.stringContaining('still loading'));
     });
 
     test('a panel that throws is logged, not raised into the page', () => {

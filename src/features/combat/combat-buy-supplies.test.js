@@ -22,7 +22,10 @@ vi.mock('../../core/dom-observer.js', () => ({
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({ consumablesPanel: () => game.panel }));
 
+vi.mock('../../utils/toast.js', () => ({ showToast: vi.fn() }));
+
 import config from '../../core/config.js';
+import { showToast } from '../../utils/toast.js';
 import feature, { injectButton, findConsumablesHeading, handleClick } from './combat-buy-supplies.js';
 
 // The combat page's consumables block as the game draws it (2026-11-14, hashed class names):
@@ -104,10 +107,11 @@ describe('combat buy supplies button', () => {
         expect(game.openTab).toHaveBeenCalledWith('combat');
     });
 
-    test('pressing before the UI bundle has published the panel does nothing and does not throw', () => {
+    test('pressing before the UI bundle has published the panel says the panel is still loading', () => {
         game.panel = null;
         expect(() => handleClick()).not.toThrow();
         expect(game.openTab).not.toHaveBeenCalled();
+        expect(showToast).toHaveBeenCalledWith(expect.stringContaining('still loading'));
     });
 
     test('a panel that throws is logged, not raised into the page', () => {

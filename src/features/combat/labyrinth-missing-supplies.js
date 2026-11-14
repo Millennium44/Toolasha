@@ -11,13 +11,20 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { consumablesPanel } from '../../utils/bundle-bridge.js';
+import { showToast } from '../../utils/toast.js';
 
 const BUTTON_CLASS = 'mwi-labyrinth-missing-supplies-button';
 const SETTING_KEY = 'labyrinthMissingSuppliesButton';
 
 /** Open the Consumables panel on its Labyrinth tab (opens it, or switches tab; never closes it). */
 export function handleClick() {
-    consumablesPanel()?.openTab('labyrinth');
+    const panel = consumablesPanel();
+    if (!panel) {
+        // The UI bundle publishes the panel a moment after load; say so rather than ignore the press
+        showToast('The Consumables panel is still loading. Try again in a moment.');
+        return;
+    }
+    panel.openTab('labyrinth');
 }
 
 const HIDDEN_LABEL_ATTR = 'data-mwi-lab-supplies-label-hidden';

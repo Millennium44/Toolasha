@@ -580,6 +580,29 @@ describe('the tabs', () => {
         expect(consumablesPanel.bodyEl.querySelector('[data-tab="combat"]').getAttribute('aria-pressed')).toBe('true');
     });
 
+    test('with no choice, a running labyrinth opens the Labyrinth tab', async () => {
+        run('/actions/labyrinth/labyrinth', '/action_types/labyrinth');
+        await open();
+        expect(consumablesPanel.bodyEl.querySelector('[data-tab="labyrinth"]').getAttribute('aria-pressed')).toBe(
+            'true'
+        );
+    });
+
+    test('a chosen tab lasts until the panel closes; the next open follows what is running', async () => {
+        runForaging();
+        consumablesPanel.openTab('labyrinth');
+        await settled();
+        expect(consumablesPanel.bodyEl.querySelector('[data-tab="labyrinth"]').getAttribute('aria-pressed')).toBe(
+            'true'
+        );
+        consumablesPanel.hide({ remember: false });
+        expect(consumablesPanel._tab).toBeNull();
+        await open();
+        expect(consumablesPanel.bodyEl.querySelector('[data-tab="skilling"]').getAttribute('aria-pressed')).toBe(
+            'true'
+        );
+    });
+
     test('the choice is dropped on a character switch', async () => {
         await open();
         tab('labyrinth');

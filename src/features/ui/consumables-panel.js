@@ -23,8 +23,9 @@
  *
  * ## Tabs
  *
- * Combat · Labyrinth · Skilling. With no explicit choice the panel follows what is running (a skill
- * puts it on Skilling, anything else on Combat). `openTab()` is the entry the combat page's and the
+ * Combat · Labyrinth · Skilling. With no explicit choice the panel follows what is running (a labyrinth
+ * run puts it on Labyrinth, a skill on Skilling, anything else on Combat); a chosen tab lasts until the
+ * panel closes. `openTab()` is the entry the combat page's and the
  * Labyrinth entry screen's "Buy supplies" buttons use. The Buy-all walk row sits at the top, under the
  * tab row, and walks only the shown tab's shortfalls; a walk already under way survives a tab switch.
  *
@@ -336,6 +337,9 @@ const KEY_PRICING_LABELS = {
 };
 
 /** The panel's tabs, in order */
+/** The running action type that puts the panel on its Labyrinth tab */
+const LABYRINTH_ACTION_TYPE = '/action_types/labyrinth';
+
 const PANEL_TABS = [
     { id: 'combat', label: 'Combat' },
     { id: 'labyrinth', label: 'Labyrinth' },
@@ -544,6 +548,9 @@ class ConsumablesPanel {
 
     hide({ remember = true } = {}) {
         if (remember) saveOpenState(GEOMETRY_KEY, false);
+        // A tab chosen by a click or a Buy supplies press lasts while the panel is up; the next
+        // opening follows what is running again, so one lab press does not pin every later open
+        this._tab = null;
         this._remove();
         // A running walk keeps its control; nothing else does
         this._syncBuyWidget();
@@ -2585,12 +2592,14 @@ class ConsumablesPanel {
     }
 
     /**
-     * The tab on screen: the player's choice, else Skilling while a skill runs, else Combat.
+     * The tab on screen: the player's choice, else Labyrinth in a labyrinth run, Skilling while a
+     * skill runs, else Combat.
      * @param {string|null} running - The running action type
      * @returns {'combat'|'labyrinth'|'skilling'}
      */
     _shownTab(running) {
         if (PANEL_TABS.some((entry) => entry.id === this._tab)) return this._tab;
+        if (running === LABYRINTH_ACTION_TYPE) return 'labyrinth';
         return isSkillingActionType(running) ? 'skilling' : 'combat';
     }
 
