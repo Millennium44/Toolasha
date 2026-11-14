@@ -147,7 +147,9 @@ const startWalk = async ({ queue = shortfall, modal = {} } = {}) => {
     inlineBtn().click();
     await tick(400);
     if (modal) openModal(modal);
+    // The form is seen, then the Buy button is held off for its arm delay
     await tick(200);
+    await tick(600);
 };
 
 beforeEach(async () => {
@@ -203,6 +205,12 @@ describe('the walk button alternates Next and Buy', () => {
         openModal();
         await tick(200);
         expect(mainLabel()).toBe('Buy Peach Gummy ×5');
+        // Armed only after a moment: an impatient second Next press must not buy
+        expect(mainEl().disabled).toBe(true);
+        mainEl().click();
+        await tick();
+        expect(gameClicks).toBe(0);
+        await tick(520);
         expect(mainEl().disabled).toBe(false);
         expect(gameClicks).toBe(0);
 
@@ -212,7 +220,7 @@ describe('the walk button alternates Next and Buy', () => {
         await tick();
         expect(gameClicks).toBe(1);
         expect(mainEl().disabled).toBe(true);
-        expect(mainLabel()).toBe('Bought…');
+        expect(mainLabel()).toBe('Sent…');
 
         // The modal closing is the one thing that advances the walk
         document.querySelector('.Modal_modalContainer__abc').remove();
@@ -252,7 +260,7 @@ describe('Buy never buys without the player, or the wrong thing', () => {
         await startWalk();
         confirmButton().click();
         expect(gameClicks).toBe(1);
-        expect(mainLabel()).toBe('Bought…');
+        expect(mainLabel()).toBe('Sent…');
         mainEl().click();
         await tick();
         expect(gameClicks).toBe(1);
@@ -316,17 +324,78 @@ describe('Buy never buys without the player, or the wrong thing', () => {
         expect(toasts()).toContain('confirm button was not found');
     });
 
-    test('a refusal from the server hands the step back and allows one more press', async () => {
+    test('a refusal from the server ends the Buy state, never re-arms it, and says to check', async () => {
         await startWalk();
         mainEl().click();
         await tick();
         expect(gameClicks).toBe(1);
         for (const handler of notices.handlers) handler({ level: 'error', key: 'errorNotification.orderNotFulfilled' });
-        expect(toasts()).toContain('the game refused it (orderNotFulfilled)');
-        expect(mainLabel()).toBe('Buy Peach Gummy ×5');
+        expect(toasts()).toContain('Check My Listings and your inventory');
+        expect(consumablesPanel._buyStep).toBe(null);
+        expect(mainLabel()).toBe('▶ Next: Star Fruit Gummy (1 left)');
+        await tick(1000);
+        expect(gameClicks).toBe(1);
+    });
+
+    test('Enter inside the matching form counts as the purchase, so ours presses nothing', async () => {
+        await startWalk();
+        const input = document.querySelector('.MarketplacePanel_quantityInputs__y input');
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        expect(mainLabel()).toBe('Sent…');
         mainEl().click();
         await tick();
-        expect(gameClicks).toBe(2);
+        expect(gameClicks).toBe(0);
+    });
+
+    test('the setting turned off after the step began refuses the press', async () => {
+        await startWalk();
+        settings.values.market_consumableBuyOpenRecommended = false;
+        mainEl().click();
+        await tick();
+        expect(gameClicks).toBe(0);
+        expect(toasts()).toContain('setting is off');
+    });
+
+    test('a cancelled walk, its failed open does not toast', async () => {
+        shortcuts.clickInstantActionButton = vi.fn(() => Promise.reject(new Error('Timeout waiting')));
+        consumablesPanel.show();
+        await tick();
+        consumablesPanel._registerBuyQueue('Combat', shortfall);
+        consumablesPanel.bodyEl.appendChild(consumablesPanel._renderInlineBuyWalk());
+        inlineBtn().click();
+        document.querySelector('.toolasha-lab-buy-next-close').click();
+        await tick(500);
+        expect(toasts()).not.toContain('Could not open');
+    });
+
+    test('the live New Buy Listing modal: exactly its Post Buy Listing confirm is pressed, once', async () => {
+        consumablesPanel._startBuyAll([shortfall[1], shortfall[0]]);
+        await tick(400);
+        const modal = document.createElement('div');
+        modal.className = 'Modal_modalContainer__live';
+        modal.innerHTML =
+            '<div class="MarketplacePanel_header__x">Buy Listing</div>' +
+            '<div><svg><use href="/static/media/items.svg#star_fruit_gummy"></use></svg></div>' +
+            '<div class="MarketplacePanel_label__a">Tradable range: 98 – 122</div>' +
+            '<div class="MarketplacePanel_priceDisplay__b">110</div>' +
+            '<div class="MarketplacePanel_quantityInputs__y"><div>Quantity (You Can Afford: 116B</div><input value="3">' +
+            ['÷2', 'Min', '-', '+', 'Max', '×2']
+                .map((t) => '<button class="Button_button__1 Button_fullWidth__2 Button_small__3">' + t + '</button>')
+                .join('') +
+            ['10', '100', '1,000'].map((t) => '<button class="mwi-quick-input-btn">' + t + '</button>').join('') +
+            '</div>' +
+            '<button class="Button_button__1 Button_success__4">Post Buy Listing</button>' +
+            '<button class="Modal_closeButton__z">x</button>';
+        const presses = [];
+        for (const btn of modal.querySelectorAll('button'))
+            btn.addEventListener('click', () => presses.push(btn.textContent));
+        document.body.appendChild(modal);
+        await tick(800);
+        expect(mainLabel()).toBe('Post buy order Star Fruit Gummy ×3');
+        mainEl().click();
+        mainEl().click();
+        await tick();
+        expect(presses).toEqual(['Post Buy Listing']);
     });
 
     test('Iron Cow characters get the old walk, with no Buy', async () => {
@@ -426,7 +495,7 @@ describe('every other way a step ends', () => {
         expect(gameClicks).toBe(1);
         expect(inlineBtn().disabled).toBe(true);
         consumablesPanel.hide({ remember: false });
-        expect(mainLabel()).toBe('Bought…');
+        expect(mainLabel()).toBe('Sent…');
         document.querySelector('.Modal_modalContainer__abc').remove();
         await tick(200);
         expect(mainLabel()).toBe('▶ Next: Star Fruit Gummy (1 left)');
@@ -437,6 +506,7 @@ describe('every other way a step ends', () => {
         await tick(400);
         openModal();
         await tick(200);
+        await tick(600);
         expect(mainLabel()).toBe('Buy Peach Gummy ×5');
         mainEl().click();
         await tick();

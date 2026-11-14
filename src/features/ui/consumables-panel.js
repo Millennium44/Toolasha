@@ -64,7 +64,7 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { showToast } from '../../utils/toast.js';
 import { currentTarget, cycleTarget, loadTarget } from '../../utils/consumable-target.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
-import { clickThroughReact } from '../../utils/react-click.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { onServerNotice, SALE_REFUSAL_KEYS } from '../../utils/server-notices.js';
 import {
     MODAL_SELECTOR,
@@ -213,6 +213,8 @@ function formatConsumableCostSide(amount, unpriced = 0, unknownRate = 0, estimat
  */
 const BUY_CHIP_ID = 'toolasha-lab-buy-next';
 const BUY_WIDGET_POSITION_KEY = 'consumablesBuyWidgetPosition';
+/** How long the Buy button stays disabled after it replaces Opening/Next */
+const BUY_ARM_MS = 500;
 /** How often a walk step looks at the game's modal */
 const BUY_STEP_POLL_MS = 200;
 /** How long the form may take to show up after its button was pressed */
@@ -2011,6 +2013,8 @@ class ConsumablesPanel {
                 // No matching button (an empty book's Buy Now has nothing to
                 // take) — the marketplace is open and the quantity is parked,
                 // which is still useful, but say so rather than doing nothing.
+                // Not when the walk was cancelled or the character changed meanwhile
+                if (step && (this._buyStep !== step || step.characterId !== currentCharacterId())) return;
                 const name = dataManager.getItemDetails?.(itemHrid)?.name || 'this item';
                 const form = strategy.mode === 'instant' ? 'Buy Now' : 'New Buy Listing';
                 showToast(`Could not open ${form} for ${name} — the quantity is filled in, finish it by hand.`, {
@@ -2109,10 +2113,17 @@ class ConsumablesPanel {
      * @returns {boolean}
      */
     _buyConfirmAvailable(strategy) {
-        if (!strategy || !config.getSetting('market_consumableBuyOpenRecommended')) return false;
-        if (!window.Toolasha?.Market?.marketplaceShortcuts) return false;
-        const mode = dataManager.getCurrentCharacterGameMode?.();
-        return !(typeof mode === 'string' && mode.includes('ironcow'));
+        if (!strategy || !window.Toolasha?.Market?.marketplaceShortcuts) return false;
+        return this._buyPressAllowed();
+    }
+
+    /**
+     * The settings-and-mode half of {@link _buyConfirmAvailable}, asked again at press time: the
+     * setting may have been turned off, or the character changed, since the step began.
+     * @returns {boolean}
+     */
+    _buyPressAllowed() {
+        return Boolean(config.getSetting('market_consumableBuyOpenRecommended')) && !isIronCowCharacter();
     }
 
     /**
@@ -2135,6 +2146,7 @@ class ConsumablesPanel {
             pressed: false,
             seen: false,
             seenAt: 0,
+            armedAt: Infinity,
             kind: null,
             note: '',
             characterId: currentCharacterId(),
@@ -2194,7 +2206,12 @@ class ConsumablesPanel {
             // player is editing still gets the press-time message instead of waiting forever)
             if (step.phase === 'opening' && (modalQuantity(modal) === step.count || Date.now() - step.seenAt > 1500)) {
                 step.phase = step.pressed ? 'sent' : 'ready';
+                step.armedAt = Date.now() + BUY_ARM_MS;
                 this._refreshBuyUi();
+                // The button comes alive once the delay has passed
+                setTimeout(() => {
+                    if (this._buyStep === step && step.phase === 'ready') this._refreshBuyUi();
+                }, BUY_ARM_MS + 10);
             }
             return;
         }
@@ -2284,8 +2301,8 @@ class ConsumablesPanel {
             }
             if (step.phase === 'sent') {
                 return {
-                    label: step.mode === 'order' ? 'Order sent…' : 'Bought…',
-                    title: 'Confirm sent — waiting for the game to close the form. Nothing more is pressed for this item.',
+                    label: step.mode === 'order' ? 'Order sent…' : 'Sent…',
+                    title: 'Confirm sent — waiting for the game to answer and close the form. Nothing more is pressed for this item.',
                     enabled: false,
                     action: 'none',
                 };
@@ -2297,7 +2314,9 @@ class ConsumablesPanel {
                     (step.note ? `Can’t confirm: ${step.note}\n` : '') +
                     'Press the game’s own confirm button for you. Refuses unless the open form is for exactly ' +
                     'this item and quantity, and presses it once.',
-                enabled: true,
+                // Held off for a moment after the label flips, so an impatient second Next press lands on
+                // a disabled button
+                enabled: Date.now() >= step.armedAt,
                 action: 'confirm',
             };
         }
@@ -2344,6 +2363,12 @@ class ConsumablesPanel {
             this._endBuyStep(step, '');
             return;
         }
+        // Still inside the arm delay: an impatient extra press of the button that was Next a moment ago
+        if (Date.now() < step.armedAt) return;
+        if (!this._buyPressAllowed()) {
+            this._refuseBuyConfirm(step, 'the recommended-form setting is off (or this is an Iron Cow)');
+            return;
+        }
         const target = this._buyConfirmTarget(step);
         if (target.why) {
             this._refuseBuyConfirm(step, target.why);
@@ -2355,11 +2380,15 @@ class ConsumablesPanel {
         step.note = '';
         this._watchBuyRefusal(step);
         this._refreshBuyUi();
-        // After this click handler has returned, on the live button re-found from the DOM: the game
-        // ignores untrusted clicks on its spend buttons, so the press goes through its React handler
+        // After this click handler has returned, on the live button re-found from the DOM and checked
+        // again. A plain click, the way Bulk Sell presses market modal confirms (proven live): the React
+        // route walks up fiber ancestors and could report success having pressed nothing, and its DOM
+        // fallback after a throw could press a second time.
         setTimeout(() => {
             if (this._buyStep !== step || !step.pressed) return;
-            const again = this._buyConfirmTarget(step);
+            const again = this._buyPressAllowed()
+                ? this._buyConfirmTarget(step)
+                : { why: 'the setting was turned off' };
             if (again.why) {
                 step.pressed = false;
                 step.phase = 'ready';
@@ -2367,7 +2396,7 @@ class ConsumablesPanel {
                 this._refuseBuyConfirm(step, again.why);
                 return;
             }
-            clickThroughReact(again.button, { reactFirst: true });
+            again.button.click();
         }, 0);
     }
 
@@ -2384,23 +2413,38 @@ class ConsumablesPanel {
      */
     _watchNativeBuyConfirm(step) {
         step.nativeStop?.();
-        const onClick = (event) => {
-            if (this._buyStep !== step || step.pressed) return;
-            const modal = event.target?.closest?.(MODAL_SELECTOR);
-            if (!modal) return;
-            const pressed = event.target.closest('button');
-            if (!pressed || pressed !== findBuyConfirmButton(modal) || isButtonDisabled(pressed)) return;
-            if (buyModalIdentityProblem(modal, step.itemHrid, step.name)) return;
-            const quantity = modalQuantity(modal);
-            if (quantity !== null && quantity <= 0) return;
+        const markSent = () => {
             step.pressed = true;
             step.phase = 'sent';
             step.note = '';
             this._watchBuyRefusal(step);
             this._refreshBuyUi();
         };
+        const submitsHere = (modal, button) => {
+            if (!button || button !== findBuyConfirmButton(modal) || isButtonDisabled(button)) return false;
+            if (buyModalIdentityProblem(modal, step.itemHrid, step.name)) return false;
+            const quantity = modalQuantity(modal);
+            return !(quantity !== null && quantity <= 0);
+        };
+        const onClick = (event) => {
+            if (this._buyStep !== step || step.pressed) return;
+            const modal = event.target?.closest?.(MODAL_SELECTOR);
+            if (!modal) return;
+            if (submitsHere(modal, event.target.closest('button'))) markSent();
+        };
+        // Enter inside the form submits it just as the button does
+        const onKey = (event) => {
+            if (event.key !== 'Enter' || this._buyStep !== step || step.pressed) return;
+            const modal = event.target?.closest?.(MODAL_SELECTOR);
+            if (!modal) return;
+            if (submitsHere(modal, findBuyConfirmButton(modal))) markSent();
+        };
         document.addEventListener('click', onClick, true);
-        step.nativeStop = () => document.removeEventListener('click', onClick, true);
+        document.addEventListener('keydown', onKey, true);
+        step.nativeStop = () => {
+            document.removeEventListener('click', onClick, true);
+            document.removeEventListener('keydown', onKey, true);
+        };
     }
 
     /** A server refusal right after the press hands the step back to the player */
@@ -2412,10 +2456,14 @@ class ConsumablesPanel {
                 return;
             }
             if (notice.level !== 'error' || !SALE_REFUSAL_KEYS.includes(notice.key)) return;
-            this._stopBuyRefusalWatch(step);
-            step.pressed = false;
-            step.phase = 'ready';
-            this._refuseBuyConfirm(step, `the game refused it (${notice.key.replace('errorNotification.', '')})`);
+            // Never re-armed: an error inside the window can belong to something else, and an
+            // orderNotFulfilled can follow a partial fill. The Buy state ends and the player checks.
+            this._endBuyStep(
+                step,
+                `The game answered ${step.name} with an error (${notice.key.replace('errorNotification.', '')}). ` +
+                    'Check My Listings and your inventory, and finish by hand if needed.',
+                true
+            );
         });
         step.refusalTimer = setTimeout(() => this._stopBuyRefusalWatch(step), BUY_REFUSAL_WINDOW_MS);
     }

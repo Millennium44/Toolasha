@@ -112,7 +112,8 @@ export function buyFormKind(modal) {
 /**
  * What the game's own confirm button in a buy modal says. The game's string table defines the buy
  * strings `buyNow`, `postBuyOrder`, `buyListing` and `postBuyListing`; these are localized, so the
- * `Button_buy` class is tried first and a translated client that matches neither fails closed.
+ * exact label is matched first, the `Button_buy` class only as a lone fallback, and a translated
+ * client that matches neither fails closed.
  */
 const BUY_CONFIRM_LABELS = [
     'buy now',
@@ -138,11 +139,14 @@ export function findBuyConfirmButton(modal) {
         const cls = String(btn.className || '');
         return !cls.includes('Modal_closeButton') && !cls.includes('mwi-') && !cls.includes('toolasha');
     });
-    return (
-        candidates.find((btn) => String(btn.className || '').includes('Button_buy')) ||
-        candidates.find((btn) => BUY_CONFIRM_LABELS.includes(btn.textContent.trim().toLowerCase())) ||
-        null
-    );
+    // The exact label first: the live New Buy Listing confirm is `Button_button Button_success` labelled
+    // "Post Buy Listing", with no `Button_buy` class. Two label matches are ambiguous, so none is pressed.
+    const byLabel = candidates.filter((btn) => BUY_CONFIRM_LABELS.includes(btn.textContent.trim().toLowerCase()));
+    if (byLabel.length === 1) return byLabel[0];
+    if (byLabel.length > 1) return null;
+    // The class only as a fallback for a renamed label, and only when it singles out one button
+    const byClass = candidates.filter((btn) => String(btn.className || '').includes('Button_buy'));
+    return byClass.length === 1 ? byClass[0] : null;
 }
 
 /**
