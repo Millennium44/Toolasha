@@ -20,7 +20,11 @@ vi.mock('../../core/dom-observer.js', () => ({
         }),
     },
 }));
-vi.mock('../../utils/bundle-bridge.js', () => ({ consumablesPanel: () => game.panel }));
+vi.mock('../../utils/bundle-bridge.js', () => ({
+    consumablesPanel: () => game.panel,
+    guildMemberSkills: () => null,
+    marketUndercutAlerts: () => null,
+}));
 
 vi.mock('../../utils/toast.js', () => ({ showToast: vi.fn() }));
 

@@ -14,7 +14,11 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/dom-observer.js', () => ({
     default: { onClass: vi.fn(() => game.unregister) },
 }));
-vi.mock('../../utils/bundle-bridge.js', () => ({ consumablesPanel: () => game.panel }));
+vi.mock('../../utils/bundle-bridge.js', () => ({
+    consumablesPanel: () => game.panel,
+    guildMemberSkills: () => null,
+    marketUndercutAlerts: () => null,
+}));
 vi.mock('../../utils/toast.js', () => ({ showToast: vi.fn() }));
 
 import config from '../../core/config.js';
