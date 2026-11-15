@@ -14,9 +14,10 @@ import { formatWithSeparator, formatPercentage } from '../../utils/formatters.js
 import { parseItemCount } from '../../utils/number-parser.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
-import { makeDraggable } from '../../utils/floating-panel.js';
+import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import {
+    allGeometry,
     clampPanelToViewport,
     restoreGeometry,
     saveGeometry,
@@ -52,6 +53,9 @@ const TAB_ID = 'mwi-risk-of-ruin-tab';
 const PANEL_KEY = 'riskOfRuin';
 /** Smallest size the panel may be fitted or restored to */
 const PANEL_MIN_SIZE = { width: 320, height: 200 };
+/** Opening size: the width, and the height the panel may grow to before it scrolls. A drag replaces both. */
+const DEFAULT_WIDTH = 460;
+const DEFAULT_MAX_HEIGHT = 620;
 /** Whether the corner launcher is drawn at all; its ✕ writes this */
 const LAUNCHER_SETTING = 'riskOfRuin_showLauncher';
 const MAX_STEPS = 20000;
@@ -93,6 +97,7 @@ class RiskOfRuinUI {
         /** Whether the calculator window is up, mirrored into the launcher and the tab */
         this.panelOpen = false;
         this.detachDrag = null;
+        this.detachResize = null;
         this.minimizeCtl = null;
         this.launcher = null;
         this.tabButton = null;
@@ -376,8 +381,8 @@ class RiskOfRuinUI {
             background: ${GAME_FRAME.background};
             border: ${GAME_FRAME.border};
             border-radius: ${GAME_FRAME.borderRadius};
-            width: 460px;
-            max-height: 620px;
+            width: ${DEFAULT_WIDTH}px;
+            max-height: ${DEFAULT_MAX_HEIGHT}px;
             display: none;
             flex-direction: column;
             font-family: 'Segoe UI', sans-serif;
@@ -449,7 +454,27 @@ class RiskOfRuinUI {
         this.detachDrag = makeDraggable(this.panel, header, (position) => {
             saveGeometry(PANEL_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
         });
-        restoreGeometry(this.panel, PANEL_KEY, PANEL_MIN_SIZE);
+        // The grip sits on the (non-scrolling) panel; only the body inside it scrolls and is redrawn.
+        // Once a size is chosen the 620px cap must go, or it would silently stop the drag.
+        const panel = this.panel;
+        this.detachResize = makeResizable(panel, {
+            minWidth: PANEL_MIN_SIZE.width,
+            minHeight: PANEL_MIN_SIZE.height,
+            onResize: (size) => {
+                panel.style.maxHeight = 'none';
+                saveGeometry(PANEL_KEY, size);
+            },
+        });
+        const grip = panel.querySelector('.toolasha-resize-grip');
+        if (grip) {
+            grip.title = 'Drag to resize, double-click to reset the size';
+            grip.addEventListener('dblclick', () => this._resetSize(panel));
+        }
+        Promise.resolve(restoreGeometry(panel, PANEL_KEY, PANEL_MIN_SIZE))
+            .then(() => {
+                if (panel.style.height) panel.style.maxHeight = 'none';
+            })
+            .catch((error) => console.error('[RiskOfRuin] Restoring the remembered size failed:', error));
 
         this.panel.addEventListener('mousedown', () => bringPanelToFront(this.panel));
 
@@ -459,6 +484,27 @@ class RiskOfRuinUI {
 
         this._populateItemLists();
         this._renderModeInputs();
+    }
+
+    /**
+     * Back to the opening size. The stored record also holds the position and minimized flag, so only the
+     * width and height are removed from it.
+     * @param {HTMLElement} panel
+     */
+    async _resetSize(panel) {
+        panel.style.width = `${DEFAULT_WIDTH}px`;
+        panel.style.height = '';
+        panel.style.maxHeight = `${DEFAULT_MAX_HEIGHT}px`;
+        try {
+            const all = await allGeometry();
+            if (all[PANEL_KEY]) {
+                delete all[PANEL_KEY].width;
+                delete all[PANEL_KEY].height;
+            }
+            await saveGeometry(PANEL_KEY, {});
+        } catch (error) {
+            console.error('[RiskOfRuin] Resetting the panel size failed:', error);
+        }
     }
 
     /**
@@ -1347,6 +1393,8 @@ class RiskOfRuinUI {
         this.tabUnregister = null;
         this.detachDrag?.();
         this.detachDrag = null;
+        this.detachResize?.();
+        this.detachResize = null;
         this.minimizeCtl?.destroy();
         this.minimizeCtl = null;
         if (this.panel) {
