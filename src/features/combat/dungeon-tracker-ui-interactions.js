@@ -80,6 +80,50 @@ class DungeonTrackerUIInteractions {
         this.setupRoiToggle();
         this.setupResetPositionButton();
         this.setupFilterIndicator();
+        this.setupKeepOnScreen();
+    }
+
+    /**
+     * Pull a dragged tracker back on screen whenever its size or the window changes. The drag
+     * keeps 100px of the panel visible, but measured at the width it had then: collapsing a panel
+     * dragged far left (or a narrower window, a phone turned) left all of it off screen with no
+     * header to grab and no reset button to press. Visual only: the saved position is a drag's,
+     * so a phone pulling the panel in does not move it on a desktop sharing the same state.
+     */
+    setupKeepOnScreen() {
+        if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler);
+        this.resizeHandler = () => this.keepOnScreen();
+        window.addEventListener('resize', this.resizeHandler);
+        // After the first layout, when the panel's real width is known
+        this.timerRegistry.scheduleTimeout(() => this.keepOnScreen(), 0);
+    }
+
+    /**
+     * Where a panel of this size may sit: at least MIN_VISIBLE_PX of it inside the window on
+     * either side, and its header never above the top or below the last MIN_VISIBLE_PX.
+     * @param {number} x - Wanted left
+     * @param {number} y - Wanted top
+     * @param {number} width - The panel's width now
+     * @returns {{x: number, y: number}}
+     */
+    clampPosition(x, y, width) {
+        const minVisiblePx = 100;
+        return {
+            x: Math.min(Math.max(-width + minVisiblePx, x), window.innerWidth - minVisiblePx),
+            y: Math.min(Math.max(0, y), window.innerHeight - minVisiblePx),
+        };
+    }
+
+    /** Re-apply the drag's bounds to a dragged panel at its current size; nothing for a default one. */
+    keepOnScreen() {
+        if (!this.container || !this.state.position || this.isDragging) return;
+        const rect = this.container.getBoundingClientRect();
+        if (!(rect.width > 0)) return;
+        const { x, y } = this.clampPosition(rect.left, rect.top, rect.width);
+        if (x === rect.left && y === rect.top) return;
+        this.container.style.left = `${x}px`;
+        this.container.style.top = `${y}px`;
+        this.container.style.transform = 'none';
     }
 
     /**
@@ -131,17 +175,8 @@ class DungeonTrackerUIInteractions {
             let x = e.clientX - this.dragOffset.x;
             let y = e.clientY - this.dragOffset.y;
 
-            // Apply position boundaries to keep tracker visible
-            const containerRect = this.container.getBoundingClientRect();
-            const minVisiblePx = 100; // Keep at least 100px visible
-
-            // Constrain Y: header must be visible at top
-            y = Math.max(0, y);
-            y = Math.min(y, window.innerHeight - minVisiblePx);
-
-            // Constrain X: keep at least 100px visible on either edge
-            x = Math.max(-containerRect.width + minVisiblePx, x);
-            x = Math.min(x, window.innerWidth - minVisiblePx);
+            // Keep at least 100px of the tracker visible, its header below the top
+            ({ x, y } = this.clampPosition(x, y, this.container.getBoundingClientRect().width));
 
             // Save position (disables default centering)
             this.state.position = { x, y };
@@ -634,6 +669,8 @@ class DungeonTrackerUIInteractions {
             this.container.style.minWidth = this.state.isCollapsed
                 ? 'min(250px, calc(100vw - 20px))'
                 : 'min(480px, calc(100vw - 20px))';
+            // The panel changed width: a position that kept 100px of the old width on screen may keep none of this one
+            this.keepOnScreen();
         }
 
         this.state.save();
@@ -924,6 +961,10 @@ class DungeonTrackerUIInteractions {
     }
 
     cleanup() {
+        if (this.resizeHandler) {
+            window.removeEventListener('resize', this.resizeHandler);
+            this.resizeHandler = null;
+        }
         // Remove document-level drag listeners
         if (this.dragMoveHandler) {
             document.removeEventListener('pointermove', this.dragMoveHandler);

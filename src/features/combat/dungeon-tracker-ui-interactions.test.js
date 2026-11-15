@@ -392,3 +392,67 @@ describe('dragging and stacking', () => {
         expect(raise).toHaveBeenCalledWith(container);
     });
 });
+
+describe('keeping a dragged tracker on screen', () => {
+    // Reported on a phone: a tracker dragged far left while wide, then collapsed, sat at
+    // left -505px and 491px wide — wholly off screen, header and reset button included
+    const place = (container, { left, top, width }) => {
+        container.style.left = `${left}px`;
+        container.style.top = `${top}px`;
+        container.getBoundingClientRect = () => ({
+            left,
+            top,
+            width,
+            height: 71,
+            right: left + width,
+            bottom: top + 71,
+        });
+    };
+
+    test('a collapse that narrows a far-left panel pulls 100px of it back on screen', () => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 412 });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: 924 });
+        const container = buildContainer('<button id="mwi-dt-collapse-btn"></button>');
+        const state = makeState({ position: { x: -505, y: 0 }, isCollapsed: false });
+        const interactions = new DungeonTrackerUIInteractions(state, null, null);
+        interactions.container = container;
+        interactions.callbacks = {};
+        interactions.applyCollapsedState = vi.fn();
+        place(container, { left: -505.152, top: 0, width: 491 });
+
+        interactions.toggleCollapse();
+
+        expect(container.style.left).toBe(`${-491 + 100}px`);
+        expect(container.style.top).toBe('0px');
+    });
+
+    test('a window resize pulls a panel left past the right edge back in, without saving it', () => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+        const container = buildContainer('');
+        const state = makeState({ position: { x: 1400, y: 50 } });
+        const interactions = new DungeonTrackerUIInteractions(state, null, null);
+        interactions.container = container;
+        interactions.setupKeepOnScreen();
+        place(container, { left: 1400, top: 50, width: 300 });
+
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 412 });
+        window.dispatchEvent(new Event('resize'));
+
+        expect(container.style.left).toBe(`${412 - 100}px`);
+        expect(state.save).not.toHaveBeenCalled();
+        interactions.cleanup();
+    });
+
+    test('a panel at its default place is left alone', () => {
+        const container = buildContainer('');
+        container.style.left = '50%';
+        const state = makeState({ position: null });
+        const interactions = new DungeonTrackerUIInteractions(state, null, null);
+        interactions.container = container;
+        place(container, { left: -900, top: 0, width: 300 });
+        container.style.left = '50%';
+        interactions.keepOnScreen();
+        expect(container.style.left).toBe('50%');
+    });
+});
