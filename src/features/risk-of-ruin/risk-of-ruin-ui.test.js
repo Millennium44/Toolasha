@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
     settingChangeRegistrations: [],
     /** `{ [panelKey]: boolean }` written by saveOpenState, read by reopenIfLeftOpen */
     openState: {},
+    /** The stored geometry record, as allGeometry hands it out */
+    geometry: {},
     domObserverHandlers: [],
 }));
 
@@ -57,6 +59,8 @@ vi.mock('../../core/dom-observer.js', () => ({
 // Geometry and open state live in IndexedDB, which is never what these tests are
 // about — but which panel was left open is, so that half is a real in-memory store.
 vi.mock('../../utils/panel-geometry.js', () => ({
+    allGeometry: vi.fn(async () => mocks.geometry),
+    markPanelInteracted: vi.fn(),
     clampPanelToViewport: vi.fn(() => null),
     restoreGeometry: vi.fn(async () => {}),
     saveGeometry: vi.fn(async () => {}),
@@ -132,7 +136,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { buildAlchemyTransmuteModel } from '../../utils/risk-of-ruin-adapters/alchemy-adapter.js';
 import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
-import { reopenIfLeftOpen, clampPanelToViewport } from '../../utils/panel-geometry.js';
+import { reopenIfLeftOpen, clampPanelToViewport, saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
 import riskOfRuinUI from './risk-of-ruin-ui.js';
 import { suggestProtectionSubstituteProxyPrice } from '../../utils/protection-substitute-lookup.js';
 import { setCustomPriceOverride } from '../settings/custom-price-overrides.js';
@@ -1014,5 +1018,77 @@ describe('transmute sell-depth cost includes the catalyst', () => {
         expect(context.items.map((i) => i.itemHrid)).toEqual(['/items/moonstone', '/items/ess']);
         expect(context.items[0].costShare).toBeCloseTo((600 * 250) / 625, 6);
         expect(context.items[1].costShare).toBeCloseTo((600 * 125) / 625, 6);
+    });
+});
+
+describe('RiskOfRuinUI resize grip', () => {
+    const grips = () => panel()?.querySelectorAll('.toolasha-resize-grip') ?? [];
+    const rect = (width, height) => ({ width, height, left: 0, top: 0, right: width, bottom: height });
+
+    beforeEach(() => {
+        mocks.settings = { riskOfRuin: true, riskOfRuin_showLauncher: true };
+        mocks.openState = {};
+        mocks.geometry = {};
+        document.body.innerHTML = '';
+        riskOfRuinUI.disable();
+        vi.mocked(saveGeometry).mockClear();
+        riskOfRuinUI.initialize();
+    });
+
+    afterEach(() => {
+        riskOfRuinUI.disable();
+    });
+
+    function drag(dx, dy) {
+        const p = panel();
+        p.getBoundingClientRect = () => rect(parseFloat(p.style.width) || 460, parseFloat(p.style.height) || 300);
+        const grip = grips()[0];
+        grip.dispatchEvent(
+            new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 10, clientY: 10 })
+        );
+        document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 10 + dx, clientY: 10 + dy }));
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 10 + dx, clientY: 10 + dy }));
+    }
+
+    test('has exactly one grip, on the outer panel', () => {
+        expect(grips()).toHaveLength(1);
+        expect(grips()[0].parentElement).toBe(panel());
+    });
+
+    test('a drag saves the new size and lifts the 620px cap so it can grow', () => {
+        expect(panel().style.maxHeight).toBe('620px');
+        drag(40, 500);
+        expect(saveGeometry).toHaveBeenCalledWith('riskOfRuin', { width: 500, height: 800 });
+        expect(panel().style.maxHeight).toBe('none');
+    });
+
+    test('a saved height lifts the cap once restored', async () => {
+        vi.mocked(restoreGeometry).mockImplementationOnce(async (p) => {
+            p.style.height = '700px';
+        });
+        riskOfRuinUI.disable();
+        riskOfRuinUI.initialize();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(panel().style.maxHeight).toBe('none');
+    });
+
+    test('double-clicking the grip restores the opening size and drops only width/height from the record', async () => {
+        mocks.geometry = { riskOfRuin: { left: 5, top: 6, width: 500, height: 800, collapsed: false } };
+        drag(0, 0);
+        grips()[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(panel().style.width).toBe('460px');
+        expect(panel().style.height).toBe('');
+        expect(panel().style.maxHeight).toBe('620px');
+        expect(mocks.geometry.riskOfRuin).toEqual({ left: 5, top: 6, collapsed: false });
+    });
+
+    test('disable removes the grip and a re-open does not duplicate it', () => {
+        const old = panel();
+        riskOfRuinUI.disable();
+        expect(old.querySelector('.toolasha-resize-grip')).toBeNull();
+        riskOfRuinUI.initialize();
+        expect(grips()).toHaveLength(1);
     });
 });
