@@ -212,6 +212,24 @@ describe('the resize grip', () => {
         expect(panel.style.height).toBe('182px');
     });
 
+    test('a drag never stretches the panel past the window edge', () => {
+        // Seen live: the queue monitor grew to a right edge of 2249 in a 2195-wide window
+        Object.defineProperty(window, 'innerWidth', { value: 1000, configurable: true });
+        Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+        panel.getBoundingClientRect = () => ({ left: 700, top: 600, width: 200, height: 100 });
+        makeResizable(panel, { minWidth: 100, minHeight: 50 });
+        const grip = panel.lastElementChild;
+
+        grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 900, clientY: 700 }));
+        document.dispatchEvent(new MouseEvent('pointermove', { clientX: 1200, clientY: 1000 }));
+        document.dispatchEvent(new MouseEvent('pointerup'));
+
+        expect(panel.style.width).toBe('300px');
+        expect(panel.style.height).toBe('200px');
+        Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
+        Object.defineProperty(window, 'innerHeight', { value: 768, configurable: true });
+    });
+
     test('a tap never lifts the caps', () => {
         panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: 300, height: 200 });
         const onStart = vi.fn();

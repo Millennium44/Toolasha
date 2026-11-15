@@ -260,6 +260,8 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize,
     let startY = 0;
     let startWidth = 0;
     let startHeight = 0;
+    let startLeft = 0;
+    let startTop = 0;
     let resizing = false;
     let moved = false;
     let activePointerId = null;
@@ -288,8 +290,15 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize,
         // tall against a 240px floor), so the floor never exceeds where it started
         const floorWidth = Math.min(minWidth, startWidth);
         const floorHeight = Math.min(minHeight, startHeight);
-        panel.style.width = `${Math.max(floorWidth, startWidth + event.clientX - startX)}px`;
-        panel.style.height = `${Math.max(floorHeight, startHeight + event.clientY - startY)}px`;
+        // Nor past the window's right or bottom edge, where the grip (and the
+        // panel's last rows) could no longer be reached; a panel that already
+        // overhangs is not shrunk by this, only kept from growing further
+        const ceilingWidth = Math.max(startWidth, window.innerWidth - startLeft);
+        const ceilingHeight = Math.max(startHeight, window.innerHeight - startTop);
+        const width = Math.max(floorWidth, startWidth + event.clientX - startX);
+        const height = Math.max(floorHeight, startHeight + event.clientY - startY);
+        panel.style.width = `${Math.min(ceilingWidth, width)}px`;
+        panel.style.height = `${Math.min(ceilingHeight, height)}px`;
     };
 
     const onPointerUp = (event) => {
@@ -325,6 +334,8 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize,
         startY = event.clientY;
         startWidth = rect.width;
         startHeight = rect.height;
+        startLeft = rect.left;
+        startTop = rect.top;
         document.addEventListener('pointermove', onPointerMove);
         document.addEventListener('pointerup', onPointerUp);
         document.addEventListener('pointercancel', onPointerUp);

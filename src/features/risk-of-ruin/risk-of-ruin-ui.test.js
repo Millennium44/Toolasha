@@ -1063,9 +1063,16 @@ describe('RiskOfRuinUI resize grip', () => {
 
     test('a drag saves the new size and lifts the 620px cap so it can grow', () => {
         expect(panel().style.maxHeight).toBe('620px');
-        drag(40, 500);
-        expect(saveGeometry).toHaveBeenCalledWith('riskOfRuin', { width: 500, height: 800 });
-        expect(panel().style.maxHeight).toBe('none');
+        // Tall enough a window for 800px: the grip stops at the window's bottom edge
+        const before = window.innerHeight;
+        Object.defineProperty(window, 'innerHeight', { value: 1200, configurable: true });
+        try {
+            drag(40, 500);
+            expect(saveGeometry).toHaveBeenCalledWith('riskOfRuin', { width: 500, height: 800 });
+            expect(panel().style.maxHeight).toBe('none');
+        } finally {
+            Object.defineProperty(window, 'innerHeight', { value: before, configurable: true });
+        }
     });
 
     test('the cap is lifted once the first drag moves, not on press and not when it ends', () => {
