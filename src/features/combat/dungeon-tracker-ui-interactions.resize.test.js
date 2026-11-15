@@ -119,14 +119,32 @@ describe('dungeon tracker resize grip', () => {
         interactions.setupResize();
         const grip = container.querySelector('.toolasha-resize-grip');
         grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 100, clientY: 100 }));
+        // Pressing alone lifts and moves nothing
+        expect(container.style.minWidth).toBe('min(480px, calc(100vw - 20px))');
+        expect(container.style.transform).toBe('translateX(-50%)');
+        document.dispatchEvent(new MouseEvent('pointermove', { clientX: 120, clientY: 130 }));
         expect(container.style.minWidth).toBe('min(250px, calc(100vw - 20px))');
         expect(container.style.transform).toBe('none');
         expect(container.style.left).toBe('40px');
         expect(container.style.top).toBe('30px');
+        // Measured on press (500x400) plus the delta
+        expect(container.style.width).toBe('520px');
+        expect(container.style.height).toBe('430px');
         // Visual only: the remembered position is not touched
         expect(state.position).toBeNull();
+        document.dispatchEvent(new MouseEvent('pointerup', { clientX: 120, clientY: 130 }));
+    });
+
+    test('a tap on the grip lifts nothing and saves nothing', () => {
+        const { container, interactions } = setup();
+        container.style.transform = 'translateX(-50%)';
+        container.style.minWidth = 'min(480px, calc(100vw - 20px))';
+        interactions.setupResize();
+        const grip = container.querySelector('.toolasha-resize-grip');
+        grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 100, clientY: 100 }));
         document.dispatchEvent(new MouseEvent('pointerup', { clientX: 100, clientY: 100 }));
-        // A tap saved nothing
+        expect(container.style.minWidth).toBe('min(480px, calc(100vw - 20px))');
+        expect(container.style.transform).toBe('translateX(-50%)');
         expect(geometry.saveGeometry).not.toHaveBeenCalled();
     });
 

@@ -880,15 +880,32 @@ describe('the resize grip', () => {
         expect(geometry.clearSize).toHaveBeenCalledWith('monsterStatCheck');
     });
 
-    test('pressing the grip anchors the centered panel to pixels without moving it', () => {
+    test('the first real move anchors the centered panel to pixels without a jump, and pressing alone does not', () => {
         panel.container.getBoundingClientRect = () => ({ width: 340, height: 300, left: 210, top: 40 });
         grips()[0].dispatchEvent(
             new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 10, clientY: 10, bubbles: true })
         );
+        expect(panel.container.style.transform).not.toBe('none');
+        document.dispatchEvent(
+            new PointerEvent('pointermove', { pointerId: 1, clientX: 30, clientY: 25, bubbles: true })
+        );
         expect(panel.container.style.transform).toBe('none');
         expect(panel.container.style.left).toBe('210px');
         expect(panel.container.style.top).toBe('40px');
+        // Start size measured on press plus the delta
+        expect(panel.container.style.width).toBe('360px');
+        expect(panel.container.style.height).toBe('315px');
         document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }));
+    });
+
+    test('a tap on the grip anchors nothing and saves nothing', () => {
+        panel.container.getBoundingClientRect = () => ({ width: 340, height: 300, left: 210, top: 40 });
+        const before = panel.container.style.transform;
+        grips()[0].dispatchEvent(
+            new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 10, clientY: 10, bubbles: true })
+        );
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }));
+        expect(panel.container.style.transform).toBe(before);
         expect(geometry.save).not.toHaveBeenCalled();
     });
 

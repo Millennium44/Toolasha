@@ -93,11 +93,23 @@ describe('xph calculator resize', () => {
         expect(panel().style.maxHeight).toBe('none');
     });
 
-    test('the 580px ceiling is lifted when the drag starts, and a tap saves nothing', () => {
+    test('the 580px ceiling is lifted when the drag moves, not on press, and a tap saves nothing', () => {
         calc.initialize();
         expect(panel().style.maxHeight).toBe('580px');
-        dragGrip(0);
+        const ev = (type, x) => {
+            const e = new MouseEvent(type, { bubbles: true, clientX: x, clientY: 10, button: 0 });
+            Object.defineProperty(e, 'pointerId', { value: 1 });
+            return e;
+        };
+        document.querySelector('.toolasha-resize-grip').dispatchEvent(ev('pointerdown', 10));
+        expect(panel().style.maxHeight).toBe('580px');
+        document.dispatchEvent(ev('pointermove', 40));
         expect(panel().style.maxHeight).toBe('none');
+        document.dispatchEvent(ev('pointerup', 40));
+        panel().style.maxHeight = '580px';
+        saveGeometry.mockClear();
+        dragGrip(0);
+        expect(panel().style.maxHeight).toBe('580px');
         expect(saveGeometry).not.toHaveBeenCalled();
     });
 

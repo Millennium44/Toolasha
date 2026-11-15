@@ -179,21 +179,36 @@ describe('the resize grip', () => {
         expect(panel.style.width).toBe('');
     });
 
-    test('onStart runs before the start size is measured', () => {
-        let measured = 300;
-        panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: measured, height: 200 });
+    test('the drag starts from the size on screen, with the caps still in place, and only then lifts them', () => {
+        // A panel capped at 620px tall whose content is 900px: lifting the cap
+        // before measuring made it jump to 900px the moment the grip was pressed
+        let measured = 620;
+        panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: 300, height: measured });
         const onStart = vi.fn(() => {
-            measured = 500;
+            measured = 900;
         });
         makeResizable(panel, { minWidth: 100, minHeight: 50, onStart });
         const grip = panel.lastElementChild;
 
         grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 400, clientY: 300 }));
-        document.dispatchEvent(new MouseEvent('pointermove', { clientX: 410, clientY: 300 }));
+        expect(onStart).not.toHaveBeenCalled();
+        document.dispatchEvent(new MouseEvent('pointermove', { clientX: 400, clientY: 310 }));
         document.dispatchEvent(new MouseEvent('pointerup'));
 
         expect(onStart).toHaveBeenCalledWith(panel);
-        expect(panel.style.width).toBe('510px');
+        expect(panel.style.height).toBe('630px');
+    });
+
+    test('a tap never lifts the caps', () => {
+        panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: 300, height: 200 });
+        const onStart = vi.fn();
+        makeResizable(panel, { onStart });
+        const grip = panel.lastElementChild;
+
+        grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 400, clientY: 300 }));
+        document.dispatchEvent(new MouseEvent('pointerup'));
+
+        expect(onStart).not.toHaveBeenCalled();
     });
 
     test('a double-click on the grip calls onReset and the title says so', () => {

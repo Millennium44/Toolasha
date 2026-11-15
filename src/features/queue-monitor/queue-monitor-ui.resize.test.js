@@ -128,7 +128,7 @@ describe('queue monitor resize', () => {
         expect(grips()[0].style.display).toBe('none');
     });
 
-    test('the first drag lifts the width caps before it measures, and anchors from the top left', async () => {
+    test('the first real move lifts the width caps after the start size was measured, and anchors from the top left', async () => {
         await ui.initialize();
         const p = panel();
         p.getBoundingClientRect = () => ({ width: 260, height: 120, left: 40, top: 50 });
@@ -140,13 +140,32 @@ describe('queue monitor resize', () => {
         };
         expect(p.style.maxWidth).toBe('320px');
         grip.dispatchEvent(ev('pointerdown', 10, 10));
+        // Pressing alone lifts and anchors nothing
+        expect(p.style.maxWidth).toBe('320px');
+        document.dispatchEvent(ev('pointermove', 40, 30));
         expect(p.style.maxWidth).toBe('none');
         expect(p.style.minWidth).toBe('0');
         expect(p.style.left).toBe('40px');
         expect(p.style.top).toBe('50px');
         expect(p.style.bottom).toBe('auto');
-        document.dispatchEvent(ev('pointerup', 10, 10));
-        // A tap saved nothing
+        // Start size measured on press (260x120) plus the delta
+        expect(p.style.width).toBe('290px');
+        expect(p.style.height).toBe('140px');
+        document.dispatchEvent(ev('pointerup', 40, 30));
+    });
+
+    test('a tap on the grip lifts nothing and saves nothing', async () => {
+        await ui.initialize();
+        const p = panel();
+        p.getBoundingClientRect = () => ({ width: 260, height: 120, left: 40, top: 50 });
+        const ev = (type) => {
+            const e = new MouseEvent(type, { bubbles: true, clientX: 10, clientY: 10, button: 0 });
+            Object.defineProperty(e, 'pointerId', { value: 1 });
+            return e;
+        };
+        grips()[0].dispatchEvent(ev('pointerdown'));
+        document.dispatchEvent(ev('pointerup'));
+        expect(p.style.maxWidth).toBe('320px');
         expect(saveGeometry).not.toHaveBeenCalled();
     });
 
