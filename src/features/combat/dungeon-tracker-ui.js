@@ -492,8 +492,8 @@ class DungeonTrackerUI {
                                 <option value="dungeon">Dungeon</option>
                             </select>
                         </div>
-                        <div style="display: flex; gap: 12px;">
-                            <div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 6px 12px;">
+                            <div style="max-width: 100%;">
                                 <label style="margin-right: 6px;">Dungeon:</label>
                                 <select class="toolasha-select" id="mwi-dt-filter-dungeon" style="
                                     background: #333;
@@ -503,11 +503,12 @@ class DungeonTrackerUI {
                                     padding: 2px 4px;
                                     font-size: 11px;
                                     min-width: 100px;
+                                    max-width: 100%;
                                 ">
                                     <option value="all">All Dungeons</option>
                                 </select>
                             </div>
-                            <div>
+                            <div style="max-width: 100%;">
                                 <label style="margin-right: 6px;">Tier:</label>
                                 <select class="toolasha-select" id="mwi-dt-filter-tier" style="
                                     background: #333;
@@ -517,11 +518,12 @@ class DungeonTrackerUI {
                                     padding: 2px 4px;
                                     font-size: 11px;
                                     min-width: 80px;
+                                    max-width: 100%;
                                 ">
                                     <option value="all">All Tiers</option>
                                 </select>
                             </div>
-                            <div>
+                            <div style="max-width: 100%;">
                                 <label style="margin-right: 6px;">Team:</label>
                                 <select class="toolasha-select" id="mwi-dt-filter-team" style="
                                     background: #333;
@@ -531,11 +533,12 @@ class DungeonTrackerUI {
                                     padding: 2px 4px;
                                     font-size: 11px;
                                     min-width: 100px;
+                                    max-width: 100%;
                                 ">
                                     <option value="all">All Teams</option>
                                 </select>
                             </div>
-                            <div>
+                            <div style="max-width: 100%;">
                                 <label style="margin-right: 6px;">Character:</label>
                                 <select class="toolasha-select" id="mwi-dt-filter-character" style="
                                     background: #333;
@@ -545,6 +548,7 @@ class DungeonTrackerUI {
                                     padding: 2px 4px;
                                     font-size: 11px;
                                     min-width: 100px;
+                                    max-width: 100%;
                                 ">
                                     <option value="mine">This character</option>
                                     <option value="all">All characters</option>
@@ -577,7 +581,7 @@ class DungeonTrackerUI {
                     " title="Every dungeon and tier side by side: measured clear times where you have runs, the combat sim where you do not, keys, tokens, chest EV and gold per hour">
                         <span style="font-size: 12px; font-weight: bold; color: #ccc;">💰 ROI Board <span id="mwi-dt-roi-toggle" style="font-size: 10px;">▶</span></span>
                     </div>
-                    <div id="mwi-dt-roi-container" style="display: none; font-size: 11px; color: #ccc;">
+                    <div id="mwi-dt-roi-container" style="display: none; font-size: 11px; color: #ccc; overflow-x: auto;">
                         <!-- Board populated when opened -->
                     </div>
                 </div>

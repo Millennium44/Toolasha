@@ -257,10 +257,14 @@ class DungeonTrackerUIState {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             color: #fff;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            max-width: calc(100vw - 20px);
+            box-sizing: border-box;
         `;
 
         // Never wider than the screen: 480px of min-width on a 390px phone
-        // pushed half the tracker permanently off the right edge
+        // pushed half the tracker permanently off the right edge. The max-width
+        // above does the same for content: the expanded panel's widest piece (the
+        // ROI table, a long team name) made every row 800px on a 412px phone
         const minWidth = this.isCollapsed ? 'min(250px, calc(100vw - 20px))' : 'min(480px, calc(100vw - 20px))';
 
         if (this.position) {

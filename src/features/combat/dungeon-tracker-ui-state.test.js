@@ -238,3 +238,18 @@ describe('loading manual flags from a record older than auto-scope', () => {
         expect(dungeonTrackerUIState.isTierFilterManual).toBe(false);
     });
 });
+
+describe('panel width', () => {
+    // Reported on a 412px phone: the expanded tracker's widest piece (the ROI table, a long team
+    // name) made the whole panel 800px wide, half of it past the edge
+    test('the panel is never wider than the screen, expanded or collapsed', () => {
+        for (const collapsed of [false, true]) {
+            dungeonTrackerUIState.isCollapsed = collapsed;
+            dungeonTrackerUIState.position = null;
+            const container = { style: { cssText: '' } };
+            dungeonTrackerUIState.updatePosition(container);
+            expect(container.style.cssText.replace(/\s+/g, ' ')).toContain('max-width: calc(100vw - 20px)');
+        }
+        dungeonTrackerUIState.isCollapsed = false;
+    });
+});

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon tracker fits on a phone
+
+The expanded tracker was about twice a phone's width, set by its ROI table and long team names. It now stays within the screen: the filters wrap onto their own lines and the ROI table scrolls sideways on its own.
+
 ### Dungeon tracker can no longer get lost off screen
 
 A tracker dragged toward an edge while expanded, then collapsed (or a window that got narrower, a phone turned), could end up wholly off screen with no header to grab. It now pulls back so its header and reset button stay reachable.
