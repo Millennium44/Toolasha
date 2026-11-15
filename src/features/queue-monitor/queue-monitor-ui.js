@@ -10,6 +10,8 @@ import storage from '../../core/storage.js';
 import { formatRelativeTime, timeReadable } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { makeResizable } from '../../utils/floating-panel.js';
+import { saveGeometry, restoreGeometry, clearGeometry } from '../../utils/panel-geometry.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import queueSnapshot from './queue-snapshot.js';
 import { queueTimeLeft } from './queue-projection.js';
@@ -111,6 +113,10 @@ class QueueMonitorUI {
         // the page's life, each one then throwing against the panel this is
         // about to null out.
         this._endDrag();
+        this.detachResize?.();
+        this.detachResize = null;
+        this.resetSizeBtn = null;
+        this._pinned = null;
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();
@@ -173,9 +179,55 @@ class QueueMonitorUI {
             overflow-y: auto;
         `;
 
+        // Back to automatic sizing: a resize pins width and height, and this is the
+        // way out. Hidden until there is a pinned size to leave.
+        this.resetSizeBtn = document.createElement('button');
+        this.resetSizeBtn.id = 'toolasha-qm-reset-size';
+        this.resetSizeBtn.textContent = '↺';
+        this.resetSizeBtn.title = 'Reset to automatic size';
+        this.resetSizeBtn.style.cssText =
+            'background:none; border:none; color:#aaa; font-size:14px; cursor:pointer; padding:0 6px; ' +
+            'line-height:1; display:none;';
+        this.resetSizeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._resetSize();
+        });
+        header.insertBefore(this.resetSizeBtn, header.querySelector('#toolasha-qm-toggle'));
+
         this.panel.appendChild(header);
         this.panel.appendChild(this.bodyEl);
         document.body.appendChild(this.panel);
+
+        // The grip sits on the panel, outside the scrolling body, so the redraws
+        // that rewrite bodyEl never touch it. The 220-320px width and 300px body
+        // height are the automatic size; a pinned size lifts those caps.
+        this.detachResize = makeResizable(this.panel, {
+            minWidth: 180,
+            minHeight: 90,
+            onResize: (size) => {
+                if (this.collapsed) return;
+                this._pinned = { width: `${size.width}px`, height: `${size.height}px` };
+                this._applyPinned();
+                saveGeometry(PANEL_ID, size);
+            },
+        });
+        // The panel is anchored bottom/right, and a grip on its bottom-right corner
+        // only follows the pointer if the panel grows right and down: anchor it from
+        // the top left first. Registered after makeResizable's own listener, which
+        // has already measured the panel by then, and size does not depend on anchor.
+        this.panel.querySelector('.toolasha-resize-grip')?.addEventListener('pointerdown', () => {
+            const rect = this.panel.getBoundingClientRect();
+            this.panel.style.left = `${rect.left}px`;
+            this.panel.style.top = `${rect.top}px`;
+            this.panel.style.right = 'auto';
+            this.panel.style.bottom = 'auto';
+        });
+        const panel = this.panel;
+        restoreGeometry(panel, PANEL_ID, { width: 180, height: 90 }, { position: false }).then(() => {
+            if (this.panel !== panel || !panel.style.width) return;
+            this._pinned = { width: panel.style.width, height: panel.style.height };
+            this._applyPinned();
+        });
 
         registerFloatingPanel(this.panel);
 
@@ -188,8 +240,47 @@ class QueueMonitorUI {
             this.collapsed = !this.collapsed;
             this.bodyEl.style.display = this.collapsed ? 'none' : 'block';
             e.target.textContent = this.collapsed ? '+' : '−';
+            this._applyPinned();
             storage.set('queueMonitor_collapsed', this.collapsed, 'settings');
         });
+    }
+
+    /**
+     * Put the panel's inline size in line with its pinned size and collapse state.
+     *
+     * A pinned height must not hold a collapsed panel open, so collapsed means
+     * automatic height (and no grip); expanded means the pinned height again.
+     */
+    _applyPinned() {
+        const panel = this.panel;
+        if (!panel) return;
+        const grip = panel.querySelector('.toolasha-resize-grip');
+        if (grip) grip.style.display = this.collapsed ? 'none' : '';
+        if (!this._pinned) {
+            if (this.resetSizeBtn) this.resetSizeBtn.style.display = 'none';
+            return;
+        }
+        panel.style.maxWidth = 'none';
+        panel.style.width = this._pinned.width;
+        panel.style.height = this.collapsed ? 'auto' : this._pinned.height;
+        panel.style.overflow = 'hidden';
+        this.bodyEl.style.maxHeight = 'none';
+        this.bodyEl.style.flex = '1 1 auto';
+        this.bodyEl.style.minHeight = '0';
+        if (this.resetSizeBtn) this.resetSizeBtn.style.display = '';
+    }
+
+    /** Leave the pinned size: automatic width and height again, and forget the saved one. */
+    _resetSize() {
+        const panel = this.panel;
+        if (!panel) return;
+        this._pinned = null;
+        for (const prop of ['width', 'height', 'maxWidth', 'overflow']) panel.style[prop] = '';
+        this.bodyEl.style.maxHeight = '300px';
+        this.bodyEl.style.flex = '';
+        this.bodyEl.style.minHeight = '';
+        this._applyPinned();
+        clearGeometry(PANEL_ID);
     }
 
     /**

@@ -13,6 +13,8 @@ import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
+import { makeResizable } from '../../utils/floating-panel.js';
+import { saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
 import {
     getCheapestProtectionPrice,
     getRealisticBaseItemPrice,
@@ -343,6 +345,7 @@ class XPHCalculator {
             border-radius: ${GAME_FRAME.borderRadius};
             width: 560px;
             max-height: 580px;
+            overflow: hidden;
             display: none;
             flex-direction: column;
             font-family: 'Segoe UI', sans-serif;
@@ -477,6 +480,27 @@ class XPHCalculator {
             panelKey: PANEL_ID,
             beforeEl: header.querySelector('#mwi-xph-close'),
             accent: '#aaa',
+            // A panel that comes back from minimized to a saved height must not be held by the default cap
+            onToggle: (collapsed) => {
+                if (!collapsed && this.panel?.style.height) this.panel.style.maxHeight = 'none';
+            },
+        });
+
+        // The 580px ceiling is the default height, not a cap: once the panel has
+        // an explicit height (dragged or restored) it must be free to go taller.
+        // The grip sits on the panel, outside the scrolling table container, so
+        // the re-renders that rewrite the table never touch it.
+        this.detachResize = makeResizable(this.panel, {
+            minWidth: 360,
+            minHeight: 240,
+            onResize: (size) => {
+                this.panel.style.maxHeight = 'none';
+                saveGeometry(PANEL_ID, size);
+            },
+        });
+        const panel = this.panel;
+        restoreGeometry(panel, PANEL_ID, { width: 360, height: 240 }, { position: false }).then(() => {
+            if (panel.style.height && panel.dataset.minimized !== 'true') panel.style.maxHeight = 'none';
         });
 
         this.panel.querySelector('#mwi-xph-close').addEventListener('click', () => {
@@ -719,6 +743,8 @@ class XPHCalculator {
             this.timerRegistry.clearAll();
             this.minimizeCtl?.destroy();
             this.minimizeCtl = null;
+            this.detachResize?.();
+            this.detachResize = null;
             if (this.panel) {
                 unregisterFloatingPanel(this.panel);
                 this.panel.remove();
