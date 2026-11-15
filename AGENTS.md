@@ -247,6 +247,10 @@ Every brief to a sub-agent carries these lines:
   "New settings start turned off" setting (`whatsNew_newDefaultsOff`). Bug fixes are on.
 - **No call to a third-party server without a plainly labelled opt-in** whose setting names the host.
   Reusing data already fetched is fine.
+- **A movable panel resizes through `makeResizable`** (`src/utils/floating-panel.js`), never CSS `resize: both`,
+  which is dead on touch. Lift opening caps (max-height, min-width) in `onStart`, reset in `onReset`, and save the
+  size with `saveGeometry` and clear it with `clearSize`. Never use `clearGeometry`, since the key may also hold
+  position, collapsed or tab. Restore with `{ position: false }` for a panel that places itself.
 - **Press game spend and sell buttons through the game's React handler** —
   `clickThroughReact(button, { reactFirst: true })`, never `.click()`. The game ignores untrusted clicks
   on them (the vendor "Confirm Sell For", the task reroll spend buttons). One user press is one game
