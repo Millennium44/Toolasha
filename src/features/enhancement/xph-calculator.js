@@ -14,7 +14,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { makeResizable } from '../../utils/floating-panel.js';
-import { saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
+import { saveGeometry, restoreGeometry, clearSize } from '../../utils/panel-geometry.js';
 import {
     getCheapestProtectionPrice,
     getRealisticBaseItemPrice,
@@ -493,15 +493,25 @@ class XPHCalculator {
         this.detachResize = makeResizable(this.panel, {
             minWidth: 360,
             minHeight: 240,
+            // Before the first drag measures the panel, or the 580px ceiling stops it at its own value
+            onStart: () => {
+                this.panel.style.maxHeight = 'none';
+            },
             onResize: (size) => {
                 this.panel.style.maxHeight = 'none';
                 saveGeometry(PANEL_ID, size);
             },
+            onReset: () => this._resetSize(),
         });
         const panel = this.panel;
-        restoreGeometry(panel, PANEL_ID, { width: 360, height: 240 }, { position: false }).then(() => {
-            if (panel.style.height && panel.dataset.minimized !== 'true') panel.style.maxHeight = 'none';
-        });
+        (async () => {
+            try {
+                await restoreGeometry(panel, PANEL_ID, { width: 360, height: 240 }, { position: false });
+                if (panel.style.height && panel.dataset.minimized !== 'true') panel.style.maxHeight = 'none';
+            } catch (error) {
+                console.error('[XPHCalculator] Restoring the remembered size failed:', error);
+            }
+        })();
 
         this.panel.querySelector('#mwi-xph-close').addEventListener('click', () => {
             this.panel.style.display = 'none';
@@ -519,6 +529,20 @@ class XPHCalculator {
         itemInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') this._showItemRoute();
         });
+    }
+
+    /** Back to the opening size; only the width and height leave the stored record. */
+    async _resetSize() {
+        const panel = this.panel;
+        if (!panel) return;
+        panel.style.width = '560px';
+        panel.style.height = '';
+        panel.style.maxHeight = '580px';
+        try {
+            await clearSize(PANEL_ID);
+        } catch (error) {
+            console.error('[XPHCalculator] Resetting the panel size failed:', error);
+        }
     }
 
     /**

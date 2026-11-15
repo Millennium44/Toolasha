@@ -85,6 +85,9 @@ const FOLD_STYLE_ID = 'mwi-market-history-fold-style';
 const TAB_ID = 'mwi-market-history-tab';
 /** Where the panel is and how it draws — one panel, so one global answer */
 const PREFS_KEY = 'mooketPanelPrefs';
+/** The size the panel opens at, and what resetting it returns to */
+const DEFAULT_PANEL_W = 520;
+const DEFAULT_PANEL_H = 300;
 /**
  * What this character is watching.
  *
@@ -229,8 +232,8 @@ class MarketHistoryPanel {
         this.prefs = {
             x: 20,
             y: 120,
-            w: 520,
-            h: 300,
+            w: DEFAULT_PANEL_W,
+            h: DEFAULT_PANEL_H,
             days: 7,
             /** Chart grouping in hours: 1 shows every reading, 3 groups into 3-hour medians */
             groupHours: DEFAULT_GROUP_HOURS,
@@ -558,6 +561,14 @@ class MarketHistoryPanel {
                 if (this.minimizeCtl?.collapsed) return;
                 this.prefs.w = width;
                 this.prefs.h = height;
+                this.savePrefs();
+            },
+            // Same record, same shape: only w and h go back to what the prefs start with
+            onReset: () => {
+                this.prefs.w = DEFAULT_PANEL_W;
+                this.prefs.h = DEFAULT_PANEL_H;
+                panel.style.width = `${DEFAULT_PANEL_W}px`;
+                if (!this.minimizeCtl?.collapsed) panel.style.height = `${DEFAULT_PANEL_H}px`;
                 this.savePrefs();
             },
         });

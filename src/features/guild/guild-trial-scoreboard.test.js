@@ -1494,6 +1494,17 @@ describe('resizing the panel', () => {
         expect(all.guildTrialScoreboard).toMatchObject({ width: 400, height: 700 });
     });
 
+    test('the cap is lifted as the first drag starts, and a tap saves no size', async () => {
+        guildTrialScoreboard.open();
+        grips()[0].dispatchEvent(
+            new PointerEvent('pointerdown', { clientX: 0, clientY: 0, pointerId: 3, bubbles: true })
+        );
+        expect(panelEl().style.maxHeight).toBe('none');
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 3, bubbles: true }));
+        const all = await allGeometry();
+        expect(all.guildTrialScoreboard?.width).toBeUndefined();
+    });
+
     test('a saved size is restored and lifts the cap', async () => {
         guildTrialScoreboard.open();
         dragGrip(80, 400);

@@ -15,7 +15,7 @@ import { performanceMonitor, scriptBuildLabel, dataManager as bridgedDataManager
 import { getGmTrafficSnapshot, getGmTrafficSummary } from '../../utils/gm-traffic.js';
 import { createTabCensus, buildTabSummary } from '../../utils/tab-census.js';
 import { makeResizable } from '../../utils/floating-panel.js';
-import { saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
+import { saveGeometry, restoreGeometry, clearSize } from '../../utils/panel-geometry.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /**
@@ -297,18 +297,31 @@ class PFormancePanel {
         this.detachResize = makeResizable(panel, {
             minWidth: 280,
             minHeight: 140,
+            // Before the first drag measures the panel, or the 500px content cap holds the content short of it
+            onStart: () => {
+                if (!this.contentEl) return;
+                this.contentEl.style.maxHeight = 'none';
+                this.contentEl.style.flex = '1 1 auto';
+                this.contentEl.style.minHeight = '0';
+            },
             onResize: (size) => {
                 if (this.isCollapsed) return;
                 this._pinnedHeight = `${size.height}px`;
                 this._applyPinned();
                 saveGeometry(PANEL_GEOMETRY_KEY, size);
             },
+            onReset: () => this._resetSize(),
         });
-        restoreGeometry(panel, PANEL_GEOMETRY_KEY, { width: 280, height: 140 }, { position: false }).then(() => {
-            if (this.panel !== panel || !panel.style.height) return;
-            this._pinnedHeight = panel.style.height;
-            this._applyPinned();
-        });
+        (async () => {
+            try {
+                await restoreGeometry(panel, PANEL_GEOMETRY_KEY, { width: 280, height: 140 }, { position: false });
+                if (this.panel !== panel || !panel.style.height) return;
+                this._pinnedHeight = panel.style.height;
+                this._applyPinned();
+            } catch (error) {
+                console.error('[PFormance] Restoring the remembered size failed:', error);
+            }
+        })();
         this._updateContent();
     }
 
@@ -463,6 +476,22 @@ class PFormancePanel {
         this.contentEl.style.minHeight = '0';
     }
 
+    /** Back to the opening size; only the width and height leave the stored record. */
+    async _resetSize() {
+        if (!this.panel || !this.contentEl) return;
+        this._pinnedHeight = null;
+        this.panel.style.width = 'min(380px, 92vw)';
+        this.panel.style.height = '';
+        this.contentEl.style.maxHeight = '500px';
+        this.contentEl.style.flex = '';
+        this.contentEl.style.minHeight = '';
+        try {
+            await clearSize(PANEL_GEOMETRY_KEY);
+        } catch (error) {
+            console.error('[PFormance] Resetting the panel size failed:', error);
+        }
+    }
+
     _startUpdating() {
         if (this.updateIntervalId) return;
         this.updateIntervalId = setInterval(() => this._updateContent(), 1000);
@@ -494,6 +523,8 @@ class PFormancePanel {
         this.detachResize?.();
         this.detachResize = null;
         this._pinnedHeight = null;
+        // A reopened panel is built expanded, so it must not still count as collapsed
+        this.isCollapsed = false;
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();

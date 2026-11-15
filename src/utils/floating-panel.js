@@ -229,13 +229,16 @@ export function makeDraggable(panel, handle, onDrop) {
  * @param {Object} [options] - Options
  * @param {number} [options.minWidth] - Smallest width
  * @param {number} [options.minHeight] - Smallest height
- * @param {Function} [options.onResize] - Called with `{width, height}` once the drag ends
+ * @param {Function} [options.onResize] - Called with `{width, height}` once a drag that moved ends
+ * @param {Function} [options.onStart] - Called with the panel on pointerdown, before the start size is measured, so a
+ *   panel can lift the opening caps (max-height, min-width) that would otherwise limit the first drag
+ * @param {Function} [options.onReset] - Called on a double-click of the grip; the panel's one way back to its default size
  * @returns {Function} Removes the grip
  */
-export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize } = {}) {
+export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize, onStart, onReset } = {}) {
     const grip = document.createElement('div');
     grip.className = 'toolasha-resize-grip';
-    grip.title = 'Drag to resize';
+    grip.title = onReset ? 'Drag to resize · double-click to reset size' : 'Drag to resize';
     Object.assign(grip.style, {
         position: 'absolute',
         right: '0',
@@ -256,6 +259,7 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
     let startWidth = 0;
     let startHeight = 0;
     let resizing = false;
+    let moved = false;
     let activePointerId = null;
 
     // Same pointer-events story as the drag handle; and a 14px grip is a
@@ -268,6 +272,8 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
 
     const onPointerMove = (event) => {
         if (!resizing || event.pointerId !== activePointerId) return;
+        if (!moved && Math.abs(event.clientX - startX) < 4 && Math.abs(event.clientY - startY) < 4) return;
+        moved = true;
         panel.style.width = `${Math.max(minWidth, startWidth + event.clientX - startX)}px`;
         panel.style.height = `${Math.max(minHeight, startHeight + event.clientY - startY)}px`;
     };
@@ -282,6 +288,9 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
         document.removeEventListener('pointerup', onPointerUp);
         document.removeEventListener('pointercancel', onPointerUp);
         releaseCapture(grip, { pointerId: ownerId });
+        // A tap on the grip is not a resize: saving it would store the current
+        // size (and, for panels that lift their caps there, drop the caps)
+        if (!moved) return;
         const rect = panel.getBoundingClientRect();
         onResize?.({ width: Math.round(rect.width), height: Math.round(rect.height) });
     };
@@ -296,7 +305,9 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
         }
         markPanelInteracted(panel);
         resizing = true;
+        moved = false;
         activePointerId = event.pointerId;
+        onStart?.(panel);
         const rect = panel.getBoundingClientRect();
         startX = event.clientX;
         startY = event.clientY;
@@ -312,11 +323,19 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
         event.stopPropagation();
     };
 
+    const onDoubleClick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onReset?.();
+    };
+
     grip.addEventListener('pointerdown', onPointerDown);
+    if (onReset) grip.addEventListener('dblclick', onDoubleClick);
     panel.appendChild(grip);
 
     return () => {
         grip.removeEventListener('pointerdown', onPointerDown);
+        grip.removeEventListener('dblclick', onDoubleClick);
         onPointerUp();
         grip.remove();
     };

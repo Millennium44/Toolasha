@@ -52,6 +52,7 @@ vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 100 } }));
 vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: vi.fn(),
     clearGeometry: vi.fn(),
+    clearSize: vi.fn(),
     restoreGeometry: vi.fn(async () => {}),
 }));
 

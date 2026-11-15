@@ -218,6 +218,21 @@ describe('the resize grip', () => {
         expect(panel.panel.style.left).toBe('20px');
     });
 
+    test('double-clicking the grip puts w and h back to the prefs defaults and nothing else', () => {
+        drag(grips()[0], 30, 20);
+        panel.savePrefs.mockClear();
+        grips()[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        expect(panel.prefs).toMatchObject({ x: 20, y: 120, w: 520, h: 300 });
+        expect(panel.panel.style.width).toBe('520px');
+        expect(panel.panel.style.height).toBe('300px');
+        expect(panel.savePrefs).toHaveBeenCalled();
+    });
+
+    test('a tap on the grip saves nothing', () => {
+        drag(grips()[0], 0, 0);
+        expect(panel.savePrefs).not.toHaveBeenCalled();
+    });
+
     test('a folded panel saves no height', () => {
         panel.minimizeCtl.setCollapsed(true);
         panel.savePrefs.mockClear();

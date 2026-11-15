@@ -11,7 +11,7 @@ import { formatRelativeTime, timeReadable } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeResizable } from '../../utils/floating-panel.js';
-import { saveGeometry, restoreGeometry, clearGeometry } from '../../utils/panel-geometry.js';
+import { saveGeometry, restoreGeometry, clearSize } from '../../utils/panel-geometry.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import queueSnapshot from './queue-snapshot.js';
 import { queueTimeLeft } from './queue-projection.js';
@@ -204,24 +204,29 @@ class QueueMonitorUI {
         this.detachResize = makeResizable(this.panel, {
             minWidth: 180,
             minHeight: 90,
+            // Before the grip measures the panel. The 220-320px width caps would stop the first drag at their own
+            // values, and the panel is anchored bottom/right, where a grip on its bottom-right corner only follows
+            // the pointer if the panel grows right and down: anchor it from the top left first. Size does not
+            // depend on the anchor, and nothing here is saved.
+            onStart: (panelEl) => {
+                panelEl.style.minWidth = '0';
+                panelEl.style.maxWidth = 'none';
+                const rect = panelEl.getBoundingClientRect();
+                panelEl.style.left = `${rect.left}px`;
+                panelEl.style.top = `${rect.top}px`;
+                panelEl.style.right = 'auto';
+                panelEl.style.bottom = 'auto';
+            },
             onResize: (size) => {
                 if (this.collapsed) return;
                 this._pinned = { width: `${size.width}px`, height: `${size.height}px` };
                 this._applyPinned();
                 saveGeometry(PANEL_ID, size);
             },
+            onReset: () => this._resetSize(),
         });
-        // The panel is anchored bottom/right, and a grip on its bottom-right corner
-        // only follows the pointer if the panel grows right and down: anchor it from
-        // the top left first. Registered after makeResizable's own listener, which
-        // has already measured the panel by then, and size does not depend on anchor.
-        this.panel.querySelector('.toolasha-resize-grip')?.addEventListener('pointerdown', () => {
-            const rect = this.panel.getBoundingClientRect();
-            this.panel.style.left = `${rect.left}px`;
-            this.panel.style.top = `${rect.top}px`;
-            this.panel.style.right = 'auto';
-            this.panel.style.bottom = 'auto';
-        });
+        // Starting collapsed with no saved size: the grip must not be there to drag a collapsed panel tall
+        this._applyPinned();
         const panel = this.panel;
         restoreGeometry(panel, PANEL_ID, { width: 180, height: 90 }, { position: false }).then(() => {
             if (this.panel !== panel || !panel.style.width) return;
@@ -275,12 +280,15 @@ class QueueMonitorUI {
         const panel = this.panel;
         if (!panel) return;
         this._pinned = null;
-        for (const prop of ['width', 'height', 'maxWidth', 'overflow']) panel.style[prop] = '';
+        for (const prop of ['width', 'height', 'overflow']) panel.style[prop] = '';
+        // Back to the opening width caps that the first drag lifted
+        panel.style.minWidth = '220px';
+        panel.style.maxWidth = '320px';
         this.bodyEl.style.maxHeight = '300px';
         this.bodyEl.style.flex = '';
         this.bodyEl.style.minHeight = '';
         this._applyPinned();
-        clearGeometry(PANEL_ID);
+        clearSize(PANEL_ID);
     }
 
     /**

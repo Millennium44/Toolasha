@@ -48,6 +48,7 @@ vi.mock('../../core/storage.js', () => ({
 vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: vi.fn(),
     clearGeometry: vi.fn(),
+    clearSize: vi.fn(),
     restoreGeometry: vi.fn(async () => {}),
 }));
 

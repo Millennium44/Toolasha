@@ -25,6 +25,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     markPanelInteracted: vi.fn(),
     saveGeometry: vi.fn(async () => {}),
     clearGeometry: vi.fn(async () => {}),
+    clearSize: vi.fn(async () => {}),
     saveCollapsed: vi.fn(async () => {}),
     wasCollapsed: vi.fn(async () => false),
     savedSize: vi.fn(async () => null),
@@ -36,18 +37,24 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 
 const { default: calc } = await import('./xph-calculator.js');
-const { saveGeometry } = await import('../../utils/panel-geometry.js');
+const { saveGeometry, clearSize, clearGeometry } = await import('../../utils/panel-geometry.js');
 
 const panel = () => document.getElementById('mwi-xph-calc-panel');
 const grips = () => document.querySelectorAll('.toolasha-resize-grip');
 
-function dragGrip() {
+function dragGrip(dx = 30) {
     const ev = (type) => {
-        const e = new MouseEvent(type, { bubbles: true, clientX: 10, clientY: 10, button: 0 });
+        const e = new MouseEvent(type, {
+            bubbles: true,
+            clientX: type === 'pointermove' ? 10 + dx : 10,
+            clientY: 10,
+            button: 0,
+        });
         Object.defineProperty(e, 'pointerId', { value: 1 });
         return e;
     };
     document.querySelector('.toolasha-resize-grip').dispatchEvent(ev('pointerdown'));
+    if (dx) document.dispatchEvent(ev('pointermove'));
     document.dispatchEvent(ev('pointerup'));
 }
 
@@ -84,5 +91,24 @@ describe('xph calculator resize', () => {
         expect(panel().style.width).toBe('720px');
         expect(panel().style.height).toBe('650px');
         expect(panel().style.maxHeight).toBe('none');
+    });
+
+    test('the 580px ceiling is lifted when the drag starts, and a tap saves nothing', () => {
+        calc.initialize();
+        expect(panel().style.maxHeight).toBe('580px');
+        dragGrip(0);
+        expect(panel().style.maxHeight).toBe('none');
+        expect(saveGeometry).not.toHaveBeenCalled();
+    });
+
+    test('double-clicking the grip restores the opening size through clearSize', () => {
+        geometry.saved = { width: 720, height: 650 };
+        calc.initialize();
+        document.querySelector('.toolasha-resize-grip').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        expect(panel().style.width).toBe('560px');
+        expect(panel().style.height).toBe('');
+        expect(panel().style.maxHeight).toBe('580px');
+        expect(clearSize).toHaveBeenCalledWith('mwi-xph-calc-panel');
+        expect(clearGeometry).not.toHaveBeenCalled();
     });
 });

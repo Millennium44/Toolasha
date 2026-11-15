@@ -660,6 +660,12 @@ class CombatScore {
         while (panel.firstChild) scroller.appendChild(panel.firstChild);
         panel.style.display = 'flex';
         panel.style.flexDirection = 'column';
+        // The drag header stays outside the scroller: inside it, it would scroll out of reach once a size is pinned
+        const scoreHeader = scroller.querySelector('#mwi-score-header');
+        if (scoreHeader) {
+            scoreHeader.style.flex = '0 0 auto';
+            panel.appendChild(scoreHeader);
+        }
         panel.appendChild(scroller);
 
         markToolashaSurface(panel, 'popover');
@@ -714,21 +720,23 @@ class CombatScore {
         panel._detachResize = makeResizable(panel, {
             minWidth: min.width,
             minHeight: min.height,
+            // Before the first drag measures the panel: the opening caps would stop it at their own values
+            onStart: pin,
             onResize: (size) => {
                 pin();
                 saveGeometry(key, size).catch(() => {});
             },
+            onReset: () => this.resetPanelSize(panel, key),
         });
-        const grip = panel.querySelector('.toolasha-resize-grip');
-        if (grip) {
-            grip.title = 'Drag to resize, double-click to reset the size';
-            grip.addEventListener('dblclick', () => this.resetPanelSize(panel, key));
-        }
-        Promise.resolve(restoreGeometry(panel, key, min))
-            .then(() => {
+        // restoreGeometry may hand back nothing at all (a mock), so await rather than chain
+        (async () => {
+            try {
+                await restoreGeometry(panel, key, min);
                 if (panel.style.height || panel.style.width) pin();
-            })
-            .catch(() => {});
+            } catch {
+                // a failed restore leaves the opening size, which is fine
+            }
+        })();
     }
 
     /**
@@ -1343,7 +1351,8 @@ class CombatScore {
             expandBtn.addEventListener('click', () => {
                 // A dragged size would hold the panel at that height whatever the cap says, so
                 // expanding hands the sizing back to the content first
-                if (panel.style.height) this.resetPanelSize(panel, 'profileAbilities');
+                // The saved size stays: this only lifts the inline height for the session
+                if (panel.style.height) panel.style.height = '';
                 expanded = !expanded;
                 panel.style.maxHeight = expanded ? 'none' : `${ABILITIES_DEFAULT_MAX_HEIGHT}px`;
                 expandBtn.textContent = expanded ? '⤡' : '⤢';

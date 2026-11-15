@@ -35,6 +35,7 @@ vi.mock('../../utils/panel-z-index.js', () => ({ bringPanelToFront: vi.fn() }));
 vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: vi.fn(async () => {}),
     clearGeometry: vi.fn(async () => {}),
+    clearSize: vi.fn(async () => {}),
     savedSize: vi.fn(async () => null),
     markPanelInteracted: vi.fn(),
 }));

@@ -11,6 +11,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 const geometry = vi.hoisted(() => ({
     saveGeometry: vi.fn(async () => {}),
     clearGeometry: vi.fn(async () => {}),
+    clearSize: vi.fn(async () => {}),
     savedSize: vi.fn(async () => null),
     markPanelInteracted: vi.fn(),
 }));
@@ -104,10 +105,62 @@ describe('dungeon tracker resize grip', () => {
 
         container.querySelector('#mwi-dt-reset-position-btn').click();
 
-        expect(geometry.clearGeometry).toHaveBeenCalledWith(GEOMETRY_KEY);
+        expect(geometry.clearSize).toHaveBeenCalledWith(GEOMETRY_KEY);
+        expect(geometry.clearGeometry).not.toHaveBeenCalled();
         expect(container.style.width).toBe('');
         expect(container.style.height).toBe('');
         expect(interactions.userSize).toBeNull();
+    });
+
+    test('the first drag drops the 480px floor so it can narrow, and pins a centered panel to pixels', () => {
+        const { container, state, interactions } = setup();
+        container.style.transform = 'translateX(-50%)';
+        container.style.minWidth = 'min(480px, calc(100vw - 20px))';
+        interactions.setupResize();
+        const grip = container.querySelector('.toolasha-resize-grip');
+        grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 100, clientY: 100 }));
+        expect(container.style.minWidth).toBe('min(250px, calc(100vw - 20px))');
+        expect(container.style.transform).toBe('none');
+        expect(container.style.left).toBe('40px');
+        expect(container.style.top).toBe('30px');
+        // Visual only: the remembered position is not touched
+        expect(state.position).toBeNull();
+        document.dispatchEvent(new MouseEvent('pointerup', { clientX: 100, clientY: 100 }));
+        // A tap saved nothing
+        expect(geometry.saveGeometry).not.toHaveBeenCalled();
+    });
+
+    test('the grip double-click resets the size, restoring the auto floor', () => {
+        const { container, interactions } = setup();
+        interactions.setupResize();
+        drag(container, 10, 10);
+        container.querySelector('.toolasha-resize-grip').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        expect(geometry.clearSize).toHaveBeenCalledWith(GEOMETRY_KEY);
+        expect(container.style.height).toBe('');
+        expect(container.style.minWidth).toBe('min(480px, calc(100vw - 20px))');
+    });
+
+    test('dropping a header drag re-applies the height cap for the new top', () => {
+        const { container, state, interactions } = setup({ position: { x: 40, y: 30 } });
+        interactions.setupResize();
+        drag(container, 10, 10);
+        expect(container.style.height).toBe('min(400px, calc(100vh - 30px))');
+        container.getBoundingClientRect = () => ({
+            left: 40,
+            top: 200,
+            width: 500,
+            height: 400,
+            right: 540,
+            bottom: 600,
+        });
+        interactions.isDragging = true;
+        interactions.container.querySelector = (sel) =>
+            sel === '#mwi-dt-header' ? { style: {}, addEventListener: () => {} } : null;
+        interactions.dragUpHandler = null;
+        interactions.setupDragging();
+        interactions.dragUpHandler();
+        expect(container.style.height).toBe('min(400px, calc(100vh - 200px))');
+        expect(state.save).toHaveBeenCalled();
     });
 
     test('collapsing drops the inline size, expanding brings it back, and a collapsed resize is not saved', () => {

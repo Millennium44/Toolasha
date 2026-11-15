@@ -19,7 +19,7 @@ import storage from '../../core/storage.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { makeResizable } from '../../utils/floating-panel.js';
-import { saveGeometry, restoreGeometry, clearGeometry } from '../../utils/panel-geometry.js';
+import { saveGeometry, restoreGeometry, clearSize } from '../../utils/panel-geometry.js';
 import { buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import Monster from '../combat-sim/engine/monster.js';
@@ -1224,8 +1224,8 @@ class MonsterStatCheckPanel {
         // Dragging the grip pins the width and height, so content stops sizing
         // the panel; this puts it back to fitting its content
         const fitBtn = document.createElement('button');
-        fitBtn.textContent = '⤢';
-        fitBtn.title = 'Reset size (fit the content)';
+        fitBtn.textContent = '↺';
+        fitBtn.title = 'Reset size';
         fitBtn.style.cssText = `background: none; border: none; color: #aaa; font-size: calc(1rem * var(--msc-scale, 1)); line-height: 1; cursor: pointer; padding: 0 4px;`;
         fitBtn.addEventListener('mouseenter', () => (fitBtn.style.color = '#fff'));
         fitBtn.addEventListener('mouseleave', () => (fitBtn.style.color = '#aaa'));
@@ -1277,11 +1277,15 @@ class MonsterStatCheckPanel {
         this.detachResize = makeResizable(container, {
             minWidth: PANEL_MIN_SIZE.width,
             minHeight: PANEL_MIN_SIZE.height,
+            // The panel is centered with translateX(-50%), so a width drag would move the grip at half the pointer's
+            // speed. Anchor it to explicit left/top first; the panel does not move on screen.
+            onStart: () => this._anchorToPixels(),
             onResize: (size) => {
                 // A collapsed panel has no real height to remember (its grip is hidden anyway)
                 if (this.minimize?.collapsed) return;
                 saveGeometry(PANEL_KEY, size);
             },
+            onReset: () => this._resetSize(),
         });
         restoreGeometry(container, PANEL_KEY, PANEL_MIN_SIZE, { position: false });
 
@@ -1987,12 +1991,22 @@ class MonsterStatCheckPanel {
         document.addEventListener('pointercancel', this.dragUpHandler);
     }
 
-    /** Drop the dragged size: back to fitting the content, and forget the saved one */
+    /** Replace the centering transform with the same spot as left/top pixels */
+    _anchorToPixels() {
+        const container = this.container;
+        if (!container || container.style.transform === 'none') return;
+        const rect = container.getBoundingClientRect();
+        container.style.transform = 'none';
+        container.style.top = `${rect.top}px`;
+        container.style.left = `${rect.left}px`;
+    }
+
+    /** Drop the dragged size: back to fitting the content, and forget the saved one (never the rest of the record) */
     _resetSize() {
         if (!this.container || this.minimize?.collapsed) return;
         this.container.style.width = `${PANEL_DEFAULT_WIDTH}px`;
         this.container.style.height = '';
-        clearGeometry(PANEL_KEY);
+        clearSize(PANEL_KEY);
     }
 
     teardown() {

@@ -881,16 +881,16 @@ class GuildTrialScoreboard {
         this._detachResize = makeResizable(container, {
             minWidth: MIN_SIZE.width,
             minHeight: MIN_SIZE.height,
+            // Before the first drag measures the panel, or the 70vh cap stops it at its own value
+            onStart: () => {
+                container.style.maxHeight = 'none';
+            },
             onResize: (size) => {
                 container.style.maxHeight = 'none';
                 saveGeometry(GEOMETRY_KEY, size);
             },
+            onReset: () => this._resetSize(container),
         });
-        const grip = container.querySelector('.toolasha-resize-grip');
-        if (grip) {
-            grip.title = 'Drag to resize, double-click to reset the size';
-            grip.addEventListener('dblclick', () => this._resetSize(container));
-        }
     }
 
     /**
