@@ -32,6 +32,7 @@ import { createCleanupRegistry } from '../../../utils/cleanup-registry.js';
 import { formatKMB, formatWithSeparator } from '../../../utils/formatters.js';
 import { navigateToMarketplace, insertTabInOrder } from '../../../utils/marketplace-tabs.js';
 import { hasCoarsePointer } from '../../../utils/mobile.js';
+import { makeResizable } from '../../../utils/floating-panel.js';
 import marketPriceStore from './market-price-store.js';
 import marketHistoryAPI from './market-history-api.js';
 import {
@@ -410,6 +411,8 @@ class MarketHistoryPanel {
             this.chart?.destroy();
             this.chart = null;
             this.shown = null;
+            this.detachResize?.();
+            this.detachResize = null;
             this.minimizeCtl?.destroy();
             this.minimizeCtl = null;
             this.panel?.remove();
@@ -498,7 +501,7 @@ class MarketHistoryPanel {
             width: ${this.prefs.w}px; z-index: 9000; display: none;
             flex-direction: column; background: ${GAME_COLORS.background}; border: 1px solid ${GAME_COLORS.frame};
             border-radius: var(--radius-sm, 0.25rem); box-shadow: ${GAME_COLORS.frameGlow};
-            font-size: 12px; color: ${GAME_COLORS.text}; user-select: none; resize: both; overflow: hidden;
+            font-size: 12px; color: ${GAME_COLORS.text}; user-select: none; overflow: hidden;
             min-width: 260px; min-height: 60px; max-width: calc(100vw - 16px);
         `;
 
@@ -544,6 +547,20 @@ class MarketHistoryPanel {
         );
 
         this.makeDraggable(panel);
+        // The grip stops pointerdown propagation, so it never starts a panel drag. It is appended last and
+        // sits under the fold rule above, so a folded panel shows none.
+        this.detachResize?.();
+        this.detachResize = makeResizable(panel, {
+            minWidth: 260,
+            minHeight: 60,
+            onResize: ({ width, height }) => {
+                // A folded panel is header height; that is not a size to remember
+                if (this.minimizeCtl?.collapsed) return;
+                this.prefs.w = width;
+                this.prefs.h = height;
+                this.savePrefs();
+            },
+        });
         markToolashaSurface(panel, 'panel');
         document.body.appendChild(panel);
         this.panel = panel;
@@ -792,9 +809,7 @@ class MarketHistoryPanel {
         panel.addEventListener('pointerdown', (e) => {
             if (this.prefs.locked) return;
             if (e.button !== 0 || e.target.closest('button, select, canvas, input')) return;
-            // The browser's own resize handle lives in the bottom-right corner
             const rect = panel.getBoundingClientRect();
-            if (e.clientX > rect.right - 16 && e.clientY > rect.bottom - 16) return;
             e.preventDefault();
 
             const grabX = e.clientX - rect.left;
@@ -814,7 +829,7 @@ class MarketHistoryPanel {
                 this.prefs.x = final.left;
                 this.prefs.y = final.top;
                 this.prefs.w = panel.offsetWidth;
-                this.prefs.h = this.prefs.open ? panel.offsetHeight : this.prefs.h;
+                this.prefs.h = this.prefs.open && !this.minimizeCtl?.collapsed ? panel.offsetHeight : this.prefs.h;
                 this.savePrefs();
             };
 

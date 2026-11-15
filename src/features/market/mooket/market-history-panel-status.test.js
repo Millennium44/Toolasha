@@ -181,3 +181,66 @@ describe('switching items clears a stale status', () => {
         expect(panel.canvas.style.display).toBe('block');
     });
 });
+
+describe('the resize grip', () => {
+    const grips = () => document.querySelectorAll('#mwi-market-history-panel .toolasha-resize-grip');
+    const drag = (grip, dx, dy) => {
+        grip.dispatchEvent(
+            new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 5, clientY: 5, bubbles: true })
+        );
+        document.dispatchEvent(
+            new PointerEvent('pointermove', { pointerId: 1, clientX: 5 + dx, clientY: 5 + dy, bubbles: true })
+        );
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }));
+    };
+
+    beforeEach(() => {
+        panel.savePrefs = vi.fn();
+        panel.panel.getBoundingClientRect = () => ({
+            width: 500,
+            height: 280,
+            left: 20,
+            top: 120,
+            right: 520,
+            bottom: 400,
+        });
+    });
+
+    test('there is one grip, and the native handle is gone', () => {
+        expect(grips()).toHaveLength(1);
+        expect(panel.panel.style.resize).toBe('');
+    });
+
+    test('a drag on the grip saves w and h in the same prefs shape, and does not move the panel', () => {
+        drag(grips()[0], 30, 20);
+        expect(panel.prefs).toMatchObject({ x: 20, y: 120, w: 500, h: 280 });
+        expect(panel.savePrefs).toHaveBeenCalled();
+        expect(panel.panel.style.left).toBe('20px');
+    });
+
+    test('a folded panel saves no height', () => {
+        panel.minimizeCtl.setCollapsed(true);
+        panel.savePrefs.mockClear();
+        drag(grips()[0], 30, 20);
+        expect(panel.prefs.h).toBe(300);
+        expect(panel.savePrefs).not.toHaveBeenCalled();
+    });
+
+    test('the bottom-right corner no longer carves out the panel drag', () => {
+        panel.panel.dispatchEvent(
+            new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 515, clientY: 395, bubbles: true })
+        );
+        const moved = new PointerEvent('pointermove', { pointerId: 1, clientX: 615, clientY: 395, bubbles: true });
+        document.dispatchEvent(moved);
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }));
+        expect(panel.savePrefs).toHaveBeenCalled();
+    });
+
+    test('disable removes the grip and a rebuild does not stack a second', () => {
+        panel.disable();
+        expect(document.querySelectorAll('.toolasha-resize-grip')).toHaveLength(0);
+        panel.buildPanel();
+        panel.buildPanel();
+        expect(document.querySelectorAll('.toolasha-resize-grip')).toHaveLength(1);
+    });
+});

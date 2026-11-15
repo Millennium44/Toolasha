@@ -18,6 +18,8 @@ import webSocketHook from '../../core/websocket.js';
 import storage from '../../core/storage.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
+import { makeResizable } from '../../utils/floating-panel.js';
+import { saveGeometry, restoreGeometry, clearGeometry } from '../../utils/panel-geometry.js';
 import { buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import Monster from '../combat-sim/engine/monster.js';
@@ -145,7 +147,7 @@ export const PHONE_PANEL_CSS = `
  * They are constants rather than literals in the style string because the one
  * thing that can be wrong here is their sum, and a sum is checkable. It was
  * wrong: `top: 8%` with `max-height: 94vh` is 102% of the viewport, so the
- * bottom 2% — including the `resize: both` corner handle — was off screen on
+ * bottom 2% — including the resize grip — was off screen on
  * every device, before the mobile address bar took its own slice on top. The
  * shared clamp never caught it: the panel is centred with a `transform`, and
  * `clampPanelToViewport` deliberately refuses transformed elements
@@ -170,6 +172,10 @@ export const PANEL_HEIGHT_BUDGET = PANEL_TOP_FRACTION + PANEL_MAX_HEIGHT_FRACTIO
 /** The visible viewport's height, with a layout-viewport fallback */
 const VIEWPORT_HEIGHT = 'var(--toolasha-visual-viewport-height, 100vh)';
 const PANEL_KEY = 'monsterStatCheck';
+/** Smallest the grip lets the panel shrink to; matches the CSS min-width/min-height */
+/** Width the panel opens at, and returns to on a size reset */
+const PANEL_DEFAULT_WIDTH = 340;
+const PANEL_MIN_SIZE = { width: 260, height: 140 };
 /** Discrepancy records kept, deduped by monster+room, oldest evicted. */
 const MAX_HISTORY = 100;
 /** Where the log persists across refreshes. */
@@ -1146,7 +1152,7 @@ class MonsterStatCheckPanel {
             left: 50%;
             transform: translateX(-50%);
             z-index: ${config.Z_FLOATING_PANEL};
-            width: 340px;
+            width: ${PANEL_DEFAULT_WIDTH}px;
             min-width: 260px;
             min-height: 140px;
             display: flex;
@@ -1154,9 +1160,8 @@ class MonsterStatCheckPanel {
             /* Height grows to fit the content (header + body), so a full readout
                shows without a scrollbar; capped so the panel's bottom edge —
                the resize handle included — stays on screen once the top offset
-               above is paid for, and resizable from the corner. */
+               above is paid for, and resizable from the corner grip. */
             max-height: calc(${VIEWPORT_HEIGHT} * ${PANEL_MAX_HEIGHT_FRACTION});
-            resize: both;
             background: ${GAME_FRAME.background};
             border: ${GAME_FRAME.border};
             border-radius: ${GAME_FRAME.borderRadius};
@@ -1216,6 +1221,20 @@ class MonsterStatCheckPanel {
         closeBtn.addEventListener('mouseleave', () => (closeBtn.style.color = '#aaa'));
         closeBtn.addEventListener('click', () => this.close());
 
+        // Dragging the grip pins the width and height, so content stops sizing
+        // the panel; this puts it back to fitting its content
+        const fitBtn = document.createElement('button');
+        fitBtn.textContent = '⤢';
+        fitBtn.title = 'Reset size (fit the content)';
+        fitBtn.style.cssText = `background: none; border: none; color: #aaa; font-size: calc(1rem * var(--msc-scale, 1)); line-height: 1; cursor: pointer; padding: 0 4px;`;
+        fitBtn.addEventListener('mouseenter', () => (fitBtn.style.color = '#fff'));
+        fitBtn.addEventListener('mouseleave', () => (fitBtn.style.color = '#aaa'));
+        fitBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._resetSize();
+        });
+
+        controls.appendChild(fitBtn);
         controls.appendChild(copyBtn);
         controls.appendChild(exportBtn);
         controls.appendChild(closeBtn);
@@ -1251,6 +1270,20 @@ class MonsterStatCheckPanel {
         });
 
         this._setupDragging(header);
+
+        // The panel centres itself, so only its size is remembered (a grabbed
+        // position is per-session, as before). The grip sits on the outer,
+        // non-scrolling container; the body scrolls inside it.
+        this.detachResize = makeResizable(container, {
+            minWidth: PANEL_MIN_SIZE.width,
+            minHeight: PANEL_MIN_SIZE.height,
+            onResize: (size) => {
+                // A collapsed panel has no real height to remember (its grip is hidden anyway)
+                if (this.minimize?.collapsed) return;
+                saveGeometry(PANEL_KEY, size);
+            },
+        });
+        restoreGeometry(container, PANEL_KEY, PANEL_MIN_SIZE, { position: false });
 
         // Arrows page through history, but only while the pointer is over the
         // panel — otherwise they'd fight the game's own keyboard handling.
@@ -1954,7 +1987,19 @@ class MonsterStatCheckPanel {
         document.addEventListener('pointercancel', this.dragUpHandler);
     }
 
+    /** Drop the dragged size: back to fitting the content, and forget the saved one */
+    _resetSize() {
+        if (!this.container || this.minimize?.collapsed) return;
+        this.container.style.width = `${PANEL_DEFAULT_WIDTH}px`;
+        this.container.style.height = '';
+        clearGeometry(PANEL_KEY);
+    }
+
     teardown() {
+        if (this.detachResize) {
+            this.detachResize();
+            this.detachResize = null;
+        }
         if (this.keyHandler) {
             document.removeEventListener('keydown', this.keyHandler);
             this.keyHandler = null;
