@@ -518,6 +518,23 @@ describe('every other way a step ends', () => {
         expect(cancelled()).toBe(true);
     });
 
+    test('a search still polling for its button stops when the character changes', async () => {
+        let cancelled = null;
+        shortcuts.clickInstantActionButton = vi.fn((_text, _timeout, isCancelled) => {
+            cancelled = isCancelled;
+            return new Promise(() => {});
+        });
+        consumablesPanel.show();
+        await tick();
+        consumablesPanel._registerBuyQueue('Combat', shortfall);
+        consumablesPanel.bodyEl.appendChild(consumablesPanel._renderInlineBuyWalk());
+        inlineBtn().click();
+        await tick(400);
+        expect(cancelled()).toBe(false);
+        bus.characterId = 'char2';
+        expect(cancelled()).toBe(true);
+    });
+
     test('cancelling mid-step stops the walk and nothing is pressed afterwards', async () => {
         await startWalk();
         document.querySelector('.toolasha-lab-buy-next-close').click();

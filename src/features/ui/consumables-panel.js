@@ -2001,8 +2001,8 @@ class ConsumablesPanel {
             // The walk was stopped, skipped or moved on during the beat: nothing to open
             if (step && this._buyStep !== step) return;
             // The shortcuts poll for their button for up to three seconds; a step skipped or cancelled in
-            // that time must stop the search, or the abandoned step opens a form after the walk moved on
-            const isCancelled = step ? () => this._buyStep !== step : null;
+            // that time, or a character change, must stop the search, or the abandoned step opens a form after the walk moved on
+            const isCancelled = step ? () => this._buyStep !== step || step.characterId !== currentCharacterId() : null;
             const openListing = async () => {
                 if (typeof shortcuts.clickListingButton !== 'function') throw new Error('No listing shortcut');
                 await shortcuts.clickListingButton('+ New Buy Listing', 'Button_buy', 3000, isCancelled);
