@@ -81,9 +81,10 @@ vi.mock('../../utils/timer-registry.js', () => ({
         clearAll: () => {},
     }),
 }));
-vi.mock('../../utils/floating-panel.js', () => ({ makeDraggable: () => {} }));
+vi.mock('../../utils/floating-panel.js', () => ({ makeDraggable: () => {}, makeResizable: () => () => {} }));
 vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: () => {},
+    allGeometry: async () => ({}),
     restoreGeometry: async () => {},
 }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: { getAllSnapshots: () => [] } }));

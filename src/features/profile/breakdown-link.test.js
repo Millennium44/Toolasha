@@ -72,6 +72,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     clampPanelToViewport: () => {},
     restoreGeometry: async () => {},
     saveGeometry: async () => {},
+    allGeometry: async () => ({}),
     saveOpenState: async () => {},
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},
