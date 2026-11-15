@@ -85,6 +85,7 @@ vi.mock('../../utils/floating-panel.js', () => ({ makeDraggable: () => {}, makeR
 vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: () => {},
     allGeometry: async () => ({}),
+    clearSize: async () => {},
     restoreGeometry: async () => {},
 }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: { getAllSnapshots: () => [] } }));

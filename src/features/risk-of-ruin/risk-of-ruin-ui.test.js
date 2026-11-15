@@ -60,6 +60,12 @@ vi.mock('../../core/dom-observer.js', () => ({
 // about — but which panel was left open is, so that half is a real in-memory store.
 vi.mock('../../utils/panel-geometry.js', () => ({
     allGeometry: vi.fn(async () => mocks.geometry),
+    clearSize: vi.fn(async (key) => {
+        if (mocks.geometry?.[key]) {
+            delete mocks.geometry[key].width;
+            delete mocks.geometry[key].height;
+        }
+    }),
     markPanelInteracted: vi.fn(),
     clampPanelToViewport: vi.fn(() => null),
     restoreGeometry: vi.fn(async () => {}),

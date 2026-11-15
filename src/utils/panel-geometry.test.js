@@ -68,6 +68,7 @@ const {
     allGeometry,
     reopenIfLeftOpen,
     clearPosition,
+    clearSize,
     restoreGeometry,
     clampGeometry,
     clampPanelToViewport,
@@ -372,6 +373,22 @@ describe('forgetting where a panel was but not how big', () => {
 
     test('a panel with nothing stored is not a problem', () => {
         return expect(clearPosition('never-seen')).resolves.toBeUndefined();
+    });
+});
+
+describe('forgetting how big a panel was but not where', () => {
+    test('the size goes and the position and other fields stay', async () => {
+        // The trial scoreboard keeps its tab beside its geometry; going back to
+        // the designed size must not move it or switch its tab.
+        await saveGeometry('board', { left: 40, top: 60, width: 500, height: 300, tab: 'mine' });
+        await clearSize('board');
+
+        const all = await allGeometry();
+        expect(all.board).toEqual({ left: 40, top: 60, tab: 'mine' });
+    });
+
+    test('a panel with nothing stored is not a problem', () => {
+        return expect(clearSize('never-seen')).resolves.toBeUndefined();
     });
 });
 

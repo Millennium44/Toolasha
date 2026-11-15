@@ -17,8 +17,8 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import {
-    allGeometry,
     clampPanelToViewport,
+    clearSize,
     restoreGeometry,
     saveGeometry,
     saveOpenState,
@@ -496,12 +496,7 @@ class RiskOfRuinUI {
         panel.style.height = '';
         panel.style.maxHeight = `${DEFAULT_MAX_HEIGHT}px`;
         try {
-            const all = await allGeometry();
-            if (all[PANEL_KEY]) {
-                delete all[PANEL_KEY].width;
-                delete all[PANEL_KEY].height;
-            }
-            await saveGeometry(PANEL_KEY, {});
+            await clearSize(PANEL_KEY);
         } catch (error) {
             console.error('[RiskOfRuin] Resetting the panel size failed:', error);
         }

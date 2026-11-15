@@ -61,6 +61,12 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},
     allGeometry: async () => geo.record,
+    clearSize: vi.fn(async (key) => {
+        if (geo.record[key]) {
+            delete geo.record[key].width;
+            delete geo.record[key].height;
+        }
+    }),
     saveGeometry: vi.fn(async (key, value) => {
         geo.record[key] = { ...geo.record[key], ...value };
     }),
