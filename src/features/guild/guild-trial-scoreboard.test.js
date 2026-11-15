@@ -77,7 +77,7 @@ vi.mock('../../utils/panel-z-index.js', () => ({
 // Real: position/tab persistence goes through it, and a stub would be testing
 // the stub. `_resetCaches` clears its module-level cache between tests — the
 // same reason `_resetMeterHistory`/`_resetTrialHistory` exist below.
-const { _resetCaches: _resetGeometryCaches } = await import('../../utils/panel-geometry.js');
+const { _resetCaches: _resetGeometryCaches, allGeometry } = await import('../../utils/panel-geometry.js');
 
 const {
     classTagHTML,
@@ -1029,9 +1029,9 @@ describe('Escape, position and the remembered tab', () => {
         guildTrialScoreboard.open();
         const header = document.querySelector(`.${PANEL_CLASS}__header`);
 
-        header.dispatchEvent(new MouseEvent('mousedown', { clientX: 100, clientY: 100, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mousemove', { clientX: 160, clientY: 140, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        header.dispatchEvent(new PointerEvent('pointerdown', { clientX: 100, clientY: 100, bubbles: true }));
+        document.dispatchEvent(new PointerEvent('pointermove', { clientX: 160, clientY: 140, bubbles: true }));
+        document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
 
         const draggedLeft = document.querySelector(`.${PANEL_CLASS}`).style.left;
         expect(draggedLeft).toBe('60px');
@@ -1048,9 +1048,9 @@ describe('Escape, position and the remembered tab', () => {
         guildTrialScoreboard.open();
         document
             .querySelector(`.${PANEL_CLASS}__header`)
-            .dispatchEvent(new MouseEvent('mousedown', { clientX: 100, clientY: 100, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mousemove', { clientX: 160, clientY: 140, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            .dispatchEvent(new PointerEvent('pointerdown', { clientX: 100, clientY: 100, bubbles: true }));
+        document.dispatchEvent(new PointerEvent('pointermove', { clientX: 160, clientY: 140, bubbles: true }));
+        document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
         guildTrialScoreboard.close();
 
         // Reopen at the restored position, then just click the header — no move
@@ -1058,14 +1058,36 @@ describe('Escape, position and the remembered tab', () => {
         await vi.waitFor(() => expect(document.querySelector(`.${PANEL_CLASS}`).style.left).toBe('60px'));
         document
             .querySelector(`.${PANEL_CLASS}__header`)
-            .dispatchEvent(new MouseEvent('mousedown', { clientX: 5, clientY: 5, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            .dispatchEvent(new PointerEvent('pointerdown', { clientX: 5, clientY: 5, bubbles: true }));
+        document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
         guildTrialScoreboard.close();
 
         guildTrialScoreboard.open();
         await vi.waitFor(() => {
             expect(document.querySelector(`.${PANEL_CLASS}`).style.left).toBe('60px');
         });
+    });
+
+    test('a touch drag of the header moves the panel and saves the same shape the mouse drag did', async () => {
+        guildTrialScoreboard.open();
+        const header = document.querySelector(`.${PANEL_CLASS}__header`);
+        header.dispatchEvent(
+            new PointerEvent('pointerdown', {
+                clientX: 100,
+                clientY: 100,
+                pointerId: 7,
+                pointerType: 'touch',
+                bubbles: true,
+            })
+        );
+        document.dispatchEvent(
+            new PointerEvent('pointermove', { clientX: 130, clientY: 150, pointerId: 7, bubbles: true })
+        );
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 7, bubbles: true }));
+        expect(document.querySelector(`.${PANEL_CLASS}`).style.top).toBe('50px');
+        const all = await allGeometry();
+        expect(all.guildTrialScoreboard.left).toBe(30);
+        expect(all.guildTrialScoreboard.top).toBe(50);
     });
 
     test('the chosen tab is remembered across a close and reopen', async () => {
@@ -1429,5 +1451,81 @@ describe('saved trials', () => {
         expect(text).toContain('Saved trial — Badger T1–T3');
         expect(text).toContain("Trial damage — 1,000,000 total, from the game's post-trial stats");
         expect(text).toContain('Trial healing — 90,000 total');
+    });
+});
+
+describe('resizing the panel', () => {
+    const panelEl = () => document.querySelector(`.${PANEL_CLASS}`);
+    const grips = () => panelEl().querySelectorAll('.toolasha-resize-grip');
+
+    function dragGrip(dx, dy) {
+        const el = panelEl();
+        el.getBoundingClientRect = () => ({
+            width: parseFloat(el.style.width) || 320,
+            height: parseFloat(el.style.height) || 300,
+            left: 0,
+            top: 0,
+        });
+        grips()[0].dispatchEvent(
+            new PointerEvent('pointerdown', { clientX: 0, clientY: 0, pointerId: 3, bubbles: true })
+        );
+        document.dispatchEvent(
+            new PointerEvent('pointermove', { clientX: dx, clientY: dy, pointerId: 3, bubbles: true })
+        );
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 3, bubbles: true }));
+    }
+
+    test('has one grip on the outer panel, and it survives a redraw of the body', () => {
+        guildTrialScoreboard.open();
+        expect(grips()).toHaveLength(1);
+        expect(grips()[0].parentElement).toBe(panelEl());
+        guildTrialScoreboard.render();
+        document.querySelector('[data-tab="taken"]').click();
+        expect(grips()).toHaveLength(1);
+    });
+
+    test('320px and 70vh are opening sizes: a drag lifts the height cap and saves the size', async () => {
+        guildTrialScoreboard.open();
+        expect(panelEl().style.width).toBe('320px');
+        expect(panelEl().style.maxHeight).toBe('70vh');
+        dragGrip(80, 400);
+        expect(panelEl().style.maxHeight).toBe('none');
+        const all = await allGeometry();
+        expect(all.guildTrialScoreboard).toMatchObject({ width: 400, height: 700 });
+    });
+
+    test('a saved size is restored and lifts the cap', async () => {
+        guildTrialScoreboard.open();
+        dragGrip(80, 400);
+        guildTrialScoreboard.close();
+        guildTrialScoreboard.open();
+        await vi.waitFor(() => expect(panelEl().style.width).toBe('400px'));
+        await vi.waitFor(() => expect(panelEl().style.maxHeight).toBe('none'));
+        expect(panelEl().style.height).toBe('700px');
+    });
+
+    test('double-clicking the grip resets only the size', async () => {
+        guildTrialScoreboard.open();
+        document.querySelector('[data-tab="taken"]').click();
+        dragGrip(80, 400);
+        grips()[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        await vi.waitFor(async () => {
+            const saved = (await allGeometry()).guildTrialScoreboard;
+            expect(saved.width).toBeUndefined();
+            expect(saved.height).toBeUndefined();
+        });
+        expect((await allGeometry()).guildTrialScoreboard.tab).toBe('taken');
+        expect(panelEl().style.width).toBe('320px');
+        expect(panelEl().style.height).toBe('');
+        expect(panelEl().style.maxHeight).toBe('70vh');
+    });
+
+    test('closing removes the grip and reopening does not duplicate it', () => {
+        guildTrialScoreboard.open();
+        const old = panelEl();
+        guildTrialScoreboard.close();
+        expect(old.querySelector('.toolasha-resize-grip')).toBeNull();
+        guildTrialScoreboard.open();
+        expect(grips()).toHaveLength(1);
     });
 });

@@ -44,6 +44,7 @@ import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { registerEscapeClose } from '../../utils/panel-escape.js';
 import { restoreGeometry, saveGeometry, allGeometry } from '../../utils/panel-geometry.js';
+import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import guildTrialDamage, {
     attributionCoverage,
     encounterOf,
@@ -97,6 +98,9 @@ export const PANEL_CLASS = 'mwi-trial-scoreboard';
 const GEOMETRY_KEY = 'guildTrialScoreboard';
 /** Smallest the panel is allowed to be measured at when clamping to a narrow viewport */
 const MIN_SIZE = { width: 240, height: 160 };
+/** Opening size: the width, and the height cap the panel grows to before its body scrolls. A drag replaces both. */
+const DEFAULT_WIDTH = 320;
+const DEFAULT_MAX_HEIGHT = '70vh';
 /** Valid values of `this.tab` — guards a stored value from a future build's tab this one does not have */
 const TAB_KEYS = ['damage', 'healing', 'casters', 'taken'];
 
@@ -728,10 +732,12 @@ class GuildTrialScoreboard {
             document.removeEventListener('visibilitychange', this._visibilityHandler);
             this._visibilityHandler = null;
         }
-        // The drag listeners live on the document rather than on the panel, so
-        // closing has to take them off by hand or every open leaves a pair
+        // The drag and resize listeners live on the document rather than on the panel, so
+        // closing has to take them off by hand or every open leaves a set
         this._release?.();
         this._release = null;
+        this._detachResize?.();
+        this._detachResize = null;
         this._escapeReg?.release();
         this._escapeReg = null;
         if (this.container) {
@@ -760,10 +766,10 @@ class GuildTrialScoreboard {
         const container = document.createElement('div');
         container.className = PANEL_CLASS;
         container.style.cssText =
-            'position:fixed; top:80px; right:24px; width:320px; z-index:9000;' +
+            `position:fixed; top:80px; right:24px; width:${DEFAULT_WIDTH}px; z-index:9000;` +
             `background:${GAME_FRAME.background}; border:${GAME_FRAME.border}; border-radius:${GAME_FRAME.borderRadius};` +
             `box-shadow:${GAME_FRAME.boxShadow}; font-size:12px; color:${GAME_COLORS.text};` +
-            'display:flex; flex-direction:column; max-height:70vh;';
+            `display:flex; flex-direction:column; max-height:${DEFAULT_MAX_HEIGHT};`;
 
         const header = document.createElement('div');
         header.className = `${PANEL_CLASS}__header`;
@@ -799,7 +805,7 @@ class GuildTrialScoreboard {
 
         const body = document.createElement('div');
         body.className = `${PANEL_CLASS}__body`;
-        body.style.cssText = 'padding:8px 10px; overflow-y:auto;';
+        body.style.cssText = 'padding:8px 10px; overflow-y:auto; flex:1 1 auto; min-height:0;';
 
         container.appendChild(header);
         container.appendChild(body);
@@ -814,9 +820,15 @@ class GuildTrialScoreboard {
         // Applied after the panel is on screen, same trade-off `simple-panel.js`
         // makes: waiting on a database read before there is any panel at all
         // would be worse than opening at the default and settling a frame later.
-        restoreGeometry(container, GEOMETRY_KEY, MIN_SIZE).catch((error) => {
-            console.error('[GuildTrialScoreboard] Restoring the remembered position failed:', error);
-        });
+        this._wireResize(container);
+        restoreGeometry(container, GEOMETRY_KEY, MIN_SIZE)
+            .then(() => {
+                // A remembered size is a chosen one: the opening cap must not hold it down
+                if (container.isConnected && container.style.height) container.style.maxHeight = 'none';
+            })
+            .catch((error) => {
+                console.error('[GuildTrialScoreboard] Restoring the remembered position failed:', error);
+            });
         // The remembered tab (and whether History was left open) rides in the
         // same geometry record, read once here rather than duplicating the
         // storage round trip `restoreGeometry` already made
@@ -849,45 +861,57 @@ class GuildTrialScoreboard {
     }
 
     /**
-     * Make the header drag the panel.
+     * Make the header drag the panel, by pointer so a finger works too. The shared helper only reports a
+     * drop once the panel has actually moved, so a plain click on the header saves nothing.
      * @param {Element} header - The drag handle
      */
     _drag(header) {
-        let from = null;
-        // Only a drag that actually moved the panel is worth a write — a plain
-        // click on the header must not re-save whatever the last drag left in
-        // `style.left`/`top`
-        let moved = false;
-        header.addEventListener('mousedown', (event) => {
-            if (event.target.tagName === 'BUTTON') return;
-            const box = this.container.getBoundingClientRect();
-            from = { x: event.clientX, y: event.clientY, left: box.left, top: box.top };
-            moved = false;
-            event.preventDefault();
+        this._release = makeDraggable(this.container, header, ({ left, top }) => {
+            saveGeometry(GEOMETRY_KEY, { left: parseFloat(left), top: parseFloat(top) });
         });
-        const move = (event) => {
-            if (!from || !this.container) return;
-            moved = true;
-            this.container.style.left = `${from.left + event.clientX - from.x}px`;
-            this.container.style.top = `${from.top + event.clientY - from.y}px`;
-            this.container.style.right = 'auto';
-        };
-        const up = () => {
-            if (moved && this.container) {
-                saveGeometry(GEOMETRY_KEY, {
-                    left: parseFloat(this.container.style.left),
-                    top: parseFloat(this.container.style.top),
-                });
+    }
+
+    /**
+     * Give the panel its resize grip. The grip is a child of the outer panel, which never scrolls or
+     * redraws (only the body inside it does), so it survives every render. Double-click it to return to the
+     * opening size.
+     * @param {HTMLElement} container - The panel
+     */
+    _wireResize(container) {
+        this._detachResize = makeResizable(container, {
+            minWidth: MIN_SIZE.width,
+            minHeight: MIN_SIZE.height,
+            onResize: (size) => {
+                container.style.maxHeight = 'none';
+                saveGeometry(GEOMETRY_KEY, size);
+            },
+        });
+        const grip = container.querySelector('.toolasha-resize-grip');
+        if (grip) {
+            grip.title = 'Drag to resize, double-click to reset the size';
+            grip.addEventListener('dblclick', () => this._resetSize(container));
+        }
+    }
+
+    /**
+     * Back to the opening size. The record also holds the position, tab and History mode, so only the width
+     * and height are removed from it.
+     * @param {HTMLElement} container - The panel
+     */
+    async _resetSize(container) {
+        container.style.width = `${DEFAULT_WIDTH}px`;
+        container.style.height = '';
+        container.style.maxHeight = DEFAULT_MAX_HEIGHT;
+        try {
+            const all = await allGeometry();
+            if (all[GEOMETRY_KEY]) {
+                delete all[GEOMETRY_KEY].width;
+                delete all[GEOMETRY_KEY].height;
             }
-            from = null;
-            moved = false;
-        };
-        document.addEventListener('mousemove', move);
-        document.addEventListener('mouseup', up);
-        this._release = () => {
-            document.removeEventListener('mousemove', move);
-            document.removeEventListener('mouseup', up);
-        };
+            await saveGeometry(GEOMETRY_KEY, {});
+        } catch (error) {
+            console.error('[GuildTrialScoreboard] Resetting the panel size failed:', error);
+        }
     }
 
     /** Remember whether the panel was left on the live view or on History */
