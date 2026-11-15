@@ -217,6 +217,29 @@ export function makeDraggable(panel, handle, onDrop) {
 }
 
 /**
+ * Pin a fixed panel by its left and top edges, where it already is.
+ *
+ * The grip sits bottom-right and grows the panel by the pointer's delta, which
+ * only follows the pointer when the top-left corner stays put. A panel placed
+ * from the right or bottom edge (the trial scoreboard at `right: 24px`, the XPH
+ * calculator) would instead grow leftward, away from the finger. A panel centered
+ * with a transform is left to its own `onStart`, since its left is not its rect's.
+ *
+ * @param {HTMLElement} panel - The panel about to be resized
+ */
+function anchorTopLeft(panel) {
+    const style = getComputedStyle(panel);
+    if (style.position !== 'fixed') return;
+    if (style.transform && style.transform !== 'none') return;
+    const rect = panel.getBoundingClientRect();
+    if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top)) return;
+    panel.style.left = `${rect.left}px`;
+    panel.style.top = `${rect.top}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+}
+
+/**
  * Give a panel a corner you can drag to resize it.
  *
  * A grip rather than CSS `resize: both`, because the native handle needs the
@@ -283,6 +306,7 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize,
             // start size was measured with them in place: lifting a max-height on
             // pointerdown would let an auto-height panel jump to its full content
             // height before the finger moved, and a tap would leave it there
+            anchorTopLeft(panel);
             onStart?.(panel);
         }
         // A floor taller or wider than the panel already is would make a drag

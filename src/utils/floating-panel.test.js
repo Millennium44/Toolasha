@@ -230,6 +230,27 @@ describe('the resize grip', () => {
         Object.defineProperty(window, 'innerHeight', { value: 768, configurable: true });
     });
 
+    test('a panel placed from the right edge is pinned by its left so the grip follows the pointer', () => {
+        // Codex on #1014: the trial scoreboard opens at right: 24px, and growing it
+        // moved its left edge while the grip stayed put under a moving finger
+        panel.style.position = 'fixed';
+        panel.style.right = '24px';
+        panel.style.top = '80px';
+        panel.getBoundingClientRect = () => ({ left: 500, top: 80, width: 300, height: 200 });
+        makeResizable(panel, { minWidth: 100, minHeight: 50 });
+        const grip = panel.lastElementChild;
+
+        grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 800, clientY: 280 }));
+        expect(panel.style.right).toBe('24px');
+        document.dispatchEvent(new MouseEvent('pointermove', { clientX: 850, clientY: 300 }));
+        document.dispatchEvent(new MouseEvent('pointerup'));
+
+        expect(panel.style.left).toBe('500px');
+        expect(panel.style.top).toBe('80px');
+        expect(panel.style.right).toBe('auto');
+        expect(panel.style.width).toBe('350px');
+    });
+
     test('a tap never lifts the caps', () => {
         panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: 300, height: 200 });
         const onStart = vi.fn();
