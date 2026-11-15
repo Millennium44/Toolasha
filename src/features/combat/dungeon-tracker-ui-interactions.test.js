@@ -32,6 +32,12 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
     },
 }));
 vi.mock('../../utils/panel-z-index.js', () => ({ bringPanelToFront: vi.fn() }));
+vi.mock('../../utils/panel-geometry.js', () => ({
+    saveGeometry: vi.fn(async () => {}),
+    clearGeometry: vi.fn(async () => {}),
+    savedSize: vi.fn(async () => null),
+    markPanelInteracted: vi.fn(),
+}));
 vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: (...args) => askChoiceMock(...args) }));
 
 const { default: DungeonTrackerUIInteractions } = await import('./dungeon-tracker-ui-interactions.js');
