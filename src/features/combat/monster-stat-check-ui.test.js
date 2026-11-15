@@ -104,6 +104,13 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: () => {},
 }));
 vi.mock('../../utils/panel-minimize.js', () => ({ attachMinimize: () => {} }));
+const geometry = vi.hoisted(() => ({ save: vi.fn(), restore: vi.fn(), clear: vi.fn() }));
+vi.mock('../../utils/panel-geometry.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    saveGeometry: geometry.save,
+    restoreGeometry: geometry.restore,
+    clearGeometry: geometry.clear,
+}));
 vi.mock('../../utils/csv-export.js', () => ({ downloadFile: () => {} }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     seedSimPriceCache: (cache) => cache,
@@ -804,5 +811,65 @@ describe('the panel on a phone', () => {
         for (const b of runs) expect(b.parentElement.className).toBe('msc-section');
         // The text carries the scale variable inline
         expect(panel.body.querySelector('button.msc-run').style.cssText).toContain('--msc-scale');
+    });
+});
+
+describe('the resize grip', () => {
+    const grips = () => document.querySelectorAll('#' + panel.container.id + ' .toolasha-resize-grip');
+
+    beforeEach(() => {
+        monsterStatCheck.disable();
+        geometry.save.mockClear();
+        geometry.restore.mockClear();
+        geometry.clear.mockClear();
+        panel._ensureBuilt();
+    });
+
+    test('the native resize handle is gone and one grip sits on the outer, non-scrolling panel', () => {
+        expect(panel.container.style.resize).toBe('');
+        expect(grips()).toHaveLength(1);
+        expect(grips()[0].parentElement).toBe(panel.container);
+        expect(panel.body.contains(grips()[0])).toBe(false);
+    });
+
+    test('a pointer drag on the grip saves the new size', () => {
+        panel.container.getBoundingClientRect = () => ({ width: 400, height: 300, left: 0, top: 0 });
+        const grip = grips()[0];
+        grip.dispatchEvent(
+            new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 10, clientY: 10, bubbles: true })
+        );
+        document.dispatchEvent(
+            new PointerEvent('pointermove', { pointerId: 1, clientX: 60, clientY: 40, bubbles: true })
+        );
+        expect(panel.container.style.width).toBe('450px');
+        expect(panel.container.style.height).toBe('330px');
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }));
+        expect(geometry.save).toHaveBeenCalledWith('monsterStatCheck', { width: 400, height: 300 });
+    });
+
+    test('building restores the saved size and not the position, which the panel places itself', () => {
+        expect(geometry.restore).toHaveBeenCalledWith(
+            panel.container,
+            'monsterStatCheck',
+            { width: 260, height: 140 },
+            { position: false }
+        );
+    });
+
+    test('the reset button puts the width back, drops the pinned height and forgets the saved size', () => {
+        panel.container.style.width = '500px';
+        panel.container.style.height = '420px';
+        panel.container.querySelector('button[title^="Reset size"]').click();
+        expect(panel.container.style.width).toBe('340px');
+        expect(panel.container.style.height).toBe('');
+        expect(geometry.clear).toHaveBeenCalledWith('monsterStatCheck');
+    });
+
+    test('teardown removes the grip and a rebuild does not stack a second', () => {
+        monsterStatCheck.disable();
+        expect(document.querySelectorAll('.toolasha-resize-grip')).toHaveLength(0);
+        panel._ensureBuilt();
+        panel._ensureBuilt();
+        expect(document.querySelectorAll('.toolasha-resize-grip')).toHaveLength(1);
     });
 });
