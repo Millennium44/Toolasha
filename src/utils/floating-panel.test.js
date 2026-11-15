@@ -199,6 +199,19 @@ describe('the resize grip', () => {
         expect(panel.style.height).toBe('630px');
     });
 
+    test('a panel already smaller than the minimum never grows on a shrinking drag', () => {
+        panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: 480, height: 182 });
+        makeResizable(panel, { minWidth: 360, minHeight: 240 });
+        const grip = panel.lastElementChild;
+
+        grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 580, clientY: 282 }));
+        document.dispatchEvent(new MouseEvent('pointermove', { clientX: 500, clientY: 202 }));
+        document.dispatchEvent(new MouseEvent('pointerup'));
+
+        expect(panel.style.width).toBe('400px');
+        expect(panel.style.height).toBe('182px');
+    });
+
     test('a tap never lifts the caps', () => {
         panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: 300, height: 200 });
         const onStart = vi.fn();

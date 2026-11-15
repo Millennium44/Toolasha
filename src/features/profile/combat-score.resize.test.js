@@ -210,7 +210,8 @@ describe('abilities panel resize', () => {
         openBoth();
         expect(abilitiesPanel().style.maxHeight).toBe('200px');
         dragGrip(abilitiesPanel(), 20, 400);
-        expect(saveGeometry).toHaveBeenCalledWith('profileAbilities', { width: 300, height: 550 });
+        // Starts 250 wide, under the 300 floor: it grows from where it is, not by jumping to the floor
+        expect(saveGeometry).toHaveBeenCalledWith('profileAbilities', { width: 270, height: 550 });
         expect(abilitiesPanel().style.maxHeight).toBe('none');
     });
 

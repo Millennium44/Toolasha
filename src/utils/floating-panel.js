@@ -283,8 +283,13 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize,
             // height before the finger moved, and a tap would leave it there
             onStart?.(panel);
         }
-        panel.style.width = `${Math.max(minWidth, startWidth + event.clientX - startX)}px`;
-        panel.style.height = `${Math.max(minHeight, startHeight + event.clientY - startY)}px`;
+        // A floor taller or wider than the panel already is would make a drag
+        // meant to shrink it jump bigger instead (the XPH calculator opens 182px
+        // tall against a 240px floor), so the floor never exceeds where it started
+        const floorWidth = Math.min(minWidth, startWidth);
+        const floorHeight = Math.min(minHeight, startHeight);
+        panel.style.width = `${Math.max(floorWidth, startWidth + event.clientX - startX)}px`;
+        panel.style.height = `${Math.max(floorHeight, startHeight + event.clientY - startY)}px`;
     };
 
     const onPointerUp = (event) => {
