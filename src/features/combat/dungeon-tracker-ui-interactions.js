@@ -11,6 +11,14 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { bringPanelToFront } from '../../utils/panel-z-index.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { makeResizable } from '../../utils/floating-panel.js';
+import { saveGeometry, clearGeometry, savedSize } from '../../utils/panel-geometry.js';
+
+/** Key of the tracker's size in the shared panelGeometry record (its position lives in its own ui-state record) */
+export const GEOMETRY_KEY = 'dungeonTracker';
+/** Smallest the user may drag the tracker; the auto-sized panel's own min-width is wider */
+const MIN_RESIZE_WIDTH = 250;
+const MIN_RESIZE_HEIGHT = 120;
 
 /**
  * How many team-and-dungeon pairs may be offered as buttons before the panel is
@@ -56,6 +64,9 @@ class DungeonTrackerUIInteractions {
         // Store drag handlers for cleanup
         this.dragMoveHandler = null;
         this.dragUpHandler = null;
+        // The size the user dragged the panel to, or null while it is auto-sized
+        this.userSize = null;
+        this.detachResize = null;
     }
 
     /**
@@ -81,6 +92,7 @@ class DungeonTrackerUIInteractions {
         this.setupResetPositionButton();
         this.setupFilterIndicator();
         this.setupKeepOnScreen();
+        this.setupResize();
     }
 
     /**
@@ -92,10 +104,96 @@ class DungeonTrackerUIInteractions {
      */
     setupKeepOnScreen() {
         if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler);
-        this.resizeHandler = () => this.keepOnScreen();
+        this.resizeHandler = () => {
+            this.applyUserSize();
+            this.keepOnScreen();
+        };
         window.addEventListener('resize', this.resizeHandler);
         // After the first layout, when the panel's real width is known
         this.timerRegistry.scheduleTimeout(() => this.keepOnScreen(), 0);
+    }
+
+    /**
+     * Give the panel a resize grip. The grip is a child of the container itself, which neither
+     * scrolls nor is rebuilt (the content area inside it scrolls, and only its children are
+     * redrawn), so it survives every update. Until the user drags it the panel stays auto-sized.
+     */
+    setupResize() {
+        this.detachResize?.();
+        const container = this.container;
+        if (!container) return;
+        this.detachResize = makeResizable(container, {
+            minWidth: MIN_RESIZE_WIDTH,
+            minHeight: MIN_RESIZE_HEIGHT,
+            onResize: (size) => this.onUserResize(size),
+        });
+        this.setGripVisible(!this.state.isCollapsed);
+        this.restoreSize(container);
+    }
+
+    /**
+     * Read the saved size and apply it, unless the panel went away or was resized meanwhile.
+     * @param {HTMLElement} container - The panel this was asked about
+     */
+    async restoreSize(container) {
+        const saved = await savedSize(GEOMETRY_KEY);
+        if (this.container !== container || this.userSize) return;
+        if (!(saved?.width > 0) || !(saved?.height > 0)) return;
+        this.userSize = { width: saved.width, height: saved.height };
+        this.applyUserSize();
+        this.keepOnScreen();
+    }
+
+    /**
+     * A drag of the grip ended: remember the size. A collapsed tracker has nothing to size
+     * (its grip is hidden), so a resize reaching here while collapsed is not saved.
+     * @param {{width: number, height: number}} size - Pixels
+     */
+    onUserResize(size) {
+        if (this.state.isCollapsed) return;
+        this.userSize = { width: size.width, height: size.height };
+        saveGeometry(GEOMETRY_KEY, this.userSize);
+        this.applyUserSize();
+        this.keepOnScreen();
+    }
+
+    /**
+     * Put the saved size on the panel, capped: never wider than the screen less 20px and never
+     * taller than the screen below its top (the same cap that keeps its bottom on screen). Nothing
+     * for an auto-sized panel; a collapsed one drops the inline size so a saved height cannot
+     * hold it open.
+     */
+    applyUserSize() {
+        if (!this.container || !this.userSize) return;
+        const style = this.container.style;
+        if (this.state.isCollapsed) {
+            style.width = '';
+            style.height = '';
+            return;
+        }
+        const top = this.container.getBoundingClientRect().top;
+        style.width = `min(${this.userSize.width}px, calc(100vw - 20px))`;
+        style.height = `min(${this.userSize.height}px, ${this.state.heightCap(top)})`;
+        // The auto-sized panel's 480px floor would stop a drag narrower
+        style.minWidth = `min(${MIN_RESIZE_WIDTH}px, calc(100vw - 20px))`;
+    }
+
+    /** Back to auto-sized: forget the saved size and drop the inline width/height. */
+    resetSize() {
+        this.userSize = null;
+        clearGeometry(GEOMETRY_KEY);
+        if (this.container) {
+            this.container.style.width = '';
+            this.container.style.height = '';
+        }
+    }
+
+    /**
+     * @param {boolean} visible - Whether the grip shows (hidden while collapsed)
+     */
+    setGripVisible(visible) {
+        const grip = this.container?.querySelector?.('.toolasha-resize-grip');
+        if (grip) grip.style.display = visible ? '' : 'none';
     }
 
     /**
@@ -675,6 +773,11 @@ class DungeonTrackerUIInteractions {
             this.keepOnScreen();
         }
 
+        // After the width/min-width above: a collapsed panel drops its inline size, an expanded one regains it
+        this.applyUserSize();
+        this.setGripVisible(!this.state.isCollapsed);
+        this.keepOnScreen();
+
         this.state.save();
     }
 
@@ -911,8 +1014,9 @@ class DungeonTrackerUIInteractions {
      * Reset dungeon tracker position to default (center)
      */
     resetPosition() {
-        // Clear saved position (re-enables default centering)
+        // Clear saved position (re-enables default centering) and size (back to auto)
         this.state.position = null;
+        this.resetSize();
 
         // Re-apply position styling
         this.state.updatePosition(this.container);
@@ -921,7 +1025,7 @@ class DungeonTrackerUIInteractions {
         this.state.save();
 
         // Show brief notification
-        this.showNotification('Dungeon Tracker position reset');
+        this.showNotification('Dungeon Tracker position and size reset');
     }
 
     /**
@@ -963,6 +1067,9 @@ class DungeonTrackerUIInteractions {
     }
 
     cleanup() {
+        this.detachResize?.();
+        this.detachResize = null;
+        this.userSize = null;
         if (this.resizeHandler) {
             window.removeEventListener('resize', this.resizeHandler);
             this.resizeHandler = null;

@@ -287,7 +287,7 @@ class DungeonTrackerUI {
                             font-size: 13px;
                             padding: 0 4px;
                             line-height: 1;
-                        " title="Reset panel position">⌖</button>
+                        " title="Reset panel position and size">⌖</button>
                         <button id="mwi-dt-collapse-btn" style="
                             background: none;
                             border: none;
