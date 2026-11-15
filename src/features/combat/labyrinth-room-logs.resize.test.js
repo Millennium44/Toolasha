@@ -103,10 +103,24 @@ describe('labyrinth room logs resize', () => {
         expect(grips().length).toBe(0);
     });
 
-    test('the 60vh caps are lifted when the drag starts, and a tap saves nothing', () => {
+    test('the 60vh caps are lifted when the drag moves, not on press, and a tap saves nothing', () => {
         labyrinthRoomLogs.ensurePanel();
-        dragGrip(0);
+        const ev = (type, x) => {
+            const e = new MouseEvent(type, { bubbles: true, clientX: x, clientY: 10, button: 0 });
+            Object.defineProperty(e, 'pointerId', { value: 1 });
+            return e;
+        };
+        document.querySelector('.toolasha-resize-grip').dispatchEvent(ev('pointerdown', 10));
+        expect(panel().style.maxHeight).toBe('60vh');
+        expect(panel().querySelector('.mwi-lab-logs-list').style.maxHeight).toBe('calc(60vh - 44px)');
+        document.dispatchEvent(ev('pointermove', 40));
         expect(panel().style.maxHeight).toBe('none');
+        expect(panel().querySelector('.mwi-lab-logs-list').style.maxHeight).toBe('none');
+        document.dispatchEvent(ev('pointerup', 40));
+        saveGeometry.mockClear();
+        panel().style.maxHeight = '60vh';
+        dragGrip(0);
+        expect(panel().style.maxHeight).toBe('60vh');
         expect(saveGeometry).not.toHaveBeenCalled();
     });
 

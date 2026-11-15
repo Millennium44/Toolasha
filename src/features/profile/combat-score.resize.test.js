@@ -148,14 +148,22 @@ describe('score panel resize', () => {
         expect(scorePanel().querySelector('#mwi-score-scroll').contains(header)).toBe(false);
     });
 
-    test('the first drag lifts the width cap as it starts, and a tap saves nothing', () => {
+    test('the first drag lifts the width cap once it moves, not on press, and a tap saves nothing', () => {
         openBoth();
-        gripsIn(scorePanel())[0].dispatchEvent(
-            new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 0, clientY: 0 })
-        );
-        expect(scorePanel().style.maxWidth).toBe('none');
+        const press = () =>
+            gripsIn(scorePanel())[0].dispatchEvent(
+                new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 0, clientY: 0 })
+            );
+        press();
+        expect(scorePanel().style.maxWidth).toBe('280px');
         document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 0, clientY: 0 }));
+        expect(scorePanel().style.maxWidth).toBe('280px');
         expect(saveGeometry).not.toHaveBeenCalled();
+
+        press();
+        document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 30, clientY: 20 }));
+        expect(scorePanel().style.maxWidth).toBe('none');
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 30, clientY: 20 }));
     });
 
     test('a drag saves the size, lifts the width cap and makes the content scroll', () => {
@@ -219,15 +227,25 @@ describe('abilities panel resize', () => {
         expect(clearSize).not.toHaveBeenCalled();
     });
 
-    test('the first drag lifts the opening caps as it starts', () => {
+    test('the first drag lifts the opening caps once it moves, not on press, and a tap saves nothing', () => {
         openBoth();
-        gripsIn(abilitiesPanel())[0].dispatchEvent(
-            new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 0, clientY: 0 })
-        );
+        const capH = abilitiesPanel().style.maxHeight;
+        const press = () =>
+            gripsIn(abilitiesPanel())[0].dispatchEvent(
+                new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 0, clientY: 0 })
+            );
+        press();
+        expect(abilitiesPanel().style.maxHeight).toBe(capH);
+        expect(abilitiesPanel().style.maxWidth).toBe('400px');
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 0, clientY: 0 }));
+        expect(abilitiesPanel().style.maxHeight).toBe(capH);
+        expect(saveGeometry).not.toHaveBeenCalled();
+
+        press();
+        document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 30, clientY: 20 }));
         expect(abilitiesPanel().style.maxHeight).toBe('none');
         expect(abilitiesPanel().style.maxWidth).toBe('none');
-        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 0, clientY: 0 }));
-        expect(saveGeometry).not.toHaveBeenCalled();
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 30, clientY: 20 }));
     });
 
     test('double-click resets to the 200px cap', async () => {

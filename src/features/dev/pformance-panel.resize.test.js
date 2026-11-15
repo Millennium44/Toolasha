@@ -106,10 +106,24 @@ describe('pformance panel resize', () => {
         expect(panel().style.height).toBe('700px');
     });
 
-    test('the content cap is lifted when the drag starts, and a tap saves nothing', () => {
+    test('the content cap is lifted when the drag moves, not on press, and a tap saves nothing', () => {
         pformancePanel.show();
-        dragGrip(0);
+        const ev = (type, x) => {
+            const e = new MouseEvent(type, { bubbles: true, clientX: x, clientY: 10, button: 0 });
+            Object.defineProperty(e, 'pointerId', { value: 1 });
+            return e;
+        };
+        const capBefore = pformancePanel.contentEl.style.maxHeight;
+        document.querySelector('.toolasha-resize-grip').dispatchEvent(ev('pointerdown', 10));
+        expect(pformancePanel.contentEl.style.maxHeight).toBe(capBefore);
+        expect(capBefore).not.toBe('none');
+        document.dispatchEvent(ev('pointermove', 40));
         expect(pformancePanel.contentEl.style.maxHeight).toBe('none');
+        document.dispatchEvent(ev('pointerup', 40));
+        pformancePanel.contentEl.style.maxHeight = capBefore;
+        saveGeometry.mockClear();
+        dragGrip(0);
+        expect(pformancePanel.contentEl.style.maxHeight).toBe(capBefore);
         expect(saveGeometry).not.toHaveBeenCalled();
     });
 

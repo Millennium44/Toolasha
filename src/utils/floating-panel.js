@@ -230,8 +230,10 @@ export function makeDraggable(panel, handle, onDrop) {
  * @param {number} [options.minWidth] - Smallest width
  * @param {number} [options.minHeight] - Smallest height
  * @param {Function} [options.onResize] - Called with `{width, height}` once a drag that moved ends
- * @param {Function} [options.onStart] - Called with the panel on pointerdown, before the start size is measured, so a
- *   panel can lift the opening caps (max-height, min-width) that would otherwise limit the first drag
+ * @param {Function} [options.onStart] - Called with the panel once a press on the grip has moved far enough to be a
+ *   resize, just before the new size is applied, so a panel can lift the opening caps (max-height, min-width) that
+ *   would otherwise limit the first drag. The start size is measured on pointerdown, with the caps still in place;
+ *   a tap never calls it
  * @param {Function} [options.onReset] - Called on a double-click of the grip; the panel's one way back to its default size
  * @returns {Function} Removes the grip
  */
@@ -272,8 +274,15 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize,
 
     const onPointerMove = (event) => {
         if (!resizing || event.pointerId !== activePointerId) return;
-        if (!moved && Math.abs(event.clientX - startX) < 4 && Math.abs(event.clientY - startY) < 4) return;
-        moved = true;
+        if (!moved) {
+            if (Math.abs(event.clientX - startX) < 4 && Math.abs(event.clientY - startY) < 4) return;
+            moved = true;
+            // Caps are lifted only once this is really a resize, and after the
+            // start size was measured with them in place: lifting a max-height on
+            // pointerdown would let an auto-height panel jump to its full content
+            // height before the finger moved, and a tap would leave it there
+            onStart?.(panel);
+        }
         panel.style.width = `${Math.max(minWidth, startWidth + event.clientX - startX)}px`;
         panel.style.height = `${Math.max(minHeight, startHeight + event.clientY - startY)}px`;
     };
@@ -288,8 +297,7 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize,
         document.removeEventListener('pointerup', onPointerUp);
         document.removeEventListener('pointercancel', onPointerUp);
         releaseCapture(grip, { pointerId: ownerId });
-        // A tap on the grip is not a resize: saving it would store the current
-        // size (and, for panels that lift their caps there, drop the caps)
+        // A tap on the grip is not a resize: saving it would store the current size
         if (!moved) return;
         const rect = panel.getBoundingClientRect();
         onResize?.({ width: Math.round(rect.width), height: Math.round(rect.height) });
@@ -307,7 +315,6 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize,
         resizing = true;
         moved = false;
         activePointerId = event.pointerId;
-        onStart?.(panel);
         const rect = panel.getBoundingClientRect();
         startX = event.clientX;
         startY = event.clientY;

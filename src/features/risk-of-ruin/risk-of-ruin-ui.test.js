@@ -1068,13 +1068,15 @@ describe('RiskOfRuinUI resize grip', () => {
         expect(panel().style.maxHeight).toBe('none');
     });
 
-    test('the cap is lifted when the first drag starts, not when it ends', () => {
+    test('the cap is lifted once the first drag moves, not on press and not when it ends', () => {
         expect(panel().style.maxHeight).toBe('620px');
         grips()[0].dispatchEvent(
             new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 10, clientY: 10 })
         );
+        expect(panel().style.maxHeight).toBe('620px');
+        document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 40, clientY: 30 }));
         expect(panel().style.maxHeight).toBe('none');
-        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 10, clientY: 10 }));
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 40, clientY: 30 }));
     });
 
     test('a tap on the grip saves no size', () => {
