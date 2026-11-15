@@ -24,8 +24,8 @@ import { readOwnScore } from './build-score-row.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
-import { makeDraggable } from '../../utils/floating-panel.js';
-import { saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
+import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
+import { allGeometry, saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import combatSimUI from '../combat-sim/combat-sim-ui.js';
 import { buildPlayerDTOFromProfile } from '../combat-sim/combat-sim-adapter.js';
@@ -37,6 +37,9 @@ import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 /**
  * Sim export format identifiers, and the per-viewer storage key that remembers the choice.
  */
+/** Opening height cap of the abilities panel; a dragged size lifts it */
+const ABILITIES_DEFAULT_MAX_HEIGHT = 200;
+
 const SIM_EXPORT_FORMATS = { METZ: 'metz', SHYKAI: 'shykai' };
 const SIM_EXPORT_FORMAT_STORAGE_KEY = 'simExportFormat';
 const SIM_EXPORT_FORMAT_LABELS = {
@@ -98,6 +101,7 @@ class CombatScore {
                 this.initialize();
             } else {
                 if (this.currentAbilitiesPanel) {
+                    this.currentAbilitiesPanel._detachResize?.();
                     this.currentAbilitiesPanel.remove();
                     this.currentAbilitiesPanel = null;
                 }
@@ -379,6 +383,7 @@ class CombatScore {
         // Remove existing panel if any
         if (this.currentPanel) {
             this.currentPanel._simFormatDropdownCleanup?.();
+            this.currentPanel._detachResize?.();
             this.currentPanel.remove();
             this.currentPanel = null;
         }
@@ -647,6 +652,16 @@ class CombatScore {
             </div>
         `;
 
+        // Everything but the grip goes in one inner element: the grip is a child of the panel itself so
+        // it stays put, and this is what scrolls once a dragged size is smaller than the content.
+        const scroller = document.createElement('div');
+        scroller.id = 'mwi-score-scroll';
+        scroller.style.cssText = 'flex: 1 1 auto; min-height: 0;';
+        while (panel.firstChild) scroller.appendChild(panel.firstChild);
+        panel.style.display = 'flex';
+        panel.style.flexDirection = 'column';
+        panel.appendChild(scroller);
+
         markToolashaSurface(panel, 'popover');
         document.body.appendChild(panel);
         performanceMonitor.markDrawn('Combat score panel');
@@ -654,7 +669,11 @@ class CombatScore {
 
         // Position panel next to modal, then let a remembered drag position win
         this.positionPanel(panel, modalContainer);
-        restoreGeometry(panel, 'profileCombatScore', { width: 180, height: 80 }).catch(() => {});
+        this.wireResize(panel, 'profileCombatScore', {
+            min: { width: 180, height: 80 },
+            scroller,
+            defaults: { maxWidth: '280px', maxHeight: '' },
+        });
 
         // Grab the title row to move it; the position is remembered
         const dragHandle = panel.querySelector('#mwi-score-header');
@@ -669,6 +688,71 @@ class CombatScore {
 
         // Set up cleanup observer
         this.setupCleanupObserver(panel, modalContainer);
+    }
+
+    /**
+     * Give a floating panel its resize grip and put back a remembered size.
+     *
+     * The CSS caps on width and height are only the opening size: once a size is chosen (dragged now, or
+     * restored from storage) they are lifted, or they would silently stop the drag. Double-clicking the grip
+     * goes back to the opening size.
+     *
+     * @param {HTMLElement} panel - The panel; the grip is appended to it
+     * @param {string} key - panel-geometry key
+     * @param {Object} options
+     * @param {{width: number, height: number}} options.min - Smallest size
+     * @param {HTMLElement} [options.scroller] - Inner element that scrolls once the size is pinned
+     * @param {{maxWidth: string, maxHeight: string}} options.defaults - The opening caps
+     */
+    wireResize(panel, key, { min, scroller, defaults }) {
+        const pin = () => {
+            panel.style.maxWidth = 'none';
+            panel.style.maxHeight = 'none';
+            if (scroller) scroller.style.overflowY = 'auto';
+        };
+        panel._resizeDefaults = { scroller, defaults };
+        panel._detachResize = makeResizable(panel, {
+            minWidth: min.width,
+            minHeight: min.height,
+            onResize: (size) => {
+                pin();
+                saveGeometry(key, size).catch(() => {});
+            },
+        });
+        const grip = panel.querySelector('.toolasha-resize-grip');
+        if (grip) {
+            grip.title = 'Drag to resize, double-click to reset the size';
+            grip.addEventListener('dblclick', () => this.resetPanelSize(panel, key));
+        }
+        Promise.resolve(restoreGeometry(panel, key, min))
+            .then(() => {
+                if (panel.style.height || panel.style.width) pin();
+            })
+            .catch(() => {});
+    }
+
+    /**
+     * Back to the opening size. The stored record also holds the position, so only width and height go.
+     * @param {HTMLElement} panel
+     * @param {string} key - panel-geometry key
+     */
+    async resetPanelSize(panel, key) {
+        const { scroller, defaults } = panel._resizeDefaults || {};
+        panel.style.width = '';
+        panel.style.height = '';
+        panel.style.maxWidth = defaults?.maxWidth ?? '';
+        panel.style.maxHeight = defaults?.maxHeight ?? '';
+        if (scroller) scroller.style.overflowY = '';
+        try {
+            const all = await allGeometry();
+            if (all[key]) {
+                delete all[key].width;
+                delete all[key].height;
+            }
+            await saveGeometry(key, {});
+        } catch (error) {
+            console.error('[Combat Score] Resetting the panel size failed:', error);
+        }
     }
 
     /**
@@ -706,6 +790,7 @@ class CombatScore {
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
                 panel._simFormatDropdownCleanup?.();
+                panel._detachResize?.();
                 panel.remove();
                 this.currentPanel = null;
             });
@@ -1129,6 +1214,7 @@ class CombatScore {
     showAbilitiesTriggersPanel(profileData, modalContainer) {
         // Remove existing abilities panel if any
         if (this.currentAbilitiesPanel) {
+            this.currentAbilitiesPanel._detachResize?.();
             this.currentAbilitiesPanel.remove();
             this.currentAbilitiesPanel = null;
         }
@@ -1154,7 +1240,7 @@ class CombatScore {
             padding: 12px;
             min-width: 300px;
             max-width: 400px;
-            max-height: 200px;
+            max-height: ${ABILITIES_DEFAULT_MAX_HEIGHT}px;
             font-size: 0.875rem;
             z-index: ${config.Z_FLOATING_PANEL};
             box-shadow: ${GAME_FRAME.boxShadow};
@@ -1199,7 +1285,10 @@ class CombatScore {
 
         // Position panel below modal
         this.positionAbilitiesPanel(panel, modalContainer);
-        restoreGeometry(panel, 'profileAbilities', { width: 300, height: 100 }).catch(() => {});
+        this.wireResize(panel, 'profileAbilities', {
+            min: { width: 300, height: 100 },
+            defaults: { maxWidth: '400px', maxHeight: `${ABILITIES_DEFAULT_MAX_HEIGHT}px` },
+        });
 
         // Set up event listeners
         this.setupAbilitiesPanelEvents(panel);
@@ -1238,6 +1327,7 @@ class CombatScore {
         const closeBtn = panel.querySelector('#mwi-abilities-close-btn');
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
+                panel._detachResize?.();
                 panel.remove();
                 this.currentAbilitiesPanel = null;
             });
@@ -1256,8 +1346,11 @@ class CombatScore {
         if (expandBtn) {
             let expanded = false;
             expandBtn.addEventListener('click', () => {
+                // A dragged size would hold the panel at that height whatever the cap says, so
+                // expanding hands the sizing back to the content first
+                if (panel.style.height) this.resetPanelSize(panel, 'profileAbilities');
                 expanded = !expanded;
-                panel.style.maxHeight = expanded ? 'none' : '200px';
+                panel.style.maxHeight = expanded ? 'none' : `${ABILITIES_DEFAULT_MAX_HEIGHT}px`;
                 expandBtn.textContent = expanded ? '⤡' : '⤢';
                 expandBtn.title = expanded ? 'Collapse' : 'Expand';
 
@@ -1322,6 +1415,7 @@ class CombatScore {
                     !document.body.contains(modal) ||
                     !document.querySelector('div[class*="SharableProfile_overviewTab"]')
                 ) {
+                    panel._detachResize?.();
                     panel.remove();
                     this.currentAbilitiesPanel = null;
                     cleanupObserver();
@@ -1354,6 +1448,7 @@ class CombatScore {
                     !document.querySelector('div[class*="SharableProfile_overviewTab"]')
                 ) {
                     panel._simFormatDropdownCleanup?.();
+                    panel._detachResize?.();
                     panel.remove();
                     this.currentPanel = null;
                     cleanupObserver();
@@ -2104,11 +2199,13 @@ class CombatScore {
 
             if (this.currentPanel) {
                 this.currentPanel._simFormatDropdownCleanup?.();
+                this.currentPanel._detachResize?.();
                 this.currentPanel.remove();
                 this.currentPanel = null;
             }
 
             if (this.currentAbilitiesPanel) {
+                this.currentAbilitiesPanel._detachResize?.();
                 this.currentAbilitiesPanel.remove();
                 this.currentAbilitiesPanel = null;
             }
