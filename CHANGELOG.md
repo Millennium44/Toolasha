@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon tracker reopens from a button
+
+While a dungeon runs, a "Tracker" button sits beside "Per-player" in the battle panel and shows or hides the dungeon tracker, so closing it with the x no longer leaves Ctrl+K as the only way back.
+
 ### More panels resize, including on a phone
 
 The dungeon tracker, risk of ruin, profile score and abilities, guild trial scoreboard, monster stat check, price history, XPH calculator, queue monitor and labyrinth room logs now have a corner grip that works by touch, and remember their size. Double-click the grip to reset a panel's size; the scoreboard can also be moved by touch.

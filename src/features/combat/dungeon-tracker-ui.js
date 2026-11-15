@@ -7,6 +7,7 @@
 import dungeonTracker from './dungeon-tracker.js';
 import { recordingAttempts } from './dungeon-run-attempt-setting.js';
 import dungeonTrackerChatAnnotations from './dungeon-tracker-chat-annotations.js';
+import { startReopenButton, stopReopenButton, syncReopenButton } from './dungeon-tracker-reopen-button.js';
 import dungeonTrackerUIState from './dungeon-tracker-ui-state.js';
 import DungeonTrackerUIChart from './dungeon-tracker-ui-chart.js';
 import DungeonTrackerUIHistory from './dungeon-tracker-ui-history.js';
@@ -176,6 +177,7 @@ class DungeonTrackerUI {
 
         // Store callback reference for cleanup
         this.dungeonUpdateHandler = (currentRun, completedRun) => {
+            syncReopenButton();
             if (completedRun) {
                 // Dungeon completed - trigger chat annotation update regardless of UI setting
                 this.timerRegistry.scheduleTimeout(() => dungeonTrackerChatAnnotations.annotateAllMessages(), 200);
@@ -227,6 +229,14 @@ class DungeonTrackerUI {
 
         // Register for dungeon tracker updates
         dungeonTracker.onUpdate(this.dungeonUpdateHandler);
+
+        // The on-screen way back after the × (Ctrl+K's toggle), beside Per-player while a dungeon runs
+        startReopenButton({
+            shouldShow: () =>
+                Boolean(config.getSetting('dungeonTrackerUI')) &&
+                Boolean(dungeonTracker.getCurrentRun() || dungeonTracker.getPendingDungeon()),
+            onPress: () => this.toggle(),
+        });
 
         // Start update loop (updates current wave time every second)
         this.startUpdateLoop();
@@ -1606,6 +1616,7 @@ class DungeonTrackerUI {
         noteTeardown(this);
         try {
             unregisterCommand('Dungeon Tracker');
+            stopReopenButton();
             this.keyRunwayClears = null;
             this.dismissed = null;
             // Immediately hide UI to prevent visual artifacts during character switch
