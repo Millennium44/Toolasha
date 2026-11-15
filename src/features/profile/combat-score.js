@@ -25,7 +25,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
-import { allGeometry, saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
+import { clearSize, saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import combatSimUI from '../combat-sim/combat-sim-ui.js';
 import { buildPlayerDTOFromProfile } from '../combat-sim/combat-sim-adapter.js';
@@ -744,12 +744,7 @@ class CombatScore {
         panel.style.maxHeight = defaults?.maxHeight ?? '';
         if (scroller) scroller.style.overflowY = '';
         try {
-            const all = await allGeometry();
-            if (all[key]) {
-                delete all[key].width;
-                delete all[key].height;
-            }
-            await saveGeometry(key, {});
+            await clearSize(key);
         } catch (error) {
             console.error('[Combat Score] Resetting the panel size failed:', error);
         }

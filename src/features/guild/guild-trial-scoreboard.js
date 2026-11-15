@@ -43,7 +43,7 @@ import dataManager from '../../core/data-manager.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { registerEscapeClose } from '../../utils/panel-escape.js';
-import { restoreGeometry, saveGeometry, allGeometry } from '../../utils/panel-geometry.js';
+import { restoreGeometry, saveGeometry, allGeometry, clearSize } from '../../utils/panel-geometry.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import guildTrialDamage, {
     attributionCoverage,
@@ -903,12 +903,7 @@ class GuildTrialScoreboard {
         container.style.height = '';
         container.style.maxHeight = DEFAULT_MAX_HEIGHT;
         try {
-            const all = await allGeometry();
-            if (all[GEOMETRY_KEY]) {
-                delete all[GEOMETRY_KEY].width;
-                delete all[GEOMETRY_KEY].height;
-            }
-            await saveGeometry(GEOMETRY_KEY, {});
+            await clearSize(GEOMETRY_KEY);
         } catch (error) {
             console.error('[GuildTrialScoreboard] Resetting the panel size failed:', error);
         }

@@ -73,6 +73,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     restoreGeometry: async () => {},
     saveGeometry: async () => {},
     allGeometry: async () => ({}),
+    clearSize: async () => {},
     saveOpenState: async () => {},
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},

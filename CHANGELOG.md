@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### More panels resize, including on a phone
+
+The dungeon tracker, risk of ruin, profile score and abilities, guild trial scoreboard, monster stat check, price history, XPH calculator, queue monitor and labyrinth room logs now have a corner grip that works by touch, and remember their size. The scoreboard can also be moved by touch, and ⌖ on the tracker resets its size too.
+
 ### Dungeon tracker fits on a phone
 
 The expanded tracker was about twice a phone's width, set by its ROI table and long team names. It now stays within the screen both ways: the filters wrap, the ROI table scrolls sideways on its own, and the panel ends above the bottom edge with its contents scrolling inside.

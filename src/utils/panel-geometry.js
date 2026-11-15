@@ -280,6 +280,27 @@ export async function clearGeometry(panelKey) {
 }
 
 /**
+ * Forget how big a panel was, but not where it was or anything else stored with it.
+ *
+ * For a panel whose record also holds its position, collapsed flag or tab: going
+ * back to the designed size must leave those alone.
+ *
+ * @param {string} panelKey - Which panel
+ */
+export async function clearSize(panelKey) {
+    const all = await allGeometry();
+    if (!all[panelKey]) return;
+
+    const { width: _width, height: _height, ...rest } = all[panelKey];
+    all[panelKey] = rest;
+    try {
+        await storage.setJSON(STORAGE_KEY, all, 'settings');
+    } catch (error) {
+        console.error('[PanelGeometry] Clearing a panel size failed:', error);
+    }
+}
+
+/**
  * Forget where a panel was, but not how big it was.
  *
  * For a panel that places itself and is only pinned by being moved: unpinning
