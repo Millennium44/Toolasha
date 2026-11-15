@@ -321,7 +321,7 @@ describe('opening the recommended buy form', () => {
             clickListingButton: vi.fn(() => Promise.resolve()),
         };
         await open({ mode: 'order', noAsk: true }, shortcuts);
-        expect(shortcuts.clickListingButton).toHaveBeenCalledWith('+ New Buy Listing', 'Button_buy');
+        expect(shortcuts.clickListingButton).toHaveBeenCalledWith('+ New Buy Listing', 'Button_buy', 3000, null);
         expect(shortcuts.clickInstantActionButton).not.toHaveBeenCalled();
     });
 

@@ -198,7 +198,7 @@ describe('the walk button alternates Next and Buy', () => {
         expect(mainLabel()).toBe('Opening Peach Gummy…');
         expect(mainEl().disabled).toBe(true);
         await tick(400);
-        expect(shortcuts.clickInstantActionButton).toHaveBeenCalledWith('Buy');
+        expect(shortcuts.clickInstantActionButton).toHaveBeenCalledWith('Buy', 3000, expect.any(Function));
         // Opened by the shortcut but the modal is not in the DOM yet: still no Buy
         expect(mainLabel()).toBe('Opening Peach Gummy…');
 
@@ -236,7 +236,12 @@ describe('the walk button alternates Next and Buy', () => {
             queue: [shortfall[1], shortfall[0]],
             modal: { item: 'star_fruit_gummy', qty: 3, header: 'Buy Listing', label: 'Post Buy Order' },
         });
-        expect(shortcuts.clickListingButton).toHaveBeenCalledWith('+ New Buy Listing', 'Button_buy');
+        expect(shortcuts.clickListingButton).toHaveBeenCalledWith(
+            '+ New Buy Listing',
+            'Button_buy',
+            3000,
+            expect.any(Function)
+        );
         expect(mainLabel()).toBe('Post buy order Star Fruit Gummy ×3');
         mainEl().click();
         await tick();
@@ -447,7 +452,12 @@ describe('every other way a step ends', () => {
         consumablesPanel.bodyEl.appendChild(consumablesPanel._renderInlineBuyWalk());
         inlineBtn().click();
         await tick(400);
-        expect(shortcuts.clickListingButton).toHaveBeenCalledWith('+ New Buy Listing', 'Button_buy');
+        expect(shortcuts.clickListingButton).toHaveBeenCalledWith(
+            '+ New Buy Listing',
+            'Button_buy',
+            3000,
+            expect.any(Function)
+        );
         expect(toasts()).not.toContain('Could not open');
         expect(gameClicks).toBe(0);
     });
@@ -473,6 +483,39 @@ describe('every other way a step ends', () => {
         expect(closeClicks).toBe(1);
         expect(gameClicks).toBe(0);
         expect(mainLabel()).toBe('▶ Next: Star Fruit Gummy (1 left)');
+    });
+
+    test('after Buy is sent, Skip still moves on (a press that never landed cannot strand the walk)', async () => {
+        await startWalk();
+        mainEl().click();
+        await tick();
+        expect(gameClicks).toBe(1);
+        expect(consumablesPanel._buyStep?.phase).toBe('sent');
+        const skip = document.querySelector('.toolasha-lab-buy-next-skip');
+        expect(skip.style.display).toBe('');
+        skip.click();
+        expect(consumablesPanel._buyStep).toBe(null);
+        expect(closeClicks).toBe(0);
+        expect(gameClicks).toBe(1);
+        expect(mainLabel()).toBe('▶ Next: Star Fruit Gummy (1 left)');
+        expect(consumablesPanel._buyNote).toContain('check My Listings');
+    });
+
+    test('a search still polling for its button stops once the step is skipped', async () => {
+        let cancelled = null;
+        shortcuts.clickInstantActionButton = vi.fn((_text, _timeout, isCancelled) => {
+            cancelled = isCancelled;
+            return new Promise(() => {});
+        });
+        consumablesPanel.show();
+        await tick();
+        consumablesPanel._registerBuyQueue('Combat', shortfall);
+        consumablesPanel.bodyEl.appendChild(consumablesPanel._renderInlineBuyWalk());
+        inlineBtn().click();
+        await tick(400);
+        expect(cancelled()).toBe(false);
+        document.querySelector('.toolasha-lab-buy-next-close').click();
+        expect(cancelled()).toBe(true);
     });
 
     test('cancelling mid-step stops the walk and nothing is pressed afterwards', async () => {

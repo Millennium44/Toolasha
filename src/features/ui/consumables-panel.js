@@ -2000,14 +2000,17 @@ class ConsumablesPanel {
         setTimeout(async () => {
             // The walk was stopped, skipped or moved on during the beat: nothing to open
             if (step && this._buyStep !== step) return;
+            // The shortcuts poll for their button for up to three seconds; a step skipped or cancelled in
+            // that time must stop the search, or the abandoned step opens a form after the walk moved on
+            const isCancelled = step ? () => this._buyStep !== step : null;
             const openListing = async () => {
                 if (typeof shortcuts.clickListingButton !== 'function') throw new Error('No listing shortcut');
-                await shortcuts.clickListingButton('+ New Buy Listing', 'Button_buy');
+                await shortcuts.clickListingButton('+ New Buy Listing', 'Button_buy', 3000, isCancelled);
             };
             try {
                 if (strategy.mode === 'instant') {
                     try {
-                        await shortcuts.clickInstantActionButton?.('Buy');
+                        await shortcuts.clickInstantActionButton?.('Buy', 3000, isCancelled);
                     } catch (error) {
                         if (error?.message === 'Cancelled') throw error;
                         // An empty book has no Buy Now to take: fall back to a buy order, as the
@@ -2288,7 +2291,13 @@ class ConsumablesPanel {
     /** Skip: give up on this item's form (closing it) and go back to Next */
     _skipBuyStep() {
         const step = this._buyStep;
-        if (!step || step.phase === 'sent') return;
+        if (!step) return;
+        // After Buy was sent the press is out; Skip only moves on (a press that never landed must not
+        // leave the walk stuck), and the form, if still up, is left for the player to read
+        if (step.phase === 'sent') {
+            this._endBuyStep(step, `Moved on from ${step.name}; check My Listings and your inventory.`);
+            return;
+        }
         const modal = document.querySelector(MODAL_SELECTOR);
         // Only a form that is this step's is closed; one the player swapped in is theirs
         if (modal && !buyModalIdentityProblem(modal, step.itemHrid, step.name)) {
@@ -2574,7 +2583,7 @@ class ConsumablesPanel {
         const sources = this._buyQueues || [];
         const walking = Boolean(next || this._buyStep);
         picker.style.display = !walking && sources.length > 1 ? '' : 'none';
-        if (skip) skip.style.display = this._buyStep && this._buyStep.phase !== 'sent' ? '' : 'none';
+        if (skip) skip.style.display = this._buyStep ? '' : 'none';
         if (!walking) {
             const signature = sources.map((source) => `${source.label}:${source.queue.length}`).join('|');
             if (picker.dataset.signature !== signature) {
@@ -2694,7 +2703,7 @@ class ConsumablesPanel {
                 this._cancelBuyWalk();
                 this._render();
             });
-            if (step && step.phase !== 'sent') {
+            if (step) {
                 const skip = document.createElement('button');
                 skip.className = 'toolasha-consumables-inline-skip';
                 skip.textContent = 'Skip';
