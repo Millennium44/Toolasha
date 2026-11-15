@@ -25,7 +25,7 @@ import config from '../../core/config.js';
 import { runInBackground } from '../../utils/background-work.js';
 import storage from '../../core/storage.js';
 import { makeResizable } from '../../utils/floating-panel.js';
-import { saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
+import { saveGeometry, restoreGeometry, clearSize } from '../../utils/panel-geometry.js';
 import { characterKey } from '../../utils/character-key.js';
 import { labyrinthRunStamp } from '../../utils/labyrinth-session.js';
 import dataManager from '../../core/data-manager.js';
@@ -2086,17 +2086,41 @@ class LabyrinthRoomLogs {
             list.style.flex = '1 1 auto';
             list.style.minHeight = '0';
         };
+        const unpin = async () => {
+            panel.style.width = '340px';
+            panel.style.height = '';
+            panel.style.maxHeight = '60vh';
+            panel.style.overflow = '';
+            list.style.maxHeight = 'calc(60vh - 44px)';
+            list.style.flex = '';
+            list.style.minHeight = '';
+            try {
+                await clearSize(PANEL_ID);
+            } catch (error) {
+                console.error('[LabyrinthRoomLogs] Resetting the panel size failed:', error);
+            }
+        };
+        // A rebuilt panel must not leave the old grip's listeners behind
+        this.detachResize?.();
         this.detachResize = makeResizable(panel, {
             minWidth: 260,
             minHeight: 140,
+            // Before the first drag measures the panel, or the 60vh caps stop it at their own values
+            onStart: pin,
             onResize: (size) => {
                 pin();
                 saveGeometry(PANEL_ID, size);
             },
+            onReset: unpin,
         });
-        restoreGeometry(panel, PANEL_ID, { width: 260, height: 140 }, { position: false }).then(() => {
-            if (panel.style.height) pin();
-        });
+        (async () => {
+            try {
+                await restoreGeometry(panel, PANEL_ID, { width: 260, height: 140 }, { position: false });
+                if (panel.style.height) pin();
+            } catch (error) {
+                console.error('[LabyrinthRoomLogs] Restoring the remembered size failed:', error);
+            }
+        })();
         this.panel = panel;
         this.paintChrome();
         return panel;

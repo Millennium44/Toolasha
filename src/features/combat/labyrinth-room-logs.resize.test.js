@@ -34,6 +34,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     markPanelInteracted: vi.fn(),
     saveGeometry: vi.fn(async () => {}),
     clearGeometry: vi.fn(async () => {}),
+    clearSize: vi.fn(async () => {}),
     restoreGeometry: vi.fn(async (panel) => {
         if (!geometry.saved) return;
         panel.style.width = `${geometry.saved.width}px`;
@@ -42,18 +43,24 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 
 const { labyrinthRoomLogs } = await import('./labyrinth-room-logs.js');
-const { saveGeometry } = await import('../../utils/panel-geometry.js');
+const { saveGeometry, clearSize, clearGeometry } = await import('../../utils/panel-geometry.js');
 
 const panel = () => document.getElementById('mwi-lab-logs-panel');
 const grips = () => document.querySelectorAll('.toolasha-resize-grip');
 
-function dragGrip() {
+function dragGrip(dx = 30) {
     const ev = (type) => {
-        const e = new MouseEvent(type, { bubbles: true, clientX: 10, clientY: 10, button: 0 });
+        const e = new MouseEvent(type, {
+            bubbles: true,
+            clientX: type === 'pointermove' ? 10 + dx : 10,
+            clientY: 10,
+            button: 0,
+        });
         Object.defineProperty(e, 'pointerId', { value: 1 });
         return e;
     };
     document.querySelector('.toolasha-resize-grip').dispatchEvent(ev('pointerdown'));
+    if (dx) document.dispatchEvent(ev('pointermove'));
     document.dispatchEvent(ev('pointerup'));
 }
 
@@ -94,5 +101,29 @@ describe('labyrinth room logs resize', () => {
         labyrinthRoomLogs.ensurePanel();
         await labyrinthRoomLogs.disable();
         expect(grips().length).toBe(0);
+    });
+
+    test('the 60vh caps are lifted when the drag starts, and a tap saves nothing', () => {
+        labyrinthRoomLogs.ensurePanel();
+        dragGrip(0);
+        expect(panel().style.maxHeight).toBe('none');
+        expect(saveGeometry).not.toHaveBeenCalled();
+    });
+
+    test('double-clicking the grip restores the opening size through clearSize', () => {
+        geometry.saved = { width: 520, height: 700 };
+        labyrinthRoomLogs.ensurePanel();
+        document.querySelector('.toolasha-resize-grip').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        expect(panel().style.width).toBe('340px');
+        expect(panel().style.height).toBe('');
+        expect(panel().style.maxHeight).toBe('60vh');
+        expect(panel().querySelector('.mwi-lab-logs-list').style.maxHeight).toBe('calc(60vh - 44px)');
+        expect(clearSize).toHaveBeenCalledWith('mwi-lab-logs-panel');
+        expect(clearGeometry).not.toHaveBeenCalled();
+    });
+
+    test('restoreGeometry returning nothing (a bare mock) does not break the build', () => {
+        labyrinthRoomLogs.ensurePanel();
+        expect(grips().length).toBe(1);
     });
 });

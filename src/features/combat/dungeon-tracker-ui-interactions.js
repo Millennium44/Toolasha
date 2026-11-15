@@ -12,7 +12,7 @@ import { bringPanelToFront } from '../../utils/panel-z-index.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { makeResizable } from '../../utils/floating-panel.js';
-import { saveGeometry, clearGeometry, savedSize } from '../../utils/panel-geometry.js';
+import { saveGeometry, clearSize, savedSize } from '../../utils/panel-geometry.js';
 
 /** Key of the tracker's size in the shared panelGeometry record (its position lives in its own ui-state record) */
 export const GEOMETRY_KEY = 'dungeonTracker';
@@ -125,10 +125,31 @@ class DungeonTrackerUIInteractions {
         this.detachResize = makeResizable(container, {
             minWidth: MIN_RESIZE_WIDTH,
             minHeight: MIN_RESIZE_HEIGHT,
+            onStart: () => this.prepareResize(),
             onResize: (size) => this.onUserResize(size),
+            onReset: () => this.resetSize(),
         });
         this.setGripVisible(!this.state.isCollapsed);
         this.restoreSize(container);
+    }
+
+    /**
+     * Called as a grip drag begins, before the panel is measured. An auto-sized panel's own 480px floor
+     * would stop the first drag from narrowing it, and a panel still centered by its transform would have
+     * its grip trail the pointer at half speed, so: drop the floor to the resize minimum and pin the spot
+     * as left/top pixels. Visual only; the saved position (state.position) stays as it was.
+     */
+    prepareResize() {
+        const container = this.container;
+        if (!container || this.state.isCollapsed) return;
+        const style = container.style;
+        style.minWidth = `min(${MIN_RESIZE_WIDTH}px, calc(100vw - 20px))`;
+        if (style.transform && style.transform !== 'none') {
+            const rect = container.getBoundingClientRect();
+            style.transform = 'none';
+            style.left = `${rect.left}px`;
+            style.top = `${rect.top}px`;
+        }
     }
 
     /**
@@ -178,13 +199,17 @@ class DungeonTrackerUIInteractions {
         style.minWidth = `min(${MIN_RESIZE_WIDTH}px, calc(100vw - 20px))`;
     }
 
-    /** Back to auto-sized: forget the saved size and drop the inline width/height. */
+    /** Back to auto-sized: forget the saved size (not the rest of the record) and drop the inline size. */
     resetSize() {
         this.userSize = null;
-        clearGeometry(GEOMETRY_KEY);
+        clearSize(GEOMETRY_KEY);
         if (this.container) {
             this.container.style.width = '';
             this.container.style.height = '';
+            // The auto-sized panel's floor, which a resize lowered
+            this.container.style.minWidth = this.state.isCollapsed
+                ? 'min(250px, calc(100vw - 20px))'
+                : 'min(480px, calc(100vw - 20px))';
         }
     }
 
@@ -292,6 +317,9 @@ class DungeonTrackerUIInteractions {
                 this.isDragging = false;
                 const header = this.container.querySelector('#mwi-dt-header');
                 if (header) header.style.cursor = 'move';
+                // The height cap depends on the top the panel was dropped at: re-apply it, then pull on screen
+                this.applyUserSize();
+                this.keepOnScreen();
                 this.state.save();
             }
         };

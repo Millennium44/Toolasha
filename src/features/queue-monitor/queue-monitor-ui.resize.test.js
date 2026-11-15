@@ -23,6 +23,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     markPanelInteracted: vi.fn(),
     saveGeometry: vi.fn(async () => {}),
     clearGeometry: vi.fn(async () => {}),
+    clearSize: vi.fn(async () => {}),
     restoreGeometry: vi.fn(async (panel) => {
         if (!geometry.saved) return;
         panel.style.width = `${geometry.saved.width}px`;
@@ -31,7 +32,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 
 const { default: ui } = await import('./queue-monitor-ui.js');
-const { saveGeometry, clearGeometry } = await import('../../utils/panel-geometry.js');
+const { saveGeometry, clearGeometry, clearSize } = await import('../../utils/panel-geometry.js');
 const storage = (await import('../../core/storage.js')).default;
 
 const panel = () => document.getElementById('toolasha-queue-monitor');
@@ -77,7 +78,7 @@ describe('queue monitor resize', () => {
     test('dragging the grip saves the new size and pins the panel', async () => {
         await ui.initialize();
         panel().getBoundingClientRect = () => ({ width: 260, height: 120, left: 0, top: 0 });
-        dragGrip(0, 0);
+        dragGrip(20, 10);
         expect(saveGeometry).toHaveBeenCalledWith('toolasha-queue-monitor', { width: 260, height: 120 });
         expect(panel().style.maxWidth).toBe('none');
         expect(panel().style.height).toBe('120px');
@@ -112,8 +113,50 @@ describe('queue monitor resize', () => {
         document.getElementById('toolasha-qm-reset-size').click();
         expect(panel().style.width).toBe('');
         expect(panel().style.height).toBe('');
-        expect(panel().style.maxWidth).toBe('');
-        expect(clearGeometry).toHaveBeenCalledWith('toolasha-queue-monitor');
+        // The opening width caps come back, and only the size is forgotten (never the whole record)
+        expect(panel().style.maxWidth).toBe('320px');
+        expect(panel().style.minWidth).toBe('220px');
+        expect(clearSize).toHaveBeenCalledWith('toolasha-queue-monitor');
+        expect(clearGeometry).not.toHaveBeenCalled();
         expect(document.getElementById('toolasha-qm-reset-size').style.display).toBe('none');
+    });
+
+    test('a panel that starts collapsed with no saved size has no grip to drag it tall', async () => {
+        storage.get.mockImplementation(async () => true);
+        await ui.initialize();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(grips()[0].style.display).toBe('none');
+    });
+
+    test('the first drag lifts the width caps before it measures, and anchors from the top left', async () => {
+        await ui.initialize();
+        const p = panel();
+        p.getBoundingClientRect = () => ({ width: 260, height: 120, left: 40, top: 50 });
+        const grip = grips()[0];
+        const ev = (type, x, y) => {
+            const e = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 });
+            Object.defineProperty(e, 'pointerId', { value: 1 });
+            return e;
+        };
+        expect(p.style.maxWidth).toBe('320px');
+        grip.dispatchEvent(ev('pointerdown', 10, 10));
+        expect(p.style.maxWidth).toBe('none');
+        expect(p.style.minWidth).toBe('0');
+        expect(p.style.left).toBe('40px');
+        expect(p.style.top).toBe('50px');
+        expect(p.style.bottom).toBe('auto');
+        document.dispatchEvent(ev('pointerup', 10, 10));
+        // A tap saved nothing
+        expect(saveGeometry).not.toHaveBeenCalled();
+    });
+
+    test('double-clicking the grip resets the size through clearSize', async () => {
+        geometry.saved = { width: 400, height: 200 };
+        await ui.initialize();
+        await vi.advanceTimersByTimeAsync(0);
+        grips()[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        expect(panel().style.width).toBe('');
+        expect(clearSize).toHaveBeenCalledWith('toolasha-queue-monitor');
+        expect(clearGeometry).not.toHaveBeenCalled();
     });
 });

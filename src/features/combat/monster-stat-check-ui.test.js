@@ -104,12 +104,13 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: () => {},
 }));
 vi.mock('../../utils/panel-minimize.js', () => ({ attachMinimize: () => {} }));
-const geometry = vi.hoisted(() => ({ save: vi.fn(), restore: vi.fn(), clear: vi.fn() }));
+const geometry = vi.hoisted(() => ({ save: vi.fn(), restore: vi.fn(), clear: vi.fn(), clearSize: vi.fn() }));
 vi.mock('../../utils/panel-geometry.js', async (importOriginal) => ({
     ...(await importOriginal()),
     saveGeometry: geometry.save,
     restoreGeometry: geometry.restore,
     clearGeometry: geometry.clear,
+    clearSize: geometry.clearSize,
 }));
 vi.mock('../../utils/csv-export.js', () => ({ downloadFile: () => {} }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
@@ -822,6 +823,7 @@ describe('the resize grip', () => {
         geometry.save.mockClear();
         geometry.restore.mockClear();
         geometry.clear.mockClear();
+        geometry.clearSize.mockClear();
         panel._ensureBuilt();
     });
 
@@ -862,7 +864,32 @@ describe('the resize grip', () => {
         panel.container.querySelector('button[title^="Reset size"]').click();
         expect(panel.container.style.width).toBe('340px');
         expect(panel.container.style.height).toBe('');
-        expect(geometry.clear).toHaveBeenCalledWith('monsterStatCheck');
+        expect(geometry.clearSize).toHaveBeenCalledWith('monsterStatCheck');
+        expect(geometry.clear).not.toHaveBeenCalled();
+    });
+
+    test('the reset button says what it does and is not the abilities panel expand glyph', () => {
+        const btn = panel.container.querySelector('button[title="Reset size"]');
+        expect(btn.textContent).toBe('↺');
+    });
+
+    test('double-clicking the grip resets the size the same way', () => {
+        panel.container.style.width = '500px';
+        grips()[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        expect(panel.container.style.width).toBe('340px');
+        expect(geometry.clearSize).toHaveBeenCalledWith('monsterStatCheck');
+    });
+
+    test('pressing the grip anchors the centered panel to pixels without moving it', () => {
+        panel.container.getBoundingClientRect = () => ({ width: 340, height: 300, left: 210, top: 40 });
+        grips()[0].dispatchEvent(
+            new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 10, clientY: 10, bubbles: true })
+        );
+        expect(panel.container.style.transform).toBe('none');
+        expect(panel.container.style.left).toBe('210px');
+        expect(panel.container.style.top).toBe('40px');
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }));
+        expect(geometry.save).not.toHaveBeenCalled();
     });
 
     test('teardown removes the grip and a rebuild does not stack a second', () => {

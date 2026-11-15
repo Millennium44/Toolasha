@@ -460,21 +460,25 @@ class RiskOfRuinUI {
         this.detachResize = makeResizable(panel, {
             minWidth: PANEL_MIN_SIZE.width,
             minHeight: PANEL_MIN_SIZE.height,
+            // Before the first drag measures the panel, or the cap would stop the drag at its own value
+            onStart: () => {
+                panel.style.maxHeight = 'none';
+            },
             onResize: (size) => {
                 panel.style.maxHeight = 'none';
                 saveGeometry(PANEL_KEY, size);
             },
+            onReset: () => this._resetSize(panel),
         });
-        const grip = panel.querySelector('.toolasha-resize-grip');
-        if (grip) {
-            grip.title = 'Drag to resize, double-click to reset the size';
-            grip.addEventListener('dblclick', () => this._resetSize(panel));
-        }
-        Promise.resolve(restoreGeometry(panel, PANEL_KEY, PANEL_MIN_SIZE))
-            .then(() => {
+        // restoreGeometry reports through its promise; a mock may hand back nothing at all
+        (async () => {
+            try {
+                await restoreGeometry(panel, PANEL_KEY, PANEL_MIN_SIZE);
                 if (panel.style.height) panel.style.maxHeight = 'none';
-            })
-            .catch((error) => console.error('[RiskOfRuin] Restoring the remembered size failed:', error));
+            } catch (error) {
+                console.error('[RiskOfRuin] Restoring the remembered size failed:', error);
+            }
+        })();
 
         this.panel.addEventListener('mousedown', () => bringPanelToFront(this.panel));
 

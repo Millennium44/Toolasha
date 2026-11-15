@@ -25,6 +25,7 @@ vi.mock('../../utils/csv-export.js', () => ({ downloadFile: () => {} }));
 vi.mock('../../utils/panel-geometry.js', () => ({
     markPanelInteracted: vi.fn(),
     saveGeometry: vi.fn(async () => {}),
+    clearSize: vi.fn(async () => {}),
     restoreGeometry: vi.fn(async (panel) => {
         if (!geometry.saved) return;
         panel.style.width = `${geometry.saved.width}px`;
@@ -33,7 +34,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 
 const { default: pformancePanel } = await import('./pformance-panel.js');
-const { saveGeometry } = await import('../../utils/panel-geometry.js');
+const { saveGeometry, clearSize } = await import('../../utils/panel-geometry.js');
 
 const monitor = {
     enabled: false,
@@ -45,13 +46,19 @@ const monitor = {
 const panel = () => document.getElementById('toolasha-pformance-panel');
 const grips = () => document.querySelectorAll('.toolasha-resize-grip');
 
-function dragGrip() {
+function dragGrip(dx = 30) {
     const ev = (type) => {
-        const e = new MouseEvent(type, { bubbles: true, clientX: 10, clientY: 10, button: 0 });
+        const e = new MouseEvent(type, {
+            bubbles: true,
+            clientX: type === 'pointermove' ? 10 + dx : 10,
+            clientY: 10,
+            button: 0,
+        });
         Object.defineProperty(e, 'pointerId', { value: 1 });
         return e;
     };
     document.querySelector('.toolasha-resize-grip').dispatchEvent(ev('pointerdown'));
+    if (dx) document.dispatchEvent(ev('pointermove'));
     document.dispatchEvent(ev('pointerup'));
 }
 
@@ -97,5 +104,34 @@ describe('pformance panel resize', () => {
         expect(grips()[0].style.display).toBe('none');
         collapse.click();
         expect(panel().style.height).toBe('700px');
+    });
+
+    test('the content cap is lifted when the drag starts, and a tap saves nothing', () => {
+        pformancePanel.show();
+        dragGrip(0);
+        expect(pformancePanel.contentEl.style.maxHeight).toBe('none');
+        expect(saveGeometry).not.toHaveBeenCalled();
+    });
+
+    test('double-clicking the grip restores the opening size through clearSize', async () => {
+        geometry.saved = { width: 500, height: 700 };
+        pformancePanel.show();
+        await Promise.resolve();
+        await Promise.resolve();
+        grips()[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        expect(panel().style.height).toBe('');
+        expect(pformancePanel.contentEl.style.maxHeight).toBe('500px');
+        expect(clearSize).toHaveBeenCalledWith('pformance-panel');
+    });
+
+    test('closing a collapsed panel does not leave the reopened one marked collapsed', () => {
+        pformancePanel.show();
+        [...panel().querySelectorAll('button')].find((b) => b.textContent === '▼').click();
+        expect(pformancePanel.isCollapsed).toBe(true);
+        pformancePanel.hide();
+        pformancePanel.show();
+        expect(pformancePanel.isCollapsed).toBe(false);
+        expect(pformancePanel.contentEl.style.display).toBe('');
+        expect(grips()[0].style.display).not.toBe('none');
     });
 });

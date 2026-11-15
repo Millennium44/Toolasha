@@ -165,6 +165,48 @@ describe('the resize grip', () => {
         expect(panel.style.height).toBe('230px');
     });
 
+    test('a tap on the grip is not a resize: nothing is sized or saved', () => {
+        panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: 300, height: 200, right: 400, bottom: 300 });
+        const onResize = vi.fn();
+        makeResizable(panel, { minWidth: 100, minHeight: 50, onResize });
+        const grip = panel.lastElementChild;
+
+        grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 400, clientY: 300 }));
+        document.dispatchEvent(new MouseEvent('pointermove', { clientX: 401, clientY: 301 }));
+        document.dispatchEvent(new MouseEvent('pointerup'));
+
+        expect(onResize).not.toHaveBeenCalled();
+        expect(panel.style.width).toBe('');
+    });
+
+    test('onStart runs before the start size is measured', () => {
+        let measured = 300;
+        panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: measured, height: 200 });
+        const onStart = vi.fn(() => {
+            measured = 500;
+        });
+        makeResizable(panel, { minWidth: 100, minHeight: 50, onStart });
+        const grip = panel.lastElementChild;
+
+        grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 400, clientY: 300 }));
+        document.dispatchEvent(new MouseEvent('pointermove', { clientX: 410, clientY: 300 }));
+        document.dispatchEvent(new MouseEvent('pointerup'));
+
+        expect(onStart).toHaveBeenCalledWith(panel);
+        expect(panel.style.width).toBe('510px');
+    });
+
+    test('a double-click on the grip calls onReset and the title says so', () => {
+        const onReset = vi.fn();
+        makeResizable(panel, { onReset });
+        const grip = panel.lastElementChild;
+
+        grip.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+
+        expect(onReset).toHaveBeenCalledTimes(1);
+        expect(grip.title).toBe('Drag to resize · double-click to reset size');
+    });
+
     test('and is finger-sized on a coarse pointer', () => {
         // 14px is a mouse target; on a touchscreen the grip is the feature
         hasCoarsePointer.mockReturnValue(true);

@@ -81,7 +81,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 vi.mock('./build-score-row.js', () => ({ readOwnScore: () => null }));
 
 const combatScore = (await import('./combat-score.js')).default;
-const { saveGeometry } = await import('../../utils/panel-geometry.js');
+const { saveGeometry, clearSize } = await import('../../utils/panel-geometry.js');
 
 const scoreData = {
     total: 300,
@@ -129,6 +129,7 @@ beforeEach(() => {
     combatScore.currentPanel = null;
     combatScore.currentAbilitiesPanel = null;
     vi.mocked(saveGeometry).mockClear();
+    vi.mocked(clearSize).mockClear();
 });
 
 describe('score panel resize', () => {
@@ -138,6 +139,23 @@ describe('score panel resize', () => {
         expect(gripsIn(scorePanel())[0].parentElement).toBe(scorePanel());
         expect(scorePanel().querySelector('#mwi-score-scroll')).not.toBeNull();
         expect(gripsIn(abilitiesPanel())).toHaveLength(1);
+    });
+
+    test('the drag header stays outside the scroller', () => {
+        openBoth();
+        const header = scorePanel().querySelector('#mwi-score-header');
+        expect(header.parentElement).toBe(scorePanel());
+        expect(scorePanel().querySelector('#mwi-score-scroll').contains(header)).toBe(false);
+    });
+
+    test('the first drag lifts the width cap as it starts, and a tap saves nothing', () => {
+        openBoth();
+        gripsIn(scorePanel())[0].dispatchEvent(
+            new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 0, clientY: 0 })
+        );
+        expect(scorePanel().style.maxWidth).toBe('none');
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 0, clientY: 0 }));
+        expect(saveGeometry).not.toHaveBeenCalled();
     });
 
     test('a drag saves the size, lifts the width cap and makes the content scroll', () => {
@@ -196,6 +214,20 @@ describe('abilities panel resize', () => {
         abilitiesPanel().querySelector('#mwi-abilities-expand-btn').click();
         expect(abilitiesPanel().style.height).toBe('');
         expect(abilitiesPanel().style.maxHeight).toBe('none');
+        // Only this session's inline height is lifted: the saved size stays
+        expect(geo.record.profileAbilities).toEqual({ width: 320, height: 500 });
+        expect(clearSize).not.toHaveBeenCalled();
+    });
+
+    test('the first drag lifts the opening caps as it starts', () => {
+        openBoth();
+        gripsIn(abilitiesPanel())[0].dispatchEvent(
+            new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: 0, clientY: 0 })
+        );
+        expect(abilitiesPanel().style.maxHeight).toBe('none');
+        expect(abilitiesPanel().style.maxWidth).toBe('none');
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 0, clientY: 0 }));
+        expect(saveGeometry).not.toHaveBeenCalled();
     });
 
     test('double-click resets to the 200px cap', async () => {
