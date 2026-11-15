@@ -45,6 +45,12 @@ vi.mock('../../core/storage.js', () => ({
     default: { get: vi.fn(async () => false), set: vi.fn() },
 }));
 
+vi.mock('../../utils/panel-geometry.js', () => ({
+    saveGeometry: vi.fn(),
+    clearGeometry: vi.fn(),
+    restoreGeometry: vi.fn(async () => {}),
+}));
+
 vi.mock('../../utils/panel-z-index.js', () => ({
     registerFloatingPanel: vi.fn(),
     unregisterFloatingPanel: vi.fn(),

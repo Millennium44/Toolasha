@@ -24,6 +24,8 @@
 import config from '../../core/config.js';
 import { runInBackground } from '../../utils/background-work.js';
 import storage from '../../core/storage.js';
+import { makeResizable } from '../../utils/floating-panel.js';
+import { saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
 import { characterKey } from '../../utils/character-key.js';
 import { labyrinthRunStamp } from '../../utils/labyrinth-session.js';
 import dataManager from '../../core/data-manager.js';
@@ -617,6 +619,8 @@ class LabyrinthRoomLogs {
         }
         document.getElementById(TAB_ID)?.remove();
         this.tabButton = null;
+        this.detachResize?.();
+        this.detachResize = null;
         document.getElementById(PANEL_ID)?.remove();
         this.panel = null;
         this.unlistenPool?.();
@@ -2072,6 +2076,27 @@ class LabyrinthRoomLogs {
         document.body.appendChild(panel);
 
         this.setupDrag(panel, header);
+        // 340px wide and 60vh tall are the defaults, not caps: a resized panel
+        // (dragged or restored) lifts both. The grip sits on the panel, outside
+        // the list that every redraw rewrites.
+        const pin = () => {
+            panel.style.maxHeight = 'none';
+            panel.style.overflow = 'hidden';
+            list.style.maxHeight = 'none';
+            list.style.flex = '1 1 auto';
+            list.style.minHeight = '0';
+        };
+        this.detachResize = makeResizable(panel, {
+            minWidth: 260,
+            minHeight: 140,
+            onResize: (size) => {
+                pin();
+                saveGeometry(PANEL_ID, size);
+            },
+        });
+        restoreGeometry(panel, PANEL_ID, { width: 260, height: 140 }, { position: false }).then(() => {
+            if (panel.style.height) pin();
+        });
         this.panel = panel;
         this.paintChrome();
         return panel;

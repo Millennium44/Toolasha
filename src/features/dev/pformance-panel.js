@@ -14,6 +14,8 @@ import { downloadFile } from '../../utils/csv-export.js';
 import { performanceMonitor, scriptBuildLabel, dataManager as bridgedDataManager } from '../../utils/bundle-bridge.js';
 import { getGmTrafficSnapshot, getGmTrafficSummary } from '../../utils/gm-traffic.js';
 import { createTabCensus, buildTabSummary } from '../../utils/tab-census.js';
+import { makeResizable } from '../../utils/floating-panel.js';
+import { saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /**
@@ -23,6 +25,9 @@ import { registerCommand, unregisterCommand } from '../../utils/command-registry
  * rendered before it existed.
  */
 const ATTRIBUTION_SETTING = 'pformanceAttribution';
+
+/** Key of the panel's saved size in the shared panel-geometry record */
+const PANEL_GEOMETRY_KEY = 'pformance-panel';
 
 function getPerformanceMonitor() {
     return performanceMonitor();
@@ -283,6 +288,27 @@ class PFormancePanel {
 
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
+
+        // The 380px width and the 500px content height are the defaults, not
+        // caps: a dragged or restored size lifts the height cap and the content
+        // scrolls inside. The grip is on the panel, outside the content that
+        // every tick rewrites. Size only: the panel places itself.
+        const panel = this.panel;
+        this.detachResize = makeResizable(panel, {
+            minWidth: 280,
+            minHeight: 140,
+            onResize: (size) => {
+                if (this.isCollapsed) return;
+                this._pinnedHeight = `${size.height}px`;
+                this._applyPinned();
+                saveGeometry(PANEL_GEOMETRY_KEY, size);
+            },
+        });
+        restoreGeometry(panel, PANEL_GEOMETRY_KEY, { width: 280, height: 140 }, { position: false }).then(() => {
+            if (this.panel !== panel || !panel.style.height) return;
+            this._pinnedHeight = panel.style.height;
+            this._applyPinned();
+        });
         this._updateContent();
     }
 
@@ -314,6 +340,7 @@ class PFormancePanel {
             this.isCollapsed = !this.isCollapsed;
             collapseBtn.textContent = this.isCollapsed ? '▶' : '▼';
             this.contentEl.style.display = this.isCollapsed ? 'none' : '';
+            this._applyPinned();
         });
 
         const copyBtn = this._headerButton('⧉', () => this._exportReport('clipboard'));
@@ -421,6 +448,21 @@ class PFormancePanel {
         });
     }
 
+    /**
+     * Keep the inline height in line with a pinned size and the collapsed state:
+     * a pinned height must not hold a collapsed panel open.
+     */
+    _applyPinned() {
+        if (!this.panel || !this.contentEl) return;
+        const grip = this.panel.querySelector('.toolasha-resize-grip');
+        if (grip) grip.style.display = this.isCollapsed ? 'none' : '';
+        if (!this._pinnedHeight) return;
+        this.panel.style.height = this.isCollapsed ? 'auto' : this._pinnedHeight;
+        this.contentEl.style.maxHeight = 'none';
+        this.contentEl.style.flex = '1 1 auto';
+        this.contentEl.style.minHeight = '0';
+    }
+
     _startUpdating() {
         if (this.updateIntervalId) return;
         this.updateIntervalId = setInterval(() => this._updateContent(), 1000);
@@ -449,6 +491,9 @@ class PFormancePanel {
         this.heapTrend?.reset();
         this.heapTrend = null;
         this._churnSample = null;
+        this.detachResize?.();
+        this.detachResize = null;
+        this._pinnedHeight = null;
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();
