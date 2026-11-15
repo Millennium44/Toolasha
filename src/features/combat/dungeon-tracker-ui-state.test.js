@@ -252,4 +252,21 @@ describe('panel width', () => {
         }
         dungeonTrackerUIState.isCollapsed = false;
     });
+
+    // Reported on the same phone: the header wrapped to 97px while the content was capped at the
+    // screen less 80px, so the panel ran 20px past the bottom and its last rows could not be reached
+    test('the panel is never taller than the screen below its top, the content scrolling inside', () => {
+        dungeonTrackerUIState.isCollapsed = false;
+        dungeonTrackerUIState.position = null;
+        const atDefault = { style: { cssText: '' } };
+        dungeonTrackerUIState.updatePosition(atDefault);
+        expect(atDefault.style.cssText.replace(/\s+/g, ' ')).toContain(
+            'max-height: calc(100vh / var(--toolasha-text-zoom, 1) - 10px - 10px)'
+        );
+        expect(atDefault.style.cssText).toContain('flex-direction: column');
+        expect(dungeonTrackerUIState.heightCap(250.6)).toBe(
+            'calc(100vh / var(--toolasha-text-zoom, 1) - 251px - 10px)'
+        );
+        expect(dungeonTrackerUIState.heightCap(-40)).toBe('calc(100vh / var(--toolasha-text-zoom, 1) - 0px - 10px)');
+    });
 });

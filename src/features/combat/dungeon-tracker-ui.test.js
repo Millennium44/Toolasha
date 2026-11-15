@@ -185,7 +185,7 @@ describe('the provisional card', () => {
 
         ui.dungeonUpdateHandler(null, null);
 
-        expect(ui.container.style.display).toBe('block');
+        expect(ui.container.style.display).toBe('flex');
         expect(text('#mwi-dt-dungeon-name')).toBe('Pirate Cove (T1)');
         expect(text('#mwi-dt-wave-counter')).toBe('waiting for next wave');
         // No run, so no elapsed and no progress — blanks, not guesses
@@ -418,7 +418,7 @@ describe('between two runs of a repeating dungeon', () => {
         ui.dungeonUpdateHandler(null, finished);
         await vi.waitFor(() => expect(text('#mwi-dt-header-last')).toBe('05:00'));
 
-        expect(ui.container.style.display).toBe('block');
+        expect(ui.container.style.display).toBe('flex');
         expect(text('#mwi-dt-dungeon-name')).toBe('Pirate Cove (T1)');
         expect(text('#mwi-dt-wave-counter')).toBe('next run starting…');
         expect(text('#mwi-dt-current-time')).toBe('00:00');
@@ -427,7 +427,7 @@ describe('between two runs of a repeating dungeon', () => {
 
         // The notifyUpdate that follows the completion keeps the same card
         ui.dungeonUpdateHandler(null, null);
-        expect(ui.container.style.display).toBe('block');
+        expect(ui.container.style.display).toBe('flex');
         expect(text('#mwi-dt-wave-counter')).toBe('next run starting…');
 
         // Wave 1 of the next run
@@ -435,7 +435,7 @@ describe('between two runs of a repeating dungeon', () => {
         world.currentRun = run({ currentWave: 1, wavesCompleted: 0, totalElapsed: 0 });
         ui.dungeonUpdateHandler(world.currentRun);
         await vi.waitFor(() => expect(text('#mwi-dt-wave-counter')).toBe('Wave 1/65'));
-        expect(ui.container.style.display).toBe('block');
+        expect(ui.container.style.display).toBe('flex');
         expect(text('#mwi-dt-time-label')).toBe('Elapsed:');
     });
 

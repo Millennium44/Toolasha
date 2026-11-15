@@ -66,6 +66,7 @@ function makeState(overrides = {}) {
         },
         save: vi.fn(),
         updatePosition: vi.fn(),
+        heightCap: (top) => `cap(${top})`,
         ...overrides,
     };
 }
@@ -424,6 +425,8 @@ describe('keeping a dragged tracker on screen', () => {
 
         expect(container.style.left).toBe(`${-491 + 100}px`);
         expect(container.style.top).toBe('0px');
+        // Its height follows its top, so the bottom stays on screen
+        expect(container.style.maxHeight).toBe('cap(0)');
     });
 
     test('a window resize pulls a panel left past the right edge back in, without saving it', () => {

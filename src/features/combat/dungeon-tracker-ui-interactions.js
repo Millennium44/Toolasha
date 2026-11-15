@@ -123,6 +123,7 @@ class DungeonTrackerUIInteractions {
         if (x === rect.left && y === rect.top) return;
         this.container.style.left = `${x}px`;
         this.container.style.top = `${y}px`;
+        this.container.style.maxHeight = this.state.heightCap(y);
         this.container.style.transform = 'none';
     }
 
@@ -184,6 +185,7 @@ class DungeonTrackerUIInteractions {
             // Apply position
             this.container.style.left = `${x}px`;
             this.container.style.top = `${y}px`;
+            this.container.style.maxHeight = this.state.heightCap(y);
             this.container.style.transform = 'none'; // Disable centering transform
         };
 

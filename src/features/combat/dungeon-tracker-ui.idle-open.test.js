@@ -275,7 +275,7 @@ describe('opening the panel while a dungeon is running', () => {
         ui.toggle();
         await Promise.resolve();
 
-        expect(ui.container.style.display).toBe('block');
+        expect(ui.container.style.display).toBe('flex');
         expect(text('#mwi-dt-dungeon-name')).toBe('Pirate Cove (T1)');
         expect(spy).not.toHaveBeenCalled();
         spy.mockRestore();

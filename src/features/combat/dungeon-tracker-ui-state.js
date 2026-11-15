@@ -246,6 +246,17 @@ class DungeonTrackerUIState {
      * Update container position and styling
      * @param {HTMLElement} container - Container element
      */
+    /**
+     * The tallest the panel may be with its top at `top`: down to 10px above the screen's bottom.
+     * The content area scrolls inside it, so the panel's bottom stays on screen however tall the
+     * header wraps (97px on a 412px phone, where a fixed "screen less 80px" content cap overran).
+     * @param {number} top - The panel's top, in px
+     * @returns {string} A CSS length
+     */
+    heightCap(top) {
+        return `calc(100vh / var(--toolasha-text-zoom, 1) - ${Math.max(0, Math.round(top))}px - 10px)`;
+    }
+
     updatePosition(container) {
         const zIndex = this.isCollapsed ? config.Z_HUD : config.Z_FLOATING_PANEL;
         const baseStyle = `
@@ -259,6 +270,8 @@ class DungeonTrackerUIState {
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
             max-width: calc(100vw - 20px);
             box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
         `;
 
         // Never wider than the screen: 480px of min-width on a 390px phone
@@ -277,6 +290,7 @@ class DungeonTrackerUIState {
                 top: ${y}px;
                 left: ${x}px;
                 min-width: ${minWidth};
+                max-height: ${this.heightCap(y)};
             `;
         } else if (this.isCollapsed) {
             // Collapsed: top-left (near action time display)
@@ -285,6 +299,7 @@ class DungeonTrackerUIState {
                 top: 10px;
                 left: 10px;
                 min-width: ${minWidth};
+                max-height: ${this.heightCap(10)};
             `;
         } else {
             // Expanded: top-center
@@ -294,6 +309,7 @@ class DungeonTrackerUIState {
                 left: 50%;
                 transform: translateX(-50%);
                 min-width: ${minWidth};
+                max-height: ${this.heightCap(10)};
             `;
         }
     }
