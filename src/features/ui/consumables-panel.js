@@ -3680,14 +3680,23 @@ class ConsumablesPanel {
             this._render();
         });
         const inventory = dataManager.getInventory?.() || [];
+        const listings = dataManager.getMarketListings?.();
         const runs = this.labRuns;
 
         // The walkable shortfall: every item short for the run target, in row order
         const queue = needs
-            .map(({ itemHrid, perRun }) => ({
-                itemHrid,
-                count: labShortfall(perRun, runs, heldInInventory(inventory, itemHrid)),
-            }))
+            .map(({ itemHrid, perRun }) => {
+                // The same own-order deductions as the row, so Buy all and the footer agree with it
+                const orders = ownBuyOrders(listings, itemHrid);
+                return {
+                    itemHrid,
+                    count: labShortfall(
+                        perRun,
+                        runs,
+                        heldInInventory(inventory, itemHrid) + orders.unclaimed + orders.open
+                    ),
+                };
+            })
             .filter((q) => q.count > 0);
         this._registerBuyQueue('Labyrinth', queue);
         heading.append(name, runsBtn, basisBtn);
@@ -4111,6 +4120,14 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             });
         }
 
+        // Fully covered by orders: still say what has to be collected before it can be used
+        if (!needCount && (orders.unclaimed > 0 || orders.open > 0)) {
+            buy.textContent = `✓${orders.unclaimed > 0 ? ` (${formatLargeNumber(orders.unclaimed)} to collect)` : ''}`;
+            buy.title =
+                `${orders.open.toLocaleString()} already on order, ` +
+                `${orders.unclaimed.toLocaleString()} to collect before they can be used.`;
+        }
+
         const runsHeld = perRun > 0 ? Math.floor(held / perRun) : 0;
         const lasts = this._cell(`${formatLargeNumber(runsHeld)} run${runsHeld === 1 ? '' : 's'}`);
         lasts.style.color = runsHeld >= runs ? ROW_COLORS.good : ROW_COLORS.bad;
@@ -4393,6 +4410,14 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
                 event.stopPropagation();
                 this._buy(entry, need.count, strategy);
             });
+        }
+
+        // Fully covered by orders: the row is a tick, but the units still have to be collected to be used
+        if (!need.count && !need.rateUnknown && (entry.unclaimedBought > 0 || entry.onOrder > 0)) {
+            buy.textContent = `✓${entry.unclaimedBought > 0 ? ` (${formatLargeNumber(entry.unclaimedBought)} to collect)` : ''}`;
+            buy.title =
+                `${(entry.onOrder || 0).toLocaleString()} already on order, ` +
+                `${(entry.unclaimedBought || 0).toLocaleString()} to collect before they can be used.`;
         }
 
         const lasts = this._cell(

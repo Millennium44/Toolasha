@@ -28,6 +28,7 @@ const game = vi.hoisted(() => ({
     prices: {},
     equipment: new Map(),
     ownedEquipment: [],
+    listings: [],
 }));
 
 const settings = vi.hoisted(() => ({ values: {}, listeners: {} }));
@@ -88,6 +89,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => game.items[hrid] || null,
         getActionDetails: () => game.actionDetail,
         getInventory: () => game.inventory,
+        getMarketListings: () => game.listings,
         getEquipment: () => game.equipment,
         getInitClientData: () => game.clientData,
         getCurrentActions: () => game.currentActions,
@@ -1419,6 +1421,30 @@ describe('the labyrinth buy all', () => {
         } finally {
             consumablesPanel._narrow = false;
         }
+    });
+
+    test('own buy orders come off both the rows and the Buy all queue', async () => {
+        game.listings = [
+            // 300 torches still to fill and 200 bought but uncollected cover the 500 torches
+            {
+                id: 1,
+                isSell: false,
+                itemHrid: '/items/basic_torch',
+                enhancementLevel: 0,
+                status: '/market_listing_status/active',
+                orderQuantity: 500,
+                filledQuantity: 200,
+                unclaimedItemCount: 200,
+            },
+        ];
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._render();
+
+        const queue = consumablesPanel._buyQueues.find((q) => q.label === 'Labyrinth').queue;
+        expect(queue.map((q) => q.itemHrid)).not.toContain('/items/basic_torch');
+        expect(consumablesPanel.bodyEl.textContent).toContain('✓ (200 to collect)');
+        game.listings = [];
     });
 
     test('a fully stocked lab shows no buy-all line', async () => {
