@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Arbitrage and Craft & Enhance buttons in any game language
+
+The skill-page title buttons now recognize the skill by its icon, so players running the game in another language get them too.
+
 <!-- shipped in 3.87.0 -->
 
 ### Overbid table shows listings beaten by older prices
