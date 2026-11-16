@@ -1642,6 +1642,7 @@ class ConsumablesPanel {
                     ...(rows || [])
                         .map((row) => ({
                             ...refillFor(row, this.target.seconds),
+                            onOrder: row.onOrder || 0,
                             itemHrid: row.itemHrid,
                             name: row.name,
                             secondsLeft: row.secondsLeft,
@@ -1962,15 +1963,9 @@ class ConsumablesPanel {
             // trip it was meant to survive, which reads as the panel opening
             // itself at random. Reported from live use, 2026-09-18.
             this.hide();
-            // The counts are already net of open buy orders; say how many, so their fills are not
-            // counted as purchases against the list again
-            const listings = dataManager.getMarketListings?.();
-            openShoppingList(
-                (shortfall || []).map((item) => ({
-                    ...item,
-                    onOrder: ownBuyOrders(listings, item?.itemHrid).open,
-                }))
-            );
+            // Each line carries the open-order credit its count was netted by (`onOrder`, set where the
+            // line is built from its forecast), so their fills are not counted as purchases again
+            openShoppingList(shortfall);
         } catch (error) {
             console.error('[ConsumablesPanel] Building the shopping list failed:', error);
         }
@@ -3283,13 +3278,16 @@ class ConsumablesPanel {
             return section;
         }
 
-        const forecasts = view.forecasts;
+        // Your own buy orders netted off, as the combat and lab paths do, so the rows, Buy all and the list agree
+        const orderListings = dataManager.getMarketListings?.();
+        const forecasts = view.forecasts.map((entry) => withBuyOrders(entry, orderListings));
         const soonest = firstToRunOut(forecasts);
         const sides = costPerDaySides(forecasts);
         const need = refillAll(forecasts, this.target.seconds);
         const shortfall = forecasts
             .map((entry) => ({
                 ...refillFor(entry, this.target.seconds),
+                onOrder: entry.onOrder || 0,
                 itemHrid: entry.itemHrid,
                 name: entry.name,
                 secondsLeft: entry.secondsLeft,
@@ -3446,6 +3444,7 @@ class ConsumablesPanel {
         const shortfall = forecasts
             .map((entry) => ({
                 ...refillFor(entry, this.target.seconds),
+                onOrder: entry.onOrder || 0,
                 itemHrid: entry.itemHrid,
                 secondsLeft: entry.secondsLeft,
             }))
@@ -3706,6 +3705,7 @@ class ConsumablesPanel {
                 const orders = ownBuyOrders(listings, itemHrid);
                 return {
                     itemHrid,
+                    onOrder: orders.open,
                     count: labShortfall(
                         perRun,
                         runs,
@@ -3728,13 +3728,14 @@ class ConsumablesPanel {
         if (queue.length) {
             let labCost = 0;
             let labUnpriced = 0;
-            const labItems = queue.map(({ itemHrid, count }) => {
+            const labItems = queue.map(({ itemHrid, count, onOrder }) => {
                 const ask = Number(getItemPrices(itemHrid)?.ask);
                 if (ask > 0) labCost += ask * count;
                 else labUnpriced += 1;
                 return {
                     itemHrid,
                     count,
+                    onOrder,
                     name: dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop(),
                 };
             });
@@ -4199,6 +4200,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         const shortfall = buyable
             .map((entry) => ({
                 ...refillFor(entry, this.target.seconds),
+                onOrder: entry.onOrder || 0,
                 itemHrid: entry.itemHrid,
                 name: entry.name,
                 secondsLeft: entry.secondsLeft,

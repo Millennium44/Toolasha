@@ -1750,9 +1750,9 @@ describe('the labyrinth burn trend', () => {
         const queue = () => consumablesPanel._buyQueues.find((q) => q.label === 'Labyrinth').queue;
         // Measured: torches average 70 a run, shrouds 2, beacons 3; five runs, 50 torches held
         expect(queue()).toEqual([
-            { itemHrid: '/items/basic_torch', count: 300 },
-            { itemHrid: '/items/basic_shroud', count: 10 },
-            { itemHrid: '/items/basic_beacon', count: 15 },
+            { itemHrid: '/items/basic_torch', count: 300, onOrder: 0 },
+            { itemHrid: '/items/basic_shroud', count: 10, onOrder: 0 },
+            { itemHrid: '/items/basic_beacon', count: 15, onOrder: 0 },
         ]);
 
         // Full capacity (100/4/5 a run) ignores the ledger
@@ -1760,9 +1760,9 @@ describe('the labyrinth burn trend', () => {
         consumablesPanel._buyQueues = [];
         consumablesPanel._render();
         expect(queue()).toEqual([
-            { itemHrid: '/items/basic_torch', count: 450 },
-            { itemHrid: '/items/basic_shroud', count: 20 },
-            { itemHrid: '/items/basic_beacon', count: 25 },
+            { itemHrid: '/items/basic_torch', count: 450, onOrder: 0 },
+            { itemHrid: '/items/basic_shroud', count: 20, onOrder: 0 },
+            { itemHrid: '/items/basic_beacon', count: 25, onOrder: 0 },
         ]);
         delete settings.values.consumables_labPerRunBasis;
     });
