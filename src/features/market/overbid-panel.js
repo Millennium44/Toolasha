@@ -115,51 +115,62 @@ export function findBeatenListings(listings, observe, now, maxAgeMs) {
 }
 
 /**
- * Sort the active listings into beaten, settled and unknown.
+ * Sort the active listings into beaten, probably beaten, settled and unknown.
  *
  * `settled` holds the ids that fresh evidence shows competitive (or only behind
  * your own order); a listing with no usable figure is in neither set, because an
  * unknown price proves nothing in either direction.
  *
+ * `probable` holds listings whose figure is older than `maxAgeMs` yet still beats them (own orders excluded,
+ * the same way). A figure taken before the listing was created (`createdTimestamp`) says nothing about it and
+ * leaves the listing unknown; a listing without a readable creation time is not held to that rule. A stale
+ * figure that does not beat the listing is unknown, never settled.
+ *
  * @param {Object[]} listings - Listings as the game sends them
  * @param {Function} observe - See {@link findBeatenListings}
  * @param {number} now - Current time in ms
- * @param {number} maxAgeMs - How old a figure may be and still count
+ * @param {number} maxAgeMs - How old a figure may be and still count as fresh
  * @param {(price: number, itemHrid: string, level: number) => number|null} [clamp] - The band clamp the
  *   figures went through, so a listing's raw price can be matched against them; applied only to an
  *   observation marked `clamped: true`, identity otherwise
- * @returns {{beaten: ReturnType<typeof findBeatenListings>, settled: Set<*>, activeIds: Set<*>,
- *   unknown: number}} `unknown` counts active listings with no usable figure
+ * @returns {{beaten: ReturnType<typeof findBeatenListings>, probable: ReturnType<typeof findBeatenListings>,
+ *   settled: Set<*>, activeIds: Set<*>, unknown: number, unknownRows: Object[]}} `unknown` counts active
+ *   listings with no usable figure, `unknownRows` names them
  */
 export function classifyListings(listings, observe, now, maxAgeMs, clamp = (price) => price) {
     const active = (listings || []).filter((listing) => listing?.status === ACTIVE_STATUS && listing.itemHrid);
     const beaten = [];
+    const probable = [];
     const settled = new Set();
     const activeIds = new Set(active.map((listing) => listing.id));
-    let unknown = 0;
+    const unknownRows = [];
 
     for (const listing of active) {
         const level = listing.enhancementLevel || 0;
         const isSell = listing.isSell === true;
+        const markUnknown = () =>
+            unknownRows.push({ id: listing.id, itemHrid: listing.itemHrid, enhancementLevel: level, isSell });
         const observation = observe(listing.itemHrid, level, isSell);
         if (!observation) {
-            unknown += 1;
+            markUnknown();
             continue;
         }
 
         const ageMs = now - observation.timestamp;
+        const stale = Number.isFinite(ageMs) && ageMs > maxAgeMs;
+        // A stale figure is judged for "probably" with the age bar lifted; it never settles anything
         const { fire } = listingBeaten({
             armed: true,
             isSell,
             listingPrice: listing.price,
             bestPrice: observation.price,
             priceAgeMs: ageMs,
-            maxPriceAgeMs: maxAgeMs,
+            maxPriceAgeMs: stale ? Infinity : maxAgeMs,
         });
         if (!fire) {
             const usable = Number.isFinite(ageMs) && ageMs <= maxAgeMs && Number.isFinite(observation.price);
             if (usable) settled.add(listing.id);
-            else unknown += 1;
+            else markUnknown();
             continue;
         }
 
@@ -167,11 +178,12 @@ export function classifyListings(listings, observe, now, maxAgeMs, clamp = (pric
         // not a rival
         // The band clamp only applies to a figure that went through it; a raw pooled sighting matches exactly
         if (beatenByOwnListing(listing, active, observation.price, observation.clamped === true ? clamp : undefined)) {
-            settled.add(listing.id);
+            if (stale) markUnknown();
+            else settled.add(listing.id);
             continue;
         }
 
-        beaten.push({
+        const row = {
             id: listing.id,
             itemHrid: listing.itemHrid,
             enhancementLevel: level,
@@ -179,10 +191,21 @@ export function classifyListings(listings, observe, now, maxAgeMs, clamp = (pric
             price: listing.price,
             bestPrice: observation.price,
             ageMs,
-        });
+        };
+        if (!stale) {
+            beaten.push(row);
+            continue;
+        }
+        // A figure from before the listing existed cannot show it beaten
+        const created = Date.parse(listing.createdTimestamp);
+        if (Number.isFinite(created) && observation.timestamp < created) {
+            markUnknown();
+            continue;
+        }
+        probable.push({ ...row, probable: true });
     }
 
-    return { beaten, settled, activeIds, unknown };
+    return { beaten, probable, settled, activeIds, unknown: unknownRows.length, unknownRows };
 }
 
 /**
@@ -226,12 +249,49 @@ function rowLabel(row) {
 }
 
 /**
+ * A figure's age as the table shows it: "58m old", "2h 5m old", "3d old".
+ * @param {number} ageMs - Age in ms
+ * @returns {string}
+ */
+export function formatFigureAge(ageMs) {
+    const minutes = Math.max(0, Math.floor(ageMs / 60000));
+    if (minutes < 60) return `${minutes}m old`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return minutes % 60 ? `${hours}h ${minutes % 60}m old` : `${hours}h old`;
+    return `${Math.floor(hours / 24)}d old`;
+}
+
+/** Most listing names the no-data note spells out before it says "and N more" */
+const MAX_NAMED_UNKNOWN = 5;
+
+/**
+ * The note naming the listings that have no usable figure.
+ * @param {Object[]} unknownRows - Listings with no usable figure (`itemHrid`, `enhancementLevel`, `isSell`)
+ * @returns {string}
+ */
+function unknownNoteText(unknownRows) {
+    const counts = new Map();
+    for (const row of unknownRows) {
+        const label = `${rowLabel(row)} (${row.isSell ? 'sell' : 'buy'})`;
+        counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    const names = [...counts].map(([label, n]) => (n > 1 ? `${label} x${n}` : label));
+    const shown = names.slice(0, MAX_NAMED_UNKNOWN).join(', ');
+    const more = names.length > MAX_NAMED_UNKNOWN ? ` and ${names.length - MAX_NAMED_UNKNOWN} more` : '';
+    return `No usable price data for ${shown}${more}, so ${unknownRows.length === 1 ? 'it' : 'they'} could not be checked.`;
+}
+
+/**
  * Draw the table into a panel body.
  * @param {HTMLElement} body - Panel body
  * @param {Object[]} rows - Beaten listings to show (the ones not hidden)
- * @param {number} [unknown] - Active listings that could not be checked for lack of fresh data
+ * @param {number} [unknown] - Active listings that could not be checked for lack of usable data
  * @param {Object} [options] - Hiding support; omitted, the table is drawn as before with no controls
- * @param {Object[]} [options.hiddenRows] - Beaten listings the player hid
+ * @param {Object[]} [options.hiddenRows] - Beaten listings the player hid (fresh and probable alike; a
+ *   probable one carries `probable: true`)
+ * @param {Object[]} [options.probableRows] - Listings beaten by a figure older than the freshness bar, drawn
+ *   in a second group with the figure's age
+ * @param {Object[]} [options.unknownRows] - The listings counted in `unknown`, named in the note
  * @param {boolean} [options.showHidden] - Draw the hidden rows (dimmed) too
  * @param {(row: Object) => void} [options.onHide] - Called with a row whose hide control was pressed
  * @param {(row: Object) => void} [options.onUnhide] - Called with a hidden row whose unhide control was pressed
@@ -239,6 +299,7 @@ function rowLabel(row) {
  */
 export function drawOverbidTable(body, rows, unknown = 0, options = {}) {
     const hiddenRows = options.hiddenRows || [];
+    const probableRows = options.probableRows || [];
     const showHidden = options.showHidden === true && hiddenRows.length > 0;
 
     if (hiddenRows.length > 0) {
@@ -258,24 +319,56 @@ export function drawOverbidTable(body, rows, unknown = 0, options = {}) {
     if (unknown > 0) {
         body.appendChild(
             panelNote(
-                `Price data is old or missing for ${unknown} of your listings, so ${unknown === 1 ? 'it' : 'they'} could not be checked.`
+                options.unknownRows?.length
+                    ? unknownNoteText(options.unknownRows)
+                    : `Price data is old or missing for ${unknown} of your listings, so ${unknown === 1 ? 'it' : 'they'} could not be checked.`
             )
         );
     }
-    const drawn = showHidden ? [...rows, ...hiddenRows] : rows;
-    if (!drawn.length) {
+    const hiddenFresh = showHidden ? hiddenRows.filter((row) => !row.probable) : [];
+    const hiddenProbable = showHidden ? hiddenRows.filter((row) => row.probable) : [];
+    const drawn = [...rows, ...hiddenFresh];
+    const drawnProbable = [...probableRows, ...hiddenProbable];
+    if (!drawn.length && !drawnProbable.length) {
         body.appendChild(
             panelNote(hiddenRows.length ? 'All overbid items are hidden.' : 'Nothing is undercut or outbid right now.')
         );
         return;
     }
 
+    if (drawn.length) drawGroup(body, drawn, hiddenRows, showHidden, options, false);
+    if (drawnProbable.length) {
+        const heading = document.createElement('div');
+        heading.dataset.overbidProbableHeading = 'true';
+        heading.textContent = 'Probably overbid';
+        Object.assign(heading.style, { marginTop: '8px', fontWeight: 'bold' });
+        body.appendChild(heading);
+        body.appendChild(
+            panelNote('The price in front of these is older than 15 minutes, so they may have changed since.')
+        );
+        drawGroup(body, drawnProbable, hiddenRows, showHidden, options, true);
+    }
+}
+
+/**
+ * Draw one table of rows.
+ * @param {HTMLElement} body - Panel body
+ * @param {Object[]} drawn - The rows of this group, hidden ones included when they are being shown
+ * @param {Object[]} hiddenRows - Every hidden row
+ * @param {boolean} showHidden - Whether hidden rows are drawn
+ * @param {Object} options - See {@link drawOverbidTable}
+ * @param {boolean} probable - Draw the group of old figures, with an age column
+ */
+function drawGroup(body, drawn, hiddenRows, showHidden, options, probable) {
     const table = document.createElement('table');
-    table.dataset.overbidTable = 'true';
+    if (probable) table.dataset.overbidProbableTable = 'true';
+    else table.dataset.overbidTable = 'true';
     Object.assign(table.style, { width: '100%', borderCollapse: 'collapse' });
 
     const head = table.createTHead().insertRow();
-    for (const text of ['Item', 'Side', 'Overbid price', 'Your price']) {
+    const heads = ['Item', 'Side', 'Overbid price', 'Your price'];
+    if (probable) heads.push('Price age');
+    for (const text of heads) {
         const cell = document.createElement('th');
         cell.textContent = text;
         Object.assign(cell.style, {
@@ -335,6 +428,12 @@ export function drawOverbidTable(body, rows, unknown = 0, options = {}) {
         yours.title = String(row.price);
         best.style.textAlign = 'right';
         yours.style.textAlign = 'right';
+        if (probable) {
+            const age = tr.insertCell();
+            age.dataset.overbidAge = 'true';
+            age.textContent = formatFigureAge(row.ageMs);
+            age.style.textAlign = 'right';
+        }
 
         for (const cell of tr.cells) cell.style.padding = '2px 6px';
     }
@@ -348,6 +447,10 @@ class OverbidPanel {
         this.panel = null;
         /** The beaten listings from the last update; the panel draws from this */
         this.rows = [];
+        /** Listings beaten by a figure older than the freshness bar; drawn, but never announced or dismissed */
+        this.probableRows = [];
+        /** Active listings with no usable figure, named in the note */
+        this.unknownRows = [];
         /** Beaten listings the player hid, as of the last update; not counted, not announced, not dismissed */
         this.hiddenRows = [];
         /** Hidden keys (see {@link hiddenKey}) of the character in {@link hiddenOwner}, oldest first */
@@ -413,6 +516,8 @@ class OverbidPanel {
             draw: (body) => {
                 drawOverbidTable(body, this.rows, this.unknown, {
                     hiddenRows: this.hiddenRows,
+                    probableRows: this.probableRows,
+                    unknownRows: this.unknownRows,
                     showHidden: this.showHidden,
                     onHide: (row) => this.setHidden(row, true),
                     onUnhide: (row) => this.setHidden(row, false),
@@ -639,13 +744,17 @@ class OverbidPanel {
         try {
             classification = currentClassification();
             this.rows = classification.beaten.filter((row) => !this.hidden.has(hiddenKey(row)));
-            this.hiddenRows = classification.beaten.filter((row) => this.hidden.has(hiddenKey(row)));
+            // Probable rows hide by the same key; hiding one never touches the dismissal bookkeeping
+            const hiddenAmong = (list) => list.filter((row) => this.hidden.has(hiddenKey(row)));
+            this.probableRows = classification.probable.filter((row) => !this.hidden.has(hiddenKey(row)));
+            this.hiddenRows = [...hiddenAmong(classification.beaten), ...hiddenAmong(classification.probable)];
         } catch (error) {
             console.error('[OverbidPanel] Checking listings failed:', error);
             return;
         }
 
         this.unknown = classification.unknown;
+        this.unknownRows = classification.unknownRows;
 
         // Open before and closed now, and not by us: the player closed it, which is a dismissal of what it showed
         if (this.wasOpen && !this.panel.isOpen()) {
@@ -662,12 +771,17 @@ class OverbidPanel {
         }
 
         if (!this.hiddenRows.length) this.showHidden = false;
-        const hiddenNote = this.hiddenRows.length ? `, ${this.hiddenRows.length} hidden` : '';
+        // The title counts the fresh rows; probable and hidden ones are noted beside the count
+        const notes = [];
+        if (this.probableRows.length) notes.push(`${this.probableRows.length} probable`);
+        if (this.hiddenRows.length) notes.push(`${this.hiddenRows.length} hidden`);
+        const extra = notes.length ? `, ${notes.join(', ')}` : '';
 
         if (!this.rows.length) {
-            this.panel.setTitle(this.hiddenRows.length ? `Overbid table (0${hiddenNote})` : 'Overbid table');
-            // Open with only hidden rows left: stay open and offer them back rather than closing under the player
-            if ((this.manual || this.hiddenRows.length) && this.panel.isOpen()) {
+            this.panel.setTitle(notes.length ? `Overbid table (0${extra})` : 'Overbid table');
+            // Open with only hidden rows left: stay open and offer them back rather than closing under the player.
+            // Probable rows alone neither keep an auto-opened panel open nor open one: the pop-up keeps the fresh bar
+            if ((this.manual || this.hiddenRows.some((row) => !row.probable)) && this.panel.isOpen()) {
                 this.panel.render();
             } else {
                 this.wasOpen = false;
@@ -676,7 +790,7 @@ class OverbidPanel {
             return;
         }
 
-        this.panel.setTitle(`Overbid table (${this.rows.length}${hiddenNote})`);
+        this.panel.setTitle(`Overbid table (${this.rows.length}${extra})`);
         const fresh = this.rows.some((row) => !this.dismissed.has(row.id));
 
         if (this.panel.isOpen()) {
@@ -769,6 +883,8 @@ class OverbidPanel {
         this.panel?.destroy();
         this.panel = null;
         this.rows = [];
+        this.probableRows = [];
+        this.unknownRows = [];
         this.hiddenRows = [];
         this.hidden = new Set();
         this.hiddenOwner = null;
