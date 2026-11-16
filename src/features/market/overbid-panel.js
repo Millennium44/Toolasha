@@ -278,7 +278,7 @@ function unknownNoteText(unknownRows) {
     const names = [...counts].map(([label, n]) => (n > 1 ? `${label} x${n}` : label));
     const shown = names.slice(0, MAX_NAMED_UNKNOWN).join(', ');
     const more = names.length > MAX_NAMED_UNKNOWN ? ` and ${names.length - MAX_NAMED_UNKNOWN} more` : '';
-    return `No usable price data for ${shown}${more}, so ${unknownRows.length === 1 ? 'it' : 'they'} could not be checked.`;
+    return `No recent price data for ${shown}${more}, so ${unknownRows.length === 1 ? 'it' : 'they'} could not be checked.`;
 }
 
 /**
