@@ -22,6 +22,10 @@ A row hidden on one device is no longer brought back when another device syncs a
 
 During a run, Last Run, Avg Run and Runs count only your runs of that dungeon and tier, instead of every dungeon whenever the history filter was on All. Picking All no longer stops the history list from following the live run.
 
+### Per-player and Tracker buttons stay in the player box on phones
+
+At phone width the Per-player and dungeon Tracker buttons sit at the top of the party box, as on desktop, instead of taking rows of their own that pushed the battle down.
+
 <!-- shipped in 3.87.0 -->
 
 ### Overbid table shows listings beaten by older prices

@@ -2,7 +2,8 @@
  * The dungeon tracker's reopen button, beside the battle panel's "Per-player" button.
  *
  * The tracker's × dismisses it for the rest of a dungeon action and Ctrl+K was the only way back.
- * This is the on-screen way back: same look and size as Per-player, in the same corner, to its left.
+ * This is the on-screen way back: same look and size as Per-player, in the same corner, to its left. On phones
+ * too: the players area reserves a thin strip at its top for the two buttons.
  * It lives here rather than in combat-dps-panel.js so the two features stay independent; the only
  * coupling is that it reads the Per-player button's width off the page to sit beside it.
  *
@@ -11,7 +12,7 @@
  */
 
 import { styleGameButton } from '../../utils/game-look.js';
-import { dockWhenNarrow } from '../../utils/responsive-dock.js';
+import { watchTopStrip } from '../../utils/responsive-dock.js';
 
 export const REOPEN_BUTTON_ID = 'toolasha-dungeon-tracker-reopen-button';
 // The Per-player button's id, read by id so the two modules share nothing else
@@ -36,25 +37,24 @@ function inGuildPanel(element) {
 }
 
 function remove() {
-    detachLayout?.();
-    detachLayout = null;
     button?.remove();
     button = null;
+    // Any stray copy a re-render left behind
+    document.querySelectorAll(`#${REOPEN_BUTTON_ID}`).forEach((el) => el.remove());
+    // After the button is gone, so the strip is only kept if Per-player still needs it
+    detachLayout?.();
+    detachLayout = null;
     if (positionedArea) positionedArea.style.position = '';
     positionedArea = null;
     area = null;
-    // Any stray copy a re-render left behind
-    document.querySelectorAll(`#${REOPEN_BUTTON_ID}`).forEach((el) => el.remove());
 }
 
-/** Keep the right offset clear of Per-player, which may come, go, dock or resize */
+/** Keep the right offset clear of Per-player, which may come, go or resize */
 function place() {
     if (!button) return;
-    if (button.dataset.toolashaDocked === 'true') return;
     const perPlayer = document.getElementById(PER_PLAYER_ID);
     let right = EDGE;
-    // Docked (phone width) Per-player is a row of its own, not in the corner
-    if (perPlayer?.isConnected && perPlayer.dataset.toolashaDocked !== 'true' && !inGuildPanel(perPlayer)) {
+    if (perPlayer?.isConnected && !inGuildPanel(perPlayer)) {
         const width = perPlayer.getBoundingClientRect().width;
         right = EDGE + (width > 0 ? width : FALLBACK_PER_PLAYER_WIDTH) + GAP;
     }
@@ -110,20 +110,14 @@ export function syncReopenButton() {
     target.appendChild(next);
     button = next;
     area = target;
-    const battleArea = target.closest('[class*="BattlePanel_battleArea"]');
-    if (battleArea?.parentElement) {
-        detachLayout = dockWhenNarrow(next, {
-            host: battleArea.parentElement,
-            before: battleArea,
-            measure:
-                battleArea.closest('[class*="GamePage_mainPanel"], [class*="GamePage_gamePanel"]') ||
-                battleArea.parentElement,
-            onChange: (narrow) => {
-                if (narrow) next.style.width = 'fit-content';
-                else place();
-            },
-        });
-    }
+    // At phone width the area keeps a thin strip free at its top so the corner buttons cover no unit
+    detachLayout = watchTopStrip(target, {
+        buttonIds: [PER_PLAYER_ID, REOPEN_BUTTON_ID],
+        measure:
+            target.closest('[class*="GamePage_mainPanel"], [class*="GamePage_gamePanel"]') ||
+            target.closest('[class*="BattlePanel_battleArea"]')?.parentElement ||
+            target,
+    });
     place();
 }
 
