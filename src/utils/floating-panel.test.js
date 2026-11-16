@@ -274,6 +274,106 @@ describe('the resize grip', () => {
         expect(grip.title).toBe('Drag to resize · double-click to reset size');
     });
 
+    describe('a reset after the grip pinned a right-placed panel', () => {
+        const place = () => {
+            panel.style.position = 'fixed';
+            panel.style.right = '60px';
+            panel.style.bottom = '20px';
+            panel.style.left = '';
+            panel.style.top = '';
+            panel.getBoundingClientRect = () => ({ left: 500, top: 300, width: 300, height: 200 });
+            const onReset = vi.fn();
+            makeResizable(panel, { minWidth: 100, minHeight: 50, onReset });
+            return { grip: panel.lastElementChild, onReset };
+        };
+        const drag = (grip, dx = 50) => {
+            grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 800, clientY: 500 }));
+            document.dispatchEvent(new MouseEvent('pointermove', { clientX: 800 + dx, clientY: 520 }));
+            document.dispatchEvent(new MouseEvent('pointerup'));
+        };
+        const reset = (grip) => grip.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+
+        test('goes back to its right and bottom, with left and top cleared', () => {
+            const { grip, onReset } = place();
+            drag(grip);
+            expect(panel.style.left).toBe('500px');
+
+            reset(grip);
+
+            expect(panel.style.right).toBe('60px');
+            expect(panel.style.bottom).toBe('20px');
+            expect(panel.style.left).toBe('');
+            expect(panel.style.top).toBe('');
+            expect(onReset).toHaveBeenCalledTimes(1);
+        });
+
+        test('still does after two drags, which never record the pinned values as the originals', () => {
+            const { grip } = place();
+            drag(grip);
+            drag(grip, 30);
+
+            reset(grip);
+
+            expect(panel.style.right).toBe('60px');
+            expect(panel.style.bottom).toBe('20px');
+            expect(panel.style.left).toBe('');
+        });
+
+        test('leaves a panel the player moved by its header since the drag where it is', () => {
+            const { grip } = place();
+            drag(grip);
+            panel.style.left = '640px';
+
+            reset(grip);
+
+            expect(panel.style.left).toBe('640px');
+            expect(panel.style.top).toBe('300px');
+            expect(panel.style.right).toBe('auto');
+        });
+
+        test('a reset with no drag before it changes no placement', () => {
+            const { grip, onReset } = place();
+
+            reset(grip);
+
+            expect(panel.style.right).toBe('60px');
+            expect(panel.style.bottom).toBe('20px');
+            expect(panel.style.left).toBe('');
+            expect(onReset).toHaveBeenCalledTimes(1);
+        });
+
+        test('restores before onReset runs, so an onReset that places the panel has the last word', () => {
+            panel.style.position = 'fixed';
+            panel.style.right = '60px';
+            panel.getBoundingClientRect = () => ({ left: 500, top: 300, width: 300, height: 200 });
+            makeResizable(panel, {
+                onReset: () => {
+                    panel.style.left = '10px';
+                },
+            });
+            const grip = panel.lastElementChild;
+            drag(grip);
+
+            reset(grip);
+
+            expect(panel.style.left).toBe('10px');
+        });
+
+        test('a second reset after the first does not restore again', () => {
+            const { grip } = place();
+            drag(grip);
+            reset(grip);
+            panel.style.left = '5px';
+            panel.style.top = '6px';
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+
+            reset(grip);
+
+            expect(panel.style.left).toBe('5px');
+        });
+    });
+
     test('and is finger-sized on a coarse pointer', () => {
         // 14px is a mouse target; on a touchscreen the grip is the feature
         hasCoarsePointer.mockReturnValue(true);

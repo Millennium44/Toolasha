@@ -226,17 +226,48 @@ export function makeDraggable(panel, handle, onDrop) {
  * with a transform is left to its own `onStart`, since its left is not its rect's.
  *
  * @param {HTMLElement} panel - The panel about to be resized
+ * @returns {{original: Object, pinned: Object}|null} The inline placement it had before and the left/top it was
+ *   pinned to (as the style reads them back), or null when the panel was left alone
  */
 function anchorTopLeft(panel) {
     const style = getComputedStyle(panel);
-    if (style.position !== 'fixed') return;
-    if (style.transform && style.transform !== 'none') return;
+    if (style.position !== 'fixed') return null;
+    if (style.transform && style.transform !== 'none') return null;
     const rect = panel.getBoundingClientRect();
-    if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top)) return;
+    if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top)) return null;
+    const original = {
+        left: panel.style.left,
+        top: panel.style.top,
+        right: panel.style.right,
+        bottom: panel.style.bottom,
+    };
     panel.style.left = `${rect.left}px`;
     panel.style.top = `${rect.top}px`;
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
+    return { original, pinned: { left: panel.style.left, top: panel.style.top } };
+}
+
+/**
+ * Put a panel back under the placement it had before `anchorTopLeft` pinned it, so a reset at the default size
+ * sits where the panel was placed rather than overhanging the window from its pinned left edge. Only when the
+ * panel still carries exactly what the anchor wrote: a panel dragged by its header since, or moved by anything
+ * else, is left where it is.
+ *
+ * @param {HTMLElement} panel - The panel
+ * @param {{original: Object, pinned: Object}|null} anchor - What `anchorTopLeft` returned
+ * @returns {boolean} Whether the original placement was restored
+ */
+function restoreAnchor(panel, anchor) {
+    if (!anchor) return false;
+    const { style } = panel;
+    if (style.left !== anchor.pinned.left || style.top !== anchor.pinned.top) return false;
+    if (style.right !== 'auto' || style.bottom !== 'auto') return false;
+    style.left = anchor.original.left;
+    style.top = anchor.original.top;
+    style.right = anchor.original.right;
+    style.bottom = anchor.original.bottom;
+    return true;
 }
 
 /**
@@ -288,6 +319,8 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize,
     let resizing = false;
     let moved = false;
     let activePointerId = null;
+    // What the first drag pinned and from where; kept across drags so a reset can go back to the placement
+    let anchor = null;
 
     // Same pointer-events story as the drag handle; and a 14px grip is a
     // mouse-sized target, so a coarse pointer gets a bigger one
@@ -306,7 +339,11 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize,
             // start size was measured with them in place: lifting a max-height on
             // pointerdown would let an auto-height panel jump to its full content
             // height before the finger moved, and a tap would leave it there
-            anchorTopLeft(panel);
+            // A later drag finds the panel still pinned by the earlier one and keeps its record, so the
+            // originals stay the placement before the first drag; a panel moved since is pinned afresh
+            const stillPinned =
+                anchor && panel.style.left === anchor.pinned.left && panel.style.top === anchor.pinned.top;
+            if (!stillPinned) anchor = anchorTopLeft(panel);
             onStart?.(panel);
         }
         // A floor taller or wider than the panel already is would make a drag
@@ -373,6 +410,8 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize,
     const onDoubleClick = (event) => {
         event.preventDefault();
         event.stopPropagation();
+        // First, so an onReset that sets its own placement has the last word
+        if (restoreAnchor(panel, anchor)) anchor = null;
         onReset?.();
     };
 
@@ -384,6 +423,7 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize,
         grip.removeEventListener('pointerdown', onPointerDown);
         grip.removeEventListener('dblclick', onDoubleClick);
         onPointerUp();
+        anchor = null;
         grip.remove();
     };
 }
