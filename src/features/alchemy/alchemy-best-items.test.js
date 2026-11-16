@@ -2701,6 +2701,11 @@ describe('remembering the place and hiding rows', () => {
             (tr) => tr.querySelector('[data-mwi-best-rank]').textContent
         );
     const hiddenKey = (owner = '1') => `alchemyBestItems_hidden_${owner}`;
+    // The lists only: the hide/unhide times beside them are checked in alchemy-best-items-hidden.test.js
+    const storedLists = (key) => {
+        const { __events, ...lists } = store.data.get(key) || {};
+        return lists;
+    };
     const typeKey = (owner = '1') => `alchemyBestItems_lastType_${owner}`;
     const toggle = () => bestItems.modal.querySelector('[data-mwi-hidden-toggle]');
     const hide = (index) => bestItems.modal.querySelectorAll('[data-mwi-best-hide]')[index].click();
@@ -2756,8 +2761,8 @@ describe('remembering the place and hiding rows', () => {
         // A hide made now lands under the new character only, and the first one's list is untouched
         pickType('decompose');
         hide(0);
-        expect(store.data.get(hiddenKey('2'))).toEqual({ decompose: ['/items/a'] });
-        expect(store.data.get(hiddenKey('1'))).toEqual({ decompose: ['/items/a'] });
+        expect(storedLists(hiddenKey('2'))).toEqual({ decompose: ['/items/a'] });
+        expect(storedLists(hiddenKey('1'))).toEqual({ decompose: ['/items/a'] });
 
         // A character whose list has not been read yet cannot be written to from another's memory
         store.owner = '3';
@@ -2773,7 +2778,7 @@ describe('remembering the place and hiding rows', () => {
         expect(names()).toEqual(['b', 'c']);
         pickType('decompose');
         expect(names()).toEqual(['a', 'b', 'c']);
-        expect(store.data.get(hiddenKey())).toEqual({ coinify: ['/items/a'] });
+        expect(storedLists(hiddenKey())).toEqual({ coinify: ['/items/a'] });
         // A tab click never rewrites the hidden list
         expect(store.writes.filter(([key]) => key === hiddenKey())).toHaveLength(1);
     });
@@ -2803,7 +2808,7 @@ describe('remembering the place and hiding rows', () => {
 
         hiddenRow.querySelector('[data-mwi-best-unhide]').click();
         expect(names()).toEqual(['a', 'b', 'c']);
-        expect(store.data.get(hiddenKey())).toEqual({ coinify: [] });
+        expect(storedLists(hiddenKey())).toEqual({ coinify: [] });
         // Nothing left hidden: the toggle goes and the reveal switches itself off
         expect(toggle().style.display).toBe('none');
         expect(bestItems.showHidden).toBe(false);
@@ -2829,7 +2834,7 @@ describe('remembering the place and hiding rows', () => {
 
         // Unhide from the shown row persists
         bestItems.modal.querySelector('[data-mwi-best-unhide]').click();
-        expect(store.data.get(hiddenKey())).toEqual({ coinify: ['/items/r150'] });
+        expect(storedLists(hiddenKey())).toEqual({ coinify: ['/items/r150'] });
     });
 
     test('the toggle says how many hidden items the other filters let through', async () => {
@@ -2878,14 +2883,14 @@ describe('remembering the place and hiding rows', () => {
         expect(bestItems.prefsOwner).toBeNull();
         hide(0);
         expect(store.writes).toEqual([]);
-        expect(store.data.get(hiddenKey())).toEqual({ coinify: ['/items/b', '/items/c'] });
+        expect(storedLists(hiddenKey())).toEqual({ coinify: ['/items/b', '/items/c'] });
 
         // Once a read works the list loads and hiding is allowed again
         store.failReads = false;
         await bestItems.openModal();
         expect(names()).toEqual(['a']);
         hide(0);
-        expect(store.data.get(hiddenKey())).toEqual({ coinify: ['/items/b', '/items/c', '/items/a'] });
+        expect(storedLists(hiddenKey())).toEqual({ coinify: ['/items/b', '/items/c', '/items/a'] });
     });
 
     test('a hide keeps what another tab or a sync pull stored behind the open modal', async () => {
@@ -2894,7 +2899,7 @@ describe('remembering the place and hiding rows', () => {
         await open();
         store.data.set(hiddenKey(), { coinify: ['/items/c', '/items/b'], decompose: ['/items/z'] });
         hide(0);
-        expect(store.data.get(hiddenKey())).toEqual({
+        expect(storedLists(hiddenKey())).toEqual({
             coinify: ['/items/c', '/items/b', '/items/a'],
             decompose: ['/items/z'],
         });
@@ -2902,12 +2907,29 @@ describe('remembering the place and hiding rows', () => {
         await vi.waitFor(() => expect(bestItems.isHidden('coinify', '/items/b')).toBe(true));
     });
 
+    test('a hide and an unhide each record when they happened, beside an old-shape list', async () => {
+        store.data.set(hiddenKey(), { coinify: ['/items/c'] });
+        vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
+        await open();
+        hide(0);
+        const afterHide = store.data.get(hiddenKey());
+        expect(afterHide.coinify).toEqual(['/items/c', '/items/a']);
+        expect(afterHide.__events.coinify['/items/a']).toEqual({ t: expect.any(Number), h: 1 });
+        // The item the old-shape list already held has no time yet: it is not invented
+        expect(afterHide.__events.coinify['/items/c']).toBeUndefined();
+
+        bestItems.modal.querySelector('[data-mwi-hidden-toggle]').click();
+        bestItems.modal.querySelector('[data-mwi-best-unhide]').click();
+        await vi.waitFor(() => expect(store.data.get(hiddenKey()).__events.coinify['/items/a'].h).toBe(0));
+        expect(store.data.get(hiddenKey()).coinify).not.toContain('/items/a');
+    });
+
     test('lists for types this build does not know are written back untouched', async () => {
         store.data.set(hiddenKey(), { coinify: [], unrefine: ['/items/q'], future: 'x' });
         vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
         await open();
         hide(0);
-        expect(store.data.get(hiddenKey())).toEqual({ coinify: ['/items/a'], unrefine: ['/items/q'], future: 'x' });
+        expect(storedLists(hiddenKey())).toEqual({ coinify: ['/items/a'], unrefine: ['/items/q'], future: 'x' });
     });
 
     test('a hide made while the saved list was being read is not undone by the read', async () => {

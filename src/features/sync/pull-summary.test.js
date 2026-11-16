@@ -218,6 +218,8 @@ describe('row counts', () => {
         expect(countRows(undefined)).toBe(0);
         expect(countRows(null)).toBe(0);
         expect(countRows([])).toBe(0);
+        // The hidden-times field of a record is bookkeeping, not a row
+        expect(countRows({ coinify: [], decompose: [], __events: { coinify: {} } })).toBe(2);
         expect(countRows('text')).toBeNull();
         expect(countRows(7)).toBeNull();
         expect(countRows(true)).toBeNull();

@@ -53,7 +53,10 @@ export function countRows(value) {
         if (Array.isArray(value)) return value.length;
         if (typeof value === 'object') {
             const proto = Object.getPrototypeOf(value);
-            if (proto === Object.prototype || proto === null) return Object.keys(value).length;
+            if (proto === Object.prototype || proto === null) {
+                // `__events` is a record's own bookkeeping (Best Items hidden times), not a row
+                return Object.keys(value).filter((key) => key !== '__events').length;
+            }
         }
     } catch {
         return null;
