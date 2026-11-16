@@ -202,8 +202,9 @@ Every brief to a sub-agent carries these lines:
   in the report. Most bugs reviewers caught were in a reader, not the changed function.
 - **Report the enumeration, not just the findings**, so nobody pays to re-derive it.
 - **Keep the hand-back short: about 40 lines.** What changed, the commit hashes, what was and was not verified,
-  open items. Put the full enumeration, consumer sweep and test list in a file in your scratchpad and give its
-  path. The integrating session re-reads every report on every later turn, so a 200-line report costs it many times over.
+  open items. Put the full enumeration, consumer sweep and test list in the commit bodies, which the integrator
+  can read when it needs them; do not write report files (Claude's harness refuses them for sub-agents). The
+  integrating session re-reads every report on every later turn, so a 200-line report costs it many times over.
 - **Porting or extending a path: list the old path's rules first.** Before writing the new path (a Lab
   feature brought to the Combat Sim, a second search beside the first), list every rule the existing
   path enforces — how it scores each side, what it refuses (unpriced own items), what it warns (stopped
