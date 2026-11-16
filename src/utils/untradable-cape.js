@@ -94,6 +94,24 @@ export function getCapeBaseValueMode() {
 }
 
 /**
+ * The cape setting as a cache-key fragment. On the decompose setting the value also depends on the Sell side
+ * of the profit and net-worth pricing modes and the patient sell tick, none of which move an order book, so a
+ * cache keyed on the mode alone would keep a stale figure after one of them changes.
+ * @returns {string}
+ */
+export function getCapeBaseValueStamp() {
+    const mode = getCapeBaseValueMode();
+    if (mode !== CAPE_BASE_VALUE_DECOMPOSE) return mode;
+    const setting = (key) => config.getSettingValue(key, '') ?? '';
+    return [
+        mode,
+        setting('profitCalc_pricingMode'),
+        setting('networth_pricingMode'),
+        config.getSetting?.('profitCalc_patientTickSell') === true ? 'tickSell' : '',
+    ].join(':');
+}
+
+/**
  * What decomposing one unrefined untradable cape yields, priced the way the decompose figures price their
  * outputs: each output at its sell price (a Labyrinth Token at its shop value), after the marketplace tax.
  * Only the base `decomposeItems` count: no success rate, catalyst or bonus drops, since this is the cape's

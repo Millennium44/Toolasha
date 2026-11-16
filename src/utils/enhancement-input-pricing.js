@@ -50,7 +50,13 @@ import { taskShopTokenPrice } from './task-shop-value.js';
 import { testerShopEnabled } from './tester-shop.js';
 import { getMarketValuesEpoch } from './market-values.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
-import { getCapeBaseValue, getCapeBaseValueMode, isRefinedCape, isUntradableCape } from './untradable-cape.js';
+import {
+    getCapeBaseValue,
+    getCapeBaseValueMode,
+    getCapeBaseValueStamp,
+    isRefinedCape,
+    isUntradableCape,
+} from './untradable-cape.js';
 import {
     TRAINEE_SHOP_PRICE,
     getCheapestProtectionPrice as getCheapestProtectionPriceFrom,
@@ -217,7 +223,7 @@ export function pricingStamp() {
         // Tester-shop pricing swaps shop-vs-market results
         testerShopEnabled() ? 'tester' : '',
         // What an unrefined untradable cape is assumed to be worth moves every cape's base cost
-        getCapeBaseValueMode(),
+        getCapeBaseValueStamp(),
         custom,
         // The game's value map clamps and fills getPrice() without any order book moving
         values,

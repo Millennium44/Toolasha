@@ -32,7 +32,7 @@ import marketAPI from '../api/marketplace.js';
 import { getItemPrice, getItemPrices } from './market-data.js';
 import { getArtisanBonus } from './artisan-bonus.js';
 import { findProducingAction } from './production-index.js';
-import { baseCapeIsPlainZero, getCapeBaseValue, getCapeBaseValueMode, isUntradableCape } from './untradable-cape.js';
+import { baseCapeIsPlainZero, getCapeBaseValue, getCapeBaseValueStamp, isUntradableCape } from './untradable-cape.js';
 import { getMarketValuesEpoch } from './market-values.js';
 import { taskShopTokenPrice } from './task-shop-value.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
@@ -291,7 +291,7 @@ export function getProductionCostDetailed(itemHrid, mode = 'ask') {
     // throw, and not cached, so the answer is recomputed once the data arrives
     if (!dataManager.getInitClientData()) return { cost: 0, partial: true };
     // The cape setting is part of the key: a refined cape's upgrade item is priced by it
-    const cacheKey = `${itemHrid}|${mode}|${getCapeBaseValueMode()}`;
+    const cacheKey = `${itemHrid}|${mode}|${getCapeBaseValueStamp()}`;
     const feedVersion = _feedVersion();
     const buffVersion = _buffVersion();
     const customVersion = _customVersion();
