@@ -28,6 +28,7 @@ import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
 import { navigateToAction, navigateToItem } from '../../utils/item-navigation.js';
 import { liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { itemLabel } from '../../utils/overlay-format.js';
+import { getIconHref, getSkillHridFromIconHref } from '../../utils/game-lookups.js';
 import {
     PRODUCTION_SKILLS,
     rankProductionArbitrage,
@@ -67,6 +68,9 @@ const BAD = '#f87171';
  * @returns {Object|null} The matching entry of PRODUCTION_SKILLS
  */
 function skillForTitle(titleElement) {
+    // The title's skill icon sprite is the same in every game language; the English name is the fallback
+    const hrid = getSkillHridFromIconHref(getIconHref(titleElement, 'skills_sprite'));
+    if (hrid) return PRODUCTION_SKILLS.find((skill) => skill.skillHrid === hrid) || null;
     const text = titleElement?.textContent || '';
     return PRODUCTION_SKILLS.find((skill) => text.includes(skill.label)) || null;
 }

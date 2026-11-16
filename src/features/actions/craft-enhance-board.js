@@ -33,6 +33,7 @@ import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
 import { navigateToAction, navigateToItem } from '../../utils/item-navigation.js';
 import { itemDailyVolume } from '../../utils/liquidity-cap.js';
 import { itemLabel } from '../../utils/overlay-format.js';
+import { getIconHref, getSkillHridFromIconHref } from '../../utils/game-lookups.js';
 import { PRODUCTION_SKILLS } from './production-arbitrage.js';
 import {
     CRAFT_ENHANCE_SETTING,
@@ -93,6 +94,9 @@ const REASON_LABELS = {
  * @returns {boolean} Whether it is a gear-making skill page
  */
 function isGearSkillTitle(titleElement) {
+    // The title's skill icon sprite is the same in every game language; the English name is the fallback
+    const hrid = getSkillHridFromIconHref(getIconHref(titleElement, 'skills_sprite'));
+    if (hrid) return BUTTON_SKILLS.some((skill) => skill.skillHrid === hrid);
     const text = titleElement?.textContent || '';
     return BUTTON_SKILLS.some((skill) => text.includes(skill.label));
 }
