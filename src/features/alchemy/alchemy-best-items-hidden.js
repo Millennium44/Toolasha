@@ -17,6 +17,8 @@ import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /** Storage key prefix (per character) */
 export const HIDDEN_KEY_PREFIX = 'alchemyBestItems_hidden_';
+/** How far ahead of this device's clock an event time may be before it is ignored */
+const MAX_AHEAD_MS = 24 * 60 * 60 * 1000;
 /** The field beside the lists that holds the events; never a valid alchemy type */
 export const EVENTS_FIELD = '__events';
 
@@ -47,7 +49,10 @@ export function listOf(value, type) {
 export function eventOf(value, type, hrid) {
     const events = isPlainObject(value) && isPlainObject(value[EVENTS_FIELD]) ? value[EVENTS_FIELD][type] : null;
     const event = isPlainObject(events) ? events[hrid] : null;
-    if (!isPlainObject(event) || !Number.isFinite(event.t) || event.t <= 0) return null;
+    // A time far ahead of this clock is a bad clock or junk: it would pin the item against every later change
+    if (!isPlainObject(event) || !Number.isFinite(event.t) || event.t <= 0 || event.t > Date.now() + MAX_AHEAD_MS) {
+        return null;
+    }
     return { t: event.t, h: event.h ? 1 : 0 };
 }
 
@@ -119,6 +124,12 @@ export function mergeHiddenRecords(local, incoming) {
         out[type] = hidden;
     }
     if (Object.keys(events).length > 0) out[EVENTS_FIELD] = events;
+    // Fields this build does not know (a newer build's sibling of the lists) pass through: incoming's, else local's
+    for (const source of [local, incoming]) {
+        for (const [key, value] of Object.entries(source)) {
+            if (key !== EVENTS_FIELD && !Array.isArray(value)) out[key] = value;
+        }
+    }
     return out;
 }
 

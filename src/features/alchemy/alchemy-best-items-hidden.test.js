@@ -143,6 +143,22 @@ describe('mergeHiddenRecords', () => {
     });
 });
 
+describe('review fixes', () => {
+    test('fields this build does not know pass through a fold, incoming first', () => {
+        const merged = mergeHiddenRecords({ coinify: [A], __meta: 'local', keep: 1 }, { coinify: [B], __meta: 'in' });
+        expect(merged.__meta).toBe('in');
+        expect(merged.keep).toBe(1);
+        expect(mergeHiddenRecords({ __meta: { v: 2 } }, { coinify: [] }).__meta).toEqual({ v: 2 });
+    });
+
+    test('an event time far ahead of the clock is ignored, so it cannot pin an item', () => {
+        const pinned = rec({ coinify: [A] }, { coinify: { [A]: ev(1e300, 1) } });
+        const unhide = rec({ coinify: [] }, { coinify: { [A]: ev(Date.now(), 0) } });
+        expect(mergeHiddenRecords(pinned, unhide).coinify).toEqual([]);
+        expect(mergeHiddenRecords(unhide, pinned).coinify).toEqual([]);
+    });
+});
+
 describe('applyHiddenChange', () => {
     test('hides into an old-shape record, keeping its other lists', () => {
         const next = applyHiddenChange({ coinify: [B], unrefine: [C] }, 'coinify', A, true, 1000);
