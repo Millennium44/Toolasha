@@ -274,8 +274,8 @@ export function getRealisticBaseItemPrice(itemHrid, { quoteOf = (hrid) => getIte
  * @param {'ask'|'bid'} [mode='ask'] - Pricing side to use for input materials
  * @returns {number} Coins per unit produced
  */
-export function getProductionCost(itemHrid, mode = 'ask') {
-    return getProductionCostDetailed(itemHrid, mode).cost;
+export function getProductionCost(itemHrid, mode = 'ask', context = 'profit') {
+    return getProductionCostDetailed(itemHrid, mode, context).cost;
 }
 
 /**
@@ -286,12 +286,13 @@ export function getProductionCost(itemHrid, mode = 'ask') {
  * @param {'ask'|'bid'} [mode='ask'] - Pricing side to use for input materials
  * @returns {{cost: number, partial: boolean}} Coins per unit produced and whether an input was unpriced
  */
-export function getProductionCostDetailed(itemHrid, mode = 'ask') {
+export function getProductionCostDetailed(itemHrid, mode = 'ask', context = 'profit') {
     // Game data not loaded yet: nothing can be priced. Unpriced (cost 0, flagged partial), never a
     // throw, and not cached, so the answer is recomputed once the data arrives
     if (!dataManager.getInitClientData()) return { cost: 0, partial: true };
     // The cape setting is part of the key: a refined cape's upgrade item is priced by it
-    const cacheKey = `${itemHrid}|${mode}|${getCapeBaseValueStamp()}`;
+    // The pricing context is part of the key: a decompose cape base is read on that context's Sell side
+    const cacheKey = `${itemHrid}|${mode}|${context}|${getCapeBaseValueStamp()}`;
     const feedVersion = _feedVersion();
     const buffVersion = _buffVersion();
     const customVersion = _customVersion();
@@ -315,7 +316,7 @@ export function getProductionCostDetailed(itemHrid, mode = 'ask') {
     _costing.add(inProgress);
     let result;
     try {
-        result = _computeProductionCost(itemHrid, mode);
+        result = _computeProductionCost(itemHrid, mode, context);
     } finally {
         _costing.delete(inProgress);
         recorder?.stop();
@@ -331,7 +332,7 @@ export function getProductionCostDetailed(itemHrid, mode = 'ask') {
 /** Items whose production cost is being worked out right now, to stop a recipe cycle */
 const _costing = new Set();
 
-function _computeProductionCost(itemHrid, mode = 'ask') {
+function _computeProductionCost(itemHrid, mode = 'ask', context = 'profit') {
     const gameData = dataManager.getInitClientData();
     const itemDetails = gameData.itemDetailMap[itemHrid];
 
@@ -366,7 +367,7 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
             // Inputs are bought, so a per-side custom price must answer with its buy figure
             let inputPrice = getItemPrice(input.itemHrid, { mode, side: 'buy' }) || 0;
             if (inputPrice === 0) {
-                const crafted = getProductionCostDetailed(input.itemHrid, mode);
+                const crafted = getProductionCostDetailed(input.itemHrid, mode, context);
                 inputPrice = crafted.cost;
                 if (crafted.partial) partial = true;
                 if (crafted.volatile) volatile = true;
@@ -394,7 +395,7 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
     // Use min(market, craft) so refined items reflect the cheapest way to obtain the base item
     if (action.upgradeItemHrid) {
         const upgradeMarketPrice = getItemPrice(action.upgradeItemHrid, { mode, side: 'buy' }) || 0;
-        const upgradeCraft = getProductionCostDetailed(action.upgradeItemHrid, mode);
+        const upgradeCraft = getProductionCostDetailed(action.upgradeItemHrid, mode, context);
         const upgradeCraftPrice = upgradeCraft.cost;
         let upgradePrice;
         if (upgradeMarketPrice > 0 && upgradeCraftPrice > 0) {
@@ -408,7 +409,7 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
         // An untradable cape has no market and no recipe: the base of a refined one is what the cape
         // setting assumes. Nothing is the player's own choice, a complete bill; a mirror with no price is not
         if (!(upgradePrice > 0) && isUntradableCape(action.upgradeItemHrid)) {
-            upgradePrice = getCapeBaseValue({ mode, itemHrid: action.upgradeItemHrid });
+            upgradePrice = getCapeBaseValue({ mode, itemHrid: action.upgradeItemHrid, context });
         }
         if (!(upgradePrice > 0) && !baseCapeIsPlainZero(itemHrid, action.upgradeItemHrid)) partial = true;
         totalPrice += upgradePrice;

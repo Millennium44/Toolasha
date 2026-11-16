@@ -87,8 +87,8 @@ function buySide(options) {
  * @param {'ask'|'bid'|'average'|string} side - The side the cost was taken on
  * @returns {boolean}
  */
-function craftPartial(itemHrid, side) {
-    return getProductionCostDetailed(itemHrid, side === 'bid' ? 'bid' : 'ask').partial;
+function craftPartial(itemHrid, side, context = 'profit') {
+    return getProductionCostDetailed(itemHrid, side === 'bid' ? 'bid' : 'ask', context).partial;
 }
 
 /**
@@ -158,7 +158,8 @@ export function priceMaterial(itemHrid, options = {}) {
         const tokens = taskShopTokenPrice(itemHrid);
         if (tokens) return { ...result(tokens.price, true, false, tokens.partial), tokenValued: true };
     }
-    const partial = Boolean(resolved.production) && craftPartial(itemHrid, buySide(options));
+    const partial =
+        Boolean(resolved.production) && craftPartial(itemHrid, buySide(options), options.context || 'profit');
     return result(resolved.price, resolved.estimated, Boolean(resolved.custom), partial);
 }
 
@@ -282,9 +283,9 @@ export function priceGuarded(itemHrid, options = {}) {
     // A craft-cost figure (the resolver's own fallback, or the guard swapping an inflated ask for it)
     // is a partial bill when a recipe input went unpriced
     let partial = false;
-    if (resolved.production) partial = craftPartial(itemHrid, buySide(options));
+    if (resolved.production) partial = craftPartial(itemHrid, buySide(options), options.context || 'profit');
     else if (price !== resolved.price) {
-        const craft = getProductionCostDetailed(itemHrid, 'ask');
+        const craft = getProductionCostDetailed(itemHrid, 'ask', options.context || 'profit');
         partial = craft.cost === price && craft.partial;
     }
     const guarded = result(price, resolved.estimated || price !== resolved.price, Boolean(resolved.custom), partial);
@@ -347,14 +348,14 @@ export function priceBase(itemHrid, options = {}) {
     const crafting = useCraftingCost ?? config.isFeatureEnabled('enhanceSim_baseItemCraftingCost');
     if (!crafting) return { ...bought, crafted: false };
     const side = mode || getPricingMode(context, 'buy');
-    const craft = getProductionCost(itemHrid, side === 'bid' ? 'bid' : 'ask');
+    const craft = getProductionCost(itemHrid, side === 'bid' ? 'bid' : 'ask', context);
     if (craft > 0 && (bought.unpriced || craft < bought.price)) {
         return {
             price: craft,
             unpriced: false,
             estimated: true,
             custom: false,
-            partial: craftPartial(itemHrid, side),
+            partial: craftPartial(itemHrid, side, context),
             crafted: true,
             // A refined cape's craft cost carries its base at the cape setting's value: an assumption
             ...craftedCapeBillFlags(itemHrid),
