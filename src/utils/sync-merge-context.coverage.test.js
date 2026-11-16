@@ -338,6 +338,12 @@ const FIXTURES = {
         a: { '/skills/milking': { name: 'Milk', tea: '/items/milking_tea' } },
         b: { '/skills/foraging': { name: 'Forage', tea: '/items/foraging_tea' } },
     },
+    'Alchemy Best Items hidden items': {
+        store: 'settings',
+        key: `alchemyBestItems_hidden_${CHAR}`,
+        a: { coinify: ['/items/holy_sword'], __events: { coinify: { '/items/holy_sword': { t: EARLIER, h: 1 } } } },
+        b: { coinify: ['/items/cheese'], decompose: ['/items/milk'] },
+    },
     'Combat Sim party finder roster': {
         store: 'settings',
         key: `combatSimPartyRoster_${CHAR}`,

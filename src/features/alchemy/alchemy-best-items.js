@@ -53,6 +53,7 @@ import {
 } from '../../utils/pricing-side-select.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
+import { HIDDEN_KEY_PREFIX, EVENTS_FIELD, applyHiddenChange } from './alchemy-best-items-hidden.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
@@ -185,8 +186,6 @@ function getPlayerAlchemyLevel() {
 const PREFS_STORE = 'settings';
 /** The alchemy type the player last chose inside the modal, per character */
 const LAST_TYPE_KEY_PREFIX = 'alchemyBestItems_lastType_';
-/** The items the player hid from the table, per character: {coinify: [hrid], decompose: [hrid], ...} */
-const HIDDEN_KEY_PREFIX = 'alchemyBestItems_hidden_';
 /** Owner of the marketplace "Return to Best Items" tab, so clearing it never sweeps another feature's tabs */
 const RETURN_TAB_OWNER = 'alchemy-best-items';
 /** How long after a return trip the table keeps putting the scroll spot back (the table paints more than once) */
@@ -882,6 +881,10 @@ class AlchemyBestItems {
                     for (const [key, list] of Object.entries(stored)) {
                         if (Array.isArray(list)) clean[key] = list.filter((hrid) => typeof hrid === 'string');
                     }
+                    // The hide/unhide times ride along so a write that has to fall back to this copy still carries them
+                    if (stored[EVENTS_FIELD] && typeof stored[EVENTS_FIELD] === 'object') {
+                        clean[EVENTS_FIELD] = stored[EVENTS_FIELD];
+                    }
                 }
                 this.hidden = clean;
             }
@@ -920,12 +923,8 @@ class AlchemyBestItems {
         // Write only this change, folded into what is stored when the write lands, so a hide made in another
         // tab or brought by a sync pull (and lists for types this build does not know) survive
         const fold = (stored) => {
-            const next = stored && typeof stored === 'object' && !Array.isArray(stored) ? { ...stored } : {};
-            const current = Array.isArray(next[type]) ? next[type].filter((hrid) => hrid !== itemHrid) : [];
-            if (hide) current.push(itemHrid);
-            next[type] = current;
-            folded = next;
-            return next;
+            folded = applyHiddenChange(stored, type, itemHrid, hide, Date.now());
+            return folded;
         };
         this.renderTable();
         Promise.resolve(storage.set(HIDDEN_KEY_PREFIX + owner, this.hidden, PREFS_STORE, true, { fold })).then(

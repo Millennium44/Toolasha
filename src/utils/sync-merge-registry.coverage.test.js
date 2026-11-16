@@ -82,6 +82,7 @@ await import('../features/tasks/task-reroll-tracker.js');
 await import('../features/alchemy/transmute-history-tracker.js');
 await import('../features/alchemy/decompose-history-tracker.js');
 await import('../features/alchemy/coinify-history-tracker.js');
+await import('../features/alchemy/alchemy-best-items-hidden.js');
 
 const CHAR = 'char-A';
 
@@ -231,6 +232,10 @@ const corpus = [
     { store: 'lootLogHistory', key: `calibrationEnhancing_${CHAR}`, label: 'Enhancement calibration' },
     { store: 'lootLogHistory', key: 'calibration', label: 'Prediction calibration' },
     { store: 'lootLogHistory', key: `calibration_${CHAR}`, label: 'Prediction calibration' },
+
+    // alchemy/alchemy-best-items-hidden.js — a raw prefix, per character
+    { store: 'settings', key: `alchemyBestItems_hidden_${CHAR}`, label: 'Alchemy Best Items hidden items' },
+    { store: 'settings', key: `alchemyBestItems_lastType_${CHAR}`, label: null },
 
     // inventory/custom-tabs/custom-tabs-data.js — a bespoke `match`, not `base`
     { store: 'settings', key: 'inventoryTabs_config', label: 'Custom inventory tabs' },
