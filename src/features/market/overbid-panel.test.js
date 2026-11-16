@@ -118,7 +118,7 @@ vi.mock('../../utils/market-values.js', () => ({
     },
 }));
 
-import overbidPanel, { currentBeatenListings, findBeatenListings } from './overbid-panel.js';
+import overbidPanel, { classifyListings, currentBeatenListings, findBeatenListings } from './overbid-panel.js';
 
 const ACTIVE = '/market_listing_status/active';
 const CHEESE = '/items/cheese';
@@ -220,6 +220,90 @@ describe('findBeatenListings', () => {
         ];
         const kept = findBeatenListings(mine, observe({ [`${CHEESE}:0:sell`]: fresh(90) }), NOW, MAX);
         expect(kept.map((r) => r.id)).toEqual([1]);
+    });
+});
+
+describe('classifyListings: probably beaten', () => {
+    const old = (price, minutes = 58) => ({ price, timestamp: NOW - minutes * 60_000 });
+    const classify = (listings, map) => classifyListings(listings, observe(map), NOW, MAX);
+
+    it('a beaten listing with a figure past the bar is probable, with its age, not beaten', () => {
+        const result = classify([listing()], { [`${CHEESE}:0:sell`]: old(90) });
+        expect(result.beaten).toEqual([]);
+        expect(result.probable).toHaveLength(1);
+        expect(result.probable[0]).toMatchObject({ id: 1, bestPrice: 90, price: 100, probable: true });
+        expect(result.probable[0].ageMs).toBe(58 * 60_000);
+        expect(result.unknown).toBe(0);
+        expect(result.settled.size).toBe(0);
+    });
+
+    it('a stale figure that does not beat the listing is unknown, never settled', () => {
+        const result = classify([listing()], { [`${CHEESE}:0:sell`]: old(100) });
+        expect(result.probable).toEqual([]);
+        expect(result.settled.size).toBe(0);
+        expect(result.unknownRows).toMatchObject([{ id: 1, itemHrid: CHEESE, enhancementLevel: 0, isSell: true }]);
+    });
+
+    it('a figure that is your own other listing is unknown when stale and settled when fresh', () => {
+        const mine = [listing({ id: 1, price: 100 }), listing({ id: 2, price: 90 })];
+        const stale = classify(mine, { [`${CHEESE}:0:sell`]: old(90) });
+        expect(stale.probable).toEqual([]);
+        expect(stale.unknown).toBe(2);
+        const freshResult = classify(mine, { [`${CHEESE}:0:sell`]: fresh(90) });
+        expect(freshResult.settled.has(1)).toBe(true);
+    });
+
+    it('the band clamp applies to a stale clamped figure, not to a raw one', () => {
+        const clamp = (price) => Math.min(price, 80);
+        const mine = [listing({ id: 1, price: 100 })];
+        const clamped = classifyListings(
+            mine,
+            observe({ [`${CHEESE}:0:sell`]: { ...old(80), clamped: true } }),
+            NOW,
+            MAX,
+            clamp
+        );
+        expect(clamped.probable).toEqual([]);
+        expect(clamped.unknown).toBe(1);
+        const raw = classifyListings(mine, observe({ [`${CHEESE}:0:sell`]: old(80) }), NOW, MAX, clamp);
+        expect(raw.probable).toHaveLength(1);
+    });
+
+    it('a figure taken before the listing was created says nothing about it', () => {
+        const created = new Date(NOW - 30 * 60_000).toISOString();
+        const result = classify([listing({ createdTimestamp: created })], { [`${CHEESE}:0:sell`]: old(90) });
+        expect(result.probable).toEqual([]);
+        expect(result.unknown).toBe(1);
+        // Taken after it was created: probable
+        const earlier = new Date(NOW - 90 * 60_000).toISOString();
+        const kept = classify([listing({ createdTimestamp: earlier })], { [`${CHEESE}:0:sell`]: old(90) });
+        expect(kept.probable).toHaveLength(1);
+        // The game's nine-digit fractions parse
+        expect(Number.isFinite(Date.parse('2026-11-01T22:46:14.129627384Z'))).toBe(true);
+    });
+
+    it('keeps two listings, a stack of three, levels and a buy and a sell of one item apart', () => {
+        const mine = [
+            listing({ id: 1, price: 100 }),
+            listing({ id: 2, price: 100 }),
+            listing({ id: 3, price: 100 }),
+            listing({ id: 4, enhancementLevel: 3, price: 100 }),
+            listing({ id: 5, isSell: false, price: 10 }),
+        ];
+        const result = classify(mine, {
+            [`${CHEESE}:0:sell`]: old(90),
+            [`${CHEESE}:3:sell`]: fresh(90),
+            [`${CHEESE}:0:buy`]: old(20, 120),
+        });
+        expect(result.probable.map((r) => r.id)).toEqual([1, 2, 3, 5]);
+        expect(result.probable.find((r) => r.id === 5)).toMatchObject({ isSell: false, bestPrice: 20 });
+        expect(result.beaten.map((r) => r.id)).toEqual([4]);
+    });
+
+    it('no listings, only unknown and no figure at all', () => {
+        expect(classify([], {})).toMatchObject({ beaten: [], probable: [], unknown: 0, unknownRows: [] });
+        const result = classify([listing({ id: 1 }), listing({ id: 2, enhancementLevel: 2 })], {});
+        expect(result.unknownRows.map((r) => r.enhancementLevel)).toEqual([0, 2]);
     });
 });
 
@@ -846,6 +930,137 @@ describe('panel', () => {
         });
     });
 
+    describe('probably overbid', () => {
+        const SWORD = '/items/sword';
+        const closeX = () => root().querySelector('.toolasha-minimize-btn').nextElementSibling.click();
+        const old = (price, minutes = 58) => ({ price, timestamp: NOW - minutes * 60_000 });
+        const ids = (selector) => [...root().querySelectorAll(`${selector} tbody tr`)].map((r) => r.dataset.listingId);
+        const openByTab = async () => {
+            const container = document.createElement('div');
+            const native = document.createElement('button');
+            native.setAttribute('role', 'tab');
+            container.appendChild(native);
+            document.body.appendChild(container);
+            hoisted.tabs = container;
+            overbidPanel.disable();
+            await overbidPanel.initialize();
+            container.querySelector('[data-mwi-overbid-tab="true"]').click();
+        };
+
+        it('mixed: fresh rows in the main table, old ones in a second group with their age, unknown named', () => {
+            hoisted.listings = [
+                listing({ id: 1, price: 100 }),
+                listing({ id: 2, itemHrid: SWORD, enhancementLevel: 3, price: 100 }),
+                listing({ id: 3, itemHrid: SWORD, enhancementLevel: 3, isSell: false, price: 10 }),
+                listing({ id: 4, itemHrid: SWORD, enhancementLevel: 5, price: 100 }),
+            ];
+            hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+            hoisted.observations[`${SWORD}:3:sell`] = old(90);
+            hoisted.observations[`${SWORD}:3:buy`] = old(20, 125);
+            fire();
+            expect(ids('[data-overbid-table]')).toEqual(['1']);
+            expect(ids('[data-overbid-probable-table]')).toEqual(['2', '3']);
+            expect(root().textContent).toContain('Probably overbid');
+            expect([...root().querySelectorAll('[data-overbid-age]')].map((c) => c.textContent)).toEqual([
+                '58m old',
+                '2h 5m old',
+            ]);
+            expect(root().textContent).toContain(
+                'No usable price data for sword +5 (sell), so it could not be checked.'
+            );
+            expect(root().textContent).toContain('Overbid table (1, 2 probable)');
+        });
+
+        it('only probable rows: the pop-up stays away, a tab opens them, and an auto-opened panel closes', async () => {
+            hoisted.listings = [listing({ id: 1 })];
+            hoisted.observations[`${CHEESE}:0:sell`] = old(90);
+            fire();
+            expect(root()).toBeNull();
+            await openByTab();
+            expect(ids('[data-overbid-probable-table]')).toEqual(['1']);
+            expect(root().querySelector('[data-overbid-table]')).toBeNull();
+            expect(root().textContent).not.toContain('Nothing is undercut');
+            // Fresh then ageing: the auto-opened panel closes, as before
+            overbidPanel.disable();
+            document.body.innerHTML = '';
+            await overbidPanel.initialize();
+            hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+            fire();
+            expect(root()).not.toBeNull();
+            vi.advanceTimersByTime(MAX + 10_000);
+            expect(root()).toBeNull();
+        });
+
+        it('a probable row neither dismisses nor resets a dismissal', () => {
+            hoisted.listings = [listing({ id: 1 })];
+            hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+            fire();
+            closeX();
+            // The figure ages into probable, then is seen fresh and still beaten: still the same news
+            vi.advanceTimersByTime(MAX + 10_000);
+            hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+            fire();
+            expect(root()).toBeNull();
+            // A probable row existing next to a dismissed fresh one does not pop it open either
+            hoisted.listings = [listing({ id: 1 }), listing({ id: 2, enhancementLevel: 2 })];
+            hoisted.observations[`${CHEESE}:2:sell`] = old(90);
+            fire();
+            expect(root()).toBeNull();
+        });
+
+        it('hiding a probable row works by the same key and is not a dismissal', () => {
+            hoisted.listings = [
+                listing({ id: 1 }),
+                listing({ id: 2, enhancementLevel: 2 }),
+                listing({ id: 3, enhancementLevel: 2, price: 120 }),
+            ];
+            hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+            hoisted.observations[`${CHEESE}:2:sell`] = old(90);
+            fire();
+            expect(ids('[data-overbid-probable-table]')).toEqual(['2', '3']);
+            root().querySelector('[data-overbid-probable-table] [data-overbid-hide]').click();
+            expect(root().querySelector('[data-overbid-probable-table]')).toBeNull();
+            expect(root().textContent).toContain('Overbid table (1, 2 hidden)');
+            expect(root().querySelector('[data-overbid-toggle-hidden]').textContent).toBe('Show hidden (2)');
+            // Showing hidden draws them dimmed in the probable group, where unhide brings them back
+            root().querySelector('[data-overbid-toggle-hidden]').click();
+            expect(ids('[data-overbid-probable-table]')).toEqual(['2', '3']);
+            expect(root().querySelectorAll('[data-overbid-probable-table] [data-overbid-hidden]')).toHaveLength(2);
+            root().querySelector('[data-overbid-unhide]').click();
+            expect(root().querySelector('[data-overbid-toggle-hidden]')).toBeNull();
+            expect(ids('[data-overbid-probable-table]')).toEqual(['2', '3']);
+        });
+
+        it('all hidden with a probable group: the open panel stays and says everything is hidden', async () => {
+            hoisted.listings = [listing({ id: 1 })];
+            hoisted.observations[`${CHEESE}:0:sell`] = old(90);
+            fire();
+            await openByTab();
+            root().querySelector('[data-overbid-hide]').click();
+            expect(root().textContent).toContain('All overbid items are hidden.');
+            expect(root().querySelector('[data-overbid-probable-table]')).toBeNull();
+        });
+
+        it('a figure from before the listing existed is named as unchecked, not probable', async () => {
+            hoisted.listings = [listing({ id: 1, createdTimestamp: new Date(NOW - 10 * 60_000).toISOString() })];
+            hoisted.observations[`${CHEESE}:0:sell`] = old(90);
+            fire();
+            await openByTab();
+            expect(root().querySelector('[data-overbid-probable-table]')).toBeNull();
+            expect(root().textContent).toContain('No usable price data for cheese (sell)');
+        });
+
+        it('lists a buy and a sell of one item, and names repeats once with a count', async () => {
+            hoisted.listings = [
+                listing({ id: 1, enhancementLevel: 1 }),
+                listing({ id: 2, enhancementLevel: 1, price: 120 }),
+                listing({ id: 3, enhancementLevel: 1, isSell: false, price: 10 }),
+            ];
+            await openByTab();
+            expect(root().textContent).toContain('cheese +1 (sell) x2, cheese +1 (buy)');
+        });
+    });
+
     describe('the Overbid tab', () => {
         function strip() {
             const container = document.createElement('div');
@@ -920,7 +1135,7 @@ describe('panel', () => {
             await overbidPanel.initialize();
             hoisted.listings = [listing()];
             tab(container).click();
-            expect(root().textContent).toMatch(/old or missing for 1 of your listings/);
+            expect(root().textContent).toContain('No usable price data for cheese (sell), so it could not be checked.');
             expect(seen()).toContain('Nothing is undercut or outbid right now');
         });
 
