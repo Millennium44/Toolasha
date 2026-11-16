@@ -95,6 +95,11 @@ function mutationsTouchTablist(mutations) {
                 return true;
             }
         }
+        // A strip leaving (the phone's main-panel copy when My Stuff is closed) strands our tab
+        for (const node of mutation.removedNodes) {
+            if (node.nodeType !== Node.ELEMENT_NODE) continue;
+            if (node.matches?.('[role="tablist"]') || node.querySelector?.('[role="tablist"]')) return true;
+        }
     }
     return false;
 }
@@ -152,7 +157,7 @@ class SkillingSimulatorUI {
             document.body,
             (mutations) => {
                 if (!mutationsTouchTablist(mutations)) return;
-                this._tryInjectTabButton();
+                this._syncTabs();
             },
             { childList: true, subtree: true }
         );
@@ -191,6 +196,33 @@ class SkillingSimulatorUI {
         return own ?? this._findTabLists()[0] ?? null;
     }
 
+    /**
+     * The tab strips changed. A strip that was replaced in the same change (a re-render) gets our tab back and
+     * keeps the Optimizer open; one that simply left (the phone's main-panel copy, when My Stuff is closed) ends
+     * the Optimizer's open state, so mounting the panel again shows the game's own default tab.
+     */
+    _syncTabs() {
+        const stranded = this.tabBtn && !this.tabBtn.isConnected ? this.tabBtn : null;
+        this._tryInjectTabButton();
+        if (stranded && this.tabBtn === stranded) {
+            this._deactivatePanel();
+            this.tabBtn = null;
+        }
+    }
+
+    /**
+     * Make a tab the one the Optimizer lives in, un-highlighting the one in the other copy of the panel.
+     * @param {HTMLElement} btn - Our tab in one copy of the panel
+     */
+    _setTabBtn(btn) {
+        const previous = this.tabBtn;
+        if (previous && previous !== btn) {
+            previous.classList.remove('Mui-selected');
+            previous.setAttribute('aria-selected', 'false');
+        }
+        this.tabBtn = btn;
+    }
+
     _tryInjectTabButton() {
         for (const tabList of this._findTabLists()) this._injectTabInto(tabList);
     }
@@ -208,7 +240,7 @@ class SkillingSimulatorUI {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             // The copy of the panel the player is looking at is the one to build in
-            this.tabBtn = btn;
+            this._setTabBtn(btn);
             this._activatePanel();
         });
 
@@ -217,9 +249,10 @@ class SkillingSimulatorUI {
         );
         if (loadoutsTab?.nextSibling) tabList.insertBefore(btn, loadoutsTab.nextSibling);
         else tabList.appendChild(btn);
-        // A second copy's tab does not take over from one that is still showing
-        const takesOver = !this.tabBtn?.isConnected || tabList.getClientRects().length > 0;
-        if (takesOver) this.tabBtn = btn;
+        // A second copy's tab never takes over from one that is on screen (opening My Stuff on a desktop must not
+        // pull an open Optimizer out of the side panel)
+        const takesOver = !this.tabBtn?.isConnected || this.tabBtn.getClientRects().length === 0;
+        if (takesOver) this._setTabBtn(btn);
 
         const scroller = tabList.parentElement;
         if (scroller?.className?.includes('MuiTabs-scroller')) scroller.style.overflow = 'auto';
@@ -273,7 +306,7 @@ class SkillingSimulatorUI {
             });
             return false;
         }
-        this.tabBtn = visibleTab;
+        this._setTabBtn(visibleTab);
 
         const changed = this.currentSkill !== skillName;
         this.currentSkill = skillName;
@@ -356,6 +389,8 @@ class SkillingSimulatorUI {
     }
 
     _rebuildPanel() {
+        // Our tab's copy of the panel is gone: building into whichever strip is left could land in a hidden one
+        if (this.tabBtn && !this.tabBtn.isConnected) return;
         const contentContainer = this._findContentContainer();
         if (!contentContainer) return;
         this._closePicker();
@@ -2354,6 +2389,10 @@ class SkillingSimulatorUI {
             this.watcher = null;
         }
         this._closePicker();
+        // Every copy of the panel can carry a tab, a panel and the hide class, not only the one we last used
+        for (const tab of document.querySelectorAll(`.${TAB_CLASS}`)) tab.remove();
+        for (const panel of document.querySelectorAll(`.${PANEL_CLASS}`)) panel.remove();
+        for (const hidden of document.querySelectorAll(`.${HIDE_CLASS}`)) hidden.classList.remove(HIDE_CLASS);
         this.tabBtn?.remove();
         this.panel?.remove();
         this.contentParent?.classList.remove(HIDE_CLASS);
