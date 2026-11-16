@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon tracker averages only the dungeon you are running
+
+During a run, Last Run, Avg Run and Runs count only your runs of that dungeon and tier, instead of every dungeon whenever the history filter was on All. Picking All no longer stops the history list from following the live run.
+
 ### Consumables counts your buy orders and buys at once when you are running out
 
 "Buy for 1 week" and Buy all now subtract your own buy listings for that item, both filled-but-uncollected and still open, so nothing is bought twice. A new "Buy instantly when it runs out within" rule (default 24 hours, in the gear) buys at ask when an item is out or about to run out.

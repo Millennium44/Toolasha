@@ -143,11 +143,43 @@ describe('autoScopeToRun', () => {
         expect(dungeonTrackerUIState.filterDungeon).toBe('Chimerical Den');
     });
 
-    test('does nothing without a dungeon name or tier', () => {
+    test('does nothing without a dungeon name', () => {
         expect(dungeonTrackerUIState.autoScopeToRun(null, 3)).toBe(false);
-        expect(dungeonTrackerUIState.autoScopeToRun('Chimerical Den', null)).toBe(false);
         expect(dungeonTrackerUIState.filterDungeon).toBe('all');
         expect(dungeonTrackerUIState.filterTier).toBe('all');
+    });
+
+    test('an untiered run scopes the dungeon alone', () => {
+        expect(dungeonTrackerUIState.autoScopeToRun('Chimerical Den', null)).toBe(true);
+        expect(dungeonTrackerUIState.filterDungeon).toBe('Chimerical Den');
+        expect(dungeonTrackerUIState.filterTier).toBe('all');
+    });
+
+    test('a hand pick of All does not stick: a live run re-scopes it and returns it to auto', () => {
+        dungeonTrackerUIState.isDungeonFilterManual = true;
+        dungeonTrackerUIState.isTierFilterManual = true;
+
+        expect(dungeonTrackerUIState.autoScopeToRun('Chimerical Den', 3)).toBe(true);
+        expect(dungeonTrackerUIState.filterDungeon).toBe('Chimerical Den');
+        expect(dungeonTrackerUIState.filterTier).toBe('3');
+        expect(dungeonTrackerUIState.isDungeonFilterManual).toBe(false);
+        expect(dungeonTrackerUIState.isTierFilterManual).toBe(false);
+
+        // so the next dungeon is followed too
+        expect(dungeonTrackerUIState.autoScopeToRun('Pirate Cove', 1)).toBe(true);
+        expect(dungeonTrackerUIState.filterDungeon).toBe('Pirate Cove');
+    });
+
+    test('a hand pick of a specific dungeon is still respected while an All tier re-scopes', () => {
+        dungeonTrackerUIState.filterDungeon = 'Pirate Cove';
+        dungeonTrackerUIState.isDungeonFilterManual = true;
+        dungeonTrackerUIState.isTierFilterManual = true; // tier left on All by hand
+
+        dungeonTrackerUIState.autoScopeToRun('Chimerical Den', 3);
+
+        expect(dungeonTrackerUIState.filterDungeon).toBe('Pirate Cove');
+        expect(dungeonTrackerUIState.isDungeonFilterManual).toBe(true);
+        expect(dungeonTrackerUIState.filterTier).toBe('3');
     });
 });
 
