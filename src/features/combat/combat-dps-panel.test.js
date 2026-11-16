@@ -15,6 +15,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { syncTopStrip } from '../../utils/responsive-dock.js';
 
 const opts = vi.hoisted(() => ({
     enabled: true,
@@ -333,7 +334,6 @@ describe('the opener, and the lifecycle', () => {
         const host = document.createElement('div');
         host.className = 'BattlePanel_battlePanel__fixture';
         document.body.append(host);
-        const rect = vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ width: 360 });
         feature.initialize();
         const fallbackButton = button();
         expect(fallbackButton.parentElement).toBe(host);
@@ -345,57 +345,91 @@ describe('the opener, and the lifecycle', () => {
         for (const handler of opts.handlers) handler.callback(battle.firstElementChild);
         expect(button()).not.toBe(fallbackButton);
         expect(fallbackButton.isConnected).toBe(false);
-        expect(button().nextElementSibling).toBe(battle);
-        expect(button().style.position).toBe('relative');
-        rect.mockReturnValue({ width: 1000 });
-        window.dispatchEvent(new Event('resize'));
         expect(button().parentElement).toBe(battle.firstElementChild);
         feature.cleanup();
         expect(host.style.position).toBe('');
-        rect.mockRestore();
     });
 
-    test('narrow Per-player opener reserves a row above the battle instead of covering combat text', () => {
-        const host = document.createElement('div');
-        host.innerHTML =
-            '<div class="BattlePanel_battleArea__fixture"><div class="BattlePanel_playersArea__fixture"><div>727 DPS</div></div></div>';
-        document.body.append(host);
-        const battle = host.firstElementChild;
-        const area = battle.firstElementChild;
-        const rect = vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ width: 360 });
-        feature.initialize();
-        expect(button().parentElement).toBe(host);
-        expect(button().nextElementSibling).toBe(battle);
-        expect(button().style.position).toBe('relative');
-        expect(button().style.zIndex).toBe('auto');
-        // Docked, it stays a compact button rather than a bar across the whole row
-        expect(button().style.width).toBe('fit-content');
-        expect(area.textContent).toBe('727 DPS');
-        // Only the battle area remounts; the docked opener itself is still
-        // connected above it. Its desktop home must switch to the new tiles.
-        const oldButton = button();
-        const rebuilt = document.createElement('div');
-        rebuilt.className = battle.className;
-        rebuilt.innerHTML =
-            '<div class="BattlePanel_playersArea__fixture" style="position:relative"><div>727 DPS</div></div>';
-        battle.replaceWith(rebuilt);
-        const newArea = rebuilt.firstElementChild;
-        for (const handler of opts.handlers) handler.callback(newArea);
-        expect(button()).not.toBe(oldButton);
-        expect(oldButton.isConnected).toBe(false);
-        expect(button().nextElementSibling).toBe(rebuilt);
-        rect.mockReturnValue({ width: 1000 });
-        window.dispatchEvent(new Event('resize'));
-        expect(button().parentElement).toBe(newArea);
-        expect(button().style.position).toBe('absolute');
-        expect(button().style.top).toBe('2px');
-        expect(button().style.width).toBe('');
-        feature.cleanup();
-        expect(area.style.position).toBe('');
-        // The new native area's existing position is not ours to erase.
-        expect(newArea.style.position).toBe('relative');
-        expect(button()).toBeNull();
-        rect.mockRestore();
+    describe('at phone width', () => {
+        const TRACKER_ID = 'toolasha-dungeon-tracker-reopen-button';
+        let main;
+        let area;
+        let width;
+
+        beforeEach(() => {
+            document.body.innerHTML =
+                '<div class="GamePage_mainPanel__fixture"><div class="BattlePanel_battlePanel__fixture">' +
+                '<div class="BattlePanel_battleArea__fixture"><div class="BattlePanel_playersArea__fixture">' +
+                '<div>727 DPS</div></div></div></div></div>';
+            main = document.querySelector('.GamePage_mainPanel__fixture');
+            area = document.querySelector('.BattlePanel_playersArea__fixture');
+            width = 360;
+            vi.spyOn(main, 'getBoundingClientRect').mockImplementation(() => ({ width }));
+        });
+
+        const resize = () => window.dispatchEvent(new Event('resize'));
+        const addTracker = () => {
+            const tracker = document.createElement('button');
+            tracker.id = TRACKER_ID;
+            area.appendChild(tracker);
+            resize();
+            return tracker;
+        };
+
+        test('stays inside the players area and reserves a strip above the units', () => {
+            feature.initialize();
+            expect(button().parentElement).toBe(area);
+            expect(button().style.position).toBe('absolute');
+            expect(button().style.top).toBe('2px');
+            expect(button().style.right).toBe('2px');
+            expect(area.style.paddingTop).toBe('22px');
+        });
+
+        test('wide width reserves nothing, and narrowing again reserves it again', () => {
+            width = 1000;
+            feature.initialize();
+            expect(area.style.paddingTop).toBe('');
+            width = 360;
+            resize();
+            expect(area.style.paddingTop).toBe('22px');
+            width = 1000;
+            resize();
+            expect(area.style.paddingTop).toBe('');
+            expect(button().parentElement).toBe(area);
+        });
+
+        test('keeps the area own padding and restores it', () => {
+            area.style.paddingTop = '3px';
+            feature.initialize();
+            expect(area.style.paddingTop).toBe('22px');
+            feature.cleanup();
+            expect(area.style.paddingTop).toBe('3px');
+        });
+
+        test('the strip stays while only the Tracker button is left, and goes with the last button', () => {
+            feature.initialize();
+            const tracker = addTracker();
+            feature.cleanup();
+            expect(button()).toBeNull();
+            expect(area.style.paddingTop).toBe('22px');
+            tracker.remove();
+            // The Tracker module's own watcher would run this pass
+            syncTopStrip(area, { buttonIds: [BUTTON_ID, TRACKER_ID], measure: main });
+            expect(area.style.paddingTop).toBe('');
+        });
+
+        test('cleanup clears the strip, and a re-rendered area gets its own', () => {
+            feature.initialize();
+            const oldArea = area;
+            const rebuilt = document.createElement('div');
+            rebuilt.className = 'BattlePanel_playersArea__fixture';
+            oldArea.replaceWith(rebuilt);
+            for (const handler of opts.handlers) handler.callback(rebuilt);
+            expect(button().parentElement).toBe(rebuilt);
+            expect(rebuilt.style.paddingTop).toBe('22px');
+            feature.cleanup();
+            expect(rebuilt.style.paddingTop).toBe('');
+        });
     });
 
     test('the button lands on the battle panel and opens the board', () => {

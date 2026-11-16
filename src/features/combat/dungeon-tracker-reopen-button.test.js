@@ -7,6 +7,7 @@ import {
     syncReopenButton,
     REOPEN_BUTTON_ID,
 } from './dungeon-tracker-reopen-button.js';
+import { syncTopStrip } from '../../utils/responsive-dock.js';
 
 const PER_PLAYER_ID = 'toolasha-combat-dps-panel-button';
 
@@ -137,5 +138,89 @@ describe('dungeon tracker reopen button', () => {
         state.dungeon = true;
         start();
         expect(tracker()).toBeNull();
+    });
+
+    describe('at phone width', () => {
+        let width;
+        let area;
+
+        beforeEach(() => {
+            width = 360;
+            area = buildBattlePanel();
+            vi.spyOn(document.querySelector('.GamePage_mainPanel__abc'), 'getBoundingClientRect').mockImplementation(
+                () => ({ width })
+            );
+        });
+
+        afterEach(() => vi.restoreAllMocks());
+
+        const resize = () => window.dispatchEvent(new Event('resize'));
+        // The Per-player module's own watcher, which is alive for as long as its button is
+        const otherModulePass = () =>
+            syncTopStrip(area, {
+                buttonIds: [['toolasha-combat-dps-panel-button', 'toolasha-dungeon-tracker-reopen-button']],
+                measure: document.querySelector('.GamePage_mainPanel__abc'),
+            });
+
+        test('stays inside the players area, left of Per-player, with a strip reserved above the units', () => {
+            state.dungeon = true;
+            start();
+            expect(tracker().parentElement).toBe(area);
+            expect(tracker().style.position).toBe('absolute');
+            expect(tracker().style.top).toBe('2px');
+            expect(tracker().style.right).toBe('66px');
+            expect(area.style.paddingTop).toBe('22px');
+        });
+
+        test('wide width reserves nothing; narrowing and widening move the strip', () => {
+            width = 1000;
+            state.dungeon = true;
+            start();
+            expect(area.style.paddingTop).toBe('');
+            width = 360;
+            resize();
+            expect(area.style.paddingTop).toBe('22px');
+            width = 1000;
+            resize();
+            expect(area.style.paddingTop).toBe('');
+            expect(tracker().parentElement).toBe(area);
+        });
+
+        test('the strip is kept for the Tracker alone, and a Per-player that arrives keeps it after the Tracker goes', () => {
+            document.getElementById(PER_PLAYER_ID).remove();
+            state.dungeon = true;
+            start();
+            expect(area.style.paddingTop).toBe('22px');
+            const perPlayer = document.createElement('button');
+            perPlayer.id = PER_PLAYER_ID;
+            area.appendChild(perPlayer);
+            state.dungeon = false;
+            vi.advanceTimersByTime(1000);
+            expect(tracker()).toBeNull();
+            expect(area.style.paddingTop).toBe('22px');
+            perPlayer.remove();
+            otherModulePass();
+            expect(area.style.paddingTop).toBe('');
+        });
+
+        test('stopping while Per-player is still there leaves the strip to it', () => {
+            state.dungeon = true;
+            start();
+            stopReopenButton();
+            expect(tracker()).toBeNull();
+            expect(area.style.paddingTop).toBe('22px');
+            document.getElementById(PER_PLAYER_ID).remove();
+            otherModulePass();
+            expect(area.style.paddingTop).toBe('');
+        });
+
+        test('the Tracker being the last button and going away clears the strip', () => {
+            document.getElementById(PER_PLAYER_ID).remove();
+            state.dungeon = true;
+            start();
+            state.dungeon = false;
+            vi.advanceTimersByTime(1000);
+            expect(area.style.paddingTop).toBe('');
+        });
     });
 });
