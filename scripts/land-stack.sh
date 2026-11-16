@@ -203,7 +203,9 @@ check_ci() { # <pr>
 }
 
 # --- c. Codex review --------------------------------------------------------------------------------
-# Prints "<reviewed sha> clean|unresolved" from Codex's latest summary comment; fails if there is none.
+# Prints "<reviewed sha> clean|findings|unknown" from Codex's latest summary comment; fails if there is none.
+# clean: a finished review with no unresolved findings. findings: a finished review that found something.
+# unknown: anything else (still running, a missing or null flag), which the check refuses.
 codex_review_state() { # <pr>
     gh api "repos/$REPO/issues/$1/comments" --paginate \
         --jq '.[] | select(.user.login|test("^chatgpt-codex-connector")) | .body' |
@@ -212,22 +214,34 @@ const body = require("fs").readFileSync(0, "utf8");
 const found = [...body.matchAll(/codex-review-state:v1\s*(\{[^\n]*\})/g)];
 if (!found.length) process.exit(3);
 const s = JSON.parse(found[found.length - 1][1]);
-const sha = s.code_review && s.code_review.commit_sha;
-if (!sha) process.exit(3);
-// The flag lives inside code_review; a missing flag counts as unresolved so the check refuses rather than passes.
-console.log(sha + " " + (s.code_review.has_unresolved_findings === false ? "clean" : "unresolved"));
+const r = s.code_review || {};
+if (!r.commit_sha) process.exit(3);
+const done = r.status === "completed";
+const verdict = done && r.has_unresolved_findings === false ? "clean" : done && r.has_unresolved_findings === true ? "findings" : "unknown";
+console.log(r.commit_sha + " " + verdict);
 '
 }
 
-unresolved_threads() { # <pr>
+# Prints "<unresolved> <total> <resolved Codex threads opened on <sha>>" for the PR's review threads.
+thread_counts() { # <pr> [reviewed sha]
+    local sha="${2:-}"
+    # Inlined into the jq filter below (gh's --jq takes no --arg), so it must be plain hex
+    case "$sha" in *[!0-9a-f]*) die "not a commit sha: $sha" ;; esac
     gh api graphql -F owner="$OWNER" -F name="$NAME" -F number="$1" -f query='
 query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){
-reviewThreads(first:100){totalCount nodes{isResolved}}}}}' \
-        --jq '[.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved|not)]|length'
+reviewThreads(first:100){totalCount nodes{isResolved comments(first:1){nodes{author{login} originalCommit{oid}}}}}}}}' \
+        --jq '.data.repository.pullRequest.reviewThreads |
+"\([.nodes[]|select(.isResolved|not)]|length) \(.totalCount) \([.nodes[]|select(.isResolved)|.comments.nodes[0]|select((.author.login // "")|test("^chatgpt-codex-connector"))|select(.originalCommit.oid == "'"$sha"'")]|length)"'
+}
+
+unresolved_threads() { # <pr>
+    local counts
+    counts="$(thread_counts "$1")"
+    echo "${counts%% *}"
 }
 
 check_codex() { # <pr>
-    local n="$1" line sha flag threads head="${HEAD_SHA[$n]}"
+    local n="$1" line sha flag threads total own counts head="${HEAD_SHA[$n]}"
     if [ -n "${REVIEWED_BY_HAND[$n]:-}" ]; then
         threads="$(unresolved_threads "$n")"
         [ "$threads" = "0" ] || die "PR #$n: $threads unresolved review thread(s)"
@@ -237,9 +251,24 @@ check_codex() { # <pr>
     line="$(codex_review_state "$n")" || die "PR #$n: no Codex review summary (codex-review-state:v1) found"
     sha="${line%% *}"
     flag="${line##* }"
-    threads="$(unresolved_threads "$n")"
+    counts="$(thread_counts "$n" "$sha")"
+    read -r threads total own <<<"$counts"
     [ "$threads" = "0" ] || die "PR #$n: $threads unresolved review thread(s)"
-    [ "$flag" = "clean" ] || die "PR #$n: Codex reports unresolved findings"
+    case "$flag" in
+        clean) ;;
+        findings)
+            # Codex never rewrites its summary when its threads are resolved, so has_unresolved_findings stays
+            # true after every finding was fixed or answered (#1022 needed --reviewed for that). Its findings are
+            # inline threads on the commit it reviewed: when that review left at least one thread and every thread
+            # on the PR is resolved, they were dealt with. Threads from an earlier round alone do not count.
+            [ "${total:-0}" -le 100 ] 2>/dev/null ||
+                die "PR #$n: more than 100 review threads; only the first 100 can be checked"
+            [ "${own:-0}" -gt 0 ] 2>/dev/null ||
+                die "PR #$n: Codex reports unresolved findings on $sha and left no thread there to resolve"
+            echo "PR #$n: Codex's summary still reads unresolved, but its $own thread(s) on $sha and all $total on the PR are resolved"
+            ;;
+        *) die "PR #$n: Codex's review of $sha has not finished (or its summary carries no verdict)" ;;
+    esac
     if [ "$sha" = "$head" ]; then
         echo "PR #$n: Codex reviewed the head ($sha); no unresolved threads"
         return
