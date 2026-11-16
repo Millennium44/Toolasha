@@ -179,7 +179,13 @@ export function openShoppingList(items, { heading: headingText = '' } = {}) {
     // Each line remembers the holdings it opened against, so what is bought
     // from here on moves its badge — and only what is bought from here on:
     // the caller already netted (or chose not to net) what was held before
-    watchedItems = wanted.map((item) => ({ ...item, baseline: ownedNow(item.itemHrid), remaining: item.count }));
+    // A line may carry `onOrder`: open buy-order units the caller already netted off `count`. Their fills
+    // would otherwise read as purchases and come off the count a second time, so they sit in the baseline
+    watchedItems = wanted.map((item) => ({
+        ...item,
+        baseline: ownedNow(item.itemHrid) + Math.max(0, Math.floor(Number(item.onOrder) || 0)),
+        remaining: item.count,
+    }));
     startInventoryWatch();
 
     // The first item opens the marketplace, and the tabs are put in behind it

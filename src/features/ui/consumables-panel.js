@@ -1654,7 +1654,15 @@ class ConsumablesPanel {
             // held plus what is short, so the bill nets the stock once and keeps them live
             const direct = (shortfall || [])
                 .filter((item) => item?.itemHrid && item.count > 0)
-                .map((item) => ({ itemHrid: item.itemHrid, count: Math.floor(Number(item.held) || 0) + item.count }));
+                .map((item) => ({
+                    itemHrid: item.itemHrid,
+                    // The bill subtracts the bag and the uncollected units (`materialsFromList`), so both
+                    // go into the total or the unclaimed ones come off twice
+                    count:
+                        Math.floor(Number(item.held) || 0) +
+                        ownBuyOrders(dataManager.getMarketListings?.(), item.itemHrid).unclaimed +
+                        item.count,
+                }));
             this.hide();
             await openBill(crafts, direct);
         } catch (error) {
@@ -1954,7 +1962,15 @@ class ConsumablesPanel {
             // trip it was meant to survive, which reads as the panel opening
             // itself at random. Reported from live use, 2026-09-18.
             this.hide();
-            openShoppingList(shortfall);
+            // The counts are already net of open buy orders; say how many, so their fills are not
+            // counted as purchases against the list again
+            const listings = dataManager.getMarketListings?.();
+            openShoppingList(
+                (shortfall || []).map((item) => ({
+                    ...item,
+                    onOrder: ownBuyOrders(listings, item?.itemHrid).open,
+                }))
+            );
         } catch (error) {
             console.error('[ConsumablesPanel] Building the shopping list failed:', error);
         }

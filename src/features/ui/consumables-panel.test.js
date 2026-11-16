@@ -1361,6 +1361,40 @@ describe('switching character', () => {
     });
 });
 
+describe('the Buy all craft bill', () => {
+    test('asks for the bag plus the uncollected units plus the count, since the bill nets both itself', async () => {
+        const openCraftBill = vi.fn();
+        window.Toolasha = { Actions: { missingMaterialsButton: { openCraftBill } } };
+        game.actionDetail = { outputItems: [{ itemHrid: '/items/key', count: 1 }] };
+        game.listings = [
+            {
+                id: 1,
+                isSell: false,
+                itemHrid: '/items/cheese',
+                enhancementLevel: 0,
+                status: '/market_listing_status/filled',
+                orderQuantity: 400,
+                filledQuantity: 400,
+                unclaimedItemCount: 400,
+            },
+        ];
+        const row = {
+            itemHrid: '/items/key',
+            name: 'Key',
+            craftActionHrid: '/actions/x',
+            rateKnown: true,
+            perDay: 1e9,
+            held: 0,
+            price: 1,
+        };
+        await consumablesPanel._openKeyMaterials([row], [{ itemHrid: '/items/cheese', count: 600, held: 0 }]);
+        game.listings = [];
+        expect(openCraftBill).toHaveBeenCalledTimes(1);
+        // The bill's own deduction (bag 0 + unclaimed 400) then lands on the 600 the row shows
+        expect(openCraftBill.mock.calls[0][1]).toEqual([{ itemHrid: '/items/cheese', count: 1000 }]);
+    });
+});
+
 describe('the labyrinth buy all', () => {
     beforeEach(() => {
         consumablesPanel._tab = 'labyrinth';
