@@ -622,14 +622,15 @@ describe('own buy orders netted off the restock', () => {
         ];
         expect(ownBuyOrders(listings, DRINK)).toEqual({ unclaimed: 10, open: 25 });
         const mine = withBuyOrders(empty, listings);
-        expect(mine.held).toBe(10);
+        expect(mine.held).toBe(0);
+        expect(mine.unclaimedBought).toBe(10);
         expect(refillFor(mine, 2 * 86400).count).toBe(13);
     });
 
-    test('a sell listing, a cancelled one, an expired one, another item and a +1 are ignored', () => {
+    test('a sell listing, an emptied cancelled or expired one, another item and a +1 are ignored', () => {
         const listings = [
             listing({ id: 1, isSell: true }),
-            listing({ id: 2, status: CANCELLED, unclaimedItemCount: 40 }),
+            listing({ id: 2, status: CANCELLED }),
             listing({ id: 3, status: '/market_listing_status/expired' }),
             listing({ id: 4, itemHrid: '/items/other' }),
             listing({ id: 5, enhancementLevel: 1 }),
@@ -643,6 +644,26 @@ describe('own buy orders netted off the restock', () => {
         expect(ownBuyOrders([claimed], DRINK)).toEqual({ unclaimed: 0, open: 0 });
         const waiting = listing({ status: FILLED, orderQuantity: 50, filledQuantity: 50, unclaimedItemCount: 20 });
         expect(ownBuyOrders([waiting], DRINK)).toEqual({ unclaimed: 20, open: 0 });
+    });
+
+    test('a cancelled or expired listing still holds what it bought, and never an open remainder', () => {
+        const listings = [
+            listing({ id: 1, status: CANCELLED, orderQuantity: 100, filledQuantity: 40, unclaimedItemCount: 40 }),
+            listing({ id: 2, status: '/market_listing_status/expired', orderQuantity: 50, unclaimedItemCount: 7 }),
+        ];
+        expect(ownBuyOrders(listings, DRINK)).toEqual({ unclaimed: 47, open: 0 });
+    });
+
+    test('held stays real inventory, so a bill built from held + count is not inflated by uncollected units', () => {
+        // Need 1,000, none in the bag, 400 bought and waiting: the panel says 600 and the bill asks for 1,000
+        const bag = forecast({ ...drink, inventoryAmount: 0 });
+        const mine = withBuyOrders(bag, [
+            listing({ status: FILLED, orderQuantity: 400, filledQuantity: 400, unclaimedItemCount: 400 }),
+        ]);
+        const need = refillFor(mine, (1000 / 24) * 86400);
+        expect(need.count).toBe(600);
+        expect(mine.held + need.count).toBe(600);
+        expect(mine.held).toBe(0);
     });
 
     test('more on order than needed clamps to zero, never negative', () => {

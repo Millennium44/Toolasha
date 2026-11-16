@@ -4044,8 +4044,8 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
 
         // Bought-but-unclaimed units are in hand; the unfilled remainder of open buy orders is on its way
         const orders = ownBuyOrders(dataManager.getMarketListings?.(), itemHrid);
-        const held = heldInInventory(inventory, itemHrid) + orders.unclaimed;
-        const needCount = Math.max(0, Math.ceil(perRun * runs) - held - orders.open);
+        const held = heldInInventory(inventory, itemHrid);
+        const needCount = Math.max(0, Math.ceil(perRun * runs) - held - orders.unclaimed - orders.open);
         const prices = getItemPrices(itemHrid);
         const ask = Number(prices?.ask) > 0 ? Number(prices.ask) : null;
         const bid = Number(prices?.bid) > 0 ? Number(prices.bid) : null;
@@ -4103,7 +4103,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
                 (ask === null ? '' : ` — about ${Math.round(ask * needCount).toLocaleString()} coins`) +
                 `.\n${strategy.mode === 'order' ? 'Place an order' : 'Buy now'}: ${strategy.reason}` +
                 (orders.open || orders.unclaimed
-                    ? `\n${orders.open.toLocaleString()} already on order, ${orders.unclaimed.toLocaleString()} bought and waiting to be claimed — netted off.`
+                    ? `\n${orders.open.toLocaleString()} already on order, ${orders.unclaimed.toLocaleString()} to collect — netted off.`
                     : '');
             buy.addEventListener('click', (event) => {
                 event.stopPropagation();
@@ -4383,10 +4383,12 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
                 (strategy.measured ? '' : '\nOpen it in the marketplace once to measure its queue.') +
                 (entry.onOrder || entry.unclaimedBought
                     ? `\n${(entry.onOrder || 0).toLocaleString()} already on order (not counted again), ` +
-                      `${(entry.unclaimedBought || 0).toLocaleString()} bought and waiting to be claimed (counted as in hand).`
+                      `${(entry.unclaimedBought || 0).toLocaleString()} to collect (counted as in hand for the runout).`
                     : '') +
                 (entry.routeNote ? `\n${entry.routeNote}` : '');
             if (entry.onOrder > 0) buy.textContent += ` (${formatLargeNumber(entry.onOrder)} on order)`;
+            if (entry.unclaimedBought > 0)
+                buy.textContent += ` (${formatLargeNumber(entry.unclaimedBought)} to collect)`;
             buy.addEventListener('click', (event) => {
                 event.stopPropagation();
                 this._buy(entry, need.count, strategy);
