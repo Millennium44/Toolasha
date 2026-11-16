@@ -58,7 +58,7 @@ The decompose chain no longer keeps stale crate values after a pricing change or
 
 ### Open in Optimizer from skill pages
 
-Gathering and production skill pages get an Open in Optimizer button (behind the ⋯ controls on phones, in the title bar on desktop) that opens the side panel on the Optimizer set to that skill and action.
+Gathering and production skill pages get an Open in Optimizer button (behind the ⋯ controls on phones, in the title bar on desktop) that opens the character panel (My Stuff on a phone) on the Optimizer set to that skill and action.
 
 ### Skill page header fits on phones
 
