@@ -77,6 +77,8 @@ import {
 import {
     forecast,
     forecastAll,
+    withBuyOrders,
+    ownBuyOrders,
     firstToRunOut,
     costPerDaySides,
     refillFor,
@@ -259,6 +261,13 @@ const BUY_TUNABLES = [
         label: 'Buy instantly when the order is worth under',
         suffix: 'coins',
         title: 'Restocks worth less than this (bid × count) are bought outright rather than using up a buy-order slot. 0 turns the rule off.',
+    },
+    {
+        key: 'market_consumableBuyInstantWithinHours',
+        fallback: 24,
+        label: 'Buy instantly when it runs out within',
+        suffix: 'hours',
+        title: 'An item that is out, or runs out within this many hours, is bought outright rather than waited for on an order. 0 turns the rule off.',
     },
 ];
 const GEOMETRY_KEY = 'consumablesPanel';
@@ -730,11 +739,16 @@ class ConsumablesPanel {
                 const keyRows = keys.get(player);
                 if (keyRows?.entry) forecasts.push(keyRows.entry);
 
+                // Only your own entries: the listings are this character's, never a party member's
+                const mine = !!player.isCurrentPlayer;
+                const listings = mine ? dataManager.getMarketListings?.() : null;
+                const own = (entry) => (mine && entry ? withBuyOrders(entry, listings) : entry);
+
                 return {
                     name: player.name || 'Unknown',
-                    isCurrent: !!player.isCurrentPlayer,
-                    forecasts,
-                    chestKey: keyRows?.chest || null,
+                    isCurrent: mine,
+                    forecasts: forecasts.map(own),
+                    chestKey: own(keyRows?.chest || null),
                 };
             })
             .filter((entry) => entry.forecasts.length || entry.chestKey)
@@ -2113,6 +2127,7 @@ class ConsumablesPanel {
             maxSpreadPct: this._buyNumber('market_consumableBuyMaxSpreadPct', 2),
             minSavingCoins: this._buyNumber('market_consumableBuyMinSaving', 0),
             minOrderValue: this._buyNumber('market_consumableBuyMinOrderValue', 0),
+            instantWithinHours: this._buyNumber('market_consumableBuyInstantWithinHours', 24),
         });
         this._buyNote = '';
         const step = this._beginBuyStep(next, strategy);
@@ -3396,16 +3411,20 @@ class ConsumablesPanel {
                       ? 'pinned zone unsimmed — run a sim there to rate food'
                       : 'food unrated — run a sim to rate it';
 
+        const listings = dataManager.getMarketListings?.();
         const forecasts = entries.map(({ itemHrid, perDay }) =>
-            forecast(
-                {
-                    itemHrid,
-                    itemName: dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop(),
-                    inventoryAmount: heldInInventory(inventory, itemHrid),
-                    consumptionRate: perDay === null ? null : perDay / 86400,
-                    consumedPerDay: perDay === null ? null : Math.ceil(perDay),
-                },
-                getItemPrices(itemHrid)
+            withBuyOrders(
+                forecast(
+                    {
+                        itemHrid,
+                        itemName: dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop(),
+                        inventoryAmount: heldInInventory(inventory, itemHrid),
+                        consumptionRate: perDay === null ? null : perDay / 86400,
+                        consumedPerDay: perDay === null ? null : Math.ceil(perDay),
+                    },
+                    getItemPrices(itemHrid)
+                ),
+                listings
             )
         );
         const shortfall = forecasts
@@ -4023,8 +4042,10 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         const row = this._grid();
         row.style.padding = '2px 0';
 
-        const held = heldInInventory(inventory, itemHrid);
-        const needCount = Math.max(0, Math.ceil(perRun * runs) - held);
+        // Bought-but-unclaimed units are in hand; the unfilled remainder of open buy orders is on its way
+        const orders = ownBuyOrders(dataManager.getMarketListings?.(), itemHrid);
+        const held = heldInInventory(inventory, itemHrid) + orders.unclaimed;
+        const needCount = Math.max(0, Math.ceil(perRun * runs) - held - orders.open);
         const prices = getItemPrices(itemHrid);
         const ask = Number(prices?.ask) > 0 ? Number(prices.ask) : null;
         const bid = Number(prices?.bid) > 0 ? Number(prices.bid) : null;
@@ -4072,6 +4093,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
                 maxSpreadPct: this._buyNumber('market_consumableBuyMaxSpreadPct', 2),
                 minSavingCoins: this._buyNumber('market_consumableBuyMinSaving', 0),
                 minOrderValue: this._buyNumber('market_consumableBuyMinOrderValue', 0),
+                instantWithinHours: this._buyNumber('market_consumableBuyInstantWithinHours', 24),
             });
             buy.textContent = `${formatLargeNumber(needCount)} ${strategy.mode === 'order' ? '⏳' : '⚡'}`;
             buy.style.cursor = 'pointer';
@@ -4079,7 +4101,10 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             buy.title =
                 `Buy ${needCount.toLocaleString()} for ${runs} run${runs === 1 ? '' : 's'}` +
                 (ask === null ? '' : ` — about ${Math.round(ask * needCount).toLocaleString()} coins`) +
-                `.\n${strategy.mode === 'order' ? 'Place an order' : 'Buy now'}: ${strategy.reason}`;
+                `.\n${strategy.mode === 'order' ? 'Place an order' : 'Buy now'}: ${strategy.reason}` +
+                (orders.open || orders.unclaimed
+                    ? `\n${orders.open.toLocaleString()} already on order, ${orders.unclaimed.toLocaleString()} bought and waiting to be claimed — netted off.`
+                    : '');
             buy.addEventListener('click', (event) => {
                 event.stopPropagation();
                 this._buy({ itemHrid }, needCount, strategy);
@@ -4339,6 +4364,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
                 maxSpreadPct: this._buyNumber('market_consumableBuyMaxSpreadPct', 2),
                 minSavingCoins: this._buyNumber('market_consumableBuyMinSaving', 0),
                 minOrderValue: this._buyNumber('market_consumableBuyMinOrderValue', 0),
+                instantWithinHours: this._buyNumber('market_consumableBuyInstantWithinHours', 24),
             });
 
             // The recommendation is on the face of it, because it is the whole
@@ -4355,7 +4381,12 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
                 `.\n${strategy.mode === 'order' ? 'Place an order' : 'Buy now'}: ${strategy.reason}` +
                 opens +
                 (strategy.measured ? '' : '\nOpen it in the marketplace once to measure its queue.') +
+                (entry.onOrder || entry.unclaimedBought
+                    ? `\n${(entry.onOrder || 0).toLocaleString()} already on order (not counted again), ` +
+                      `${(entry.unclaimedBought || 0).toLocaleString()} bought and waiting to be claimed (counted as in hand).`
+                    : '') +
                 (entry.routeNote ? `\n${entry.routeNote}` : '');
+            if (entry.onOrder > 0) buy.textContent += ` (${formatLargeNumber(entry.onOrder)} on order)`;
             buy.addEventListener('click', (event) => {
                 event.stopPropagation();
                 this._buy(entry, need.count, strategy);
@@ -4625,6 +4656,7 @@ for (const key of [
     'market_consumableBuyMaxSpreadPct',
     'market_consumableBuyMinSaving',
     'market_consumableBuyMinOrderValue',
+    'market_consumableBuyInstantWithinHours',
 ]) {
     config.onSettingChange(key, () => consumablesPanel.refreshFromSettings());
 }
@@ -4658,6 +4690,10 @@ dataManager.on('character_switched', () => {
 // the pins it read were keyed on 'default' — this is the first read that can
 // name a character
 dataManager.on('character_initialized', () => consumablesPanel.reloadIdlePins());
+
+// An order filling or being claimed changes what is still to buy; the tick would catch it within
+// seconds, this makes it immediate
+dataManager.on('market_listings_updated', () => consumablesPanel.refreshFromSettings());
 
 /** Console handle, since a panel that only opens from the overlay is hard to reach */
 if (typeof window !== 'undefined') {

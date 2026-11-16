@@ -190,7 +190,10 @@ export function refillFor(entry, seconds) {
     // Time the running activation already covers is not bought again; a target it covers needs nothing
     const covered = Number.isFinite(entry.activeSeconds) && entry.activeSeconds > 0 ? entry.activeSeconds : 0;
     const wanted = Math.max(0, Math.ceil((entry.perDay * (seconds - covered)) / 86400));
-    const count = Math.max(0, wanted - Math.floor(entry.held));
+    // Units already bought but unclaimed are in `held` (see `withBuyOrders`); the unfilled remainder of the
+    // player's open buy orders is on its way and is not bought a second time
+    const onOrder = Number(entry.onOrder) > 0 ? Math.floor(Number(entry.onOrder)) : 0;
+    const count = Math.max(0, wanted - Math.floor(entry.held) - onOrder);
 
     return {
         count,
@@ -377,6 +380,60 @@ export function exactDrinkRates(breakdown, drinkConcentration = 0, itemDetails =
 }
 
 /**
+ * What the player's own market listings already hold for one item.
+ *
+ * Counted: buy listings (not sell) for this item at enhancement level 0 — the inventory stack the forecast
+ * is about. `unclaimed` is bought-but-uncollected units (an active or filled listing's `unclaimedItemCount`);
+ * `open` is the unfilled remainder of a still-active listing. Cancelled, expired and fully claimed listings
+ * count for nothing, so the worst this can do is miss an order and recommend a few too many.
+ *
+ * @param {Array<Object>|null} listings - `dataManager.getMarketListings()` rows
+ * @param {string} itemHrid - The item
+ * @returns {{unclaimed: number, open: number}}
+ */
+export function ownBuyOrders(listings, itemHrid) {
+    let unclaimed = 0;
+    let open = 0;
+    if (!itemHrid) return { unclaimed, open };
+    for (const listing of listings || []) {
+        if (!listing || listing.isSell || listing.itemHrid !== itemHrid) continue;
+        if (Number(listing.enhancementLevel) > 0) continue;
+        const status = listing.status;
+        if (status !== '/market_listing_status/active' && status !== '/market_listing_status/filled') continue;
+        const bought = Number(listing.unclaimedItemCount);
+        if (bought > 0) unclaimed += Math.floor(bought);
+        if (status === '/market_listing_status/active') {
+            const remaining = Number(listing.orderQuantity) - Number(listing.filledQuantity || 0);
+            if (remaining > 0) open += Math.floor(remaining);
+        }
+    }
+    return { unclaimed, open };
+}
+
+/**
+ * A forecast with the player's own buy orders folded in: units bought but not yet claimed are stock in hand
+ * (they count toward `held` and push `secondsLeft` out), and the unfilled remainder of open orders is carried
+ * as `onOrder` for `refillFor` to net off. Only for the character's own entries — never a party member's.
+ *
+ * @param {Forecast} entry - From `forecast`
+ * @param {Array<Object>|null} listings - `dataManager.getMarketListings()` rows
+ * @returns {Forecast} The same entry when nothing is on order, else a copy
+ */
+export function withBuyOrders(entry, listings) {
+    const { unclaimed, open } = ownBuyOrders(listings, entry?.itemHrid);
+    if (!unclaimed && !open) return entry;
+    const rate = Number(entry.perDay) > 0 ? entry.perDay / 86400 : 0;
+    return {
+        ...entry,
+        held: entry.held + unclaimed,
+        secondsLeft:
+            Number.isFinite(entry.secondsLeft) && rate > 0 ? entry.secondsLeft + unclaimed / rate : entry.secondsLeft,
+        onOrder: open,
+        unclaimedBought: unclaimed,
+    };
+}
+
+/**
  * Whether to place a buy order or simply take the ask.
  *
  * The bulk sell assistant's judgement, mirrored: an order at the bid saves the
@@ -401,6 +458,8 @@ export function exactDrinkRates(breakdown, drinkConcentration = 0, itemDetails =
  *   saving — (ask − bid) × count — is under this many coins. 0 turns it off.
  * @param {number} [input.minOrderValue] - Buy instantly when the order's total
  *   (bid × count) is under this — too small to be worth an order slot. 0 turns it off.
+ * @param {number} [input.instantWithinHours] - Buy instantly when the item is out, or its stock runs
+ *   out within this many hours. 0 (the default here) turns it off.
  * @returns {{mode: string, saving: number, savingPerHour: number|null, measured: boolean, reason: string, noAsk?: boolean}}
  *   `order` or `instant`; `noAsk` marks an order chosen because nothing is for sale
  */
@@ -413,6 +472,7 @@ export function buyStrategy({
     maxSpreadPct = 2,
     minSavingCoins = 0,
     minOrderValue = 0,
+    instantWithinHours = 0,
 }) {
     // Only reached when no order book has been seen for this item. Six hours is
     // a placeholder, not a measurement, and the caller is told which it got so
@@ -451,6 +511,17 @@ export function buyStrategy({
     // it is a fill so fast the order is as good as instant
     const savingPerHour = waitSeconds > 0 ? saving / (waitSeconds / 3600) : saving;
     const instant = (reason) => ({ mode: 'instant', saving, savingPerHour, measured, reason });
+
+    // Out of stock, or about to be: an order that may sit for hours is the wrong tool for a gap that close
+    if (instantWithinHours > 0 && Number.isFinite(secondsLeft) && secondsLeft <= instantWithinHours * 3600) {
+        const runsOut =
+            secondsLeft <= 0
+                ? 'Out of stock'
+                : secondsLeft < 3600
+                  ? `Runs out in ${Math.max(1, Math.round(secondsLeft / 60))}m`
+                  : `Runs out in ${Math.round(secondsLeft / 3600)}h`;
+        return instant(`${runsOut} — buying now rather than waiting on an order.`);
+    }
 
     // Running out before an order would plausibly fill makes the saving
     // theoretical — you cannot spend a discount you did not receive in time

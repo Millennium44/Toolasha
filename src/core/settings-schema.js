@@ -1964,6 +1964,14 @@ export const settingsGroups = {
                 min: 0,
                 help: 'Restocks whose whole order (bid × count) is worth less than this are recommended as instant buys rather than using up a buy-order slot. 0 turns this rule off. Default: 0.',
             },
+            market_consumableBuyInstantWithinHours: {
+                id: 'market_consumableBuyInstantWithinHours',
+                label: 'Market: Consumables buy instantly when it runs out within (hours)',
+                type: 'number',
+                default: 24,
+                min: 0,
+                help: 'When an item is out, or its stock runs out within this many hours, the Consumables panel recommends buying instantly rather than waiting on a buy order. 0 turns this rule off. Default: 24.',
+            },
             market_consumableBuyOpenRecommended: {
                 id: 'market_consumableBuyOpenRecommended',
                 label: 'Market: Consumables buy links open the recommended order form',
