@@ -7671,6 +7671,46 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.88.0](https://github.com/Millennium44/Toolasha/compare/v3.87.0...v3.88.0) (2026-11-16)
+
+
+### Features
+
+* consumables panel nets your own buy orders and buys instantly when stock is nearly out ([e7b822e](https://github.com/Millennium44/Toolasha/commit/e7b822ed964ea922e7a42e79bcf72a10baed6a05))
+* untradable capes can be valued at their decompose value, philo gets a "Capes from owned stones" box ([d3d7a37](https://github.com/Millennium44/Toolasha/commit/d3d7a37c0da7e3684c26a7b6d712f7cd6afd9042))
+
+
+### Bug Fixes
+
+* Best Items hidden list merges across devices instead of last write wins ([12c2ab0](https://github.com/Millennium44/Toolasha/commit/12c2ab0688659436440b6b78a246d9d06445b750))
+* Best Items hidden merge keeps unknown fields and ignores far-future times ([ae24c11](https://github.com/Millennium44/Toolasha/commit/ae24c11a5498d686d20143a0ef6ebf43fa3705e2))
+* cape decompose value re-costs when the Sell pricing setting changes ([038501b](https://github.com/Millennium44/Toolasha/commit/038501b8330b422d244f83434fd5837a94630bd6))
+* consumables keep held as real inventory, count uncollected units from ended buy listings ([cd771aa](https://github.com/Millennium44/Toolasha/commit/cd771aa48c09a320f6a1fb3a264d163a64d5519e))
+* decompose cape value prices outputs on the Sell side and ignores value-map estimates ([e79641d](https://github.com/Millennium44/Toolasha/commit/e79641d296816fa465a2f59a13e102320e33f9ee))
+* dungeon Tracker button sits beside Per-player on phones ([91dd030](https://github.com/Millennium44/Toolasha/commit/91dd030229e8ca16160698fc5bd47820c6b61eec))
+* dungeon tracker header counts the run on screen, not every dungeon ([41966ed](https://github.com/Millennium44/Toolasha/commit/41966eda4d1b37976bbfcb597a9a0854b9338515))
+* lab Buy all queue nets own orders; fully covered rows still say what to collect ([d9549aa](https://github.com/Millennium44/Toolasha/commit/d9549aaae5997c381f6056c0389bc989472b3ab7))
+* net-worth enhancement bills price a decompose cape base on the net-worth Sell side ([d7acbde](https://github.com/Millennium44/Toolasha/commit/d7acbde98445a351ea7ae0bd5d8ed8cf01eb63b1))
+* Per-player and Tracker buttons stay inside the players box on phones ([2c68488](https://github.com/Millennium44/Toolasha/commit/2c684884e94074b5a6e9360bd35b83a3554ab5ef))
+* shopping list and craft bill no longer net own orders twice ([be653e1](https://github.com/Millennium44/Toolasha/commit/be653e10b47c1f80d2ca36f86492418bdeb8b92e))
+* skill-page Arbitrage and Craft & Enhance buttons find the skill by its icon, not its English title ([4c3d690](https://github.com/Millennium44/Toolasha/commit/4c3d6903e76a2949436d8ef34e6241825f9f876e))
+* skilling tea list nets own buy orders and every list line carries its own credit ([c181eb0](https://github.com/Millennium44/Toolasha/commit/c181eb0cd8f780cf014629e99ad0b3d1ed01bb30))
+
+
+### Documentation
+
+* changelog entry for cape decompose value and owned stones ([773f2e6](https://github.com/Millennium44/Toolasha/commit/773f2e6b7d0e7fa4b919fe4be223bfe0fec901c0))
+* changelog entry for language-independent skill title buttons ([1e3e458](https://github.com/Millennium44/Toolasha/commit/1e3e4586020af09b3f8a77787ddb6df5998bd6e8))
+* changelog entry for per-dungeon tracker header averages ([6190439](https://github.com/Millennium44/Toolasha/commit/61904395654878bc801fb84cdb37ffaa39cdf94e))
+* changelog entry for phone combat buttons in the player box ([fdb0679](https://github.com/Millennium44/Toolasha/commit/fdb06791d74b97657b567626b3595e1785456ba2))
+* changelog entry for the Best Items hidden-list sync merge ([381e2bd](https://github.com/Millennium44/Toolasha/commit/381e2bd591d1f42868789c3d6aa41ed88a79e266))
+
+
+### Miscellaneous Chores
+
+* **deps:** raise the basic-ftp override to 6.2.4 for the patched advisory ([9e8da30](https://github.com/Millennium44/Toolasha/commit/9e8da30bebd18b4b7cfe1c276877f656294d4db7))
+* land-stack accepts Codex findings whose threads are all resolved ([939cf9a](https://github.com/Millennium44/Toolasha/commit/939cf9aaec34ddbe9be9c41f572bece669413d7c))
+
 ## [3.87.0](https://github.com/Millennium44/Toolasha/compare/v3.86.1...v3.87.0) (2026-11-16)
 
 ### Features
