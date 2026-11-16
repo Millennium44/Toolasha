@@ -18,6 +18,10 @@ The skill-page title buttons now recognize the skill by its icon, so players run
 
 A row hidden on one device is no longer brought back when another device syncs an older hidden list, and an unhide carries over too.
 
+### Dungeon tracker averages only the dungeon you are running
+
+During a run, Last Run, Avg Run and Runs count only your runs of that dungeon and tier, instead of every dungeon whenever the history filter was on All. Picking All no longer stops the history list from following the live run.
+
 <!-- shipped in 3.87.0 -->
 
 ### Overbid table shows listings beaten by older prices
