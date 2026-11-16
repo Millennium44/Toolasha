@@ -18,6 +18,10 @@ The skill-page title buttons now recognize the skill by its icon, so players run
 
 A row hidden on one device is no longer brought back when another device syncs an older hidden list, and an unhide carries over too.
 
+### Tracker button sits beside Per-player on phones
+
+At phone width the dungeon Tracker button shares Per-player's row instead of taking a row of its own.
+
 <!-- shipped in 3.87.0 -->
 
 ### Overbid table shows listings beaten by older prices

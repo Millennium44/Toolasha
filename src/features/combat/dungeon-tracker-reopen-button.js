@@ -29,6 +29,7 @@ let timer = null;
 let button = null;
 let area = null;
 let positionedArea = null;
+let positionedHost = null;
 let detachLayout = null;
 
 function inGuildPanel(element) {
@@ -42,6 +43,8 @@ function remove() {
     button = null;
     if (positionedArea) positionedArea.style.position = '';
     positionedArea = null;
+    if (positionedHost) positionedHost.style.position = '';
+    positionedHost = null;
     area = null;
     // Any stray copy a re-render left behind
     document.querySelectorAll(`#${REOPEN_BUTTON_ID}`).forEach((el) => el.remove());
@@ -50,7 +53,10 @@ function remove() {
 /** Keep the right offset clear of Per-player, which may come, go, dock or resize */
 function place() {
     if (!button) return;
-    if (button.dataset.toolashaDocked === 'true') return;
+    if (button.dataset.toolashaDocked === 'true') {
+        placeDocked();
+        return;
+    }
     const perPlayer = document.getElementById(PER_PLAYER_ID);
     let right = EDGE;
     // Docked (phone width) Per-player is a row of its own, not in the corner
@@ -59,6 +65,36 @@ function place() {
         right = EDGE + (width > 0 ? width : FALLBACK_PER_PLAYER_WIDTH) + GAP;
     }
     button.style.right = `${right}px`;
+}
+
+/**
+ * At phone width both buttons dock above the battle area, which stacks its children in a column. Sit beside a
+ * docked Per-player on its row rather than taking a row of our own; without one, keep the docked row.
+ */
+function placeDocked() {
+    const host = button.parentElement;
+    const perPlayer = document.getElementById(PER_PLAYER_ID);
+    const beside =
+        host &&
+        perPlayer?.isConnected &&
+        perPlayer.dataset.toolashaDocked === 'true' &&
+        perPlayer.parentElement === host &&
+        perPlayer.offsetWidth > 0;
+    if (!beside) {
+        Object.assign(button.style, { position: 'relative', top: 'auto', left: 'auto', margin: '6px 0' });
+        return;
+    }
+    if (!host.style.position) {
+        host.style.position = 'relative';
+        positionedHost = host;
+    }
+    Object.assign(button.style, {
+        position: 'absolute',
+        top: `${perPlayer.offsetTop}px`,
+        left: `${perPlayer.offsetLeft + perPlayer.offsetWidth + GAP}px`,
+        right: 'auto',
+        margin: '0',
+    });
 }
 
 function findArea() {
@@ -120,7 +156,11 @@ export function syncReopenButton() {
                 battleArea.parentElement,
             onChange: (narrow) => {
                 if (narrow) next.style.width = 'fit-content';
-                else place();
+                else if (positionedHost) {
+                    positionedHost.style.position = '';
+                    positionedHost = null;
+                }
+                place();
             },
         });
     }
