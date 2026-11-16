@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Overbid table shows listings beaten by older prices
+
+Listings whose only price data is the hourly snapshot or an hour-old pooled sighting were left out with a bare "could not be checked" count, though My Listings marked them red. They now appear under "Probably overbid" with the price's age, and listings with no data at all are named. Pop-up alerts still need a price under 15 minutes old.
+
 ### Dungeon tracker reopens from a button
 
 While a dungeon runs, a "Tracker" button sits beside "Per-player" in the battle panel and shows or hides the dungeon tracker, so closing it with the x no longer leaves Ctrl+K as the only way back.
