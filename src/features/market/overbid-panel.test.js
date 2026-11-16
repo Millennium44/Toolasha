@@ -966,7 +966,7 @@ describe('panel', () => {
                 '2h 5m old',
             ]);
             expect(root().textContent).toContain(
-                'No usable price data for sword +5 (sell), so it could not be checked.'
+                'No recent price data for sword +5 (sell), so it could not be checked.'
             );
             expect(root().textContent).toContain('Overbid table (1, 2 probable)');
         });
@@ -1047,7 +1047,7 @@ describe('panel', () => {
             fire();
             await openByTab();
             expect(root().querySelector('[data-overbid-probable-table]')).toBeNull();
-            expect(root().textContent).toContain('No usable price data for cheese (sell)');
+            expect(root().textContent).toContain('No recent price data for cheese (sell)');
         });
 
         it('lists a buy and a sell of one item, and names repeats once with a count', async () => {
@@ -1135,7 +1135,7 @@ describe('panel', () => {
             await overbidPanel.initialize();
             hoisted.listings = [listing()];
             tab(container).click();
-            expect(root().textContent).toContain('No usable price data for cheese (sell), so it could not be checked.');
+            expect(root().textContent).toContain('No recent price data for cheese (sell), so it could not be checked.');
             expect(seen()).toContain('Nothing is undercut or outbid right now');
         });
 
