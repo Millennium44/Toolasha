@@ -28,6 +28,7 @@ const game = vi.hoisted(() => ({
     prices: {},
     equipment: new Map(),
     ownedEquipment: [],
+    listings: [],
 }));
 
 const settings = vi.hoisted(() => ({ values: {}, listeners: {} }));
@@ -88,6 +89,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => game.items[hrid] || null,
         getActionDetails: () => game.actionDetail,
         getInventory: () => game.inventory,
+        getMarketListings: () => game.listings,
         getEquipment: () => game.equipment,
         getInitClientData: () => game.clientData,
         getCurrentActions: () => game.currentActions,
@@ -1359,6 +1361,40 @@ describe('switching character', () => {
     });
 });
 
+describe('the Buy all craft bill', () => {
+    test('asks for the bag plus the uncollected units plus the count, since the bill nets both itself', async () => {
+        const openCraftBill = vi.fn();
+        window.Toolasha = { Actions: { missingMaterialsButton: { openCraftBill } } };
+        game.actionDetail = { outputItems: [{ itemHrid: '/items/key', count: 1 }] };
+        game.listings = [
+            {
+                id: 1,
+                isSell: false,
+                itemHrid: '/items/cheese',
+                enhancementLevel: 0,
+                status: '/market_listing_status/filled',
+                orderQuantity: 400,
+                filledQuantity: 400,
+                unclaimedItemCount: 400,
+            },
+        ];
+        const row = {
+            itemHrid: '/items/key',
+            name: 'Key',
+            craftActionHrid: '/actions/x',
+            rateKnown: true,
+            perDay: 1e9,
+            held: 0,
+            price: 1,
+        };
+        await consumablesPanel._openKeyMaterials([row], [{ itemHrid: '/items/cheese', count: 600, held: 0 }]);
+        game.listings = [];
+        expect(openCraftBill).toHaveBeenCalledTimes(1);
+        // The bill's own deduction (bag 0 + unclaimed 400) then lands on the 600 the row shows
+        expect(openCraftBill.mock.calls[0][1]).toEqual([{ itemHrid: '/items/cheese', count: 1000 }]);
+    });
+});
+
 describe('the labyrinth buy all', () => {
     beforeEach(() => {
         consumablesPanel._tab = 'labyrinth';
@@ -1419,6 +1455,30 @@ describe('the labyrinth buy all', () => {
         } finally {
             consumablesPanel._narrow = false;
         }
+    });
+
+    test('own buy orders come off both the rows and the Buy all queue', async () => {
+        game.listings = [
+            // 300 torches still to fill and 200 bought but uncollected cover the 500 torches
+            {
+                id: 1,
+                isSell: false,
+                itemHrid: '/items/basic_torch',
+                enhancementLevel: 0,
+                status: '/market_listing_status/active',
+                orderQuantity: 500,
+                filledQuantity: 200,
+                unclaimedItemCount: 200,
+            },
+        ];
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._render();
+
+        const queue = consumablesPanel._buyQueues.find((q) => q.label === 'Labyrinth').queue;
+        expect(queue.map((q) => q.itemHrid)).not.toContain('/items/basic_torch');
+        expect(consumablesPanel.bodyEl.textContent).toContain('✓ (200 to collect)');
+        game.listings = [];
     });
 
     test('a fully stocked lab shows no buy-all line', async () => {
@@ -1690,9 +1750,9 @@ describe('the labyrinth burn trend', () => {
         const queue = () => consumablesPanel._buyQueues.find((q) => q.label === 'Labyrinth').queue;
         // Measured: torches average 70 a run, shrouds 2, beacons 3; five runs, 50 torches held
         expect(queue()).toEqual([
-            { itemHrid: '/items/basic_torch', count: 300 },
-            { itemHrid: '/items/basic_shroud', count: 10 },
-            { itemHrid: '/items/basic_beacon', count: 15 },
+            { itemHrid: '/items/basic_torch', count: 300, onOrder: 0 },
+            { itemHrid: '/items/basic_shroud', count: 10, onOrder: 0 },
+            { itemHrid: '/items/basic_beacon', count: 15, onOrder: 0 },
         ]);
 
         // Full capacity (100/4/5 a run) ignores the ledger
@@ -1700,9 +1760,9 @@ describe('the labyrinth burn trend', () => {
         consumablesPanel._buyQueues = [];
         consumablesPanel._render();
         expect(queue()).toEqual([
-            { itemHrid: '/items/basic_torch', count: 450 },
-            { itemHrid: '/items/basic_shroud', count: 20 },
-            { itemHrid: '/items/basic_beacon', count: 25 },
+            { itemHrid: '/items/basic_torch', count: 450, onOrder: 0 },
+            { itemHrid: '/items/basic_shroud', count: 20, onOrder: 0 },
+            { itemHrid: '/items/basic_beacon', count: 25, onOrder: 0 },
         ]);
         delete settings.values.consumables_labPerRunBasis;
     });

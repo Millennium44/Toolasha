@@ -115,3 +115,61 @@ export function capToViewport(scroller, on) {
         scroller.style.setProperty('max-width', `${visible}px`, 'important');
     }
 }
+
+const STRIP_PADDING_KEY = 'toolashaStripPadding';
+const STRIP_HEIGHT = 22;
+
+/**
+ * Keep a thin strip free at the top of an area that corner buttons are absolutely positioned in, at phone
+ * width only, so the buttons never cover the first row of the game's own content. The strip is reserved while
+ * any of the named buttons is inside the area and the measured panel is narrow, and cleared otherwise. Which
+ * buttons count is decided by id, so several features can share one area without knowing about each other.
+ * Call it again whenever the area, a button or the width may have changed; it only touches what it set.
+ *
+ * @param {HTMLElement|null} area - The area the buttons sit in
+ * @param {Object} options
+ * @param {string[]} options.buttonIds - Element ids that need the strip while they are in the area
+ * @param {HTMLElement} [options.measure] - Content panel whose width decides (default: the area)
+ * @param {number} [options.breakpoint] - Maximum narrow content width
+ */
+export function syncTopStrip(area, { buttonIds, measure = area, breakpoint = 640 }) {
+    if (!area?.style) return;
+    const width = measure?.getBoundingClientRect?.().width;
+    const present = buttonIds.some((id) => {
+        const el = document.getElementById(id);
+        return Boolean(el) && el.parentElement === area;
+    });
+    const reserved = STRIP_PADDING_KEY in area.dataset;
+    // A hidden panel measures 0; keep whatever is set rather than flicker
+    if (!(width > 0) && reserved && present) return;
+    if (present && width > 0 && width <= breakpoint) {
+        if (!reserved) {
+            area.dataset[STRIP_PADDING_KEY] = area.style.paddingTop;
+            area.style.paddingTop = `${STRIP_HEIGHT}px`;
+        }
+    } else if (reserved) {
+        area.style.paddingTop = area.dataset[STRIP_PADDING_KEY];
+        delete area.dataset[STRIP_PADDING_KEY];
+    }
+}
+
+/**
+ * Re-run {@link syncTopStrip} when the measured panel resizes or the window does.
+ * @param {HTMLElement} area
+ * @param {Object} options - As for syncTopStrip
+ * @returns {Function} Stop watching and clear the strip if no button needs it any more. Remove your own button
+ *   first.
+ */
+export function watchTopStrip(area, options) {
+    const measure = options.measure || area;
+    const run = () => syncTopStrip(area, options);
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(run) : null;
+    observer?.observe(measure);
+    window.addEventListener('resize', run);
+    run();
+    return () => {
+        observer?.disconnect();
+        window.removeEventListener('resize', run);
+        run();
+    };
+}

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Consumables counts your buy orders and buys at once when you are running out
+
+"Buy for 1 week" and Buy all now subtract your own buy listings for that item, both filled-but-uncollected and still open, so nothing is bought twice. A new "Buy instantly when it runs out within" rule (default 24 hours, in the gear) buys at ask when an item is out or about to run out.
+
 ### Arbitrage and Craft & Enhance buttons in any game language
 
 The skill-page title buttons now recognize the skill by its icon, so players running the game in another language get them too.
@@ -17,6 +21,10 @@ A row hidden on one device is no longer brought back when another device syncs a
 ### Capes can be valued at their decompose value, and philo can use owned stones for capes
 
 "Untradable capes: base value" gains "Its decompose value" (2,000 essence for a cape, quiver or cloak, after tax), so the philo and profit figures count what you give up by not decomposing it. The philo calculator also gains "Capes from owned stones", which values refined capes at your own stones without switching every other input to owned.
+
+### Per-player and Tracker buttons stay in the player box on phones
+
+At phone width the Per-player and dungeon Tracker buttons sit at the top of the party box, as on desktop, instead of taking rows of their own that pushed the battle down.
 
 <!-- shipped in 3.87.0 -->
 

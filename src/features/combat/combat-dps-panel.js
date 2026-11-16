@@ -99,7 +99,7 @@ import { resolveRosterColors } from '../../utils/player-colors.js';
 import { formatKMB, formatWithSeparator, formatDateTime } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { dockWhenNarrow } from '../../utils/responsive-dock.js';
+import { watchTopStrip } from '../../utils/responsive-dock.js';
 import { BUTTON_LOOK, GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
 
 /**
@@ -1292,10 +1292,11 @@ let detachOpenerLayout = null;
 let positionedArea = null;
 
 function removeOpener() {
-    detachOpenerLayout?.();
-    detachOpenerLayout = null;
     injected?.remove();
     injected = null;
+    // After the button is gone, so the strip is only kept if the Tracker button still needs it
+    detachOpenerLayout?.();
+    detachOpenerLayout = null;
     openerArea = null;
     if (positionedArea?.style.position === 'relative') positionedArea.style.position = '';
     positionedArea = null;
@@ -1356,19 +1357,14 @@ function inject() {
     injected = button;
     openerArea = area;
     lastArea = area;
-    const battleArea = area.closest('[class*="BattlePanel_battleArea"]');
-    if (battleArea?.parentElement) {
-        detachOpenerLayout = dockWhenNarrow(button, {
-            host: battleArea.parentElement,
-            before: battleArea,
+    // At phone width the players area keeps a thin strip free at its top so the corner buttons cover no unit
+    if (area.matches(PLAYERS_AREA)) {
+        detachOpenerLayout = watchTopStrip(area, {
+            buttonIds: [BUTTON_ID, 'toolasha-dungeon-tracker-reopen-button'],
             measure:
-                battleArea.closest('[class*="GamePage_mainPanel"], [class*="GamePage_gamePanel"]') ||
-                battleArea.parentElement,
-            // The dock gives a toolbar the full row; this one stays the small desktop button. The dock saved
-            // the wide width before this runs and puts it back before onChange(false).
-            onChange: (narrow) => {
-                if (narrow) button.style.width = 'fit-content';
-            },
+                area.closest('[class*="GamePage_mainPanel"], [class*="GamePage_gamePanel"]') ||
+                area.closest('[class*="BattlePanel_battleArea"]')?.parentElement ||
+                area,
         });
     }
 }
