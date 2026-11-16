@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 The skill-page title buttons now recognize the skill by its icon, so players running the game in another language get them too.
 
+### Hidden Best Items rows stay hidden across devices
+
+A row hidden on one device is no longer brought back when another device syncs an older hidden list, and an unhide carries over too.
+
 <!-- shipped in 3.87.0 -->
 
 ### Overbid table shows listings beaten by older prices
