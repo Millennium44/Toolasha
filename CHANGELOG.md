@@ -14,6 +14,10 @@ The skill-page title buttons now recognize the skill by its icon, so players run
 
 A row hidden on one device is no longer brought back when another device syncs an older hidden list, and an unhide carries over too.
 
+### Capes can be valued at their decompose value, and philo can use owned stones for capes
+
+"Untradable capes: base value" gains "Its decompose value" (2,000 essence for a cape, quiver or cloak, after tax), so the philo and profit figures count what you give up by not decomposing it. The philo calculator also gains "Capes from owned stones", which values refined capes at your own stones without switching every other input to owned.
+
 <!-- shipped in 3.87.0 -->
 
 ### Overbid table shows listings beaten by older prices
