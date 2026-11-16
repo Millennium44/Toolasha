@@ -41,6 +41,7 @@ vi.mock('../core/data-manager.js', () => ({
         getEquipment: () => new Map(game.equipment),
         getActionDrinkSlots: () => game.drinks,
         getBuffStateVersion: () => game.buffVersion,
+        getItemDetails: (hrid) => game.items[hrid] ?? null,
     },
 }));
 // This module's own concern is the production-cost formula, not the in-stock
@@ -71,6 +72,11 @@ vi.mock('./market-data.js', () => ({
     getItemPrices: (hrid, level = 0) => game.prices[`${hrid}:${level}`] || null,
     getItemPrice: (hrid, { mode = 'ask', side = 'sell' } = {}) =>
         game.customSides[hrid]?.[side] ?? (game.prices[`${hrid}:0`]?.[mode] || 0),
+    // The decompose cape value prices its outputs on the Sell side the settings name
+    getItemPriceInfo: (hrid, { context = 'profit' } = {}) => {
+        const price = game.prices[`${hrid}:0`]?.[game.contextSide?.[context] ?? game.sellSide ?? 'ask'];
+        return { price: price || null, source: 'book', estimated: false };
+    },
 }));
 
 const {
@@ -470,6 +476,47 @@ describe('a refined untradable cape is its refinement stones alone', () => {
         }
         expect(results.zero).toEqual({ cost: 1500, partial: false });
         expect(results.mirror).toEqual({ cost: 1500, partial: true });
+    });
+
+    test('on decompose, changing the Sell setting re-costs the cape instead of serving the cached bill', async () => {
+        const { default: config } = await import('../core/config.js');
+        const ESSENCE = '/items/test_essence';
+        game.items[CAPE].alchemyDetail = { decomposeItems: [{ itemHrid: ESSENCE, count: 2000 }] };
+        game.prices[`${ESSENCE}:0`] = { ask: 500, bid: 400 };
+        const costWith = (profitMode, sellSide) => {
+            game.sellSide = sellSide;
+            const spy = vi.spyOn(config, 'getSettingValue').mockImplementation((key, fallback) => {
+                if (key === 'untradableCapeBaseValue') return 'decompose';
+                if (key === 'profitCalc_pricingMode') return profitMode;
+                return fallback;
+            });
+            const result = getProductionCostDetailed(REFINED, 'ask');
+            spy.mockRestore();
+            return result;
+        };
+        // hybrid sells at the ask, conservative at the bid: no feed, buff or custom version moves in between
+        const hybrid = costWith('hybrid', 'ask');
+        const conservative = costWith('conservative', 'bid');
+        expect(hybrid.cost).toBeCloseTo(1500 + 2000 * 500 * 0.96, 6);
+        expect(conservative.cost).toBeCloseTo(1500 + 2000 * 400 * 0.96, 6);
+        game.sellSide = undefined;
+    });
+
+    test('on decompose, a net-worth bill reads the net-worth Sell side, never the profit one, and the two do not share a cache entry', async () => {
+        const { default: config } = await import('../core/config.js');
+        const ESSENCE = '/items/test_essence';
+        game.items[CAPE].alchemyDetail = { decomposeItems: [{ itemHrid: ESSENCE, count: 2000 }] };
+        game.prices[`${ESSENCE}:0`] = { ask: 500, bid: 400 };
+        game.contextSide = { profit: 'bid', networth: 'ask' };
+        const spy = vi
+            .spyOn(config, 'getSettingValue')
+            .mockImplementation((key, fallback) => (key === 'untradableCapeBaseValue' ? 'decompose' : fallback));
+        const profit = getProductionCostDetailed(REFINED, 'ask');
+        const networth = getProductionCostDetailed(REFINED, 'ask', 'networth');
+        spy.mockRestore();
+        game.contextSide = undefined;
+        expect(profit.cost).toBeCloseTo(1500 + 2000 * 400 * 0.96, 6);
+        expect(networth.cost).toBeCloseTo(1500 + 2000 * 500 * 0.96, 6);
     });
 
     test('an unpriced stone leaves the bill partial under either setting', async () => {

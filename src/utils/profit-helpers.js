@@ -492,12 +492,12 @@ export function resolveItemPrice(itemHrid, options = {}) {
     // An enhanced level with no listing stays unpriced and the caller decides (e.g. base
     // price plus enhancement materials).
     if (enhancementLevel === 0) {
-        const prodCost = getProductionCost(itemHrid, mode || getPricingMode(context, side));
+        const prodCost = getProductionCost(itemHrid, mode || getPricingMode(context, side), context);
         if (prodCost > 0) {
             // `production` says the figure is a craft cost. `partial` says the bill is a lower bound: an input
             // (or an input's own input) nothing prices was counted as 0, so it is not what the item costs
             const costMode = mode || getPricingMode(context, side);
-            const partial = Boolean(getProductionCostDetailed(itemHrid, costMode).partial);
+            const partial = Boolean(getProductionCostDetailed(itemHrid, costMode, context).partial);
             return {
                 price: prodCost,
                 custom: false,

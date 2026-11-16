@@ -681,7 +681,7 @@ class ExpectedValueCalculator {
             // has no recipe for, and a base of nothing stays unpriced, never 0.
             const capeValue =
                 enhancementLevel === 0 && isUntradableCape(itemHrid) && !isRefinedCape(itemHrid)
-                    ? getCapeBaseValue()
+                    ? getCapeBaseValue({ itemHrid })
                     : 0;
             return capeValue > 0
                 ? { value: capeValue, source: 'untradableCape', needsTax: false, estimated: true }

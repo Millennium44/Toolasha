@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Capes can be valued at their decompose value, and philo can use owned stones for capes
+
+"Untradable capes: base value" gains "Its decompose value" (2,000 essence for a cape, quiver or cloak, after tax), so the philo and profit figures count what you give up by not decomposing it. The philo calculator also gains "Capes from owned stones", which values refined capes at your own stones without switching every other input to owned.
+
 ### Dungeon tracker averages only the dungeon you are running
 
 During a run, Last Run, Avg Run and Runs count only your runs of that dungeon and tier, instead of every dungeon whenever the history filter was on All. Picking All no longer stops the history list from following the live run.

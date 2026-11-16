@@ -850,6 +850,7 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
             const price = isRefinedCape(item.itemHrid)
                 ? 0
                 : getCapeBaseValue({
+                      itemHrid: item.itemHrid,
                       context: 'networth',
                       mode: config.getSettingValue('networth_pricingMode') || 'ask',
                   });

@@ -50,7 +50,13 @@ import { taskShopTokenPrice } from './task-shop-value.js';
 import { testerShopEnabled } from './tester-shop.js';
 import { getMarketValuesEpoch } from './market-values.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
-import { getCapeBaseValue, getCapeBaseValueMode, isRefinedCape, isUntradableCape } from './untradable-cape.js';
+import {
+    getCapeBaseValue,
+    getCapeBaseValueMode,
+    getCapeBaseValueStamp,
+    isRefinedCape,
+    isUntradableCape,
+} from './untradable-cape.js';
 import {
     TRAINEE_SHOP_PRICE,
     getCheapestProtectionPrice as getCheapestProtectionPriceFrom,
@@ -81,8 +87,8 @@ function buySide(options) {
  * @param {'ask'|'bid'|'average'|string} side - The side the cost was taken on
  * @returns {boolean}
  */
-function craftPartial(itemHrid, side) {
-    return getProductionCostDetailed(itemHrid, side === 'bid' ? 'bid' : 'ask').partial;
+function craftPartial(itemHrid, side, context = 'profit') {
+    return getProductionCostDetailed(itemHrid, side === 'bid' ? 'bid' : 'ask', context).partial;
 }
 
 /**
@@ -152,7 +158,8 @@ export function priceMaterial(itemHrid, options = {}) {
         const tokens = taskShopTokenPrice(itemHrid);
         if (tokens) return { ...result(tokens.price, true, false, tokens.partial), tokenValued: true };
     }
-    const partial = Boolean(resolved.production) && craftPartial(itemHrid, buySide(options));
+    const partial =
+        Boolean(resolved.production) && craftPartial(itemHrid, buySide(options), options.context || 'profit');
     return result(resolved.price, resolved.estimated, Boolean(resolved.custom), partial);
 }
 
@@ -217,7 +224,7 @@ export function pricingStamp() {
         // Tester-shop pricing swaps shop-vs-market results
         testerShopEnabled() ? 'tester' : '',
         // What an unrefined untradable cape is assumed to be worth moves every cape's base cost
-        getCapeBaseValueMode(),
+        getCapeBaseValueStamp(),
         custom,
         // The game's value map clamps and fills getPrice() without any order book moving
         values,
@@ -231,8 +238,8 @@ export function pricingStamp() {
  * @param {Object} options - Same as {@link priceMaterial}
  * @returns {{price: number|null, unpriced: boolean, estimated: boolean, custom: boolean, partial: boolean, assumed: true}}
  */
-function assumedCapeBase(options) {
-    const value = getCapeBaseValue({ context: options.context || 'profit', mode: options.mode });
+function assumedCapeBase(options, itemHrid) {
+    const value = getCapeBaseValue({ context: options.context || 'profit', mode: options.mode, itemHrid });
     return value > 0 ? { ...result(value, true), assumed: true } : { ...result(0), partial: true, assumed: true };
 }
 
@@ -248,7 +255,7 @@ function assumedCapeBase(options) {
  */
 function craftedCapeBillFlags(itemHrid) {
     if (!isRefinedCape(itemHrid) || !isUntradableCape(itemHrid)) return {};
-    return getCapeBaseValueMode() === 'mirror' ? { assumed: true } : { baseCapeCounted: false };
+    return getCapeBaseValueMode() !== 'zero' ? { assumed: true } : { baseCapeCounted: false };
 }
 
 /**
@@ -268,7 +275,7 @@ export function priceGuarded(itemHrid, options = {}) {
         // cape setting assumes, flagged so a caller can tell an assumption from an unpriced input. (A
         // refined one is priced by its recipe; a custom price of 0 stays the player's own "unpriced".)
         if (!resolved.custom && isUntradableCape(itemHrid) && !isRefinedCape(itemHrid)) {
-            return assumedCapeBase(options);
+            return assumedCapeBase(options, itemHrid);
         }
         return { ...result(0), custom: Boolean(resolved.custom) };
     }
@@ -276,9 +283,9 @@ export function priceGuarded(itemHrid, options = {}) {
     // A craft-cost figure (the resolver's own fallback, or the guard swapping an inflated ask for it)
     // is a partial bill when a recipe input went unpriced
     let partial = false;
-    if (resolved.production) partial = craftPartial(itemHrid, buySide(options));
+    if (resolved.production) partial = craftPartial(itemHrid, buySide(options), options.context || 'profit');
     else if (price !== resolved.price) {
-        const craft = getProductionCostDetailed(itemHrid, 'ask');
+        const craft = getProductionCostDetailed(itemHrid, 'ask', options.context || 'profit');
         partial = craft.cost === price && craft.partial;
     }
     const guarded = result(price, resolved.estimated || price !== resolved.price, Boolean(resolved.custom), partial);
@@ -341,14 +348,14 @@ export function priceBase(itemHrid, options = {}) {
     const crafting = useCraftingCost ?? config.isFeatureEnabled('enhanceSim_baseItemCraftingCost');
     if (!crafting) return { ...bought, crafted: false };
     const side = mode || getPricingMode(context, 'buy');
-    const craft = getProductionCost(itemHrid, side === 'bid' ? 'bid' : 'ask');
+    const craft = getProductionCost(itemHrid, side === 'bid' ? 'bid' : 'ask', context);
     if (craft > 0 && (bought.unpriced || craft < bought.price)) {
         return {
             price: craft,
             unpriced: false,
             estimated: true,
             custom: false,
-            partial: craftPartial(itemHrid, side),
+            partial: craftPartial(itemHrid, side, context),
             crafted: true,
             // A refined cape's craft cost carries its base at the cape setting's value: an assumption
             ...craftedCapeBillFlags(itemHrid),

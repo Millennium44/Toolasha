@@ -419,7 +419,7 @@ function priceWithPartial(itemHrid, enhancementLevel, priceCache = null) {
         if (isUntradableCape(itemHrid)) {
             const capeValue = isRefinedCape(itemHrid)
                 ? 0
-                : getCapeBaseValue({ context: 'networth', mode: pricingMode });
+                : getCapeBaseValue({ context: 'networth', mode: pricingMode, itemHrid });
             return { price: capeValue, partial: !(capeValue > 0) };
         }
     }
