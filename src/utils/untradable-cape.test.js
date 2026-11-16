@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
     settings: {},
     prices: {},
     priceCalls: [],
+    estimated: {},
 }));
 
 vi.mock('../core/config.js', () => ({
@@ -17,6 +18,11 @@ vi.mock('./market-data.js', () => ({
     getItemPrice: (hrid, options) => {
         mocks.priceCalls.push([hrid, options]);
         return mocks.prices[hrid] ?? null;
+    },
+    getItemPriceInfo: (hrid, options) => {
+        mocks.priceCalls.push([hrid, options]);
+        const price = mocks.prices[hrid] ?? null;
+        return { price, source: price === null ? null : 'book', estimated: Boolean(mocks.estimated?.[hrid]) };
     },
 }));
 
@@ -35,6 +41,7 @@ beforeEach(() => {
     mocks.settings = {};
     mocks.prices = { '/items/mirror_of_protection': 5_000_000 };
     mocks.priceCalls = [];
+    mocks.estimated = {};
     mocks.items = {
         '/items/gatherer_cape': { name: 'Gatherer Cape', ...back },
         '/items/gatherer_cape_refined': { name: 'Gatherer Cape (Refined)', ...back },
@@ -144,7 +151,8 @@ describe('getCapeBaseValue on the decompose setting', () => {
             expect(getCapeBaseValue({ itemHrid: hrid })).toBeCloseTo(taxed(500) * 2000 + taxed(100) * 3, 6);
             mocks.priceCalls = [];
             getCapeBaseValue({ itemHrid: hrid, context: 'networth', mode: 'bid' });
-            expect(mocks.priceCalls[0]).toEqual([ESSENCE, { context: 'networth', side: 'sell', mode: 'bid' }]);
+            // A caller's mode is for the Mirror: outputs are sold, so they are asked on the Sell side only
+            expect(mocks.priceCalls[0]).toEqual([ESSENCE, { context: 'networth', side: 'sell' }]);
         });
     }
 
@@ -157,6 +165,11 @@ describe('getCapeBaseValue on the decompose setting', () => {
 
     test('any unpriced output makes it 0 (a floor the readers flag), never a partial sum', () => {
         delete mocks.prices[COIN_LIKE];
+        expect(getCapeBaseValue({ itemHrid: '/items/gatherer_cape' })).toBe(0);
+    });
+
+    test('an output priced only from the value map (an empty book) is not firm: 0, a floor', () => {
+        mocks.estimated[ESSENCE] = true;
         expect(getCapeBaseValue({ itemHrid: '/items/gatherer_cape' })).toBe(0);
     });
 

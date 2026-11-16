@@ -1523,6 +1523,31 @@ describe('untradable items with no price', () => {
             expect(row.cost).toBeNull();
         });
 
+        test('decompose outputs follow the Sell setting, not the buy side the table passes (buy ask, sell bid)', () => {
+            const hrid = CAPE_HRID;
+            const REFINED = `${hrid}_refined`;
+            mocks.itemDetails[hrid] = {
+                equipmentDetail: { type: '/equipment_types/back' },
+                alchemyDetail: { decomposeItems: [{ itemHrid: ESSENCE, count: 2000 }] },
+            };
+            mocks.itemDetails[REFINED] = { equipmentDetail: { type: '/equipment_types/back' } };
+            mocks.refineActions['/actions/refine_cape'] = {
+                outputItems: [{ itemHrid: REFINED }],
+                inputItems: [{ itemHrid: OTHER_HRID, count: 3 }],
+                upgradeItemHrid: hrid,
+            };
+            mocks.prices[`${ESSENCE}+0`] = { ask: 500, bid: 400 };
+            mocks.globalPricingMode = 'conservative'; // buy at the ask, sell at the bid
+            calc.pricingMode = 'conservative';
+            calc.capesFromOwnedStones = true;
+            const details = cape(REFINED);
+            mocks.capeMode = 'zero';
+            const zero = calc.calculateRow(REFINED, details).cost;
+            mocks.capeMode = 'decompose';
+            const base = calc.calculateRow(REFINED, details).cost - zero;
+            expect(base).toBeCloseTo(2000 * SHARD_TAXED(400), 6);
+        });
+
         for (const [label, hrid] of [
             ['a skilling cape', CAPE_HRID],
             ['a Chimerical Quiver', '/items/chimerical_quiver'],
@@ -1553,9 +1578,9 @@ describe('untradable items with no price', () => {
                 mocks.capeMode = 'decompose';
                 const dec = calc.calculateRow(REFINED, details);
                 expect(dec.needsPrice).toBe(false);
-                // conservative buys at the ask: the decompose base reads the same side
+                // the decompose base reads the global Sell side (hybrid sells at the ask)
                 const base = dec.cost - zero;
-                expect(base).toBeCloseTo(2000 * SHARD_TAXED(500), 6);
+                expect(base).toBeCloseTo(2000 * SHARD_TAXED(mocks.globalPricingMode === 'hybrid' ? 500 : 400), 6);
                 // an unpriced output: a missing term, never stones alone
                 delete mocks.prices[`${ESSENCE}+0`];
                 const unpriced = calc.calculateRow(REFINED, details);

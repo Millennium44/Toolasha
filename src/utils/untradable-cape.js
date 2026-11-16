@@ -16,7 +16,7 @@
 
 import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
-import { getItemPrice } from './market-data.js';
+import { getItemPrice, getItemPriceInfo } from './market-data.js';
 import { getAlchemyOutputShopValue } from './alchemy-shop-value.js';
 import { calculatePriceAfterTax } from './profit-helpers.js';
 
@@ -102,12 +102,12 @@ export function getCapeBaseValueMode() {
  * @param {string} itemHrid - The cape
  * @param {Object} [options]
  * @param {'profit'|'networth'} [options.context='profit'] - Whose pricing mode to read
- * @param {'ask'|'bid'|'average'} [options.mode] - Force one book side
+ * @param {'ask'|'bid'|'average'} [options.mode] - Ignored: outputs are always priced on the Sell side
  * @returns {{value: number, complete: boolean}} `complete` is false when the cape has no decompose
- *   recipe or any output (including another cape) has no price; the value is then not usable as a
+ *   recipe or any output (including another cape) has no firm price (unpriced or only a value-map estimate); the value is then not usable as a
  *   figure and {@link getCapeBaseValue} returns 0 for it, which readers already flag as a floor.
  */
-export function getCapeDecomposeValue(itemHrid, { context = 'profit', mode } = {}) {
+export function getCapeDecomposeValue(itemHrid, { context = 'profit' } = {}) {
     const outputs = dataManager.getItemDetails?.(itemHrid)?.alchemyDetail?.decomposeItems;
     if (!Array.isArray(outputs) || outputs.length === 0) return { value: 0, complete: false };
     let value = 0;
@@ -116,7 +116,11 @@ export function getCapeDecomposeValue(itemHrid, { context = 'profit', mode } = {
         if (!output.itemHrid || output.itemHrid === itemHrid || isUntradableCape(output.itemHrid)) {
             return { value: 0, complete: false };
         }
-        const price = getItemPrice(output.itemHrid, { context, side: 'sell', ...(mode ? { mode } : {}) });
+        // Outputs are sold, so they follow the player's Sell setting whatever book side the caller passes for
+        // the Mirror (an explicit mode overrides the side). An estimate from the official value map (an empty
+        // book) is no firm price: it leaves the cape value unpriced, a floor the readers flag.
+        const info = getItemPriceInfo(output.itemHrid, { context, side: 'sell' });
+        const price = info?.estimated ? null : info?.price;
         if (price > 0) {
             value += calculatePriceAfterTax(price) * count;
             continue;
@@ -144,7 +148,7 @@ export function getCapeBaseValue({ context = 'profit', mode, itemHrid } = {}) {
     const baseMode = getCapeBaseValueMode();
     if (baseMode === CAPE_BASE_VALUE_DECOMPOSE) {
         if (!itemHrid) return 0;
-        const decompose = getCapeDecomposeValue(unrefinedCapeOf(itemHrid), { context, mode });
+        const decompose = getCapeDecomposeValue(unrefinedCapeOf(itemHrid), { context });
         return decompose.complete ? decompose.value : 0;
     }
     if (baseMode !== CAPE_BASE_VALUE_MIRROR) return 0;
@@ -169,7 +173,9 @@ export function describeAssumedCape(entry, name, formatValue) {
     // for an input nothing prices), and a mirror setting is a floor when the mirror itself has no price
     let floor = '';
     if (entry.partial) {
-        if (decompose) floor = ' An output of its decompose (or another input) has no price, so this is a floor.';
+        if (decompose)
+            floor =
+                ' An output of its decompose (or another input) has no firm price (none, or only an estimate), so this is a floor.';
         else if (mirror) floor = ' The Mirror of Protection or another input has no price, so this is a floor.';
         else if (refined) floor = ' An input has no price, so this is a floor.';
         else floor = ' The base cape counts as nothing, so this is a floor.';

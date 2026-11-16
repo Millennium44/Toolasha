@@ -1959,7 +1959,7 @@ class AlchemyBestItems {
                         : getCapeBaseValueMode() === CAPE_BASE_VALUE_MIRROR
                           ? 'the untradable-cape setting values the base cape as a Mirror of Protection, which has no price, so this is a floor'
                           : getCapeBaseValueMode() === CAPE_BASE_VALUE_DECOMPOSE
-                            ? 'the untradable-cape setting values the base cape at what it decomposes into, and an output has no price, so this is a floor'
+                            ? 'the untradable-cape setting values the base cape at what it decomposes into, and an output has no firm price (none, or only an estimate), so this is a floor'
                             : refined
                               ? 'the base cape counts as nothing (the untradable-cape setting)'
                               : 'the base cape counts as nothing (the untradable-cape setting), so this is a floor') +
