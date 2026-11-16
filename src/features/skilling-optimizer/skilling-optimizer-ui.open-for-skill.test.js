@@ -9,6 +9,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
     characterId: 'char-1',
     ensureOpen: vi.fn(() => true),
+    visibleTab: vi.fn(() => document.querySelector('.toolasha-skilling-opt-tab')),
     toast: vi.fn(),
     actions: [
         { hrid: '/actions/woodcutting/tree', available: true },
@@ -21,7 +22,10 @@ vi.mock('../../core/config.js', () => ({
     default: { COLOR_ACCENT: '#22c55e', COLOR_INFO: '#0af', COLOR_PROFIT: '#0f0', getSetting: () => true },
 }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
-vi.mock('../../utils/character-panel.js', () => ({ ensureCharacterPanelOpen: mocks.ensureOpen }));
+vi.mock('../../utils/character-panel.js', () => ({
+    ensureCharacterPanelOpen: mocks.ensureOpen,
+    findVisibleOwnTab: mocks.visibleTab,
+}));
 vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
     ...(await importOriginal()),
     dataManager: () => ({ getCurrentCharacterId: () => mocks.characterId }),
@@ -61,7 +65,46 @@ describe('openForSkill', () => {
         ui.initialize();
         mocks.characterId = 'char-1';
         mocks.ensureOpen.mockClear();
+        mocks.visibleTab.mockReset();
+        mocks.visibleTab.mockImplementation(() => document.querySelector('.toolasha-skilling-opt-tab'));
         mocks.toast.mockClear();
+    });
+
+    test('the tab already sits in a panel that never shows: warns and activates nothing', async () => {
+        // Phone, seen live: the tab is injected into the hidden panel, so the old code selected it unseen
+        vi.useFakeTimers();
+        try {
+            mountTabs();
+            ui._tryInjectTabButton();
+            mocks.visibleTab.mockReturnValue(null);
+            const pending = ui.openForSkill('/skills/woodcutting', null);
+            await vi.advanceTimersByTimeAsync(4000);
+            expect(await pending).toBe(false);
+            expect(mocks.toast).toHaveBeenCalledTimes(1);
+            expect(ui.isActive).toBe(false);
+            expect(ui.selectedActionHrids).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('the tab sits in a hidden panel that shows after the press: waits, then selects the tab', async () => {
+        vi.useFakeTimers();
+        try {
+            mountTabs();
+            ui._tryInjectTabButton();
+            mocks.visibleTab
+                .mockReturnValueOnce(null)
+                .mockReturnValueOnce(null)
+                .mockImplementation(() => document.querySelector('.toolasha-skilling-opt-tab'));
+            const pending = ui.openForSkill('/skills/woodcutting', null);
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(await pending).toBe(true);
+            expect(ui.isActive).toBe(true);
+            expect(mocks.toast).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     test('panel open on another tab: switches to Optimizer, skill and the given action', async () => {
