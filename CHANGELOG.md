@@ -7645,6 +7645,125 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.87.0](https://github.com/Millennium44/Toolasha/compare/v3.86.1...v3.87.0) (2026-11-16)
+
+
+### Features
+
+* best items shows a running count while it checks market volume ([4b56ea5](https://github.com/Millennium44/Toolasha/commit/4b56ea578f2f002dcc008e59bd8f6f92f07821f0))
+* Buy supplies button on skill panels opens the Consumables panel on that skill ([8d82618](https://github.com/Millennium44/Toolasha/commit/8d82618787a3b79a2476a3abae9f78bd88363911))
+* Buy-all walk button presses the game's confirm, alternating with Next ([3b1fc12](https://github.com/Millennium44/Toolasha/commit/3b1fc12b9866eef180549b206871781e394eacf8))
+* consumables panel tabs and a combat Buy supplies button ([8ee9061](https://github.com/Millennium44/Toolasha/commit/8ee906146d1ee5bcd16435cfa513aecc48e8e0b9))
+* core advisor values the next line of a worn talisman against its cores ([c40f735](https://github.com/Millennium44/Toolasha/commit/c40f735d53604152fb05fe9fd0648c381b25d8c2))
+* core advisor values the next talisman line against its cores ([efa9063](https://github.com/Millennium44/Toolasha/commit/efa9063e63daca44067936d25f98ef29ca3ff784))
+* dungeon tracker has a resize grip ([9ceaad1](https://github.com/Millennium44/Toolasha/commit/9ceaad1f62cbbc130cc6682fe3c0a6b7605bbf1b))
+* dungeon tracker reopens from a button beside Per-player ([c011cd3](https://github.com/Millennium44/Toolasha/commit/c011cd369eb52b1c5735ec5948d4bb3d06ad88a0))
+* guild trial scoreboard can be resized and moved by touch ([2d2964d](https://github.com/Millennium44/Toolasha/commit/2d2964de61cb8f0d68440d7df115938b9a9e33df))
+* monster stat check and price history panels resize with a touch-friendly grip ([e6d56fd](https://github.com/Millennium44/Toolasha/commit/e6d56fd6bf81695127c9505b0ed67bcf67e540a4))
+* Open in Optimizer button on skill pages ([81d6102](https://github.com/Millennium44/Toolasha/commit/81d6102c49a9bd76f88a3fded3265654861c117a))
+* Open in Optimizer from skill pages, and a header that fits on phones ([982da66](https://github.com/Millennium44/Toolasha/commit/982da6691c3d1f74ba737d2fd83b513600229ef8))
+* profile score and abilities panels can be resized by a corner grip ([eafb8da](https://github.com/Millennium44/Toolasha/commit/eafb8da1f7d9a67d4be7687ec25ac00492ffd9bd))
+* risk of ruin calculator can be resized by its corner grip ([d51334b](https://github.com/Millennium44/Toolasha/commit/d51334bbd9c03dc065c49dfa91eea5bf6a8a24dc))
+* XPH calculator, queue monitor, lab room logs and performance panels resize and remember their size ([ee23c56](https://github.com/Millennium44/Toolasha/commit/ee23c56ae392cfe93cd07c224dabdf9e54e82847))
+
+
+### Bug Fixes
+
+* a replayed old Battle started cannot end a restored dungeon run ([5cb4e3b](https://github.com/Millennium44/Toolasha/commit/5cb4e3b78352cb9894aef063b5eea3870c09996b))
+* a second copy of a Special talisman line adds nothing ([978f908](https://github.com/Millennium44/Toolasha/commit/978f908b03f09d4bc025042671530454802e772a))
+* belt and core results sit under their own controls, not below the ranking table ([661ce2a](https://github.com/Millennium44/Toolasha/commit/661ce2aae14fa479990db0bb2fbeaadf140aa9e4))
+* best items check count uses the filter labels color so it reads on the dark modal ([4876128](https://github.com/Millennium44/Toolasha/commit/4876128aa0a6d2bf731f8839471edf9445faa212))
+* best items settle unbounded rows when the volume sweep fails outright ([ea7f919](https://github.com/Millennium44/Toolasha/commit/ea7f919a549c3ea70da61f633743e9fb6904604b))
+* buy walk falls back to a buy listing when an empty book has no Buy Now ([24db00b](https://github.com/Millennium44/Toolasha/commit/24db00bcb20ac44f2f93bf08192a7dc45c4b0554))
+* buy walk form search also stops when the character changes ([73cd3f3](https://github.com/Millennium44/Toolasha/commit/73cd3f3dc4cf48d18d38afe6b04c5c4a2cfa5239))
+* buy walk stops an abandoned form search and lets Skip move on after Buy was sent ([ab0d43b](https://github.com/Millennium44/Toolasha/commit/ab0d43b545dca23127d544e0b2fe0fcbacd7c718))
+* chain caches also drop when the expected-value refill completes ([07151e2](https://github.com/Millennium44/Toolasha/commit/07151e2f0a8bb46cd4a8641aca3be1c25d591142))
+* chain caches clear when the expected-value calculator recomputes or a custom price changes ([4698443](https://github.com/Millennium44/Toolasha/commit/4698443d3303c7f4b7313c819df8f92f145d500f))
+* changelog merge driver writes the merge in place, never a truncated copy ([2fd5999](https://github.com/Millennium44/Toolasha/commit/2fd5999d4d93c57fd72fa0fddb81f60d0b87830f))
+* combat Buy supplies button takes the Consumables heading's place ([37b2ef6](https://github.com/Millennium44/Toolasha/commit/37b2ef63a7bce6c922f26beba577fcb7be8099f1))
+* combat core check compares every player of the roster, not only the selected one ([5566b3b](https://github.com/Millennium44/Toolasha/commit/5566b3b961b90fe18980e2e1e7776cb1748b108b))
+* combat trial readout and abilities fit on phones ([4e6bbfd](https://github.com/Millennium44/Toolasha/commit/4e6bbfd4f913b7e93d11243a6e186a1c3a05d012))
+* combat trial readout sits under the bosses in rows ([5e0a85d](https://github.com/Millennium44/Toolasha/commit/5e0a85d2a96ae9b5cbaf91e242a47aaf917de6d9))
+* consumables panel opens on Labyrinth during a run and drops a chosen tab on close ([cb1a358](https://github.com/Millennium44/Toolasha/commit/cb1a3586a05fcbf3e41c32b9335a196d29dba62e))
+* core advisor carries missing-price flags and labels profit figures as floors ([74fd25a](https://github.com/Millennium44/Toolasha/commit/74fd25ac6f3d3f859da31d5aca76df19a87caf04))
+* core advisor compares the gear the ranking measured, item by item ([77261b3](https://github.com/Millennium44/Toolasha/commit/77261b3d9bf3dcb2eff3bdbaa5f4ec4d792d93f4))
+* core advisor counts combat lines that need an unpriced input as 0, like the belt advisor ([b1d8afe](https://github.com/Millennium44/Toolasha/commit/b1d8afe0ee496fb96405abd15c7e538a147eeebd))
+* core advisor draws a message for every ending, including a changed ranking ([8b646ac](https://github.com/Millennium44/Toolasha/commit/8b646acb28a0ca8c6ca2d24a4640fb2389183893))
+* core advisor refuses a ranking that is out of date for the gear ([367b4f5](https://github.com/Millennium44/Toolasha/commit/367b4f57ccc2c7c3726a95c010ed32f5a49515bd))
+* core result goes stale when a tool or tea changes under the same loadout ([0737443](https://github.com/Millennium44/Toolasha/commit/073744318077b2eb43b37cccc4314fa9e99c0585))
+* dungeon tracker ends above the bottom of the screen, its contents scrolling inside ([0e40d65](https://github.com/Millennium44/Toolasha/commit/0e40d65818af1694f12c8f5e49c2e7e5270c6117))
+* dungeon tracker fits a phone screen when expanded ([1f7291f](https://github.com/Millennium44/Toolasha/commit/1f7291f7bfcea20dd3dd3657b1cb080de543c34a))
+* dungeon tracker notices a party switching to another dungeon ([03dd104](https://github.com/Millennium44/Toolasha/commit/03dd10452e2874cdca88e4d741c26b3600d83f66)), closes [#999](https://github.com/Millennium44/Toolasha/issues/999)
+* dungeon tracker pulls back on screen after a collapse or a window resize ([8ad748e](https://github.com/Millennium44/Toolasha/commit/8ad748e6167f6f49100bb067a1a4573820ba06ad))
+* gathering row sell-tax hover title only shows with the marker ([7f4a986](https://github.com/Millennium44/Toolasha/commit/7f4a986ceb20663c0bcfd2b089a26c29a9ac5f0c))
+* guild trial readout fits on phones and desktop ([9eac0fd](https://github.com/Millennium44/Toolasha/commit/9eac0fd834fc487174bf9ac06eff0b1ccb5a6a1b))
+* one Special test everywhere, and no copies sim for Special lines ([515b06c](https://github.com/Millennium44/Toolasha/commit/515b06c4982b0fd8ce08b31564c861d179f4ba4f))
+* Open in Optimizer abandons a pending open on disable or character switch ([0de2308](https://github.com/Millennium44/Toolasha/commit/0de23081c034b681bceb140ff8c599c6fff993d5))
+* Open in Optimizer follows Optimizer restarts and presses the panel toggle safely ([a912fcb](https://github.com/Millennium44/Toolasha/commit/a912fcb074ce7d596b238331bc6e31c7c2984390))
+* Open in Optimizer opens the character panel on a phone ([9a8f201](https://github.com/Millennium44/Toolasha/commit/9a8f201194a3d88fa60ae0e56356264c49fd792c))
+* Optimizer tab cleanup and takeover across both character panel copies ([0586fde](https://github.com/Millennium44/Toolasha/commit/0586fdebf237881f9bc8d0ee9b840bf89c46806c))
+* Overbid table says "no recent price data" for unchecked listings ([5e56a5d](https://github.com/Millennium44/Toolasha/commit/5e56a5dd0ad6941f753d455c19b08dbc31a80680))
+* Overbid table shows listings beaten by an older price as "Probably overbid" ([e19be07](https://github.com/Millennium44/Toolasha/commit/e19be07dbe550c2a4ce359cca33b8eb2322a4e52))
+* panel resize grip lifts caps on the first drag, ignores taps and resets on double-click ([999646f](https://github.com/Millennium44/Toolasha/commit/999646f6fdce62c53adb9892b892f2022a015273))
+* resize grip lifts a panel's caps only once the drag moves, after measuring ([bad9cad](https://github.com/Millennium44/Toolasha/commit/bad9cadb759d84ab40fa488b871689e4a1941f57))
+* resize grip never makes a panel bigger on a shrinking drag ([e8f955a](https://github.com/Millennium44/Toolasha/commit/e8f955a0fb1d2a33227722b088d09900a23b95ea))
+* resize grip pins a right-placed panel by its left edge so it follows the pointer ([40e19c6](https://github.com/Millennium44/Toolasha/commit/40e19c66daaf84056692a1f681473763a3ebe9cf))
+* resize grip reset puts a right-placed panel back where it was placed ([367a606](https://github.com/Millennium44/Toolasha/commit/367a6066296d45541f06f37bcde255c8f9dae7e1))
+* resize grip stops a panel at the window's right and bottom edge ([0dd1897](https://github.com/Millennium44/Toolasha/commit/0dd189788a16084a45ebabfef3f20f6817d84190))
+* skill page filter fills the free width on phones ([29dba79](https://github.com/Millennium44/Toolasha/commit/29dba792518b95f7d0e0911e478d71ea2290dea2))
+* skill page header fits on phones with the ⋯ menu ([b1282da](https://github.com/Millennium44/Toolasha/commit/b1282dac4fe4c8595d88e49a4b710832bbae879a))
+* skilling trial readout always stacks under the card, in three columns on wide rows ([d6d5e7d](https://github.com/Millennium44/Toolasha/commit/d6d5e7d998424ca9335247fa394fa24689437ed3))
+* skilling trial readout picks three columns from the readout width, not the card width ([a0b0a63](https://github.com/Millennium44/Toolasha/commit/a0b0a6328c4cdf5161000fc98f43b7651f7ca18a))
+* tooltip gathering-source profit follows the sell-tax toggle ([bfb2aef](https://github.com/Millennium44/Toolasha/commit/bfb2aef4f02ef5771c679ca81c4f0686d420926e))
+* trial progress numbers no longer cut off on the skilling card ([da4f2f1](https://github.com/Millennium44/Toolasha/commit/da4f2f14c5ac8e21d2aceb36734d1a57c8386ac3))
+* trial readout stacks under the card on narrow rows, drops the Deadline row, and the payout fold hides its buttons ([fc484dc](https://github.com/Millennium44/Toolasha/commit/fc484dc005ed6a5c1c68e642f540a2e79c6226dc))
+* trial row teardown restores a nested card ([9faca66](https://github.com/Millennium44/Toolasha/commit/9faca66265dcfe6ab33876b0cd8ca8993920466f))
+* walk Buy presses with a plain click, arms late, and never re-arms after an error ([e905008](https://github.com/Millennium44/Toolasha/commit/e9050085eff35baa794dd9949664a44daf32fdc1))
+
+
+### Code Refactoring
+
+* panel size reset goes through a shared clearSize ([22f2e5f](https://github.com/Millennium44/Toolasha/commit/22f2e5f031714f69bfa26b1aa416b3eb79b3ee08))
+
+
+### Documentation
+
+* agent hand-backs keep the detail in commit bodies, not report files ([738963c](https://github.com/Millennium44/Toolasha/commit/738963cd30ddccead61ab4ebde51492e2e0b7f7c))
+* changelog entries for feat/talisman-core-advisor ([4291166](https://github.com/Millennium44/Toolasha/commit/4291166324651d3b509f9d380e0305fb30efd267))
+* changelog entries for fix/dungeon-switch-detection ([038a34d](https://github.com/Millennium44/Toolasha/commit/038a34d2a05e20dc56b3bd440cf686242ff664c4))
+* changelog entries for fix/pricing-followups-973 ([9dee959](https://github.com/Millennium44/Toolasha/commit/9dee959d109e4a18ba535a24c5fa52041e66cf9c))
+* changelog entries for fix/tooltip-gathering-sell-tax ([d92e284](https://github.com/Millennium44/Toolasha/commit/d92e284b8497f78f33ef385fa010f2b4f19c54fe))
+* changelog entries for fix/trial-readout-mobile ([265b13b](https://github.com/Millennium44/Toolasha/commit/265b13baae55c8c06e9dc4fc4c1822405c2bda72))
+* changelog entries for Open in Optimizer and the skill header ([7072ccb](https://github.com/Millennium44/Toolasha/commit/7072ccbbeb7db86d12e1b7be5435581942adfb77))
+* changelog entry for Best Items check progress ([345ea32](https://github.com/Millennium44/Toolasha/commit/345ea3200a391dccce5ea870125fe0f1f3b45ce6))
+* changelog entry for combat Buy supplies and panel tabs ([832bf6d](https://github.com/Millennium44/Toolasha/commit/832bf6df6d78fd319940e0cd68024cd4587ec98f))
+* changelog entry for duplicate Special lines ([d94059a](https://github.com/Millennium44/Toolasha/commit/d94059aa54a1c3cdb27de60bec3dc06b63080e2d))
+* changelog entry for the Overbid table probable group ([bf42d04](https://github.com/Millennium44/Toolasha/commit/bf42d04293921c045f01adee0ff0db0b9fd20e28))
+* changelog entry for the walk Buy press ([caa03e3](https://github.com/Millennium44/Toolasha/commit/caa03e3a32d1515be1e241a4b56726163108b2a5))
+* Open in Optimizer changelog names My Stuff on a phone ([3fa790e](https://github.com/Millennium44/Toolasha/commit/3fa790e51b1c9bbac3aa30560d99982ff5d951cc))
+* say how a movable panel resizes in the agent guide ([72c5e2a](https://github.com/Millennium44/Toolasha/commit/72c5e2a8b64dbfcd0fdbd8d0cb7ddb4767b998d4))
+
+
+### Tests
+
+* a DOM click on Check cores runs the core check ([70a1979](https://github.com/Millennium44/Toolasha/commit/70a19796ae93cbf8fa58d06c5d40a06f87360e10))
+* buy supplies button tests stub the bundle bridge exports the mock check requires ([508a210](https://github.com/Millennium44/Toolasha/commit/508a2106fd01d46f5839421462d18ff12b15bbb3))
+* house cost and affordability panels redraw on pricing setting changes ([ad860d1](https://github.com/Millennium44/Toolasha/commit/ad860d137065b37b714f8a8252e5d861e186863f))
+
+
+### Build System
+
+* allow server-notices in both the market and ui bundles (stateless) ([1452280](https://github.com/Millennium44/Toolasha/commit/1452280c9eac49ad437d7d95a4565b5e7793dfd2))
+
+
+### Miscellaneous Chores
+
+* **deps:** bump the development-dependencies group with 2 updates ([04f0113](https://github.com/Millennium44/Toolasha/commit/04f0113465a882de409d3ed717c300046b4986ac))
+* dev-load-branch builds main plus several branches in its own worktree ([14cda87](https://github.com/Millennium44/Toolasha/commit/14cda876268d9f8093ccb527b7f6997fdebdc637))
+* gates rerun the suite once when vitest crashes before reporting ([1ad7d45](https://github.com/Millennium44/Toolasha/commit/1ad7d4500e6938da1c0de82bdb9485f2c455f196))
+* merge CHANGELOG.md with a union-then-Prettier driver ([ab83893](https://github.com/Millennium44/Toolasha/commit/ab838938c7fd37fa1e730cccf1eca50d89356b19))
+* merge CHANGELOG.md with a union-then-Prettier driver ([ecbca07](https://github.com/Millennium44/Toolasha/commit/ecbca0751e2797b5e5a52d36acc73e0315368ce4))
+
 ## [3.86.1](https://github.com/Millennium44/Toolasha/compare/v3.86.0...v3.86.1) (2026-11-13)
 
 ### Bug Fixes
