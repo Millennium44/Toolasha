@@ -223,6 +223,23 @@ describe('purchases move the badges', () => {
         expect(tabText()).toContain('Cheese: 0');
     });
 
+    test('an open order the caller already netted off does not come off again when it fills', () => {
+        tabBar();
+        openShoppingList([{ itemHrid: '/items/cheese', name: 'Cheese', count: 600, onOrder: 400 }]);
+        vi.advanceTimersByTime(200);
+        expect(tabText()).toContain('Cheese: 600');
+
+        game.unclaimed = { '/items/cheese': 400 };
+        fireWs({ type: 'market_listings_updated' });
+        expect(tabText()).toContain('Cheese: 600');
+
+        // Bought beyond the order does move it
+        game.inventory = [{ itemHrid: '/items/cheese', count: 100, enhancementLevel: 0 }];
+        game.unclaimed = { '/items/cheese': 400 };
+        fireWs({ type: 'items_updated' });
+        expect(tabText()).toContain('Cheese: 500');
+    });
+
     test('what was already held before the open is the caller’s business, not a purchase', () => {
         game.inventory = [{ itemHrid: '/items/cheese', count: 100, enhancementLevel: 0 }];
         openAndBuild();

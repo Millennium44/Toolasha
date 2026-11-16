@@ -10,6 +10,8 @@ import {
     buyStrategy,
     refillFor,
     refillAll,
+    ownBuyOrders,
+    withBuyOrders,
 } from './consumable-forecast.js';
 
 /** One drink an hour, 100 in the bag, worth 50 each */
@@ -554,5 +556,130 @@ describe('buyStrategy and a measured fill time', () => {
     test('a book saying it fills slowly refuses an order the assumption would allow', () => {
         expect(buyStrategy({ ...base, secondsLeft: 12 * 3600 }).mode).toBe('order');
         expect(buyStrategy({ ...base, secondsLeft: 12 * 3600, fillSeconds: 5 * 86400 }).mode).toBe('instant');
+    });
+});
+
+describe('buyStrategy: buy instantly when it runs out soon', () => {
+    const base = { count: 100, ask: 110, bid: 100, secondsLeft: 30 * 86400 };
+
+    test('off at 0: out of stock with time on the book still follows the other rules', () => {
+        // A 1-minute fill is measured, so running out "before it fills" does not apply to 10 hours
+        const result = buyStrategy({ ...base, secondsLeft: 10 * 3600, fillSeconds: 60, instantWithinHours: 0 });
+        expect(result.mode).toBe('order');
+    });
+
+    test('out of stock is instant, with the reason said', () => {
+        const result = buyStrategy({ ...base, secondsLeft: 0, fillSeconds: 0, instantWithinHours: 24 });
+        expect(result.mode).toBe('instant');
+        expect(result.reason).toMatch(/^Out of stock — buying now/);
+    });
+
+    test('inside the window is instant and names the time', () => {
+        const result = buyStrategy({ ...base, secondsLeft: 5 * 3600, fillSeconds: 60, instantWithinHours: 24 });
+        expect(result.mode).toBe('instant');
+        expect(result.reason).toBe('Runs out in 5h — buying now rather than waiting on an order.');
+    });
+
+    test('outside the window the order stays', () => {
+        const result = buyStrategy({ ...base, secondsLeft: 25 * 3600, fillSeconds: 60, instantWithinHours: 24 });
+        expect(result.mode).toBe('order');
+    });
+
+    test('an unknown time left is not "out"', () => {
+        expect(buyStrategy({ ...base, secondsLeft: null, instantWithinHours: 24 }).reason).not.toMatch(/buying now/);
+    });
+
+    test('nothing for sale still orders: instant is not on offer', () => {
+        const result = buyStrategy({ ...base, ask: null, secondsLeft: 0, instantWithinHours: 24 });
+        expect(result.mode).toBe('order');
+        expect(result.noAsk).toBe(true);
+    });
+});
+
+describe('own buy orders netted off the restock', () => {
+    const ACTIVE = '/market_listing_status/active';
+    const FILLED = '/market_listing_status/filled';
+    const CANCELLED = '/market_listing_status/cancelled';
+    const DRINK = '/items/drink';
+    const listing = (over) => ({
+        id: 1,
+        isSell: false,
+        itemHrid: DRINK,
+        enhancementLevel: 0,
+        status: ACTIVE,
+        orderQuantity: 100,
+        filledQuantity: 0,
+        unclaimedItemCount: 0,
+        ...over,
+    });
+    // 24 a day, none held: two days need 48
+    const empty = forecast({ ...drink, inventoryAmount: 0 });
+
+    test('two active listings on the same item add up', () => {
+        const listings = [
+            listing({ id: 1, orderQuantity: 30, filledQuantity: 10, unclaimedItemCount: 10 }),
+            listing({ id: 2, orderQuantity: 5 }),
+        ];
+        expect(ownBuyOrders(listings, DRINK)).toEqual({ unclaimed: 10, open: 25 });
+        const mine = withBuyOrders(empty, listings);
+        expect(mine.held).toBe(0);
+        expect(mine.unclaimedBought).toBe(10);
+        expect(refillFor(mine, 2 * 86400).count).toBe(13);
+    });
+
+    test('a sell listing, an emptied cancelled or expired one, another item and a +1 are ignored', () => {
+        const listings = [
+            listing({ id: 1, isSell: true }),
+            listing({ id: 2, status: CANCELLED }),
+            listing({ id: 3, status: '/market_listing_status/expired' }),
+            listing({ id: 4, itemHrid: '/items/other' }),
+            listing({ id: 5, enhancementLevel: 1 }),
+        ];
+        expect(ownBuyOrders(listings, DRINK)).toEqual({ unclaimed: 0, open: 0 });
+        expect(refillFor(withBuyOrders(empty, listings), 2 * 86400).count).toBe(48);
+    });
+
+    test('a fully filled and claimed listing counts for nothing; a filled unclaimed one is stock in hand', () => {
+        const claimed = listing({ status: FILLED, orderQuantity: 50, filledQuantity: 50, unclaimedItemCount: 0 });
+        expect(ownBuyOrders([claimed], DRINK)).toEqual({ unclaimed: 0, open: 0 });
+        const waiting = listing({ status: FILLED, orderQuantity: 50, filledQuantity: 50, unclaimedItemCount: 20 });
+        expect(ownBuyOrders([waiting], DRINK)).toEqual({ unclaimed: 20, open: 0 });
+    });
+
+    test('a cancelled or expired listing still holds what it bought, and never an open remainder', () => {
+        const listings = [
+            listing({ id: 1, status: CANCELLED, orderQuantity: 100, filledQuantity: 40, unclaimedItemCount: 40 }),
+            listing({ id: 2, status: '/market_listing_status/expired', orderQuantity: 50, unclaimedItemCount: 7 }),
+        ];
+        expect(ownBuyOrders(listings, DRINK)).toEqual({ unclaimed: 47, open: 0 });
+    });
+
+    test('held stays real inventory, so a bill built from held + count is not inflated by uncollected units', () => {
+        // Need 1,000, none in the bag, 400 bought and waiting: the panel says 600 and the bill asks for 1,000
+        const bag = forecast({ ...drink, inventoryAmount: 0 });
+        const mine = withBuyOrders(bag, [
+            listing({ status: FILLED, orderQuantity: 400, filledQuantity: 400, unclaimedItemCount: 400 }),
+        ]);
+        const need = refillFor(mine, (1000 / 24) * 86400);
+        expect(need.count).toBe(600);
+        expect(mine.held + need.count).toBe(600);
+        expect(mine.held).toBe(0);
+    });
+
+    test('more on order than needed clamps to zero, never negative', () => {
+        const mine = withBuyOrders(empty, [listing({ orderQuantity: 5000 })]);
+        expect(refillFor(mine, 2 * 86400).count).toBe(0);
+    });
+
+    test('unclaimed items push the runout out; open orders do not', () => {
+        const open = withBuyOrders(empty, [listing({ orderQuantity: 100 })]);
+        expect(open.secondsLeft).toBe(0);
+        const waiting = withBuyOrders(empty, [listing({ status: FILLED, unclaimedItemCount: 10 })]);
+        expect(waiting.secondsLeft).toBeCloseTo(10 * 3600, 6);
+    });
+
+    test('nothing on order returns the very same entry', () => {
+        expect(withBuyOrders(empty, [])).toBe(empty);
+        expect(withBuyOrders(empty, null)).toBe(empty);
     });
 });

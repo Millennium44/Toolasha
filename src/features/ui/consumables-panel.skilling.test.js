@@ -28,6 +28,7 @@ const game = vi.hoisted(() => ({
     map: new Map(),
     prices: {},
     latest: null,
+    listings: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -62,6 +63,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getActionDetails: (hrid) => game.actionDetails[hrid] || null,
         getActionDrinkSlots: (type) => game.slots[type] || [],
         getInventory: () => game.inventory,
+        getMarketListings: () => game.listings,
         getEquipment: () => new Map(),
         getInitClientData: () => game.clientData,
         getCurrentActions: () => game.currentActions,
@@ -175,6 +177,7 @@ beforeEach(() => {
         '/items/mystery_tea': { name: 'Mystery Tea' },
     };
     game.inventory = [];
+    game.listings = [];
     game.clientData = { itemDetailMap: game.items };
     game.characterData = { noncombatStats: { drinkConcentration: 0.129 } };
     game.currentActions = [];
@@ -385,6 +388,35 @@ describe('a skill', () => {
         const perDay = 86400 / (300 / 1.129);
         const wanted = Math.ceil((perDay * consumablesPanel.target.seconds) / 86400);
         expect(queue.queue.map((item) => item.count)).toEqual([wanted, wanted]);
+    });
+
+    test('an open buy order is netted off the shortfall and carried to the list as its credit', async () => {
+        runForaging();
+        game.slots[FORAGING] = [slot('/items/gathering_tea'), slot('/items/efficiency_tea', { slotIndex: 1 })];
+        game.prices['/items/gathering_tea'] = { ask: 1000, bid: 900 };
+        game.prices['/items/efficiency_tea'] = { ask: 2000, bid: 1800 };
+        const perDay = 86400 / (300 / 1.129);
+        const wanted = Math.ceil((perDay * consumablesPanel.target.seconds) / 86400);
+        const onOrder = Math.floor(wanted / 2);
+        game.listings = [
+            {
+                id: 1,
+                isSell: false,
+                itemHrid: '/items/gathering_tea',
+                enhancementLevel: 0,
+                status: '/market_listing_status/active',
+                orderQuantity: onOrder,
+                filledQuantity: 0,
+                unclaimedItemCount: 0,
+            },
+        ];
+        await open();
+
+        const queue = consumablesPanel._buyQueues.find((entry) => entry.label === 'Foraging teas');
+        expect(queue.queue.map((item) => [item.count, item.onOrder])).toEqual([
+            [wanted - onOrder, onOrder],
+            [wanted, 0],
+        ]);
     });
 
     test('an unpriced tea is flagged in the total, never drawn as free', async () => {
