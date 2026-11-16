@@ -137,4 +137,88 @@ describe('openForSkill with two copies of the character panel', () => {
         expect(ui.isActive).toBe(false);
         expect(document.querySelector('.toolasha-skilling-opt-panel')).toBeNull();
     });
+
+    test('cleanup removes the tab, panel and hide class from both copies', () => {
+        document.body.innerHTML = NAV + side(true);
+        ui.initialize();
+        mountMain();
+        ui._tryInjectTabButton();
+        document.querySelector('#main .toolasha-skilling-opt-tab').click();
+        expect(document.querySelectorAll('.toolasha-skilling-opt-tab')).toHaveLength(2);
+
+        ui.cleanup();
+
+        expect(document.querySelectorAll('.toolasha-skilling-opt-tab')).toHaveLength(0);
+        expect(document.querySelectorAll('.toolasha-skilling-opt-panel')).toHaveLength(0);
+        expect(document.querySelectorAll('.toolasha-opt-hide-content')).toHaveLength(0);
+    });
+
+    test('desktop: opening My Stuff mounts a second copy that does not pull an open Optimizer out of the side', async () => {
+        document.body.innerHTML = NAV + side(false);
+        ui.initialize();
+        await ui.openForSkill('/skills/foraging', null);
+        const sideTab = document.querySelector('#side .toolasha-skilling-opt-tab');
+        expect(ui.tabBtn).toBe(sideTab);
+
+        mountMain();
+        ui._tryInjectTabButton();
+
+        const mainTab = document.querySelector('#main .toolasha-skilling-opt-tab');
+        expect(mainTab).not.toBeNull();
+        expect(ui.tabBtn).toBe(sideTab);
+        expect(mainTab.classList.contains('Mui-selected')).toBe(false);
+        expect(mainTab.getAttribute('aria-selected')).not.toBe('true');
+        expect(document.querySelector('#main .toolasha-skilling-opt-panel')).toBeNull();
+        expect(document.querySelector('#side .toolasha-skilling-opt-panel')).not.toBeNull();
+    });
+
+    test('phone: leaving My Stuff ends the open state, so mounting it again shows the game default tab', async () => {
+        document.body.innerHTML = NAV + side(true);
+        ui.initialize();
+        mocks.press.mockImplementation(() => {
+            mountMain();
+            return 'react';
+        });
+        expect(await ui.openForSkill('/skills/foraging', null)).toBe(true);
+        expect(ui.isActive).toBe(true);
+
+        document.getElementById('main').remove();
+        ui._syncTabs();
+        expect(ui.isActive).toBe(false);
+        expect(ui.tabBtn).toBeNull();
+
+        mountMain();
+        ui._syncTabs();
+        const mainTab = document.querySelector('#main .toolasha-skilling-opt-tab');
+        expect(mainTab).not.toBeNull();
+        expect(ui.isActive).toBe(false);
+        expect(mainTab.classList.contains('Mui-selected')).toBe(false);
+        expect(document.querySelector('#main .toolasha-skilling-opt-panel')).toBeNull();
+        expect(document.querySelector('#main .toolasha-opt-hide-content')).toBeNull();
+    });
+
+    test('a strip replaced in one change keeps the Optimizer open in the new one', async () => {
+        document.body.innerHTML = NAV + side(false);
+        ui.initialize();
+        await ui.openForSkill('/skills/foraging', null);
+        document.getElementById('side').remove();
+        document.body.insertAdjacentHTML('beforeend', side(false));
+        ui._syncTabs();
+        expect(ui.isActive).toBe(true);
+        expect(document.querySelector('#side .toolasha-skilling-opt-panel')).not.toBeNull();
+    });
+
+    test('selecting the Optimizer in the other copy un-highlights the first copy', async () => {
+        document.body.innerHTML = NAV + side(false);
+        ui.initialize();
+        await ui.openForSkill('/skills/foraging', null);
+        const sideTab = document.querySelector('#side .toolasha-skilling-opt-tab');
+        mountMain();
+        ui._tryInjectTabButton();
+
+        document.querySelector('#main .toolasha-skilling-opt-tab').click();
+
+        expect(sideTab.classList.contains('Mui-selected')).toBe(false);
+        expect(sideTab.getAttribute('aria-selected')).toBe('false');
+    });
 });
