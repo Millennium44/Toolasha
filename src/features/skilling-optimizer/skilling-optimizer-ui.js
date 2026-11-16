@@ -30,7 +30,7 @@ import { buildEnhancementLevelMap } from '../../utils/loadout-scraper.js';
 import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot, dataManager as sharedDataManager } from '../../utils/bundle-bridge.js';
 import { registerOptimizerOpener } from '../../utils/optimizer-bridge.js';
-import { ensureCharacterPanelOpen } from '../../utils/character-panel.js';
+import { ensureCharacterPanelOpen, findVisibleOwnTab } from '../../utils/character-panel.js';
 import { showToast } from '../../utils/toast.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
@@ -174,18 +174,28 @@ class SkillingSimulatorUI {
     // Tab injection
     // -------------------------------------------------------------------------
 
+    /**
+     * Every tab strip with a Loadouts tab. The game draws the character panel twice on a phone (a hidden side
+     * copy, and one inside the main panel while My Stuff is open), so there can be two.
+     * @returns {HTMLElement[]}
+     */
+    _findTabLists() {
+        return [...document.querySelectorAll('[role="tablist"]')].filter((tl) =>
+            [...tl.querySelectorAll('[role="tab"]')].some((tab) => tab.textContent.trim().startsWith('Loadouts'))
+        );
+    }
+
+    /** @returns {HTMLElement|null} The strip our tab is in, else the first strip with a Loadouts tab */
     _findTabList() {
-        for (const tl of document.querySelectorAll('[role="tablist"]')) {
-            for (const tab of tl.querySelectorAll('[role="tab"]')) {
-                if (tab.textContent.trim().startsWith('Loadouts')) return tl;
-            }
-        }
-        return null;
+        const own = this.tabBtn?.isConnected ? this.tabBtn.closest('[role="tablist"]') : null;
+        return own ?? this._findTabLists()[0] ?? null;
     }
 
     _tryInjectTabButton() {
-        const tabList = this._findTabList();
-        if (!tabList) return;
+        for (const tabList of this._findTabLists()) this._injectTabInto(tabList);
+    }
+
+    _injectTabInto(tabList) {
         if (tabList.querySelector(`.${TAB_CLASS}`)) return;
 
         const existingTab = tabList.querySelector('[role="tab"]');
@@ -197,6 +207,8 @@ class SkillingSimulatorUI {
         btn.style.minWidth = 'auto';
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
+            // The copy of the panel the player is looking at is the one to build in
+            this.tabBtn = btn;
             this._activatePanel();
         });
 
@@ -205,7 +217,9 @@ class SkillingSimulatorUI {
         );
         if (loadoutsTab?.nextSibling) tabList.insertBefore(btn, loadoutsTab.nextSibling);
         else tabList.appendChild(btn);
-        this.tabBtn = btn;
+        // A second copy's tab does not take over from one that is still showing
+        const takesOver = !this.tabBtn?.isConnected || tabList.getClientRects().length > 0;
+        if (takesOver) this.tabBtn = btn;
 
         const scroller = tabList.parentElement;
         if (scroller?.className?.includes('MuiTabs-scroller')) scroller.style.overflow = 'auto';
@@ -214,7 +228,7 @@ class SkillingSimulatorUI {
             tab.addEventListener('click', (e) => this._deactivatePanel(e.currentTarget));
         }
 
-        if (this.isActive) this._activatePanel();
+        if (this.isActive && takesOver) this._activatePanel();
     }
 
     /**
@@ -237,24 +251,29 @@ class SkillingSimulatorUI {
         const skillName = this._skillNameForHrid(skillHrid);
         if (!skillName) return false;
 
-        // Opening the panel mounts the tab strip; the body watcher then injects our tab
-        if (!this.tabBtn?.isConnected) this.tabBtn = null;
         // A disable or character switch while we wait must not be undone by this call afterwards
         const generation = this._generation;
         const characterId = this._currentCharacterId();
         const stale = () => generation !== this._generation || characterId !== this._currentCharacterId();
+        // Pressing opens the panel and mounts its tab strip; the body watcher then injects our tab. Which tab is
+        // the one on screen decides everything: a tab in a hidden copy of the panel would be selected unseen
         const opened = ensureCharacterPanelOpen();
-        if (!this.tabBtn) {
-            if (opened) await this._waitForTab(stale);
-            else this._tryInjectTabButton();
+        let visibleTab = findVisibleOwnTab();
+        if (!visibleTab) {
+            if (opened) visibleTab = await this._waitForVisibleTab(stale);
+            else {
+                this._tryInjectTabButton();
+                visibleTab = findVisibleOwnTab();
+            }
         }
         if (stale()) return false;
-        if (!this.tabBtn) {
+        if (!visibleTab) {
             showToast('Open the character panel, then the Optimizer tab: it could not be opened from here.', {
                 kind: 'warn',
             });
             return false;
         }
+        this.tabBtn = visibleTab;
 
         const changed = this.currentSkill !== skillName;
         this.currentSkill = skillName;
@@ -273,16 +292,18 @@ class SkillingSimulatorUI {
     }
 
     /**
-     * Wait (bounded) for the character panel's tab strip to mount and take our tab.
-     * @returns {Promise<void>}
+     * Wait (bounded) for a copy of the character panel to be on screen with our tab in it.
+     * @returns {Promise<HTMLElement|null>}
      */
-    async _waitForTab(stale = () => false) {
-        for (let i = 0; i < 20 && !this.tabBtn; i++) {
-            if (stale()) return;
+    async _waitForVisibleTab(stale = () => false) {
+        for (let i = 0; i < 20; i++) {
+            if (stale()) return null;
             this._tryInjectTabButton();
-            if (this.tabBtn) return;
+            const tab = findVisibleOwnTab();
+            if (tab) return tab;
             await new Promise((resolve) => setTimeout(resolve, 150));
         }
+        return null;
     }
 
     /** @returns {string|null} The character this Optimizer is serving right now */
@@ -318,6 +339,8 @@ class SkillingSimulatorUI {
 
         const contentContainer = this._findContentContainer();
         if (contentContainer?.parentElement) {
+            // Building in another copy of the panel than last time: the old one is not left hiding its tabs
+            if (this.contentParent !== contentContainer.parentElement) this.contentParent?.classList.remove(HIDE_CLASS);
             this.contentParent = contentContainer.parentElement;
             this.contentParent.classList.add(HIDE_CLASS);
         }
