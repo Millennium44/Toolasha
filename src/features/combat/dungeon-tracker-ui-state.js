@@ -226,17 +226,27 @@ class DungeonTrackerUIState {
      * @returns {boolean} True if a filter changed and the caller must re-sync the DOM
      */
     autoScopeToRun(dungeonName, tier) {
-        if (!dungeonName || tier === null || tier === undefined) return false;
-        const tierStr = String(tier);
+        if (!dungeonName) return false;
         let changed = false;
 
-        if (!this.isDungeonFilterManual && this.filterDungeon !== dungeonName) {
+        // A hand pick of 'All' is not a scope worth protecting: it is the one
+        // value that mixes every dungeon into the header, and it used to stick
+        // forever. A live run re-scopes it (and hands the control back to auto
+        // mode, so the next dungeon is followed too). A specific pick stays.
+        if ((!this.isDungeonFilterManual || this.filterDungeon === 'all') && this.filterDungeon !== dungeonName) {
             this.filterDungeon = dungeonName;
+            this.isDungeonFilterManual = false;
             changed = true;
         }
-        if (!this.isTierFilterManual && this.filterTier !== tierStr) {
-            this.filterTier = tierStr;
-            changed = true;
+
+        // An untiered run scopes the dungeon alone
+        if (tier !== null && tier !== undefined) {
+            const tierStr = String(tier);
+            if ((!this.isTierFilterManual || this.filterTier === 'all') && this.filterTier !== tierStr) {
+                this.filterTier = tierStr;
+                this.isTierFilterManual = false;
+                changed = true;
+            }
         }
 
         return changed;

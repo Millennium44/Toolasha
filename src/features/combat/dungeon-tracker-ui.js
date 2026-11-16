@@ -33,7 +33,7 @@ import config from '../../core/config.js';
 import { ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE } from '../../utils/all-zones-snapshot.js';
 import { characterKey } from '../../utils/character-key.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
-import { isClearRun, summarizeAttempts } from '../../utils/dungeon-run-result.js';
+import { isClearRun, summarizeAttempts, runsForDungeonTier } from '../../utils/dungeon-run-result.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { timeReadable } from '../../utils/formatters.js';
@@ -716,7 +716,7 @@ class DungeonTrackerUI {
         // reopened) used to leave them at their pre-render placeholder ('--:--',
         // 0 runs, empty list) until the next 1 Hz tick redrew them.
         try {
-            const drawn = await this.drawHistoryStats(ticket, character);
+            const drawn = await this.drawHistoryStats(ticket, character, pending);
             if (!drawn) return;
             await this.updateRunHistory(ticket, character);
             await this.updateRoiBoard();
@@ -776,7 +776,7 @@ class DungeonTrackerUI {
         if (paceElement) paceElement.style.display = 'none';
 
         try {
-            const drawn = await this.drawHistoryStats(ticket, character);
+            const drawn = await this.drawHistoryStats(ticket, character, pending);
             if (!drawn) return;
             await this.updateRunHistory(ticket, character);
             await this.updateRoiBoard();
@@ -970,7 +970,7 @@ class DungeonTrackerUI {
             return;
         }
 
-        const drawn = await this.drawHistoryStats(ticket, character);
+        const drawn = await this.drawHistoryStats(ticket, character, run);
         if (!drawn) return;
 
         // Pace against stored history — always your own runs for this dungeon,
@@ -1003,10 +1003,22 @@ class DungeonTrackerUI {
      *
      * @param {Object} ticket - From `captureOwner`, taken before any await
      * @param {{id: string|null, name: string|null}} character - Whose history this is
+     * @param {{dungeonName: string, tier: number|null}|null} [liveScope] - The dungeon+tier the
+     *   panel is showing, when it is a run's. Defaults to the tracker's current or pending run.
+     *   With one, Last/Avg/Runs and the stats grid are the player's own runs of that dungeon and
+     *   tier whatever the Dungeon/Tier/Team filters say; without, the filters decide.
      * @returns {Promise<{allRuns: Array<Object>, averageLimits: Object}|null>} What was read,
      *   or null when a character switch tore the panel down mid-read
      */
-    async drawHistoryStats(ticket, character) {
+    async drawHistoryStats(ticket, character, liveScope) {
+        const live =
+            liveScope === undefined
+                ? dungeonTracker.getCurrentRun?.() || dungeonTracker.getPendingDungeon?.()
+                : liveScope;
+        const scope =
+            live && live.dungeonName && live.dungeonName !== 'Unknown'
+                ? { dungeonName: live.dungeonName, tier: live.tier ?? null }
+                : null;
         // Fetch run statistics - respect ALL filters to match chart exactly
         let stats, lastRunTime;
 
@@ -1032,19 +1044,27 @@ class DungeonTrackerUI {
         // it back to the character asking
         let attempts = filterRunsForCharacter(storedRuns, this.state.filterCharacter, character);
 
-        // Apply dungeon filter
-        if (this.state.filterDungeon !== 'all') {
-            attempts = attempts.filter((r) => r.dungeonName === this.state.filterDungeon);
-        }
+        if (scope) {
+            // The run on screen: this player's runs of this dungeon and tier, by
+            // the rule the pace chip uses (a dungeon whose runs are all untiered
+            // is read untiered). Not the history filters, which with Dungeon on
+            // 'All' averaged every dungeon together under one dungeon's name.
+            attempts = runsForDungeonTier(filterRunsForCharacter(storedRuns, 'mine', character), scope);
+        } else {
+            // Apply dungeon filter
+            if (this.state.filterDungeon !== 'all') {
+                attempts = attempts.filter((r) => r.dungeonName === this.state.filterDungeon);
+            }
 
-        // Apply tier filter (a specific tier excludes untiered runs)
-        if (this.state.filterTier !== 'all') {
-            attempts = attempts.filter((r) => String(r.tier) === this.state.filterTier);
-        }
+            // Apply tier filter (a specific tier excludes untiered runs)
+            if (this.state.filterTier !== 'all') {
+                attempts = attempts.filter((r) => String(r.tier) === this.state.filterTier);
+            }
 
-        // Apply team filter
-        if (this.state.filterTeam !== 'all') {
-            attempts = attempts.filter((r) => r.teamKey === this.state.filterTeam);
+            // Apply team filter
+            if (this.state.filterTeam !== 'all') {
+                attempts = attempts.filter((r) => r.teamKey === this.state.filterTeam);
+            }
         }
 
         // Clears only from here on, but for the fail figures
@@ -1094,6 +1114,14 @@ class DungeonTrackerUI {
             // No runs match filters
             stats = { totalRuns: 0, avgTime: 0, fastestTime: 0, slowestTime: 0 };
             lastRunTime = 0;
+        }
+
+        // Say what the three header figures count
+        const headerStats = this.container.querySelector('#mwi-dt-header-stats');
+        if (headerStats) {
+            headerStats.title = scope
+                ? `${scope.dungeonName}${scope.tier === null ? '' : ` T${scope.tier}`}, your runs`
+                : '';
         }
 
         // Update header stats (always visible)

@@ -17,6 +17,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { captureOwner } from '../../utils/init-ownership.js';
 
 const world = vi.hoisted(() => ({
     currentRun: null,
@@ -24,6 +25,7 @@ const world = vi.hoisted(() => ({
     settings: { dungeonTrackerUI: true, dungeonPace: true, dungeonKeyRunway: true, dungeonTrackerAverageWindow: 0 },
     runs: [],
     baselines: {},
+    me: false,
 }));
 
 vi.mock('./dungeon-tracker.js', () => ({
@@ -90,7 +92,8 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
         getDungeonInfo: () => null,
         getTeamKey: (names) => names.sort().join(','),
     },
-    filterRunsForCharacter: (runs) => runs,
+    // Honors 'mine' only when a test sets `world.me`: a run is the player's unless it says otherwise
+    filterRunsForCharacter: (runs, mode) => (mode === 'mine' && world.me ? runs.filter((r) => r.mine !== false) : runs),
     currentCharacter: () => ({ id: 'market123', name: 'Marketcow' }),
     minMaxOf: (numbers) => {
         let min = Infinity;
@@ -165,6 +168,7 @@ beforeEach(async () => {
     world.pending = null;
     world.runs = [];
     world.baselines = {};
+    world.me = false;
     world.settings.dungeonTrackerAverageWindow = 0;
     world.settings.dungeonKeyRunway = true;
     ui.keyRunwayClears = null;
@@ -935,5 +939,138 @@ describe('the key runway beside the Keys figure', () => {
         expect(ui.keyRunwayClears).not.toBeNull();
         ui.cleanup();
         expect(ui.keyRunwayClears).toBeNull();
+    });
+});
+
+describe('the header counts the run on screen, not every dungeon', () => {
+    const MIN = 60_000;
+    let n = 0;
+    /** A stored clear; later calls are more recent. */
+    const stored = (dungeonName, tier, minutes, extra = {}) => ({
+        dungeonName,
+        tier,
+        teamKey: 'Marketcow',
+        duration: minutes * MIN,
+        timestamp: new Date(Date.UTC(2026, 0, 1) + ++n * 3_600_000).toISOString(),
+        ...extra,
+    });
+
+    beforeEach(() => {
+        n = 0;
+        world.me = true;
+        // The filters sit on 'All', as after a hand pick of All
+        ui.state.filterDungeon = 'all';
+        ui.state.filterTier = 'all';
+        ui.state.filterTeam = 'all';
+    });
+
+    const header = () => ({
+        last: text('#mwi-dt-header-last'),
+        avg: text('#mwi-dt-header-avg'),
+        runs: text('#mwi-dt-header-runs'),
+    });
+
+    // Three dungeons, two Pirate Cove tiers, and two runs that are someone else's
+    const history = () => [
+        stored('Pirate Cove', 0, 20),
+        stored('Pirate Cove', 0, 22),
+        stored('Pirate Cove', 1, 40),
+        stored('Chimerical Den', 0, 5),
+        stored('Chimerical Den', 0, 5),
+        stored('Sinister Circus', 2, 10),
+        stored('Pirate Cove', 0, 3, { mine: false }),
+        stored('Pirate Cove', 0, 99, { teamKey: 'Other', mine: false }),
+    ];
+
+    test('a live run reads its own dungeon and tier with every filter on All', async () => {
+        world.runs = history();
+        await ui.update(run({ dungeonName: 'Pirate Cove', tier: 0 }), true);
+
+        // T0 Pirate Cove, mine: 20 and 22 -> last 22:00, avg 21:00, 2 runs
+        expect(header()).toEqual({ last: '22:00', avg: '21:00', runs: '2' });
+        expect(text('#mwi-dt-avg-time')).toBe('21:00');
+        expect(text('#mwi-dt-last-time')).toBe('22:00');
+        expect(text('#mwi-dt-fastest-time')).toBe('20:00');
+        expect(text('#mwi-dt-slowest-time')).toBe('22:00');
+        expect(titleOf('#mwi-dt-header-stats')).toBe('Pirate Cove T0, your runs');
+    });
+
+    test('the other tier of the same dungeon reads its own figures', async () => {
+        world.runs = history();
+        await ui.update(run({ dungeonName: 'Pirate Cove', tier: 1 }), true);
+        expect(header()).toEqual({ last: '40:00', avg: '40:00', runs: '1' });
+    });
+
+    test('a dungeon and tier with no prior runs shows blanks, not another dungeon', async () => {
+        world.runs = history();
+        await ui.update(run({ dungeonName: 'Sinister Circus', tier: 5 }), true);
+        expect(header()).toEqual({ last: '--:--', avg: '--:--', runs: '0' });
+        expect(text('#mwi-dt-fastest-time')).toBe('--:--');
+    });
+
+    test('a Team filter does not narrow the live run figures', async () => {
+        world.runs = history();
+        ui.state.filterTeam = 'Other';
+        await ui.update(run({ dungeonName: 'Pirate Cove', tier: 0 }), true);
+        expect(header().runs).toBe('2');
+    });
+
+    test('a manual pick of another dungeon does not move the header off the live run', async () => {
+        world.runs = history();
+        ui.state.filterDungeon = 'Chimerical Den';
+        ui.state.isDungeonFilterManual = true;
+        try {
+            await ui.update(run({ dungeonName: 'Pirate Cove', tier: 0 }), true);
+            expect(header()).toEqual({ last: '22:00', avg: '21:00', runs: '2' });
+        } finally {
+            ui.state.isDungeonFilterManual = false;
+        }
+    });
+
+    test('a dungeon whose stored runs are all untiered is read untiered, as the pace chip does', async () => {
+        world.runs = [
+            stored('Chimerical Den', null, 6),
+            stored('Chimerical Den', null, 8),
+            stored('Pirate Cove', 0, 20),
+        ];
+        await ui.update(run({ dungeonName: 'Chimerical Den', tier: 3 }), true);
+        expect(header()).toEqual({ last: '08:00', avg: '07:00', runs: '2' });
+    });
+
+    test('an untiered run of a tiered dungeon is left out of a tier figures', async () => {
+        world.runs = [stored('Pirate Cove', null, 90), stored('Pirate Cove', 0, 20)];
+        await ui.update(run({ dungeonName: 'Pirate Cove', tier: 0 }), true);
+        expect(header()).toEqual({ last: '20:00', avg: '20:00', runs: '1' });
+    });
+
+    test('the average window applies to Avg Run, the run count does not', async () => {
+        world.settings.dungeonTrackerAverageWindow = 2;
+        world.runs = [
+            stored('Pirate Cove', 0, 40),
+            stored('Pirate Cove', 0, 20),
+            stored('Pirate Cove', 0, 22),
+            stored('Chimerical Den', 0, 1),
+        ];
+        await ui.update(run({ dungeonName: 'Pirate Cove', tier: 0 }), true);
+        expect(header()).toEqual({ last: '22:00', avg: '21:00', runs: '3' });
+    });
+
+    test('between runs the header keeps the dungeon and tier just run', async () => {
+        world.runs = history();
+        world.pending = { dungeonName: 'Pirate Cove', tier: 0, pending: true, betweenRuns: true };
+        ui.dungeonUpdateHandler(null, null);
+        await vi.waitFor(() => expect(header().runs).toBe('2'));
+        expect(header()).toEqual({ last: '22:00', avg: '21:00', runs: '2' });
+    });
+
+    test('with no live or pending run the filters decide, and the tooltip is cleared', async () => {
+        world.runs = history();
+        await ui.update(run({ dungeonName: 'Pirate Cove', tier: 0 }), true);
+        expect(titleOf('#mwi-dt-header-stats')).not.toBe('');
+
+        ui.state.filterDungeon = 'Chimerical Den';
+        await ui.drawHistoryStats(captureOwner(ui), { id: 'market123', name: 'Marketcow' }, null);
+        expect(header()).toEqual({ last: '05:00', avg: '05:00', runs: '2' });
+        expect(titleOf('#mwi-dt-header-stats')).toBe('');
     });
 });
