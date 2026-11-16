@@ -908,14 +908,18 @@ describe('the stored settings', () => {
 
     test('the own-use toggles persist', async () => {
         calc.ownInputs = true;
+        calc.capesFromOwnedStones = true;
         calc.keepPhilo = true;
         await calc.saveSettings();
         expect(stored().ownInputs).toBe(true);
+        expect(stored().capesFromOwnedStones).toBe(true);
         expect(stored().keepPhilo).toBe(true);
 
         const fresh = new PhiloCalculator();
+        expect(fresh.capesFromOwnedStones).toBe(false);
         await fresh.loadSettings();
         expect(fresh.ownInputs).toBe(true);
+        expect(fresh.capesFromOwnedStones).toBe(true);
         expect(fresh.keepPhilo).toBe(true);
     });
 
@@ -1470,6 +1474,95 @@ describe('untradable items with no price', () => {
             calc.calculateRow(REFINED, details);
             expect(calc._ownedRefinedBreakdowns[REFINED]).toBeUndefined();
         });
+    });
+
+    describe('capes from owned stones, and the decompose base value', () => {
+        const ESSENCE = '/items/test_essence';
+        const SHARD_TAXED = (price) => price * (1 - MARKET_TAX);
+
+        function ownedStonesCape(count = 3) {
+            const { REFINED, details } = refinedCape();
+            mocks.refineActions['/actions/refine_cape'].inputItems = [
+                { itemHrid: OTHER_HRID, count },
+                { itemHrid: '/items/coin', count: 1000 },
+            ];
+            return { REFINED, details };
+        }
+
+        test('the box alone values a refined cape as base cape plus owned stones, other inputs untouched', () => {
+            const { REFINED, details } = ownedStonesCape(3);
+            mocks.capeMode = 'mirror';
+            mocks.prices[`${MIRROR_HRID}+0`] = { ask: 7000, bid: 6000 };
+            calc.pricingMode = 'conservative';
+            const off = calc.calculateRow(REFINED, details);
+            expect(off.costSource).toBe('craft');
+            calc.capesFromOwnedStones = true;
+            const on = calc.calculateRow(REFINED, details);
+            expect(on.costSource).toBe('owned');
+            expect(on.cost).toBeCloseTo(3 * SHARD_TAXED(100) + 1000 + 7000, 6);
+            // not "I own the inputs": a plain input (the widget's own shard cost) is still bought at the ask
+            expect(calc.ownInputs).toBe(false);
+            expect(calc.resolveItemCost(OTHER_HRID, mocks.itemDetails[OTHER_HRID]).source).not.toBe('owned');
+        });
+
+        test('owned-inputs on wins and gives the same cape figure with the box on or off', () => {
+            const { REFINED, details } = ownedStonesCape(3);
+            calc.ownInputs = true;
+            calc.capesFromOwnedStones = false;
+            const a = calc.calculateRow(REFINED, details).cost;
+            calc.capesFromOwnedStones = true;
+            expect(calc.calculateRow(REFINED, details).cost).toBe(a);
+        });
+
+        test('the box leaves a tradable refined item alone and an unpriced stone unpriced, never 0', () => {
+            const { REFINED, details } = ownedStonesCape(3);
+            calc.capesFromOwnedStones = true;
+            delete mocks.prices[`${OTHER_HRID}+0`];
+            const row = calc.calculateRow(REFINED, details);
+            expect(row.needsPrice).toBe(true);
+            expect(row.cost).toBeNull();
+        });
+
+        for (const [label, hrid] of [
+            ['a skilling cape', CAPE_HRID],
+            ['a Chimerical Quiver', '/items/chimerical_quiver'],
+            ['an Enchanted Cloak', '/items/enchanted_cloak'],
+        ]) {
+            test(`decompose base: ${label} refined = decompose value + stones (owned stones box on)`, () => {
+                const REFINED = `${hrid}_refined`;
+                mocks.itemDetails[hrid] = {
+                    equipmentDetail: { type: '/equipment_types/back' },
+                    alchemyDetail: { decomposeItems: [{ itemHrid: ESSENCE, count: 2000 }] },
+                };
+                mocks.itemDetails[REFINED] = { equipmentDetail: { type: '/equipment_types/back' } };
+                mocks.refineActions[`/actions/refine_${hrid}`] = {
+                    outputItems: [{ itemHrid: REFINED }],
+                    inputItems: [
+                        { itemHrid: OTHER_HRID, count: 3 },
+                        { itemHrid: '/items/coin', count: 1000 },
+                    ],
+                    upgradeItemHrid: hrid,
+                };
+                mocks.prices[`${ESSENCE}+0`] = { ask: 500, bid: 400 };
+                calc.pricingMode = 'conservative';
+                calc.capesFromOwnedStones = true;
+                const details = cape(REFINED);
+                mocks.capeMode = 'zero';
+                const zero = calc.calculateRow(REFINED, details).cost;
+                expect(zero).toBeCloseTo(3 * SHARD_TAXED(100) + 1000, 6);
+                mocks.capeMode = 'decompose';
+                const dec = calc.calculateRow(REFINED, details);
+                expect(dec.needsPrice).toBe(false);
+                // conservative buys at the ask: the decompose base reads the same side
+                const base = dec.cost - zero;
+                expect(base).toBeCloseTo(2000 * SHARD_TAXED(500), 6);
+                // an unpriced output: a missing term, never stones alone
+                delete mocks.prices[`${ESSENCE}+0`];
+                const unpriced = calc.calculateRow(REFINED, details);
+                expect(unpriced.needsPrice).toBe(true);
+                expect(unpriced.cost).toBeNull();
+            });
+        }
     });
 
     test('a tradable item with no price is still dropped', () => {

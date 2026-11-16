@@ -30,6 +30,7 @@ import { openAlchemyOnItem, selectAlchemyTab } from '../../utils/alchemy-navigat
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import {
     CAPE_BASE_VALUE_MIRROR,
+    CAPE_BASE_VALUE_DECOMPOSE,
     CAPE_BASE_VALUE_SETTING,
     getCapeBaseValue,
     getCapeBaseValueMode,
@@ -1944,7 +1945,7 @@ class AlchemyBestItems {
             // An untradable cape has no market price: its value in this row is an assumption
             if (isUntradableCape(item.itemHrid)) {
                 const refined = isRefinedCape(item.itemHrid);
-                const baseValue = getCapeBaseValue();
+                const baseValue = getCapeBaseValue({ itemHrid: item.itemHrid });
                 const marker = document.createElement('span');
                 marker.textContent = '*';
                 marker.setAttribute('data-mwi-assumed-value', 'true');
@@ -1957,9 +1958,11 @@ class AlchemyBestItems {
                         ? `the base cape counts as ${formatWithSeparator(Math.round(baseValue))} coins (the untradable-cape setting)`
                         : getCapeBaseValueMode() === CAPE_BASE_VALUE_MIRROR
                           ? 'the untradable-cape setting values the base cape as a Mirror of Protection, which has no price, so this is a floor'
-                          : refined
-                            ? 'the base cape counts as nothing (the untradable-cape setting)'
-                            : 'the base cape counts as nothing (the untradable-cape setting), so this is a floor') +
+                          : getCapeBaseValueMode() === CAPE_BASE_VALUE_DECOMPOSE
+                            ? 'the untradable-cape setting values the base cape at what it decomposes into, and an output has no price, so this is a floor'
+                            : refined
+                              ? 'the base cape counts as nothing (the untradable-cape setting)'
+                              : 'the base cape counts as nothing (the untradable-cape setting), so this is a floor') +
                     ', plus refinement and your own enhancing cost. Never taxed.';
                 nameTd.appendChild(marker);
             }

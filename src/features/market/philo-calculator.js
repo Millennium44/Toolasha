@@ -260,6 +260,10 @@ class PhiloCalculator {
         // "I own the inputs": items being transmuted are loot already held, so
         // their cost is the sell-after-tax price given up, not the buy price.
         this.ownInputs = false;
+        // "Capes from owned stones": a refined cape is its base cape (the Untradable capes setting) plus its
+        // refinement stones at the sell-after-tax price, without switching any other input to owned. Implied
+        // by ownInputs, which wins.
+        this.capesFromOwnedStones = false;
         // "Keep the Philo": the stone is used, not sold, so it is valued at the
         // full price with no market tax taken off.
         this.keepPhilo = false;
@@ -569,6 +573,7 @@ class PhiloCalculator {
             pricingMode: this.pricingMode,
             itemCostOverrides: this.itemCostOverrides,
             ownInputs: this.ownInputs,
+            capesFromOwnedStones: this.capesFromOwnedStones,
             keepPhilo: this.keepPhilo,
         };
     }
@@ -590,6 +595,7 @@ class PhiloCalculator {
         this.filterText = '';
         this.pricingMode = DEFAULT_PRICING_MODE;
         this.ownInputs = false;
+        this.capesFromOwnedStones = false;
         this.keepPhilo = false;
         this.itemCostOverrides = {};
     }
@@ -660,6 +666,7 @@ class PhiloCalculator {
                         ? { ...saved.itemCostOverrides }
                         : {};
                 this.ownInputs = saved.ownInputs || false;
+                this.capesFromOwnedStones = saved.capesFromOwnedStones === true;
                 this.keepPhilo = saved.keepPhilo || false;
             }
         } catch (error) {
@@ -977,7 +984,7 @@ class PhiloCalculator {
         let cost = owned.cost;
         const lines = [...owned.lines];
         if (owned.baseNote === 'untradable') {
-            const baseValue = this.capeBaseValue();
+            const baseValue = this.capeBaseValue(action.upgradeItemHrid);
             if (baseValue > 0) {
                 cost += baseValue;
                 lines.push(
@@ -1047,6 +1054,13 @@ class PhiloCalculator {
             }
         }
 
+        // "Capes from owned stones" alone: only a refined untradable cape is costed as owned, every other input
+        // keeps its normal costing. "I own the inputs" already did this above and wins.
+        if (this.capesFromOwnedStones && isRefinedItem(itemHrid) && isUntradableCape(itemHrid)) {
+            const parts = this.resolveOwnedRefinedCost(itemHrid);
+            if (parts) return parts;
+        }
+
         const buyType = this.getPriceType('buy');
         const quoteAt = (level) => {
             const priceData = ironCowBook(itemHrid, level) ?? marketAPI.getPrice(itemHrid, level);
@@ -1083,7 +1097,7 @@ class PhiloCalculator {
             // cape setting's value. On "nothing" that is the player's choice, so the stones alone are the
             // whole cost; a mirror setting with no mirror price is a missing term, which asks for a price.
             if (source === 'craft' && resolved.baseNote === 'untradable') {
-                const baseValue = this.capeBaseValue();
+                const baseValue = this.capeBaseValue(itemHrid);
                 this._craftBaseNotes = this._craftBaseNotes || {};
                 if (!(baseValue > 0)) {
                     if (getCapeBaseValueMode() === CAPE_BASE_VALUE_ZERO) {
@@ -1121,7 +1135,7 @@ class PhiloCalculator {
         // Only an unrefined cape takes the setting; an unresolved refined one is missing its stones'
         // price, so it stays a needs-price row
         if (isUntradableCape(itemHrid) && !isRefinedCape(itemHrid)) {
-            const baseValue = this.capeBaseValue();
+            const baseValue = this.capeBaseValue(itemHrid);
             if (baseValue > 0) {
                 return { itemCost: baseValue, selfReturnUnitValue: baseValue, source: 'capeSetting', fallbackLevel: 0 };
             }
@@ -1132,11 +1146,12 @@ class PhiloCalculator {
     /**
      * The Untradable capes setting's value, read on this table's buy side: its explicit mode when it
      * has one, the global pricing (and patient tick) only while it follows Global.
+     * @param {string} [itemHrid] - The cape (or its refined version) being valued; the decompose option needs it
      * @returns {number} Value, or 0 when the setting yields none
      */
-    capeBaseValue() {
+    capeBaseValue(itemHrid) {
         const mode = this.pricingMode === GLOBAL_PRICING_MODE ? undefined : this.getPriceType('buy');
-        return getCapeBaseValue({ context: 'profit', mode });
+        return getCapeBaseValue({ context: 'profit', mode, itemHrid });
     }
 
     /** @returns {Object} The cost basis of a row that waits for the player's price */
@@ -1823,12 +1838,18 @@ class PhiloCalculator {
         const ownInputsLabel = document.createElement('label');
         ownInputsLabel.style.cssText =
             'display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;';
+        let ownedStonesCheckbox = null;
         const ownInputsCheckbox = document.createElement('input');
         ownInputsCheckbox.type = 'checkbox';
         ownInputsCheckbox.checked = this.ownInputs;
         ownInputsCheckbox.style.cursor = 'pointer';
         ownInputsCheckbox.addEventListener('change', () => {
             this.ownInputs = ownInputsCheckbox.checked;
+            if (ownedStonesCheckbox) {
+                ownedStonesCheckbox.checked = this.capesFromOwnedStones || this.ownInputs;
+                ownedStonesCheckbox.disabled = this.ownInputs;
+                ownedStonesCheckbox.style.cursor = this.ownInputs ? 'default' : 'pointer';
+            }
             this.recalculate();
             this.saveSettings();
         });
@@ -1839,6 +1860,28 @@ class PhiloCalculator {
         ownInputsLabel.appendChild(ownInputsCheckbox);
         ownInputsLabel.appendChild(document.createTextNode('I own the inputs'));
         container.appendChild(ownInputsLabel);
+
+        // "Capes from owned stones" checkbox: moot while "I own the inputs" is on, which already does this
+        const ownedStonesLabel = document.createElement('label');
+        ownedStonesLabel.style.cssText =
+            'display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;';
+        ownedStonesCheckbox = document.createElement('input');
+        ownedStonesCheckbox.type = 'checkbox';
+        ownedStonesCheckbox.checked = this.capesFromOwnedStones || this.ownInputs;
+        ownedStonesCheckbox.disabled = this.ownInputs;
+        ownedStonesCheckbox.style.cursor = this.ownInputs ? 'default' : 'pointer';
+        ownedStonesCheckbox.addEventListener('change', () => {
+            this.capesFromOwnedStones = ownedStonesCheckbox.checked;
+            this.recalculate();
+            this.saveSettings();
+        });
+        ownedStonesLabel.title =
+            'A refined cape is priced as its base cape (the Untradable capes setting) plus its refinement stones ' +
+            'valued as ones you own: the sell-after-tax price you give up by using them. Every other input keeps ' +
+            'its normal buy cost. Always on while "I own the inputs" is checked.';
+        ownedStonesLabel.appendChild(ownedStonesCheckbox);
+        ownedStonesLabel.appendChild(document.createTextNode('Capes from owned stones'));
+        container.appendChild(ownedStonesLabel);
 
         // "Keep the Philo" checkbox
         const keepPhiloLabel = document.createElement('label');

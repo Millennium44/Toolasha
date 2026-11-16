@@ -110,6 +110,81 @@ describe('getCapeBaseValue', () => {
     });
 });
 
+describe('getCapeBaseValue on the decompose setting', () => {
+    const ESSENCE = '/items/test_essence';
+    const COIN_LIKE = '/items/test_shard';
+    // After the 4% market tax
+    const taxed = (price) => price * 0.96;
+
+    beforeEach(() => {
+        mocks.settings.untradableCapeBaseValue = 'decompose';
+        mocks.prices[ESSENCE] = 500;
+        mocks.prices[COIN_LIKE] = 100;
+        for (const hrid of ['/items/gatherer_cape', '/items/chimerical_quiver', '/items/enchanted_cloak']) {
+            mocks.items[hrid].alchemyDetail = {
+                decomposeItems: [
+                    { itemHrid: ESSENCE, count: 2000 },
+                    { itemHrid: COIN_LIKE, count: 3 },
+                ],
+            };
+        }
+    });
+
+    test('is on its own mode; the default is still zero and never reads a price', () => {
+        expect(getCapeBaseValueMode()).toBe('decompose');
+        delete mocks.settings.untradableCapeBaseValue;
+        expect(getCapeBaseValueMode()).toBe('zero');
+        mocks.priceCalls = [];
+        expect(getCapeBaseValue({ itemHrid: '/items/gatherer_cape' })).toBe(0);
+        expect(mocks.priceCalls).toHaveLength(0);
+    });
+
+    for (const hrid of ['/items/gatherer_cape', '/items/chimerical_quiver', '/items/enchanted_cloak']) {
+        test(`${hrid}: every output at its sell price after tax, on the side and context asked`, () => {
+            expect(getCapeBaseValue({ itemHrid: hrid })).toBeCloseTo(taxed(500) * 2000 + taxed(100) * 3, 6);
+            mocks.priceCalls = [];
+            getCapeBaseValue({ itemHrid: hrid, context: 'networth', mode: 'bid' });
+            expect(mocks.priceCalls[0]).toEqual([ESSENCE, { context: 'networth', side: 'sell', mode: 'bid' }]);
+        });
+    }
+
+    test('a refined cape takes the decompose value of the cape behind it', () => {
+        expect(getCapeBaseValue({ itemHrid: '/items/gatherer_cape_refined' })).toBeCloseTo(
+            taxed(500) * 2000 + taxed(100) * 3,
+            6
+        );
+    });
+
+    test('any unpriced output makes it 0 (a floor the readers flag), never a partial sum', () => {
+        delete mocks.prices[COIN_LIKE];
+        expect(getCapeBaseValue({ itemHrid: '/items/gatherer_cape' })).toBe(0);
+    });
+
+    test('no cape given, no decompose recipe, or an output that is itself a cape: 0, never a guess', () => {
+        expect(getCapeBaseValue()).toBe(0);
+        expect(getCapeBaseValue({ itemHrid: '/items/sinister_cape_refined' })).toBe(0);
+        mocks.items['/items/gatherer_cape'].alchemyDetail.decomposeItems = [
+            { itemHrid: '/items/chimerical_quiver', count: 1 },
+        ];
+        mocks.prices['/items/chimerical_quiver'] = 1e9;
+        expect(getCapeBaseValue({ itemHrid: '/items/gatherer_cape' })).toBe(0);
+    });
+
+    test('describeAssumedCape words the decompose source and its floor', () => {
+        const entry = { itemHrid: '/items/gatherer_cape', enhancementLevel: 0, value: 10, partial: true };
+        const text = describeAssumedCape(entry, 'Cape', String);
+        expect(text).toContain('decomposing');
+        expect(text).toContain('decompose');
+        expect(text).toContain('floor');
+        const refined = describeAssumedCape(
+            { ...entry, itemHrid: '/items/gatherer_cape_refined', partial: false },
+            'Cape',
+            String
+        );
+        expect(refined).toContain('decompose value of the base cape');
+    });
+});
+
 describe('describeAssumedCape', () => {
     const format = (n) => String(n);
 

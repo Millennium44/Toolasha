@@ -231,8 +231,8 @@ export function pricingStamp() {
  * @param {Object} options - Same as {@link priceMaterial}
  * @returns {{price: number|null, unpriced: boolean, estimated: boolean, custom: boolean, partial: boolean, assumed: true}}
  */
-function assumedCapeBase(options) {
-    const value = getCapeBaseValue({ context: options.context || 'profit', mode: options.mode });
+function assumedCapeBase(options, itemHrid) {
+    const value = getCapeBaseValue({ context: options.context || 'profit', mode: options.mode, itemHrid });
     return value > 0 ? { ...result(value, true), assumed: true } : { ...result(0), partial: true, assumed: true };
 }
 
@@ -248,7 +248,7 @@ function assumedCapeBase(options) {
  */
 function craftedCapeBillFlags(itemHrid) {
     if (!isRefinedCape(itemHrid) || !isUntradableCape(itemHrid)) return {};
-    return getCapeBaseValueMode() === 'mirror' ? { assumed: true } : { baseCapeCounted: false };
+    return getCapeBaseValueMode() !== 'zero' ? { assumed: true } : { baseCapeCounted: false };
 }
 
 /**
@@ -268,7 +268,7 @@ export function priceGuarded(itemHrid, options = {}) {
         // cape setting assumes, flagged so a caller can tell an assumption from an unpriced input. (A
         // refined one is priced by its recipe; a custom price of 0 stays the player's own "unpriced".)
         if (!resolved.custom && isUntradableCape(itemHrid) && !isRefinedCape(itemHrid)) {
-            return assumedCapeBase(options);
+            return assumedCapeBase(options, itemHrid);
         }
         return { ...result(0), custom: Boolean(resolved.custom) };
     }

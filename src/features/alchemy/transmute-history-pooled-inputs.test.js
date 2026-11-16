@@ -247,6 +247,39 @@ describe('pooled totals: membership is derived from the game data', () => {
     });
 });
 
+describe('pooled totals: unrefined untradable capes pool the same way', () => {
+    // A skilling cape, the Chimerical Quiver and the Enchanted Cloak, plus a Sinister-style one with a 92/8 split
+    const UNREFINED = ['/items/gatherer_cape', '/items/chimerical_quiver', '/items/enchanted_cloak'];
+    const SINISTER = '/items/sinister_cape';
+
+    beforeEach(() => {
+        for (const hrid of UNREFINED) {
+            mocks.items[hrid] = capeItem(hrid, { rate: 0.5 });
+            mocks.prices[hrid] = 100;
+        }
+        mocks.items[SINISTER] = capeItem(SINISTER, { rate: 0.5, stoneDropRate: 0.08 });
+        mocks.items[SINISTER].alchemyDetail.transmuteDropTable[0].dropRate = 0.92;
+        mocks.prices[SINISTER] = 100;
+    });
+
+    test('identical signatures pool; a different drop split does not', () => {
+        loadSessions([...UNREFINED, SINISTER].map((hrid) => capeSession(hrid)));
+        const totals = transmuteHistoryViewer.computeInputItemTotals();
+        const pooled = transmuteHistoryViewer.computePooledTotals(totals);
+        expect(pooled).toHaveLength(1);
+        expect(pooled[0].memberHrids.sort()).toEqual([...UNREFINED].sort());
+        expect(pooled[0].attempts).toBe(30);
+    });
+
+    test('refined and unrefined capes with the same signature pool together, keyed by self not hrid', () => {
+        mocks.items[CAPE_HRIDS[0]] = capeItem(CAPE_HRIDS[0], { rate: 0.5 });
+        loadSessions([UNREFINED[0], CAPE_HRIDS[0]].map((hrid) => capeSession(hrid)));
+        const pooled = transmuteHistoryViewer.computePooledTotals(transmuteHistoryViewer.computeInputItemTotals());
+        expect(pooled).toHaveLength(1);
+        expect(pooled[0].memberHrids).toHaveLength(2);
+    });
+});
+
 describe('pooled totals: honesty rules carry through', () => {
     // Cell order matches buildTotalsRow — see transmute-history-totals.test.js
     const COL = {

@@ -408,7 +408,7 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
         // An untradable cape has no market and no recipe: the base of a refined one is what the cape
         // setting assumes. Nothing is the player's own choice, a complete bill; a mirror with no price is not
         if (!(upgradePrice > 0) && isUntradableCape(action.upgradeItemHrid)) {
-            upgradePrice = getCapeBaseValue({ mode });
+            upgradePrice = getCapeBaseValue({ mode, itemHrid: action.upgradeItemHrid });
         }
         if (!(upgradePrice > 0) && !baseCapeIsPlainZero(itemHrid, action.upgradeItemHrid)) partial = true;
         totalPrice += upgradePrice;
