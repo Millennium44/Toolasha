@@ -99,6 +99,8 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 vi.mock('./estimated-listing-age.js', () => ({ default: estimatedListingAgeMock }));
+const ledgerMock = vi.hoisted(() => ({ getLastFillTimes: vi.fn(() => new Map()) }));
+vi.mock('./trade-ledger-store.js', () => ({ default: ledgerMock }));
 // Tab-bar wiring and DOM-observer plumbing — not what these tests are about,
 // and both pull in core/websocket.js if left real.
 vi.mock('../../utils/marketplace-tabs.js', () => ({
@@ -131,6 +133,10 @@ beforeEach(() => {
 
     marketHistoryViewer.listings = [];
     marketHistoryViewer.filteredListings = [];
+    marketHistoryViewer.dateBasis = 'listed';
+    marketHistoryViewer.fillDateRange = { dateFrom: null, dateTo: null };
+    marketHistoryViewer.lastFillTimes = new Map();
+    ledgerMock.getLastFillTimes.mockReset().mockReturnValue(new Map());
     // Table/control rendering is not what these tests are about, and needs a
     // real modal in the DOM to not throw.
     marketHistoryViewer.loadListings = vi.fn(async () => {});
@@ -533,6 +539,65 @@ describe('the date column sorts by the date it shows', () => {
         marketHistoryViewer.applyFilters();
 
         expect(marketHistoryViewer.filteredListings.map((listing) => listing.id)).toEqual([2, 3, 1]);
+    });
+
+    test('sorts a previously listed sale by the last recorded fill and puts unrecorded fills last', () => {
+        marketHistoryViewer.listings = [
+            { id: 1, itemHrid: '/items/a', isSell: true, timestamp: 1000, filledQuantity: 1 },
+            { id: 2, itemHrid: '/items/a', isSell: true, timestamp: 2000, filledQuantity: 2 },
+            { id: 3, itemHrid: '/items/a', isSell: true, timestamp: 3000, filledQuantity: 1 },
+        ];
+        ledgerMock.getLastFillTimes.mockReturnValue(
+            new Map([
+                ['1', 5000],
+                ['2', 4000],
+            ])
+        );
+        marketHistoryViewer.dateBasis = 'fill';
+
+        marketHistoryViewer.applyFilters();
+        expect(marketHistoryViewer.filteredListings.map((listing) => listing.id)).toEqual([1, 2, 3]);
+        marketHistoryViewer.sortDirection = 'asc';
+        marketHistoryViewer.applyFilters();
+        expect(marketHistoryViewer.filteredListings.map((listing) => listing.id)).toEqual([2, 1, 3]);
+    });
+
+    test('Today filters on the local day of the last fill and leaves the listed-date range alone', () => {
+        vi.useFakeTimers();
+        try {
+            const now = new Date(2026, 10, 17, 12);
+            vi.setSystemTime(now);
+            const lastNight = new Date(2026, 10, 16, 23, 59, 59, 999).getTime();
+            const tonight = new Date(2026, 10, 17, 23, 59, 59, 999).getTime();
+            const tomorrow = new Date(2026, 10, 18).getTime();
+            marketHistoryViewer.listings = [1, 2, 3, 4].map((id) => ({
+                id,
+                itemHrid: '/items/a',
+                isSell: true,
+                timestamp: lastNight,
+                filledQuantity: 1,
+            }));
+            marketHistoryViewer.filters.dateTo = new Date(lastNight);
+            marketHistoryViewer.dateBasis = 'fill';
+            ledgerMock.getLastFillTimes.mockReturnValue(
+                new Map([
+                    ['1', tonight],
+                    ['2', lastNight],
+                    ['3', tomorrow],
+                ])
+            );
+            marketHistoryViewer.applyFilters();
+
+            const popup = marketHistoryViewer.createDateFilterPopup();
+            [...popup.querySelectorAll('button')].find((button) => button.textContent === 'Today').click();
+
+            expect(marketHistoryViewer.filteredListings.map((listing) => listing.id)).toEqual([1]);
+            expect(marketHistoryViewer.getFilteredListingsExcluding('item').map((listing) => listing.id)).toEqual([1]);
+            expect(marketHistoryViewer.filters.dateTo.getTime()).toBe(lastNight);
+            expect(storageMock.set).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     test('a row with no createdTimestamp still sorts by the numeric timestamp the column falls back to', () => {

@@ -728,6 +728,20 @@ describe('the ledger cannot be wiped by a failed read or a stale copy', () => {
         expect(LEDGER().get(STATE_KEY)[3].filledQuantity).toBe(6);
     });
 
+    test('last fill times use the latest recorded partial and exclude a switched character’s records', async () => {
+        seedSplit([fill(1, DAY1 + 200), fill(1, DAY2 + 100), fill(2, DAY2 + 300)]);
+        await tradeLedgerStore.load();
+
+        expect(tradeLedgerStore.getLastFillTimes()).toEqual(
+            new Map([
+                ['1', DAY2 + 100],
+                ['2', DAY2 + 300],
+            ])
+        );
+        dataManagerMock.characterId = 'other';
+        expect(tradeLedgerStore.getLastFillTimes().size).toBe(0);
+    });
+
     test('getRecords hands out copies', () => {
         memory([fill(1, 1000)], {});
         const copy = tradeLedgerStore.getRecords();

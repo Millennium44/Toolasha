@@ -22,6 +22,7 @@ import listingMarkers, { markerStateFor } from './listing-markers.js';
 /** Rows here are finished trades, not working orders. Markers are told so. */
 const HISTORY_SURFACE = { surface: 'history' };
 import estimatedListingAge from './estimated-listing-age.js';
+import tradeLedgerStore from './trade-ledger-store.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { styleGameButton, BUTTON_LOOK, GAME_COLORS } from '../../utils/game-look.js';
 
@@ -76,6 +77,9 @@ class MarketHistoryViewer {
         this.showAll = false;
         this.sortColumn = 'createdTimestamp';
         this.sortDirection = 'desc'; // Most recent first
+        this.dateBasis = 'listed';
+        this.fillDateRange = { dateFrom: null, dateTo: null };
+        this.lastFillTimes = new Map();
         this.searchTerm = '';
         this.typeFilter = 'all'; // 'all', 'buy', 'sell'
         this.statusFilter = 'all'; // 'all', 'active', 'filled', 'filled_active', 'canceled', 'expired', 'unknown'
@@ -312,8 +316,10 @@ class MarketHistoryViewer {
      * Load listings from storage: the 90-day log and the archive of everything older
      */
     async loadListings() {
+        const owner = dataManager.getCurrentCharacterId?.();
         try {
             const { listings: stored, archiveReadable } = await estimatedListingAge.allPersonalListingsDetailed();
+            if (owner !== dataManager.getCurrentCharacterId?.()) return;
             // Said beside the table, and in the export and the Clear count: an archive that could not be read is
             // not an empty one
             this.archiveUnreadable = archiveReadable === false;
@@ -330,15 +336,56 @@ class MarketHistoryViewer {
 
             // Update statuses (active and expired detection)
             await this.updateListingStatuses();
+            if (owner !== dataManager.getCurrentCharacterId?.()) return;
 
             this.cachedDateRange = null; // Clear cache when loading new data
             this.applyFilters();
         } catch (error) {
+            if (owner !== dataManager.getCurrentCharacterId?.()) return;
             console.error('[MarketHistoryViewer] Failed to load listings:', error);
             this.listings = [];
             this.filteredListings = [];
             this.archiveUnreadable = false;
+            this.lastFillTimes.clear();
         }
+    }
+
+    dateLabel() {
+        return this.dateBasis === 'fill' ? 'Last recorded fill' : 'Listed date';
+    }
+
+    listingCountText() {
+        const count = `Total: ${this.filteredListings.length} listings`;
+        return this.dateBasis === 'fill' ? `${count} · quantities and totals cover each listing’s lifetime` : count;
+    }
+
+    dateRange() {
+        return this.dateBasis === 'fill' ? this.fillDateRange : this.filters;
+    }
+
+    dateFor(listing) {
+        if (this.dateBasis === 'fill') return this.lastFillTimes.get(String(listing.id)) ?? null;
+        const listedAt = new Date(listing.createdTimestamp ?? NaN).getTime();
+        if (Number.isFinite(listedAt)) return listedAt;
+        return Number.isFinite(listing.timestamp) ? listing.timestamp : null;
+    }
+
+    datePredicate() {
+        const { dateFrom, dateTo } = this.dateRange();
+        if (!dateFrom && !dateTo) return null;
+        const endOfDay = dateTo ? new Date(dateTo).setHours(23, 59, 59, 999) : Infinity;
+        const startOfDay = dateFrom ? dateFrom.getTime() : -Infinity;
+        return (listing) => {
+            const at = this.dateFor(listing);
+            return at != null && at >= startOfDay && at <= endOfDay;
+        };
+    }
+
+    setDateRange(dateFrom, dateTo) {
+        Object.assign(this.dateRange(), { dateFrom, dateTo });
+        if (this.dateBasis === 'listed') void this.saveFilters();
+        this.applyFilters();
+        this.renderTable();
     }
 
     /**
@@ -383,12 +430,8 @@ class MarketHistoryViewer {
         const hasSearchTerm = !!this.searchTerm;
         const searchTerm = hasSearchTerm ? this.searchTerm.toLowerCase() : '';
 
-        const hasDateFilter = !!(this.filters.dateFrom || this.filters.dateTo);
-        let dateToEndOfDay = null;
-        if (hasDateFilter && this.filters.dateTo) {
-            dateToEndOfDay = new Date(this.filters.dateTo);
-            dateToEndOfDay.setHours(23, 59, 59, 999);
-        }
+        if (this.dateBasis === 'fill') this.lastFillTimes = tradeLedgerStore.getLastFillTimes();
+        const dateMatches = this.datePredicate();
 
         const hasItemFilter = this.filters.selectedItems.length > 0;
         const itemFilterSet = hasItemFilter ? new Set(this.filters.selectedItems) : null;
@@ -426,17 +469,7 @@ class MarketHistoryViewer {
             }
 
             // Date range filter
-            if (hasDateFilter) {
-                const listingDate = new Date(listing.createdTimestamp || listing.timestamp);
-
-                if (this.filters.dateFrom && listingDate < this.filters.dateFrom) {
-                    return false;
-                }
-
-                if (dateToEndOfDay && listingDate > dateToEndOfDay) {
-                    return false;
-                }
-            }
+            if (dateMatches && !dateMatches(listing)) return false;
 
             // Item filter (using Set for O(1) lookup)
             if (hasItemFilter && !itemFilterSet.has(listing.itemHrid)) {
@@ -485,14 +518,12 @@ class MarketHistoryViewer {
             // dates carries `timestamp: NaN`, and a NaN comparator drops it at an
             // arbitrary point in a column that still looks sorted. Pre-computed
             // per row rather than parsed inside the comparator, which runs O(n log n).
-            const times = new Map();
-            for (const listing of filtered) {
-                const parsed = Date.parse(listing.createdTimestamp);
-                times.set(listing, Number.isFinite(parsed) ? parsed : Number(listing.timestamp) || 0);
-            }
+            const times = new Map(filtered.map((listing) => [listing, this.dateFor(listing)]));
             filtered.sort((a, b) => {
                 const aVal = times.get(a);
                 const bVal = times.get(b);
+                if (aVal == null) return bVal == null ? 0 : 1;
+                if (bVal == null) return -1;
                 return this.sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
             });
         } else {
@@ -720,6 +751,7 @@ class MarketHistoryViewer {
 
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '✕';
+        closeBtn.setAttribute('aria-label', 'Close Market History');
         closeBtn.style.cssText = `
             background: none;
             border: none;
@@ -894,6 +926,30 @@ class MarketHistoryViewer {
         leftGroup.appendChild(typeFilter);
         leftGroup.appendChild(statusFilter);
 
+        const dateBasis = document.createElement('select');
+        dateBasis.className = 'toolasha-select';
+        dateBasis.style.cssText = statusFilter.style.cssText;
+        dateBasis.setAttribute('aria-label', 'Market History date basis');
+        dateBasis.title = 'Choose which date the table shows, sorts and filters.';
+        for (const [value, label] of [
+            ['listed', 'Listed date'],
+            ['fill', 'Last recorded fill'],
+        ]) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = label;
+            dateBasis.appendChild(option);
+        }
+        dateBasis.value = this.dateBasis;
+        dateBasis.addEventListener('change', () => {
+            this.dateBasis = dateBasis.value;
+            this.sortColumn = 'createdTimestamp';
+            this.sortDirection = 'desc';
+            this.applyFilters();
+            this.renderTable();
+        });
+        leftGroup.appendChild(dateBasis);
+
         // Middle group: Active filter badges
         const middleGroup = document.createElement('div');
         middleGroup.className = 'mwi-active-filters';
@@ -996,7 +1052,7 @@ class MarketHistoryViewer {
             font-size: 14px;
             white-space: nowrap;
         `;
-        stats.textContent = `Total: ${this.filteredListings.length} listings`;
+        stats.textContent = this.listingCountText();
 
         rightGroup.appendChild(kmbLabel);
         rightGroup.appendChild(stats);
@@ -1019,7 +1075,7 @@ class MarketHistoryViewer {
     updateStats() {
         const stats = this.modal.querySelector('.mwi-market-history-stats');
         if (stats) {
-            stats.textContent = `Total: ${this.filteredListings.length} listings`;
+            stats.textContent = this.listingCountText();
         }
 
         // Update Clear All Filters button visibility
@@ -1044,23 +1100,13 @@ class MarketHistoryViewer {
         const badges = [];
 
         // Date filter
-        if (this.filters.dateFrom || this.filters.dateTo) {
-            const dateText = [];
-            if (this.filters.dateFrom) {
-                dateText.push(formatDateTime(this.filters.dateFrom, { includeTime: false }));
-            }
-            if (this.filters.dateTo) {
-                dateText.push(formatDateTime(this.filters.dateTo, { includeTime: false }));
-            }
+        const { dateFrom, dateTo } = this.dateRange();
+        if (dateFrom || dateTo) {
+            const dates = [dateFrom, dateTo].filter(Boolean);
+            const dateText = dates.map((date) => formatDateTime(date, { includeTime: false }));
             badges.push({
-                label: `Date: ${dateText.join(' - ')}`,
-                onRemove: () => {
-                    this.filters.dateFrom = null;
-                    this.filters.dateTo = null;
-                    this.saveFilters();
-                    this.applyFilters();
-                    this.renderTable();
-                },
+                label: `${this.dateLabel()}: ${dateText.join(' - ')}`,
+                onRemove: () => this.setDateRange(null, null),
             });
         }
 
@@ -1200,8 +1246,7 @@ class MarketHistoryViewer {
         if (!controls) return;
 
         const hasActiveFilters =
-            this.filters.dateFrom !== null ||
-            this.filters.dateTo !== null ||
+            this.hasActiveFilter('createdTimestamp') ||
             this.filters.selectedItems.length > 0 ||
             this.filters.selectedEnhLevels.length > 0 ||
             (this.filters.selectedTypes.length > 0 && this.filters.selectedTypes.length < 2);
@@ -1270,7 +1315,7 @@ class MarketHistoryViewer {
         `;
 
         const columns = [
-            { key: 'createdTimestamp', label: 'Date' },
+            { key: 'createdTimestamp', label: this.dateLabel() },
             { key: 'itemHrid', label: 'Item' },
             { key: 'enhancementLevel', label: 'Enh Lvl' },
             { key: 'isSell', label: 'Type' },
@@ -1335,6 +1380,7 @@ class MarketHistoryViewer {
             if (filterableColumns.includes(col.key)) {
                 const filterBtn = document.createElement('button');
                 filterBtn.textContent = '⋮';
+                filterBtn.setAttribute('aria-label', `Filter by ${col.label.toLowerCase()}`);
                 filterBtn.style.cssText = `
                     background: none;
                     border: none;
@@ -1393,9 +1439,14 @@ class MarketHistoryViewer {
 
                 // Date
                 const dateCell = document.createElement('td');
-                // Use createdTimestamp if available, otherwise fall back to numeric timestamp
-                const dateValue = listing.createdTimestamp || listing.timestamp;
-                dateCell.textContent = formatDateTime(new Date(dateValue));
+                const dateValue = this.dateFor(listing);
+                dateCell.textContent = dateValue == null ? '—' : formatDateTime(new Date(dateValue));
+                if (this.dateBasis === 'fill') {
+                    dateCell.title =
+                        dateValue == null
+                            ? 'No fill recorded in your Trade Ledger for this listing'
+                            : 'When Toolasha last observed a fill for this listing';
+                }
                 dateCell.style.padding = '4px 10px';
                 row.appendChild(dateCell);
 
@@ -2232,25 +2283,8 @@ class MarketHistoryViewer {
         }
 
         // Apply date range filter (unless excluded)
-        if (excludeFilterType !== 'date' && (this.filters.dateFrom || this.filters.dateTo)) {
-            filtered = filtered.filter((listing) => {
-                const listingDate = new Date(listing.createdTimestamp || listing.timestamp);
-
-                if (this.filters.dateFrom && listingDate < this.filters.dateFrom) {
-                    return false;
-                }
-
-                if (this.filters.dateTo) {
-                    const endOfDay = new Date(this.filters.dateTo);
-                    endOfDay.setHours(23, 59, 59, 999);
-                    if (listingDate > endOfDay) {
-                        return false;
-                    }
-                }
-
-                return true;
-            });
-        }
+        const dateMatches = excludeFilterType === 'date' ? null : this.datePredicate();
+        if (dateMatches) filtered = filtered.filter(dateMatches);
 
         // Apply item filter (unless excluded)
         if (excludeFilterType !== 'item' && this.filters.selectedItems.length > 0) {
@@ -2289,7 +2323,7 @@ class MarketHistoryViewer {
     hasActiveFilter(columnKey) {
         switch (columnKey) {
             case 'createdTimestamp':
-                return this.filters.dateFrom !== null || this.filters.dateTo !== null;
+                return !!(this.dateRange().dateFrom || this.dateRange().dateTo);
             case 'itemHrid':
                 return this.filters.selectedItems.length > 0;
             case 'enhancementLevel':
@@ -2419,7 +2453,7 @@ class MarketHistoryViewer {
 
         // Title
         const title = document.createElement('div');
-        title.textContent = 'Filter by Date';
+        title.textContent = `Filter by ${this.dateLabel().toLowerCase()}`;
         title.style.cssText = `
             color: ${GAME_COLORS.text};
             font-weight: bold;
@@ -2427,21 +2461,28 @@ class MarketHistoryViewer {
         `;
         popup.appendChild(title);
 
-        // Get date range from filtered listings (excluding date filter itself)
-        // Cache the result to avoid recalculating on every popup open
-        if (!this.cachedDateRange) {
-            const filteredListings = this.getFilteredListingsExcluding('date');
+        if (this.dateBasis === 'fill') {
+            const help = document.createElement('p');
+            help.style.cssText = `color: ${GAME_COLORS.textDim}; font-size: 12px; max-width: 250px;`;
+            help.textContent =
+                'Dates come from your Trade Ledger. A date is when Toolasha saw the last fill, including a partial fill. ' +
+                'Older or unrecorded fills may have no date.';
+            popup.appendChild(help);
+        }
 
-            if (filteredListings.length > 0) {
-                // Use timestamps directly to avoid creating Date objects unnecessarily
-                const timestamps = filteredListings.map((l) => l.timestamp || new Date(l.createdTimestamp).getTime());
-                this.cachedDateRange = {
-                    minDate: new Date(Math.min(...timestamps)),
-                    maxDate: new Date(Math.max(...timestamps)),
-                };
-            } else {
-                this.cachedDateRange = { minDate: null, maxDate: null };
+        // Other filters still determine the date range shown here.
+        if (!this.cachedDateRange) {
+            let earliest = Infinity;
+            let latest = -Infinity;
+            for (const listing of this.getFilteredListingsExcluding('date')) {
+                const time = this.dateFor(listing);
+                if (time == null) continue;
+                earliest = Math.min(earliest, time);
+                latest = Math.max(latest, time);
             }
+            this.cachedDateRange = Number.isFinite(earliest)
+                ? { minDate: new Date(earliest), maxDate: new Date(latest) }
+                : { minDate: null, maxDate: null };
         }
 
         const { minDate, maxDate } = this.cachedDateRange;
@@ -2473,7 +2514,8 @@ class MarketHistoryViewer {
 
         const fromInput = document.createElement('input');
         fromInput.type = 'date';
-        fromInput.value = this.filters.dateFrom ? this.formatDateInputValue(this.filters.dateFrom) : '';
+        const { dateFrom, dateTo } = this.dateRange();
+        fromInput.value = dateFrom ? this.formatDateInputValue(dateFrom) : '';
         if (minDate) fromInput.min = this.formatDateInputValue(minDate);
         if (maxDate) fromInput.max = this.formatDateInputValue(maxDate);
         fromInput.style.cssText = `
@@ -2498,7 +2540,7 @@ class MarketHistoryViewer {
 
         const toInput = document.createElement('input');
         toInput.type = 'date';
-        toInput.value = this.filters.dateTo ? this.formatDateInputValue(this.filters.dateTo) : '';
+        toInput.value = dateTo ? this.formatDateInputValue(dateTo) : '';
         if (minDate) toInput.min = this.formatDateInputValue(minDate);
         if (maxDate) toInput.max = this.formatDateInputValue(maxDate);
         toInput.style.cssText = `
@@ -2523,35 +2565,35 @@ class MarketHistoryViewer {
         applyBtn.textContent = 'Apply';
         styleGameButton(applyBtn, 'primary');
         applyBtn.style.flex = '1';
-        applyBtn.addEventListener('click', () => {
-            // Parse as local dates so setHours(23,59,59,999) covers the selected local day
-            this.filters.dateFrom = fromInput.value ? this.parseLocalDate(fromInput.value) : null;
-            this.filters.dateTo = toInput.value ? this.parseLocalDate(toInput.value) : null;
-            this.saveFilters();
-            this.applyFilters();
-            this.renderTable();
+        const applyDates = (from, to) => {
+            this.setDateRange(from, to);
             popup.remove();
             this.activeFilterPopup = null;
             this.activeFilterButton = null;
+        };
+        applyBtn.addEventListener('click', () => {
+            applyDates(
+                fromInput.value ? this.parseLocalDate(fromInput.value) : null,
+                toInput.value ? this.parseLocalDate(toInput.value) : null
+            );
+        });
+
+        const todayBtn = document.createElement('button');
+        todayBtn.textContent = 'Today';
+        styleGameButton(todayBtn, 'quiet');
+        todayBtn.addEventListener('click', () => {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            applyDates(today, today);
         });
 
         const clearBtn = document.createElement('button');
         clearBtn.textContent = 'Clear';
         styleGameButton(clearBtn, 'quiet');
         clearBtn.style.flex = '1';
-        clearBtn.addEventListener('click', () => {
-            this.filters.dateFrom = null;
-            this.filters.dateTo = null;
-            this.saveFilters();
-            this.applyFilters();
-            this.renderTable();
-            popup.remove();
-            this.activeFilterPopup = null;
-            this.activeFilterButton = null;
-        });
+        clearBtn.addEventListener('click', () => applyDates(null, null));
 
-        buttonContainer.appendChild(applyBtn);
-        buttonContainer.appendChild(clearBtn);
+        buttonContainer.append(applyBtn, todayBtn, clearBtn);
 
         popup.appendChild(fromLabel);
         popup.appendChild(fromInput);
@@ -2973,6 +3015,7 @@ class MarketHistoryViewer {
     async clearAllFilters() {
         this.filters.dateFrom = null;
         this.filters.dateTo = null;
+        this.fillDateRange = { dateFrom: null, dateTo: null };
         this.filters.selectedItems = [];
         this.filters.selectedEnhLevels = [];
         this.filters.selectedTypes = [];
@@ -3032,6 +3075,9 @@ class MarketHistoryViewer {
             this.listings = [];
             this.filteredListings = [];
             this.cachedDateRange = null;
+            this.dateBasis = 'listed';
+            this.fillDateRange = { dateFrom: null, dateTo: null };
+            this.lastFillTimes.clear();
 
             this.isInitialized = false;
         } catch (error) {
