@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market History can sort and filter by last recorded fill
+
+Switch from Listed date to Last recorded fill to see older listings that traded today. The date filter has a Today button, and listings without a recorded fill keep a blank fill date.
+
 <!-- shipped in 3.88.0 -->
 
 ### Capes can be valued at their decompose value, and philo can use owned stones for capes

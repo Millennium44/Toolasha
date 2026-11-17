@@ -1911,6 +1911,23 @@ class TradeLedgerStore {
     }
 
     /**
+     * Last recorded fill per listing for the active character.
+     * @returns {Map<string, number>} Listing id to the most recent observation time
+     */
+    getLastFillTimes() {
+        const times = new Map();
+        if (!this.isLoaded || this._loadedFor !== ledgerCharId()) return times;
+        for (const record of this.records) {
+            if (!record) continue;
+            const { listingId, t, quantity } = record;
+            if (listingId == null || !Number.isFinite(t) || t <= 0 || !(quantity > 0)) continue;
+            const id = String(listingId);
+            if (t > (times.get(id) ?? 0)) times.set(id, t);
+        }
+        return times;
+    }
+
+    /**
      * Whether ledger data is loaded
      * @returns {boolean}
      */
