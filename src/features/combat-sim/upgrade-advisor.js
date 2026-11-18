@@ -7686,8 +7686,20 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // generated. This is how one specific thing — "what would the Critical Aura
     // do for me" — gets ranked against the upgrades you were already weighing,
     // rather than becoming a change applied to all of them.
+    // A queued armor swap is priced as the generated forced-armor rows are, and a generated pair that is only
+    // that piece plus pieces already worn is the same change: one row (as in the whole-run table)
+    const keepReplacedQueued = config.getSettingValue('labSim_keepReplacedGear', true);
+    const queuedExtras = extraCandidates.map((candidate) =>
+        queuedArmorPricedLikeGenerated(candidate, keepReplacedQueued)
+    );
+    for (const candidate of queuedExtras) {
+        if (!candidate.checkedSwap) continue;
+        for (let i = candidates.length - 1; i >= 0; i--) {
+            if (pairIsQueuedPiece(candidates[i], candidate, [{ dto: playerDTO }], gameData)) candidates.splice(i, 1);
+        }
+    }
     const already = new Map(candidates.map((candidate, index) => [candidateAssignmentKey(candidate), index]));
-    for (const candidate of extraCandidates) {
+    for (const candidate of queuedExtras) {
         const key = candidateAssignmentKey(candidate);
         if (already.has(key)) {
             // The same change asked for by hand and generated: one row, and it is the hand-checked one (it may

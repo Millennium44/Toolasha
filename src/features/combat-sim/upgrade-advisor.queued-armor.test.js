@@ -93,7 +93,7 @@ vi.mock('./lab-armor-candidates.js', async (importOriginal) => ({
     ...(await importOriginal()),
     generateLabArmorCandidates: () => state.armor.map((candidate) => ({ ...candidate })),
 }));
-vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: {} }));
+vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: { getCombatExperienceBonus: () => 0 } }));
 vi.mock('./labyrinth-level-finder.js', () => ({ findMaxLabyrinthLevel: vi.fn(), defaultThreshold: () => 0.7 }));
 vi.mock('../../utils/tester-shop.js', () => ({ testerShopEnabled: () => false, testerGearPrice: () => null }));
 vi.mock('./direct-enhancement-cost.js', () => ({
@@ -317,5 +317,68 @@ describe('a generated pair beside a queued single piece of it', () => {
         const fights = [fight('mimic', { [LEGS]: worn(BOTTOMS) })];
         const raw = await run(fights, [{ hrid: CAPE, level: 0 }]);
         expect(rowsOf(raw).pairs).toHaveLength(1);
+    });
+});
+
+describe('the Configure-fight run prices and folds queued armor the same way', () => {
+    const single = async (equipment, queue, mode = 'equipment') => {
+        const fights = [fight('mimic', equipment)];
+        const built = queue.length ? buildQueuedCombatCandidates(queue, fights, gameData, true) : null;
+        return advisor.runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [fights[0].dto],
+                playerIndex: 0,
+                monsterHrid: fights[0].monsterHrid,
+                roomLevel: 50,
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                upgradeMode: mode,
+                extraCandidates: built?.candidates || [],
+            },
+            () => {}
+        );
+    };
+    const generatedPair = () => ({
+        type: 'cross_slot',
+        labArmor: true,
+        slot: BODY,
+        currentHrid: null,
+        currentLevel: 0,
+        upgradeHrid: TOP,
+        upgradeLevel: 0,
+        addedSlots: { [BODY]: worn(TOP), [LEGS]: worn(BOTTOMS) },
+        clearedSlots: [],
+        removedItems: [],
+        description: 'Royal Robe Top + Royal Robe Bottoms',
+    });
+
+    test('a queued cape keeps the replaced gear, as the generated row does', async () => {
+        state.armor = [generatedCape([worn(OLD_CAPE)])];
+        const generated = (await single({ [BACK]: worn(OLD_CAPE) }, [])).results.find(
+            (row) => row.candidate.upgradeHrid === CAPE
+        );
+        const queued = (await single({ [BACK]: worn(OLD_CAPE) }, [{ hrid: CAPE, level: 0 }])).results.find(
+            (row) => row.candidate.upgradeHrid === CAPE
+        );
+        expect(queued.candidate.checkedSwap).toBe(true);
+        expect(queued.candidate.keptItems).toEqual([worn(OLD_CAPE)]);
+        expect(queued.cost).toBe(generated.cost);
+    });
+
+    test('a generated pair that is only the queued piece plus a worn one is not shown beside it', async () => {
+        state.armor = [generatedPair()];
+        const worn1 = { [LEGS]: worn(BOTTOMS) };
+        const rows = (raw) => ({
+            pairs: raw.results.filter((row) => Object.keys(row.candidate.addedSlots || {}).length === 2),
+            queued: raw.results.filter((row) => row.candidate.checkedSwap),
+        });
+        expect(rows(await single(worn1, [])).pairs).toHaveLength(1);
+        const { pairs, queued } = rows(await single(worn1, [{ hrid: TOP, level: 0 }]));
+        expect(queued).toHaveLength(1);
+        expect(pairs).toHaveLength(0);
+        // The legs piece not worn: the pair buys a second piece and stays
+        const other = rows(await single({ [LEGS]: worn(OLD_BOTTOMS) }, [{ hrid: TOP, level: 0 }]));
+        expect(other.pairs).toHaveLength(1);
     });
 });
