@@ -7686,11 +7686,16 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // generated. This is how one specific thing — "what would the Critical Aura
     // do for me" — gets ranked against the upgrades you were already weighing,
     // rather than becoming a change applied to all of them.
-    const already = new Set(candidates.map(candidateAssignmentKey));
+    const already = new Map(candidates.map((candidate, index) => [candidateAssignmentKey(candidate), index]));
     for (const candidate of extraCandidates) {
         const key = candidateAssignmentKey(candidate);
-        if (already.has(key)) continue;
-        already.add(key);
+        if (already.has(key)) {
+            // The same change asked for by hand and generated: one row, and it is the hand-checked one (it may
+            // reach more loadouts and keeps its identity for the row actions)
+            if (candidate.checkedSwap) candidates[already.get(key)] = candidate;
+            continue;
+        }
+        already.set(key, candidates.length);
         candidates.push(candidate);
     }
 
@@ -7711,9 +7716,10 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         .filter((c) => c.type !== 'community_buff' && labCanUse(c))
         .map((generated) => {
             const c = labSaleTaxRate == null ? generated : { ...generated, saleTaxRate: labSaleTaxRate };
-            const cost = calculateUpgradeCost(c, gameData, isSelf);
+            // A hand-checked swap of a copy already worn buys nothing: its builder priced it at zero
+            const cost = c.checkedSwap && c.noPurchase ? c.cost : calculateUpgradeCost(c, gameData, isSelf);
             const row = { ...c, cost };
-            const routeDetail = routeDetailAtPricing(c, cost, gameData, isSelf);
+            const routeDetail = c.noPurchase ? null : routeDetailAtPricing(c, cost, gameData, isSelf);
             if (routeDetail) routeDetails.set(row, routeDetail);
             return row;
         });
@@ -8220,7 +8226,14 @@ export function conflictKeys(candidate) {
             keys.push(`ability:${candidate.replacesHrid}`, `ability_out:${candidate.replacesHrid}`);
         }
         if (candidate.fillsFreeSlot) keys.push(`ability_fill:${candidate.slot}`);
-        return keys;
+        // A folded hand-checked row takes a different way onto the bar in each loadout; it conflicts with every
+        // swap that would free or replace any ability one of those ways displaces
+        for (const hrid of candidate.replacesAny || []) {
+            if (hrid === candidate.upgradeHrid) continue;
+            keys.push(`ability:${hrid}`, `ability_out:${hrid}`);
+        }
+        for (const slot of candidate.fillsAny || []) keys.push(`ability_fill:${slot}`);
+        return [...new Set(keys)];
     }
 
     const slots = candidate.addedSlots
@@ -9454,7 +9467,9 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     }
     for (const candidate of extraCandidates) {
         const key = allFightsPoolKey(candidate);
-        if (!candidatesByKey.has(key)) candidatesByKey.set(key, candidate);
+        // A hand-checked swap replaces the generated one for the same change: it is the identity the
+        // player asked for, and `allLoadouts` may widen its reach past the generated row's
+        if (!candidatesByKey.has(key) || candidate.checkedSwap) candidatesByKey.set(key, candidate);
     }
     // Which archetype each loadout resolved to, for the panel to say out loud.
     // The guide narrows a loadout's swaps from every ability in the game to the
@@ -9853,8 +9868,9 @@ export async function runLabyrinthCombinationCheck(params, onProgress, options =
         // the plan valued the second one.
         const bySlot = new Map();
         for (const pick of picks) {
-            if (!candidateAppliesToDTO(pick.candidate, fight.dto, gameData)) continue;
-            const key = conflictKey(pick.candidate);
+            const forFight = candidateForFight(pick, i);
+            if (!candidateAppliesToDTO(forFight, fight.dto, gameData)) continue;
+            const key = conflictKey(forFight);
             const standing = bySlot.get(key);
             const gain = pick.fights?.[i]?.winRateDelta ?? 0;
             if (!standing || gain > standing.gain) bySlot.set(key, { pick, gain });
@@ -9865,8 +9881,9 @@ export async function runLabyrinthCombinationCheck(params, onProgress, options =
         for (const { pick } of bySlot.values()) {
             // Re-checked against the loadout as it now stands: a swap can fill a
             // hand that was empty when the picks were chosen
-            if (!candidateAppliesToDTO(pick.candidate, dto, gameData)) continue;
-            dto = applyCandidateToDTO(dto, pick.candidate);
+            const forFight = candidateForFight(pick, i);
+            if (!candidateAppliesToDTO(forFight, dto, gameData)) continue;
+            dto = applyCandidateToDTO(dto, forFight);
             installed.push(pick.candidate.description);
         }
 
@@ -10667,6 +10684,19 @@ export function checkedAbilityAppliesToDTO(candidate, dto, gameData = null) {
     if (candidate.fillsFreeSlot) return freeSlotForAbility(abilities, special) >= 0;
     const index = abilities.findIndex((ability) => ability?.hrid === candidate.replacesHrid);
     return index >= 0 && (special ? index === 0 : index > 0);
+}
+
+/**
+ * The candidate to apply to one fight of a whole-run row. A folded hand-checked ability row carries the way each
+ * loadout takes the ability (`fights[i].option`: its slot, what it replaces, level-up or free slot); the row's own
+ * candidate names none, so applying it as it stands changes nothing. Every other row applies its candidate.
+ * @param {{candidate: Object, fights?: Array<Object>}} row - A whole-run result row (or a plan pick)
+ * @param {number} index - The fight's index
+ * @returns {Object} A candidate `candidateAppliesToDTO` and `applyCandidateToDTO` can use for that fight
+ */
+export function candidateForFight(row, index) {
+    const option = row?.fights?.[index]?.option;
+    return option ? { ...row.candidate, ...option } : row.candidate;
 }
 
 /**

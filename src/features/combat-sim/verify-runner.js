@@ -41,6 +41,7 @@ import {
 import {
     PAIRED_TIME_HEADROOM,
     applyCandidateToDTO,
+    candidateForFight,
     applyCommunityBuffCandidate,
     buildModifiedCombatBuffs,
     candidateAssignmentKey,
@@ -558,7 +559,7 @@ export async function verifyLabCandidates({
             buffs = isToken ? buildModifiedCombatBuffs(labyrinthCombatBuffs, candidate) : labyrinthCombatBuffs;
             for (const [i, fight] of fights.entries()) {
                 if (!reach[r][i]) continue;
-                const dto = isToken ? fight.dto : applyCandidateToDTO(fight.dto, candidate);
+                const dto = isToken ? fight.dto : applyCandidateToDTO(fight.dto, candidateForFight(row, i));
                 if (!isToken && candidate.type === 'combat_level') {
                     // The grind also trains the weapon's own skill; the analysis simulated the pair
                     for (const along of row.alongside || []) {

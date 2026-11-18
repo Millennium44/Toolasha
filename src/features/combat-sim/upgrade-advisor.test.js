@@ -3883,6 +3883,49 @@ describe('what a budget buys', () => {
         expect(plan.skipped.some((s) => s.reason.includes('already cover'))).toBe(true);
     });
 
+    test('a folded queued ability that takes a slot off Y conflicts with a generated Y to Z swap', () => {
+        const folded = covering([0, 1, 2], { cost: 10 });
+        folded.candidate = {
+            type: 'ability_swap',
+            slot: 'ability_1',
+            upgradeHrid: '/abilities/x',
+            checkedAbility: true,
+            replacesAny: ['/abilities/y'],
+        };
+        const generated = covering([0, 1, 2], { cost: 10 });
+        generated.candidate = {
+            type: 'ability_swap',
+            slot: 'ability_2',
+            upgradeHrid: '/abilities/z',
+            replacesHrid: '/abilities/y',
+        };
+        expect(planFor([folded, generated], 1000).picks).toHaveLength(1);
+    });
+
+    test('two folded queued auras that fill the same empty slot are never both bought', () => {
+        const aura = (hrid) => {
+            const row = covering([0, 1, 2], { cost: 10 });
+            row.candidate = {
+                type: 'ability_swap',
+                slot: 'ability_1',
+                upgradeHrid: hrid,
+                checkedAbility: true,
+                fillsAny: ['ability_1'],
+            };
+            return row;
+        };
+        expect(planFor([aura('/abilities/critical_aura'), aura('/abilities/fierce_aura')], 1000).picks).toHaveLength(1);
+        // Nor alongside a generated fill of that slot
+        const generatedFill = covering([0, 1, 2], { cost: 10 });
+        generatedFill.candidate = {
+            type: 'ability_swap',
+            slot: 'ability_1',
+            upgradeHrid: '/abilities/mystic_aura',
+            fillsFreeSlot: true,
+        };
+        expect(planFor([aura('/abilities/critical_aura'), generatedFill], 1000).picks).toHaveLength(1);
+    });
+
     test('a second piece is valued only at what it adds', () => {
         // The cheap piece is the best thing room 0 can wear; the broad one is
         // better than nothing in room 1 and worse than the first in room 0, so
@@ -10644,6 +10687,98 @@ describe('the Lab single-fight analysis taxes resale as the analysed character p
     test("the live character's own analysis follows their own status", async () => {
         saleTax.ironCow = true;
         expect((await labCostFor({ self: true })).cost).toBe(200_000_000 - 1_000_000);
+    });
+});
+
+describe('a hand-checked swap beside a generated row for the same change', () => {
+    const generated = {
+        type: 'tier',
+        slot: MAIN_HAND,
+        currentHrid: '/items/fine_sword',
+        currentLevel: 10,
+        upgradeHrid: '/items/regal_sword_refined',
+        upgradeLevel: 10,
+        description: 'Generated',
+    };
+    const checked = { ...generated, description: 'Checked', checkedSwap: true, allLoadouts: true };
+    const player = () => ({
+        equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 10 } },
+        abilities: [],
+        staminaLevel: 50,
+        hrid: '/players/target',
+    });
+
+    beforeEach(() => {
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        getItemPrices.mockReturnValue({ ask: 200_000_000, bid: 150_000_000 });
+        resolveItemPrice.mockImplementation((_hrid, { side }) => ({ price: side === 'sell' ? 1_000_000 : 5_000_000 }));
+        runLabyrinthSimulation.mockReset();
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+    });
+
+    test('the whole-run pool keeps one row, and it is the checked one', async () => {
+        const { results } = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [{ monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto: player() }],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: [],
+                extraCandidates: [generated, checked],
+            },
+            null,
+            {}
+        );
+        expect(results).toHaveLength(1);
+        expect(results[0].candidate).toMatchObject({ description: 'Checked', checkedSwap: true });
+    });
+
+    test('the single-fight analysis keeps one row, and it is the checked one', async () => {
+        const { results } = await runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [player()],
+                playerIndex: 0,
+                selfHrid: null,
+                monsterHrid: '/monsters/goblin',
+                roomLevel: 100,
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                upgradeMode: 'ability_swap',
+                extraCandidates: [generated, checked],
+            },
+            null,
+            {}
+        );
+        const rows = results.filter((r) => r.candidate.upgradeHrid === '/items/regal_sword_refined');
+        expect(rows).toHaveLength(1);
+        expect(rows[0].candidate).toMatchObject({ description: 'Checked', checkedSwap: true });
+    });
+
+    test('a checked swap of a copy already worn stays free in the single-fight table, with no purchase breakdown', async () => {
+        const owned = { ...checked, noPurchase: true, cost: 0 };
+        const { results } = await runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [player()],
+                playerIndex: 0,
+                selfHrid: null,
+                monsterHrid: '/monsters/goblin',
+                roomLevel: 100,
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                upgradeMode: 'ability_swap',
+                extraCandidates: [owned],
+            },
+            null,
+            {}
+        );
+        const row = results.find((r) => r.candidate.checkedSwap);
+        expect(row.cost).toBe(0);
+        expect(row.costDetail).toBeNull();
     });
 });
 

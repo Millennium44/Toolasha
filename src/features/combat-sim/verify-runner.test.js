@@ -75,6 +75,10 @@ vi.mock('./upgrade-advisor.js', () => ({
         if (candidate.explode) throw new Error('cannot apply');
         return { ...dto, applied: candidate.effect };
     }),
+    candidateForFight: (row, index) => {
+        const option = row?.fights?.[index]?.option;
+        return option ? { ...row.candidate, ...option } : row.candidate;
+    },
     applyCommunityBuffCandidate: (buffs) => buffs,
     buildModifiedCombatBuffs: (base, candidate) => [...base, { token: candidate.description }],
     candidateAssignmentKey: (candidate) => `key:${candidate.description}`,
@@ -650,6 +654,22 @@ describe('verifyLabCandidates', () => {
             expect(c.precision.minTrials).not.toBe(9999);
         }
         expect(out.rows[0].seeds).toBe(2);
+    });
+
+    test('a folded checked-ability row is applied through the way each fight takes it, not as its bare candidate', async () => {
+        await verifyLabCandidates({
+            context: labContext(),
+            pairing: { seed: 5 },
+            rows: [
+                labRow('folded', 'bare', [true, false, true], {
+                    fights: [{ applied: true, option: { effect: 'good' } }, { applied: false }, { applied: true }],
+                }),
+            ],
+            seeds: 2,
+        });
+        const markers = sim.labCalls.filter((c) => c.marker !== 'base').map((c) => c.marker);
+        // Fight 0 takes it by its recorded option; fight 2 has none, so the candidate stands
+        expect(markers.sort()).toEqual(['bare', 'bare', 'good', 'good']);
     });
 
     test('baseline and candidate share each fight seed, derived per seed and fight, distinct from the pairing seed', async () => {
