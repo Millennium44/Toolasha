@@ -187,9 +187,12 @@ export function resolveItemEnhancement(itemHrid, playerDTO, inventory) {
     return owned === null ? DEFAULT_ARMOR_ENHANCEMENT : owned;
 }
 
+/** Locations whose items nobody can use (escrowed by a market listing) */
+const UNHELD_LOCATIONS = new Set(['/item_locations/market_listing', '/item_locations/marketplace']);
+
 /**
- * The level this item is actually held at — equipped, else the best copy in
- * inventory — or null when it isn't owned at all. Separate from
+ * The level this item is actually held at — equipped in the analyzed loadout, else the best copy the
+ * character holds (inventory or worn) — or null when it isn't owned at all. Separate from
  * resolveItemEnhancement so callers can tell "owned at +0" from "not owned",
  * which the cape comparison needs to decide whether to assume a level.
  * @param {string} itemHrid - Item HRID
@@ -205,9 +208,12 @@ export function findOwnedEnhancement(itemHrid, playerDTO, inventory) {
     let best = null;
     for (const item of inventory || []) {
         if (item?.itemHrid !== itemHrid) continue;
-        // Equipped copies live in the same list under a different location
-        if (item.itemLocationHrid && item.itemLocationHrid !== '/item_locations/inventory') continue;
-        if (Number(item.count) <= 0) continue;
+        // Copies the character holds live in the same list: the bag, and whatever it is wearing right now
+        // (any other equipment slot), which an analyzed saved loadout need not list. Copies escrowed by a
+        // market listing are held by no one.
+        if (UNHELD_LOCATIONS.has(item.itemLocationHrid)) continue;
+        // Equipped rows do not reliably carry a count: absent is one worn copy, only an explicit zero is skipped
+        if (item.count != null && Number(item.count) <= 0) continue;
         const level = Math.max(0, Math.floor(Number(item.enhancementLevel) || 0));
         if (best === null || level > best) best = level;
     }

@@ -126,9 +126,24 @@ describe('resolveItemEnhancement', () => {
         expect(resolveItemEnhancement(hrid, player({}), inventory)).toBe(9);
     });
 
-    test('ignores copies equipped elsewhere and empty stacks', () => {
+    test('counts a copy the character is wearing that the analyzed loadout does not list', () => {
         const inventory = [
             { itemHrid: hrid, enhancementLevel: 15, count: 1, itemLocationHrid: '/item_locations/body' },
+            { itemHrid: hrid, enhancementLevel: 4, count: 1, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        expect(resolveItemEnhancement(hrid, player({}), inventory)).toBe(15);
+        // A worn row without a count is one copy
+        expect(
+            resolveItemEnhancement(hrid, player({}), [
+                { itemHrid: hrid, enhancementLevel: 6, itemLocationHrid: '/item_locations/body' },
+            ])
+        ).toBe(6);
+    });
+
+    test('ignores empty stacks and copies escrowed by a market listing', () => {
+        const inventory = [
+            { itemHrid: hrid, enhancementLevel: 15, count: 1, itemLocationHrid: '/item_locations/market_listing' },
+            { itemHrid: hrid, enhancementLevel: 13, count: 1, itemLocationHrid: '/item_locations/marketplace' },
             { itemHrid: hrid, enhancementLevel: 11, count: 0, itemLocationHrid: '/item_locations/inventory' },
         ];
         expect(resolveItemEnhancement(hrid, player({}), inventory)).toBe(DEFAULT_ARMOR_ENHANCEMENT);
@@ -676,6 +691,67 @@ describe('cape options', () => {
 
         // A +10 cloak in the bank is what would actually be worn
         expect(cloak.enhancementLevel).toBe(10);
+    });
+
+    describe('a cape the character wears that the analyzed loadout does not list', () => {
+        const quiverDto = () => ({
+            equipment: {
+                '/equipment_types/two_hand': { hrid: '/items/bow' },
+                [BACK]: { hrid: '/items/chimerical_quiver', enhancementLevel: 5 },
+            },
+            abilities: [],
+        });
+        const back = (itemHrid, enhancementLevel, location = '/item_locations/back') => ({
+            itemHrid,
+            enhancementLevel,
+            count: 1,
+            itemLocationHrid: location,
+        });
+        const levels = (dto, inventory) => {
+            const capes = capesIn(generateLabArmorCandidates(dto, capeGameData(), inventory));
+            return Object.fromEntries(capes.map((c) => [c.hrid, c.enhancementLevel]));
+        };
+
+        test('a worn refined +7 raises the refined row; the plain +5 spare still sets the plain row', () => {
+            const inventory = [
+                back('/items/sinister_cape', 5, '/item_locations/inventory'),
+                back('/items/sinister_cape_refined', 7),
+            ];
+            const out = levels(quiverDto(), inventory);
+            expect(out['/items/sinister_cape']).toBe(5);
+            expect(out['/items/sinister_cape_refined']).toBe(7);
+        });
+
+        test('plain and refined are matched separately, each at its own best', () => {
+            const inventory = [
+                back('/items/sinister_cape', 9),
+                back('/items/sinister_cape_refined', 3, '/item_locations/inventory'),
+            ];
+            const out = levels(quiverDto(), inventory);
+            expect(out['/items/sinister_cape']).toBe(9);
+            // 3 is below the +5 worn quiver, so the worn level stands
+            expect(out['/items/sinister_cape_refined']).toBe(5);
+        });
+
+        test('an owned copy lower than worn never drags the row below the worn level', () => {
+            const out = levels(quiverDto(), [back('/items/sinister_cape_refined', 2)]);
+            expect(out['/items/sinister_cape_refined']).toBe(5);
+        });
+
+        test('nothing owned (no inventory, as for a party member) uses the worn level', () => {
+            for (const inventory of [null, []]) {
+                const out = levels(quiverDto(), inventory);
+                expect(out['/items/sinister_cape']).toBe(5);
+                expect(out['/items/sinister_cape_refined']).toBe(5);
+            }
+        });
+
+        test('a copy on a market listing is not owned', () => {
+            const out = levels(quiverDto(), [
+                back('/items/sinister_cape_refined', 7, '/item_locations/market_listing'),
+            ]);
+            expect(out['/items/sinister_cape_refined']).toBe(5);
+        });
     });
 
     test('offers the refined variant of each cape alongside the plain one', () => {
