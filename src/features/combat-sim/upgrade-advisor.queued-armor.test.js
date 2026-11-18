@@ -225,3 +225,68 @@ describe('a queued item that is also a generated forced-armor row', () => {
         expect(rowsFor(raw, CAPE)[0].candidate.keptItems).toEqual([worn(OLD_CAPE)]);
     });
 });
+
+describe('a generated pair beside a queued single piece of it', () => {
+    const generatedPair = () => ({
+        type: 'cross_slot',
+        labArmor: true,
+        slot: BODY,
+        currentHrid: null,
+        currentLevel: 0,
+        upgradeHrid: TOP,
+        upgradeLevel: 0,
+        addedSlots: { [BODY]: worn(TOP), [LEGS]: worn(BOTTOMS) },
+        clearedSlots: [],
+        removedItems: [],
+        description: 'Royal Robe Top + Royal Robe Bottoms',
+    });
+    const queue = [{ hrid: TOP, level: 0 }];
+    const rowsOf = (raw) => ({
+        pairs: raw.results.filter((row) => Object.keys(row.candidate.addedSlots || {}).length === 2),
+        queued: raw.results.filter((row) => row.candidate.checkedSwap && row.candidate.upgradeHrid === TOP),
+    });
+
+    test('with the other piece already worn the pair is the queued row and is not shown twice', async () => {
+        state.armor = [generatedPair()];
+        const fights = [fight('mimic', { [LEGS]: worn(BOTTOMS) })];
+        // The control: without the queue the pair is a row of its own
+        expect(rowsOf(await run(fights, [])).pairs).toHaveLength(1);
+
+        const { pairs, queued } = rowsOf(await run(fights, queue));
+        expect(queued).toHaveLength(1);
+        expect(pairs).toHaveLength(0);
+    });
+
+    test('two fights that both wear the other piece still fold to the one row', async () => {
+        state.armor = [generatedPair()];
+        const fights = [
+            fight('mimic', { [LEGS]: worn(BOTTOMS) }),
+            fight('eye', { [LEGS]: worn(BOTTOMS), [BACK]: worn(OLD_CAPE) }),
+        ];
+        const { pairs, queued } = rowsOf(await run(fights, queue));
+        expect(queued).toHaveLength(1);
+        expect(pairs).toHaveLength(0);
+    });
+
+    test('a pair that really buys the second piece in some loadout stays', async () => {
+        state.armor = [generatedPair()];
+        const fights = [fight('mimic', { [LEGS]: worn(BOTTOMS) }), fight('eye', { [LEGS]: worn(OLD_BOTTOMS) })];
+        const { pairs, queued } = rowsOf(await run(fights, queue));
+        expect(queued).toHaveLength(1);
+        expect(pairs).toHaveLength(1);
+    });
+
+    test('a pair that needs both pieces, and an empty queue, are untouched', async () => {
+        state.armor = [generatedPair()];
+        const fights = [fight('mimic', { [LEGS]: worn(OLD_BOTTOMS) })];
+        expect(rowsOf(await run(fights, queue)).pairs).toHaveLength(1);
+        expect(rowsOf(await run(fights, [])).pairs).toHaveLength(1);
+    });
+
+    test('a queued piece the pair does not hold leaves the pair alone', async () => {
+        state.armor = [generatedPair()];
+        const fights = [fight('mimic', { [LEGS]: worn(BOTTOMS) })];
+        const raw = await run(fights, [{ hrid: CAPE, level: 0 }]);
+        expect(rowsOf(raw).pairs).toHaveLength(1);
+    });
+});

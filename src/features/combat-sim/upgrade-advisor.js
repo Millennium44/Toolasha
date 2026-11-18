@@ -9269,6 +9269,39 @@ function labArmorForLoadout(candidate, dto, keepReplaced) {
 }
 
 /**
+ * Whether a generated multi-slot row is nothing more than a queued single-slot swap.
+ *
+ * The forced-armor generator pairs a body with a legs piece even when the legs piece is already worn, so
+ * {body X, legs W} with W worn is the same change as the queued X on its own, under a different key. It is
+ * the same only if that holds in every loadout the pair reaches, and the queued row reaches them too;
+ * anywhere the pair really buys a second piece, it is its own row and stays.
+ *
+ * @param {Object} pooled - A pooled candidate
+ * @param {Object} queued - A queued (`checkedSwap`) candidate
+ * @param {Array<Object>} fights - The run's fights, each with a loadout `dto`
+ * @param {Object} gameData - Game data payload
+ * @returns {boolean}
+ */
+function pairIsQueuedPiece(pooled, queued, fights, gameData) {
+    if (queued.addedSlots || !queued.slot || pooled.checkedSwap) return false;
+    const added = Object.entries(pooled.addedSlots || {});
+    if (added.length < 2 || pooled.clearedSlots?.length) return false;
+    const mine = pooled.addedSlots[queued.slot];
+    if (!mine || mine.hrid !== queued.upgradeHrid || (mine.enhancementLevel || 0) !== (queued.upgradeLevel || 0)) {
+        return false;
+    }
+    return fights.every((fight) => {
+        if (!candidateAppliesToDTO(pooled, fight.dto, gameData)) return true;
+        const othersWorn = added.every(([slot, item]) => {
+            if (slot === queued.slot) return true;
+            const equipped = fight.dto?.equipment?.[slot];
+            return equipped?.hrid === item.hrid && (equipped.enhancementLevel || 0) === (item.enhancementLevel || 0);
+        });
+        return othersWorn && candidateAppliesToDTO(queued, fight.dto, gameData);
+    });
+}
+
+/**
  * A queued swap that takes the place of a generated forced-armor row, priced the way that row is.
  *
  * The generated row went through `labArmorForLoadout`, so under `labSim_keepReplacedGear` the gear it replaces is
@@ -9492,6 +9525,14 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     }
     for (const candidate of extraCandidates) {
         const key = allFightsPoolKey(candidate);
+        // A generated pair that is this queued piece plus pieces already worn is the same change: one row
+        if (candidate.checkedSwap) {
+            for (const [pooledKey, pooled] of candidatesByKey) {
+                if (pooledKey !== key && pairIsQueuedPiece(pooled, candidate, fights, gameData)) {
+                    candidatesByKey.delete(pooledKey);
+                }
+            }
+        }
         // A hand-checked swap replaces the generated one for the same change: it is the identity the
         // player asked for, and `allLoadouts` may widen its reach past the generated row's
         if (!candidatesByKey.has(key) || candidate.checkedSwap) {
