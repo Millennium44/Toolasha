@@ -1300,11 +1300,14 @@ class MarketHistoryViewer {
             tableContainer.appendChild(note);
         }
 
-        if (this.dateBasis === 'fill' && !config.getSetting('market_tradeLedger')) {
+        const ledgerOff = !config.getSetting('market_tradeLedger');
+        // Not loaded yet reads as "no fills": say so rather than show blank dates as if nothing traded
+        if (this.dateBasis === 'fill' && (ledgerOff || !tradeLedgerStore.isReady())) {
             const note = document.createElement('div');
             note.className = 'mwi-market-history-ledger-note';
-            note.textContent =
-                'Fill dates come from the Trade Ledger, which is off — turn it on in settings to record them.';
+            note.textContent = ledgerOff
+                ? 'Fill dates come from the Trade Ledger, which is off — turn it on in settings to record them.'
+                : 'The Trade Ledger is still loading — fill dates are blank until it has; change a filter or reopen to refresh.';
             note.style.cssText = `
                 padding: 6px 10px;
                 margin-bottom: 6px;

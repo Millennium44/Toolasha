@@ -101,7 +101,7 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 vi.mock('./estimated-listing-age.js', () => ({ default: estimatedListingAgeMock }));
-const ledgerMock = vi.hoisted(() => ({ getLastFillTimes: vi.fn(() => new Map()) }));
+const ledgerMock = vi.hoisted(() => ({ getLastFillTimes: vi.fn(() => new Map()), isReady: vi.fn(() => true) }));
 vi.mock('./trade-ledger-store.js', () => ({ default: ledgerMock }));
 // Tab-bar wiring and DOM-observer plumbing — not what these tests are about,
 // and both pull in core/websocket.js if left real.
@@ -839,6 +839,13 @@ describe('the fill-date control and the Trade Ledger setting', () => {
         expect(container.querySelector(NOTE)).toBeNull();
         expect(container.querySelectorAll('tbody tr')).toHaveLength(1);
         expect(container.querySelector('tbody td').textContent).toBe('11-17 12:00:00');
+    });
+
+    test('ledger on but not loaded yet: says so instead of blank dates as if nothing traded', () => {
+        settingsMock.market_tradeLedger = true;
+        ledgerMock.isReady.mockReturnValueOnce(false);
+        const container = draw(new Map());
+        expect(container.querySelector(NOTE)?.textContent).toMatch(/still loading/);
     });
 
     test('the note is for the fill basis only', () => {
