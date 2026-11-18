@@ -8543,7 +8543,15 @@ function planWithinBudgetOnce(
                 });
             } else {
                 const keys = conflictKeys(result.candidate);
-                pinnedEntries.push({ result, savings: savingsOf(result, true), key: keys[0], keys, id, pinned: true });
+                pinnedEntries.push({
+                    result,
+                    savings: savingsOf(result, true),
+                    key: keys[0],
+                    keys,
+                    id,
+                    pinned: true,
+                    copyUse: heldCopyUse(result),
+                });
             }
             continue;
         }
@@ -8652,6 +8660,8 @@ function planWithinBudgetOnce(
     // One DTO wears one piece per slot: a fill candidate sharing a slot with a pin would have to be worn instead of
     // it or as well as it, and neither is a basket the confirm run can simulate
     const pinnedKeys = new Set();
+    const copyUseOfPick = new WeakMap();
+    const copyUsesConflict = (a, b) => a.key === b.key && (a.mode === 'consumes' || b.mode === 'consumes');
     const blockedByPin = (entry) => singleLoadout && entry.keys.some((key) => pinnedKeys.has(key));
 
     // The picks already in the basket that cannot be worn with `entry`: they hold a key it needs under another group
@@ -8728,6 +8738,7 @@ function planWithinBudgetOnce(
         };
         picks.push(pick);
         creditedOf.set(pick, credited);
+        if (entry.copyUse) copyUseOfPick.set(pick, entry.copyUse);
         bestBySlot.set(entry.key, next);
     };
 
@@ -8755,6 +8766,18 @@ function planWithinBudgetOnce(
                     break;
                 }
                 if (!holder) claimedBy.set(key, entry);
+            }
+        }
+        for (let i = 0; i < pinnedEntries.length; i++) {
+            for (let j = i + 1; j < pinnedEntries.length; j++) {
+                const a = pinnedEntries[i];
+                const b = pinnedEntries[j];
+                if (!a.copyUse || !b.copyUse || !copyUsesConflict(a.copyUse, b.copyUse)) continue;
+                blocked.push({
+                    kind: 'conflict',
+                    ids: [a.id, b.id],
+                    reason: `Pinned "${a.result.candidate.description}" and "${b.result.candidate.description}" cannot be taken together \u2014 one uses the copy you hold and the other enhances it.`,
+                });
             }
         }
         for (const [a, b] of conflicting) {
@@ -8809,12 +8832,23 @@ function planWithinBudgetOnce(
         for (const entry of pinnedEntries) acceptPin(entry);
     }
 
-    // Copies the basket relies on or uses up. A copy one row uses free cannot be the copy another row enhances
-    const copyUsesOf = new Map();
+    // The held copy each pick relies on or uses up (`copyUseOfPick`) is read from the picks that stand, never
+    // kept apart from them, so a pick that is displaced or backed out takes its copy use with it
+    /**
+     * Whether `entry` needs a copy that a pick which would STAY already relies on or uses up. A pick the entry
+     * displaces or overlaps is replaced by it, so it is not a clash; a pin is never replaced.
+     */
     const copyClashes = (entry) => {
         if (!entry.copyUse) return false;
-        const other = copyUsesOf.get(entry.copyUse.key);
-        return Boolean(other) && (other.has('consumes') || entry.copyUse.mode === 'consumes');
+        const replaced = new Set([
+            ...displacedBy(entry).map((i) => picks[i]),
+            ...overlapping(entry).filter((pick) => !pick.pinned),
+        ]);
+        return picks.some((pick) => {
+            if (replaced.has(pick)) return false;
+            const use = copyUseOfPick.get(pick);
+            return Boolean(use) && copyUsesConflict(use, entry.copyUse);
+        });
     };
     const remaining = [...eligible];
     let forced = seedId ? eligible.find((entry) => candidateKey(entry.result) === seedId) || null : null;
@@ -8877,10 +8911,6 @@ function planWithinBudgetOnce(
         const { entry, marginal } = best;
         remaining.splice(remaining.indexOf(entry), 1);
         for (const key of entry.keys) taken.add(key);
-        if (entry.copyUse) {
-            if (!copyUsesOf.has(entry.copyUse.key)) copyUsesOf.set(entry.copyUse.key, new Set());
-            copyUsesOf.get(entry.copyUse.key).add(entry.copyUse.mode);
-        }
 
         // A piece nobody would now wear is gold spent on nothing: an earlier
         // pick in this group that this one beats in every room it covered is
@@ -8911,6 +8941,7 @@ function planWithinBudgetOnce(
         };
         picks.push(pick);
         creditedOf.set(pick, credited);
+        if (entry.copyUse) copyUseOfPick.set(pick, entry.copyUse);
 
         bestBySlot.set(entry.key, foldStanding(bestBySlot.get(entry.key), credited, false).next);
 
@@ -8938,6 +8969,8 @@ function planWithinBudgetOnce(
         if (isExclusive(entry.result.candidate) && entry.keys.some((key) => taken.has(key))) {
             // Otherwise this reads as "worthless", when it may well be the
             // second-best swap into a slot the plan has already filled
+            reason = 'a pick already uses what this needs';
+        } else if (copyClashes(entry)) {
             reason = 'a pick already uses what this needs';
         } else if (blockedByPin(entry)) {
             reason = 'a pinned pick uses what this needs';

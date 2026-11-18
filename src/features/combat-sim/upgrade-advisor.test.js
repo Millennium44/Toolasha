@@ -8594,6 +8594,61 @@ describe('one owned copy used by several rows of a budget plan', () => {
         expect(plan.picks).toHaveLength(2);
     });
 
+    const sized = (r, cost, gain, ladderOver = {}) => ({
+        ...r,
+        cost,
+        attemptsDelta: -gain,
+        costDetail: { ladder: { ...r.costDetail.ladder, ...ladderOver } },
+    });
+
+    test('a later enhance of the same copy that replaces the earlier pick is not a clash', () => {
+        const slot = '/equipment_types/back';
+        const small = sized(enhance('small', slot), 10, 1, { fromLevel: 5, toLevel: 11 });
+        const large = sized(enhance('large', slot), 100, 3, { fromLevel: 5, toLevel: 12 });
+        const plan = planWithinBudget([small, large], 1000, { singleLoadout: true });
+        expect(plan.picks.map((pick) => pick.candidate.description)).toEqual(['large']);
+    });
+
+    test('a replaced pick gives its copy back, so a row on that copy is no longer refused', () => {
+        const slot = '/equipment_types/back';
+        const small = sized(enhance('small', slot), 10, 1, { fromLevel: 5, toLevel: 11 });
+        const large = sized(enhance('large', slot), 100, 3, { fromLevel: 6, toLevel: 12 });
+        const other = sized(free('other', '/equipment_types/neck'), 10, 1, { fromLevel: 5 });
+        // `small` consumes the +5, is replaced by `large` (a different copy), so the +5 is free to equip again
+        const plan = planWithinBudget([small, large, other], 1000, { singleLoadout: true });
+        expect(plan.picks.map((pick) => pick.candidate.description).sort()).toEqual(['large', 'other']);
+    });
+
+    test('a genuine clash is reported as the conflict the seeded retry looks for', () => {
+        const plan = planWithinBudget(
+            [free('forced', '/equipment_types/back'), enhance('enh', '/equipment_types/neck')],
+            1000,
+            {
+                singleLoadout: true,
+            }
+        );
+        expect(plan.skipped.map((entry) => entry.reason)).toContain('a pick already uses what this needs');
+    });
+
+    test('a pinned free row keeps an enhance row on its copy out of the plan', () => {
+        const forced = free('forced', '/equipment_types/back');
+        const enh = enhance('enh', '/equipment_types/neck');
+        const plan = planWithinBudget([forced, enh], 1000, { singleLoadout: true, required: [candidateKey(forced)] });
+        expect(plan.picks.map((pick) => pick.candidate.description)).toEqual(['forced']);
+    });
+
+    test('two pins that need the same copy in conflicting ways block the plan', () => {
+        const forced = free('forced', '/equipment_types/back');
+        const enh = enhance('enh', '/equipment_types/neck');
+        const plan = planWithinBudget([forced, enh], 1000, {
+            singleLoadout: true,
+            required: [candidateKey(forced), candidateKey(enh)],
+        });
+        expect(plan.picks).toEqual([]);
+        expect(plan.blocked[0].kind).toBe('conflict');
+        expect(plan.blocked[0].reason).toMatch(/copy you hold/);
+    });
+
     test('rows on different copies, a fresh ladder and a party row are not tied together', () => {
         const other = enhance('c', '/equipment_types/neck');
         other.costDetail.ladder.fromLevel = 5;
