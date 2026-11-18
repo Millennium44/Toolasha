@@ -1077,6 +1077,10 @@ class CombatSimulator {
 
         const aliveTargets = targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0);
         const attackedTargets = new Set();
+        // Who this swing struck (not parried), for Echo below
+        const struckTargets = [];
+        let wasParried = false;
+        const overkillPool = this._openOverkillPool(event.source);
 
         for (let i = 0; i < aliveTargets.length; i++) {
             let target = aliveTargets[i];
@@ -1123,6 +1127,9 @@ class CombatSimulator {
             if (parryTarget) {
                 target = source;
                 source = parryTarget;
+                wasParried = true;
+            } else {
+                struckTargets.push(target);
             }
 
             // Whether this blow is what put the target down — read before the
@@ -1261,6 +1268,10 @@ class CombatSimulator {
                 break;
             }
         }
+
+        // Echo works on direct attacks, auto attacks included (the game's dev, 2026-11-18); a parry is not one
+        if (!wasParried) this._processEcho(event.source, 'autoAttack', null, struckTargets);
+        this._closeOverkillPool(event.source, overkillPool);
 
         // Re-arm BEFORE the encounter is torn down, exactly as `tryUseAbility`
         // already does. Two reasons, in order of importance:
@@ -2225,6 +2236,7 @@ class CombatSimulator {
             return;
         }
 
+        const overkillPool = this._openOverkillPool(source);
         const avoidTarget = [];
         // Who this cast struck (not parried), for Echo below
         const hitTargets = [];
@@ -2522,7 +2534,41 @@ class CombatSimulator {
             }
         }
 
-        if (!wasParried) this._processEcho(source, ability, abilityEffect, hitTargets);
+        if (!wasParried) this._processEcho(source, ability.hrid, abilityEffect, hitTargets);
+        this._closeOverkillPool(source, overkillPool);
+    }
+
+    /**
+     * Overkill (talisman): start gathering what one attack carries past its targets' last hitpoints. Every kill of
+     * an area cast (or a pierce, or the echo that follows) adds to one pool, banked into the store when the attack
+     * is done, so the whole sum lands on the next direct hit rather than spilling into the cast's next target (the
+     * game's dev, 2026-11-18). A unit without the mechanic gets no pool and nothing changes for it.
+     *
+     * @private
+     * @param {Object} source - The attacker
+     * @returns {{amount: number}|null} The pool, to hand to `_closeOverkillPool`
+     */
+    _openOverkillPool(source) {
+        if (!(source?.talismanMechanics?.overkill > 0)) return null;
+        const pool = { amount: 0 };
+        source.overkillPool = pool;
+        return pool;
+    }
+
+    /**
+     * Bank an attack's gathered overkill. A source that died during its own attack (thorns, retaliation) has
+     * already lost its store, and the pool goes with it.
+     *
+     * @private
+     * @param {Object} source - The attacker
+     * @param {{amount: number}|null} pool - From `_openOverkillPool`
+     */
+    _closeOverkillPool(source, pool) {
+        if (!pool) return;
+        if (source.overkillPool === pool) source.overkillPool = null;
+        if (pool.amount > 0 && source.combatDetails.currentHitpoints > 0) {
+            source.overkillStore = (source.overkillStore || 0) + pool.amount;
+        }
     }
 
     /**
@@ -2564,18 +2610,20 @@ class CombatSimulator {
     }
 
     /**
-     * Echo (talisman): a damage cast repeats once, with the Echo chance, as a second hit at half damage on every
-     * target it struck that is still standing. The repeat rolls its own accuracy and crit, goes through the normal
-     * damage path (so Smite, Shatter and Overkill apply), is credited to the same ability, and does not itself echo
-     * or repeat the cast's side effects (stun, DoT, buffs). A cast that killed its target does not echo.
+     * Echo (talisman): a direct attack (a damage cast or an auto attack) repeats once, with the Echo chance, as a
+     * second hit at half damage on every target it struck that is still standing. The repeat rolls its own accuracy
+     * and crit, goes through the normal damage path (so Smite, Shatter and Overkill apply), is credited to the same
+     * ability (or to `autoAttack`), and does not itself echo or repeat the attack's side effects (stun, DoT, buffs,
+     * thorns, retaliation, life steal, mana leech, curse, fury). An attack that killed its target does not echo.
+     * Parries and thorns never echo. Heals echo too: see `_processHealEcho`.
      *
      * @private
-     * @param {Object} source - The caster
-     * @param {Object} ability - The ability cast
-     * @param {Object} abilityEffect - Its damage effect
-     * @param {Array<Object>} hitTargets - The units the cast struck
+     * @param {Object} source - The attacker
+     * @param {string} label - The ability hrid, or 'autoAttack', the echo is credited to
+     * @param {Object|null} abilityEffect - The damage effect, or null for an auto attack
+     * @param {Array<Object>} hitTargets - The units the attack struck
      */
-    _processEcho(source, ability, abilityEffect, hitTargets) {
+    _processEcho(source, label, abilityEffect, hitTargets) {
         const echo = source.talismanMechanics?.echo;
         if (!(echo > 0) || hitTargets.length === 0) return;
         // Thorns or retaliation may have just put the caster down; a dead caster does not echo
@@ -2590,7 +2638,7 @@ class CombatSimulator {
             this.simResult.addAttack(
                 source,
                 target,
-                ability.hrid,
+                label,
                 attackResult.didHit ? attackResult.damageDone : 'miss',
                 attackResult.didHit && attackResult.isCrit
             );
@@ -2598,6 +2646,31 @@ class CombatSimulator {
                 this.eventQueue.clearEventsForUnit(target);
                 this._finalizeDeath(target);
             }
+        }
+    }
+
+    /**
+     * Echo on a heal: with the Echo chance the heal repeats once at half strength on everyone it healed who is
+     * still standing (the game's tooltip: repeat damage/heal at half strength; the dev, 2026-11-18: "or heal
+     * boost"). One roll per cast, like a damage echo. The half heal rolls its own amount and is rounded up the way
+     * an echoed hit is; neither has been measured on a heal.
+     *
+     * @private
+     * @param {Object} source - The healer
+     * @param {Object} ability - The heal ability
+     * @param {Object} abilityEffect - Its heal effect
+     * @param {Array<Object>} healedTargets - Who the cast healed
+     */
+    _processHealEcho(source, ability, abilityEffect, healedTargets) {
+        const echo = source.talismanMechanics?.echo;
+        if (!(echo > 0) || healedTargets.length === 0) return;
+        if (source.combatDetails.currentHitpoints <= 0) return;
+        const standing = healedTargets.filter((unit) => unit.combatDetails.currentHitpoints > 0);
+        if (standing.length === 0 || !(random() < echo)) return;
+        for (const target of standing) {
+            const amountHealed = CombatUtilities.processHeal(source, abilityEffect, target, ECHO_DAMAGE_SCALE);
+            this.simResult.addHitpointsGained(target, ability.hrid, amountHealed);
+            this.recordHealLog(source, ability.hrid, target, amountHealed);
         }
     }
 
@@ -2611,11 +2684,14 @@ class CombatSimulator {
 
         if (abilityEffect.targetType === 'allAllies') {
             const targets = source.isPlayer ? this.players : this.enemies;
+            const healed = [];
             for (const target of targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0)) {
                 const amountHealed = CombatUtilities.processHeal(source, abilityEffect, target);
                 this.simResult.addHitpointsGained(target, ability.hrid, amountHealed);
                 this.recordHealLog(source, ability.hrid, target, amountHealed);
+                healed.push(target);
             }
+            this._processHealEcho(source, ability, abilityEffect, healed);
             return;
         }
 
@@ -2639,6 +2715,7 @@ class CombatSimulator {
                 const amountHealed = CombatUtilities.processHeal(source, abilityEffect, healTarget);
                 this.simResult.addHitpointsGained(healTarget, ability.hrid, amountHealed);
                 this.recordHealLog(source, ability.hrid, healTarget, amountHealed);
+                this._processHealEcho(source, ability, abilityEffect, [healTarget]);
             }
             return;
         }
@@ -2651,6 +2728,7 @@ class CombatSimulator {
         const amountHealed = CombatUtilities.processHeal(source, abilityEffect, source);
         this.simResult.addHitpointsGained(source, ability.hrid, amountHealed);
         this.recordHealLog(source, ability.hrid, source, amountHealed);
+        this._processHealEcho(source, ability, abilityEffect, [source]);
     }
 
     /**

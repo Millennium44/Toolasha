@@ -63,6 +63,12 @@ class CombatUnit {
      * unit dies (`clearTalismanFightState`); it persists across encounters otherwise.
      */
     overkillStore = 0;
+    /**
+     * Overkill gathered by the attack now being resolved, banked into `overkillStore` when it ends; null between
+     * attacks. Set by the simulator (`_openOverkillPool`).
+     * @type {{amount: number}|null}
+     */
+    overkillPool = null;
     /** Fortify (talisman): current stack count (0-4) and the time its 5 s window ends */
     fortifyStacks = 0;
     fortifyExpireTime = 0;
@@ -628,6 +634,7 @@ class CombatUnit {
      */
     clearTalismanFightState() {
         this.overkillStore = 0;
+        this.overkillPool = null;
         if (this.fortifyStacks > 0) {
             this.fortifyStacks = 0;
             this.fortifyExpireTime = 0;

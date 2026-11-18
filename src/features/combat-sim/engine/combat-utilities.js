@@ -138,8 +138,8 @@ class CombatUtilities {
      *   actually swinging at). See `appliesTaskDamage`.
      * @param {Object} [options] - Talisman mechanics context; absent for an ordinary attack
      * @param {number} [options.damageScale] - Multiplies the rolled damage before mitigation (an Echo hit: 0.5)
-     * @param {boolean} [options.isEcho] - This is an Echo hit: it leaves thorns, retaliation and life drain to the
-     *   hit it echoes, so none of them is applied twice
+     * @param {boolean} [options.isEcho] - This is an Echo hit: it leaves thorns, retaliation, life drain, life steal
+     *   and mana leech to the hit it echoes, so none of them is applied twice
      * @returns {Object} Attack result
      */
     static processAttack(source, target, abilityEffect = null, taskDamageMode = TASK_DAMAGE_OFF, options = null) {
@@ -339,7 +339,12 @@ class CombatUtilities {
             target.combatDetails.currentHitpoints -= damageDone;
             const overkill = source.talismanMechanics?.overkill;
             if (overkill > 0 && hitpointsBefore > 0 && mitigatedDamage > hitpointsBefore) {
-                source.overkillStore = (source.overkillStore || 0) + overkill * (mitigatedDamage - hitpointsBefore);
+                const gained = overkill * (mitigatedDamage - hitpointsBefore);
+                // While one attack is still landing on several targets (an area cast, a pierce, its echo) the
+                // simulator holds a pool: the whole attack's overkill is banked together once it is done, so a
+                // kill on the first target does not spill into the second (the game's dev, 2026-11-18)
+                if (source.overkillPool) source.overkillPool.amount += gained;
+                else source.overkillStore = (source.overkillStore || 0) + gained;
             }
         }
 
@@ -428,7 +433,8 @@ class CombatUtilities {
         // https://metzlii.github.io/metz-combat-simulator/, says as much of both
         // life steal and mana leech). Only the Life Drain ability was captured.
         // Do not "fix" this for consistency without a measurement.
-        if (!abilityEffect && didHit && source.combatDetails.combatStats.lifeSteal > 0) {
+        // An Echo hit is a pure damage boost (the game's dev, 2026-11-18): no life steal or mana leech of its own
+        if (!options?.isEcho && !abilityEffect && didHit && source.combatDetails.combatStats.lifeSteal > 0) {
             lifeStealHeal = source.addHitpoints(Math.floor(source.combatDetails.combatStats.lifeSteal * damageDone));
         }
 
@@ -442,7 +448,7 @@ class CombatUtilities {
         }
 
         let manaLeechMana = 0;
-        if (!abilityEffect && didHit && source.combatDetails.combatStats.manaLeech > 0) {
+        if (!options?.isEcho && !abilityEffect && didHit && source.combatDetails.combatStats.manaLeech > 0) {
             manaLeechMana = source.addManapoints(Math.floor(source.combatDetails.combatStats.manaLeech * damageDone));
         }
 
@@ -464,7 +470,14 @@ class CombatUtilities {
     // touches anything, so reaching one of these means a new caller skipped
     // that screen and is about to heal or revive off a formula that does not
     // apply. Better a loud stop than a silently wrong heal.
-    static processHeal(source, abilityEffect, target) {
+    /**
+     * @param {Object} source - The healer
+     * @param {Object} abilityEffect - The heal effect
+     * @param {Object} target - Who is healed
+     * @param {number} [scale] - Multiplies the rolled heal (an Echo heal: 0.5), rounded up like an echoed hit
+     * @returns {number} Hitpoints actually restored
+     */
+    static processHeal(source, abilityEffect, target, scale = 1) {
         if (abilityEffect.combatStyleHrid !== '/combat_styles/magic') {
             throw new Error('Heal ability effect not supported for combat style: ' + abilityEffect.combatStyleHrid);
         }
@@ -478,7 +491,8 @@ class CombatUtilities {
         const minHeal = healingAmplify * (1 + baseHealFlat);
         const maxHeal = healingAmplify * (baseHealRatio * magicMaxDamage + baseHealFlat);
 
-        const heal = this.randomInt(minHeal, maxHeal);
+        const rolled = this.randomInt(minHeal, maxHeal);
+        const heal = scale === 1 ? rolled : Math.ceil(rolled * scale);
         const amountHealed = target.addHitpoints(heal);
 
         return amountHealed;

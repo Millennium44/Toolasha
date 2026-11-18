@@ -18,6 +18,7 @@ import CombatSimulator from './combat-simulator.js';
 import CombatUtilities from './combat-utilities.js';
 import CombatUnit from './combat-unit.js';
 import CheckBuffExpirationEvent from './events/check-buff-expiration-event.js';
+import AutoAttackEvent from './events/auto-attack-event.js';
 import { getGameData, setGameData } from './game-data.js';
 import Monster from './monster.js';
 import Player from './player.js';
@@ -899,5 +900,185 @@ describe('the unit base class', () => {
         const unit = new CombatUnit();
         expect(unit.overkillStore).toBe(0);
         expect(unit.fortifyStacks).toBe(0);
+    });
+});
+
+describe('the game dev rules for Echo and Overkill (2026-11-18)', () => {
+    const AREA = { ...DAMAGE_EFFECT, targetType: 'allEnemies' };
+    const HEAL_EFFECT = {
+        effectType: '/ability_effect_types/heal',
+        targetType: 'self',
+        combatStyleHrid: '/combat_styles/magic',
+        damageFlat: 100,
+        damageRatio: 1,
+        buffs: null,
+    };
+    const HEAL = { hrid: '/abilities/test_heal' };
+
+    function spyProcessHeal() {
+        const original = CombatUtilities.processHeal.bind(CombatUtilities);
+        const calls = [];
+        vi.spyOn(CombatUtilities, 'processHeal').mockImplementation((...args) => {
+            const healed = original(...args);
+            calls.push({ scale: args[3], healed, target: args[2] });
+            return healed;
+        });
+        return calls;
+    }
+
+    test('an area cast banks every kill it makes together, and none of it lands inside the same cast', () => {
+        const { sim, player } = fightSim({ mechanics: { overkill: 0.5 }, count: 3 });
+        player.combatDetails.combatStats.criticalRate = 0;
+        // The first two die to the cast with plenty left over; the third is far too big to die
+        sim.enemies[0].combatDetails.currentHitpoints = 1;
+        sim.enemies[1].combatDetails.currentHitpoints = 1;
+        sim.enemies[2].combatDetails.currentHitpoints = 1e9;
+        seedSimRng(5);
+        const calls = spyProcessAttack();
+        sim.processAbilityDamageEffect(player, ABILITY, AREA);
+        const [first, second, third] = calls.map((c) => c.result);
+        vi.restoreAllMocks();
+        // The same rolls against targets that cannot die give each hit's full size
+        const { sim: plainSim, player: plain } = fightSim({ mechanics: {}, count: 3 });
+        plain.combatDetails.combatStats.criticalRate = 0;
+        seedSimRng(5);
+        const plainCalls = spyProcessAttack();
+        plainSim.processAbilityDamageEffect(plain, ABILITY, AREA);
+        const rolled = plainCalls.map((c) => c.result.damageDone);
+        expect(first.damageDone).toBe(1);
+        expect(second.damageDone).toBe(1);
+        // The third target took the plain hit: the first two kills' overkill did not ride into it
+        expect(third.damageDone).toBe(rolled[2]);
+        // Both kills are banked together afterwards, waiting for the next hit
+        expect(player.overkillStore).toBeCloseTo(0.5 * (rolled[0] - 1) + 0.5 * (rolled[1] - 1), 9);
+        expect(player.overkillPool).toBeNull();
+    });
+
+    test('the store from before an area cast goes to its first landed hit only', () => {
+        const { sim, player } = fightSim({ mechanics: { overkill: 0.5 }, count: 3 });
+        player.combatDetails.combatStats.criticalRate = 0;
+        player.overkillStore = 400;
+        seedSimRng(7);
+        const calls = spyProcessAttack();
+        sim.processAbilityDamageEffect(player, ABILITY, AREA);
+        const done = calls.map((c) => c.result.damageDone);
+        vi.restoreAllMocks();
+        const { sim: plainSim, player: plain } = fightSim({ mechanics: {}, count: 3 });
+        plain.combatDetails.combatStats.criticalRate = 0;
+        seedSimRng(7);
+        const plainCalls = spyProcessAttack();
+        plainSim.processAbilityDamageEffect(plain, ABILITY, AREA);
+        const plainDone = plainCalls.map((c) => c.result.damageDone);
+        expect(done).toEqual([plainDone[0] + 400, plainDone[1], plainDone[2]]);
+        expect(player.overkillStore).toBe(0);
+    });
+
+    test('a caster killed during its own cast banks nothing', () => {
+        const { sim, player } = fightSim({ mechanics: { overkill: 1 } });
+        player.combatDetails.currentHitpoints = 1;
+        sim.enemies[0].combatDetails.currentHitpoints = 1;
+        sim.enemies[0].combatDetails.combatStats.physicalThorns = 50;
+        sim.enemies[0].combatDetails.defensiveMaxDamage = 1e6;
+        seedSimRng(14);
+        sim.processAbilityDamageEffect(player, ABILITY, DAMAGE_EFFECT);
+        expect(player.combatDetails.currentHitpoints).toBe(0);
+        expect(player.overkillStore).toBe(0);
+        expect(player.overkillPool).toBeNull();
+    });
+
+    test('an auto attack echoes at half damage, credited to the auto attack, with no life steal or mana leech', () => {
+        const { sim, player } = fightSim({ mechanics: { echo: 1 } });
+        player.combatDetails.combatStats.criticalRate = 10;
+        player.combatDetails.combatStats.criticalDamage = 0;
+        player.combatDetails.combatStats.lifeSteal = 0.5;
+        player.combatDetails.combatStats.manaLeech = 0.5;
+        player.combatDetails.currentHitpoints = 1;
+        player.combatDetails.currentManapoints = 0;
+        seedSimRng(21);
+        const calls = spyProcessAttack();
+        sim.processAutoAttackEvent(new AutoAttackEvent(sim.simulationTime, player));
+        const [swing, echo] = calls;
+        expect(calls).toHaveLength(2);
+        expect(swing.options).toBeFalsy();
+        expect(echo.options).toMatchObject({ isEcho: true, damageScale: 0.5 });
+        expect(echo.result.damageDone).toBe(Math.ceil(swing.result.damageDone / 2));
+        expect(swing.result.lifeStealHeal).toBeGreaterThan(0);
+        expect(echo.result.lifeStealHeal).toBe(0);
+        expect(echo.result.manaLeechMana).toBe(0);
+        const recorded = sim.simResult.attacks.player1[DUMMY_HRID].autoAttack;
+        expect(Object.values(recorded).reduce((sum, n) => sum + n, 0)).toBe(2);
+    });
+
+    test('an auto attack that kills, or a unit without Echo, draws no echo roll', () => {
+        const run = (mechanics, hp) => {
+            // A second, unkillable dummy keeps the encounter open after each kill
+            const { sim, player } = fightSim({ mechanics, hp, count: 2 });
+            sim.enemies[1].combatDetails.currentHitpoints = 1e9;
+            seedSimRng(31);
+            const calls = spyProcessAttack();
+            for (let i = 0; i < 20; i++) {
+                sim.enemies[0].combatDetails.currentHitpoints = hp;
+                sim._finalizedDeaths = new WeakSet();
+                sim.processAutoAttackEvent(new AutoAttackEvent(sim.simulationTime, player));
+            }
+            const echoes = calls.filter((c) => c.options?.isEcho).length;
+            vi.restoreAllMocks();
+            return { echoes, next: random() };
+        };
+        const plain = run({}, 1e9);
+        expect(run({ echo: 0 }, 1e9)).toEqual(plain);
+        expect(plain.echoes).toBe(0);
+        const killing = run({ echo: 1 }, 1);
+        expect(killing.echoes).toBe(0);
+        expect(killing.next).toBe(run({}, 1).next);
+    });
+
+    test('a parried auto attack does not echo', () => {
+        const { sim, player } = fightSim({ mechanics: { echo: 1 } });
+        vi.spyOn(sim, 'checkParry').mockReturnValue(sim.enemies[0]);
+        seedSimRng(2);
+        const calls = spyProcessAttack();
+        sim.processAutoAttackEvent(new AutoAttackEvent(sim.simulationTime, player));
+        expect(calls.filter((c) => c.options?.isEcho)).toHaveLength(0);
+    });
+
+    test('a heal echoes at half strength with the Echo chance, credited to the heal', () => {
+        const { sim, player } = fightSim({ mechanics: { echo: 1 } });
+        player.combatDetails.currentHitpoints = 1;
+        seedSimRng(3);
+        const calls = spyProcessHeal();
+        sim.processAbilityHealEffect(player, HEAL, HEAL_EFFECT);
+        expect(calls.map((c) => c.scale)).toEqual([undefined, 0.5]);
+        expect(calls[1].target).toBe(player);
+        const magicMax = player.combatDetails.magicMaxDamage;
+        const amplify = 1 + player.combatDetails.combatStats.healingAmplify;
+        expect(calls[1].healed).toBeLessThanOrEqual(Math.ceil(amplify * (magicMax + 100) * 0.5));
+        expect(calls[1].healed).toBeGreaterThan(0);
+
+        // About the Echo value of the casts echo
+        vi.restoreAllMocks();
+        const { sim: some, player: healer } = fightSim({ mechanics: { echo: 0.2 } });
+        seedSimRng(4);
+        const many = spyProcessHeal();
+        for (let i = 0; i < 4000; i++) {
+            healer.combatDetails.currentHitpoints = 1;
+            some.processAbilityHealEffect(healer, HEAL, HEAL_EFFECT);
+        }
+        const rate = many.filter((c) => c.scale === 0.5).length / 4000;
+        expect(rate).toBeGreaterThan(0.18);
+        expect(rate).toBeLessThan(0.22);
+    });
+
+    test('a healer without Echo draws no extra number for a heal', () => {
+        const run = (mechanics) => {
+            const { sim, player } = fightSim({ mechanics });
+            seedSimRng(41);
+            for (let i = 0; i < 10; i++) {
+                player.combatDetails.currentHitpoints = 1;
+                sim.processAbilityHealEffect(player, HEAL, HEAL_EFFECT);
+            }
+            return [player.combatDetails.currentHitpoints, random()];
+        };
+        expect(run({ echo: 0 })).toEqual(run({}));
     });
 });
