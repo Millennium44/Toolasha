@@ -1104,6 +1104,16 @@ const CSV_KIND_BY_TYPE = {
 };
 
 /**
+ * A coin figure for a spreadsheet: whole coins. Prices are sums and products of floats, so an exact price
+ * arrives as 125320800.00000001. Export only: the table and the ranking keep the unrounded figure.
+ * @param {*} value - A coin amount, or null
+ * @returns {number|null} Whole coins, or null when there is no finite figure
+ */
+export function wholeCoins(value) {
+    return Number.isFinite(value) ? Math.round(value) : null;
+}
+
+/**
  * The kind of change a result row is, for the CSV's Type column. Read off the candidate's own type (and the
  * row's currency for a token buff), never off its description text.
  * @param {Object} row - A result row
@@ -9408,7 +9418,7 @@ class LabSimUI {
                 rows: [...sorted, ...levelSorted, ...tokenResults].map((r) => ({
                     upgrade: r.candidate?.description || '',
                     type: csvUpgradeKind(r),
-                    cost: r.cost ?? null,
+                    cost: wholeCoins(r.cost),
                     // Infinity does not survive a spreadsheet; the credit-funded
                     // row's value figure is its (negative) cost column
                     perMillion: r.attemptsSavedPerMillion === Infinity ? null : (r.attemptsSavedPerMillion ?? null),
@@ -10936,7 +10946,7 @@ class LabSimUI {
                 return {
                     upgrade: r.candidate?.description || '',
                     paidIn: CSV_PAID_IN[r.costType] || 'gold',
-                    cost: r.costType === 'gold' ? (r.cost ?? null) : null,
+                    cost: r.costType === 'gold' ? wholeCoins(r.cost) : null,
                     // Shrine rows are paid in gold *and* guild tokens; the token
                     // half rides on the candidate rather than the result row
                     tokenCost: r.costType === 'token' ? (r.tokenCost ?? null) : (r.candidate?.guildTokenCost ?? null),
@@ -13020,7 +13030,7 @@ class LabSimUI {
                             .map((key) => String(key).replace('/skills/', ''))
                             .join(', '),
                         paidIn: CSV_PAID_IN[r.costType] || 'gold',
-                        cost: r.costType === 'token' ? null : (r.cost ?? null),
+                        cost: r.costType === 'token' ? null : wholeCoins(r.cost),
                         tokenCost: r.costType === 'gold' || r.costType === 'community' ? null : (r.tokenCost ?? null),
                         clearRate: r.clearRate ?? null,
                         clearRateDelta: r.clearRateDelta ?? null,

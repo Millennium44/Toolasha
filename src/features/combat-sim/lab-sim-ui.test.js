@@ -6430,6 +6430,27 @@ describe('the all-fights Combat levels table', () => {
         // The description holds commas, so the CSV quotes it; read it back by prefix
         expect(csv.saved[0]).toMatch(/Critical Aura 60[^\n]*ability swap/);
     });
+
+    test('the CSV cost is whole coins, not float noise', () => {
+        const noisy = { ...gear, cost: 125320800.00000001 };
+        const noisy2 = {
+            ...gear,
+            candidate: { ...gear.candidate, description: 'Other Helm' },
+            cost: 159984000.00000003,
+        };
+        const free = { ...gear, candidate: { ...gear.candidate, description: 'Free Helm' }, cost: 0 };
+        ui._renderAllFightsResults(analysis([noisy, noisy2, free]), container);
+        container.previousElementSibling.querySelector('button').click();
+
+        const costOf = (name) =>
+            csv.saved[0]
+                .split(/\r?\n/)
+                .find((l) => l.startsWith(name))
+                .split(',')[2];
+        expect(costOf('Plain Helm')).toBe('125320800');
+        expect(costOf('Other Helm')).toBe('159984000');
+        expect(costOf('Free Helm')).toBe('0');
+    });
 });
 
 describe('the Ability order Include option', () => {
