@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab sim gear rows use the gear you already own
+
+- A cape or other piece you are wearing now counts as owned, so its row is offered at your level (a refined +7, not +5).
+- A piece you already own at that level is free; only levels above it cost anything.
+- A budget plan never counts one owned copy twice, once free and once enhanced.
+- A row that replaces different pieces in different fights names all of them.
+
 ### Lab sim queued swaps in Upgrade runs, tidier
 
 - A restored or redrawn Upgrade run keeps its "including N queued" note.
