@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab sim queued swaps in Upgrade runs, tidier
+
+- A restored or redrawn Upgrade run keeps its "including N queued" note.
+- A stopped run no longer picks a queued ability's best option from the options it reached before stopping.
+- A queued armor swap is priced like the generated row it replaces, following "Keep replaced gear".
+- A queued piece no longer shows twice when a generated pair only adds that piece.
+
 ### Lab sim budget plan tabs fill the buy amount
 
 The marketplace tabs from a budget plan now put each tab's missing count, such as a whole stack of ability books, into the Buy box instead of leaving it at 1.
