@@ -8226,7 +8226,13 @@ export function conflictKeys(candidate) {
             keys.push(`ability:${candidate.replacesHrid}`, `ability_out:${candidate.replacesHrid}`);
         }
         if (candidate.fillsFreeSlot) keys.push(`ability_fill:${candidate.slot}`);
-        return keys;
+        // A folded hand-checked row takes a different way onto the bar in each loadout; it conflicts with every
+        // swap that would free or replace any ability one of those ways displaces
+        for (const hrid of candidate.replacesAny || []) {
+            if (hrid === candidate.upgradeHrid) continue;
+            keys.push(`ability:${hrid}`, `ability_out:${hrid}`);
+        }
+        return [...new Set(keys)];
     }
 
     const slots = candidate.addedSlots

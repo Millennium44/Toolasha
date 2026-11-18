@@ -5822,6 +5822,21 @@ describe('Check a swap', () => {
             expect(ui.panel.querySelector('#mwi-labsim-swap-results').innerHTML).toBe('');
         });
 
+        test('the starting line says the queued swaps are part of the run', async () => {
+            await twoFights(5, 7);
+            type('combat', 'Sinister Cape', '7');
+            ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+            tickOnly('combat_level');
+            const seen = [];
+            const original = ui._setStatus.bind(ui);
+            ui._setStatus = (text) => {
+                seen.push(text);
+                original(text);
+            };
+            await ui._onUpgradeAnalyze();
+            expect(seen.find((text) => text.startsWith('Starting:'))).toContain(', plus 1 queued swap.');
+        });
+
         test('with nothing queued the run is the generated one, with no extra candidates and no note', async () => {
             await twoFights(5, 7);
             tickOnly('combat_level');

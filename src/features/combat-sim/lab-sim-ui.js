@@ -5900,7 +5900,12 @@ class LabSimUI {
                         guild_shrine: stepOptions.guildShrineSteps,
                     }
                 );
-                this._setStatus(`Starting: ${estimate.text}. Stop cancels at any point.`);
+                const queuedCount = plan.orderOnly ? 0 : this._checkedSwaps.combat.length;
+                this._setStatus(
+                    `Starting: ${estimate.text}` +
+                        (queuedCount ? `, plus ${queuedCount} queued swap${queuedCount === 1 ? '' : 's'}` : '') +
+                        '. Stop cancels at any point.'
+                );
                 // The table result a combined run saves again with the order section
                 let allFightsAnalysis = null;
                 if (!plan.orderOnly) {
@@ -6125,7 +6130,13 @@ class LabSimUI {
                 if (analysisResult?.roomLevels) analysisResult.roomLevels.targetFloor = this._getTargetFloor();
                 this._renderUpgradeResults(analysisResult, resultsEl);
                 singleAnalysis = analysisResult;
-                if (queued && analysisResult?.results?.length) {
+                if (queued && !analysisResult?.results?.length) {
+                    const note = this._describeQueuedRun(queued, analysisResult, gameData);
+                    if (note.trailer)
+                        this._setStatus(
+                            `${this.panel.querySelector('#mwi-labsim-status')?.textContent || 'No upgrade candidates found.'} ${note.trailer}`
+                        );
+                } else if (queued) {
                     const note = this._describeQueuedRun(queued, analysisResult, gameData);
                     this._setStatus(
                         `Upgrade analysis complete: ${analysisResult.results.length} upgrades` +

@@ -1035,6 +1035,10 @@ export function mergeCheckedAbilityRows(analysis, gameData) {
             ...first,
             description: parts.length ? `${first.description} (${shown})` : first.description,
         };
+        // Every ability the chosen ways onto the bar displace: `conflictKeys` reads it, as the single
+        // `replacesHrid` is gone
+        const displaced = [...new Set(applied.map((fight) => fight.option?.replacesHrid).filter(Boolean))];
+        if (displaced.length) candidate.replacesAny = displaced;
         delete candidate.poolKey;
         delete candidate.optionLabel;
         delete candidate.optionId;

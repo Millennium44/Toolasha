@@ -3883,6 +3883,25 @@ describe('what a budget buys', () => {
         expect(plan.skipped.some((s) => s.reason.includes('already cover'))).toBe(true);
     });
 
+    test('a folded queued ability that takes a slot off Y conflicts with a generated Y to Z swap', () => {
+        const folded = covering([0, 1, 2], { cost: 10 });
+        folded.candidate = {
+            type: 'ability_swap',
+            slot: 'ability_1',
+            upgradeHrid: '/abilities/x',
+            checkedAbility: true,
+            replacesAny: ['/abilities/y'],
+        };
+        const generated = covering([0, 1, 2], { cost: 10 });
+        generated.candidate = {
+            type: 'ability_swap',
+            slot: 'ability_2',
+            upgradeHrid: '/abilities/z',
+            replacesHrid: '/abilities/y',
+        };
+        expect(planFor([folded, generated], 1000).picks).toHaveLength(1);
+    });
+
     test('a second piece is valued only at what it adds', () => {
         // The cheap piece is the best thing room 0 can wear; the broad one is
         // better than nothing in room 1 and worse than the first in room 0, so
