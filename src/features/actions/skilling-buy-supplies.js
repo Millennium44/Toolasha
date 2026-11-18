@@ -32,6 +32,18 @@ const CONTAINER_CLASSES = [
 ];
 
 /**
+ * True when the element carries a class of exactly this game prefix (`Prefix__hash`), not merely a class
+ * that contains the text somewhere.
+ * @param {Element} el
+ * @param {string} prefix - e.g. 'LabyrinthPanel_supplies'
+ * @returns {boolean}
+ */
+function hasGameClass(el, prefix) {
+    const classes = typeof el?.className === 'string' ? el.className.split(/\s+/) : [];
+    return classes.some((c) => c.startsWith(`${prefix}__`));
+}
+
+/**
  * The block's "Consumables" heading, by position and class rather than text (players run the game in
  * Chinese). Live DOM (2026-11-14, Foraging and Alchemy): the container's first children are a
  * `*Panel_label` (the text, then the tea recommendation buttons) and the ActionTypeConsumableSlots.
@@ -39,7 +51,14 @@ const CONTAINER_CLASSES = [
  * @returns {Element|null}
  */
 export function findConsumablesHeading(container) {
-    return container?.querySelector?.(':scope > [class*="Panel_label"]') || null;
+    if (!container) return null;
+    return (
+        [...container.children].find((child) =>
+            String(child.className)
+                .split(/\s+/)
+                .some((c) => /^[A-Za-z]+Panel_label__/.test(c))
+        ) || null
+    );
 }
 
 /**
@@ -122,19 +141,17 @@ function createButton(container) {
 
 /**
  * Put the button where the heading's text was, once per rendered block. With no heading (or no text in
- * it) the button goes at the top of the block instead.
+ * it) nothing is added.
  * @param {Element} container - A *_consumablesContainer element
  */
 export function injectButton(container) {
-    if (!container || container.querySelector(`.${BUTTON_CLASS}`)) return;
-    const button = createButton(container);
+    if (!container || !CONTAINER_CLASSES.some((cls) => hasGameClass(container, cls))) return;
+    if (container.querySelector(`.${BUTTON_CLASS}`)) return;
+    // No heading text, no button: never guess a spot in a block that is not the real consumables block
     const heading = findConsumablesHeading(container);
     const text = heading && headingTextNode(heading);
-    if (!text) {
-        button.style.margin = '0 0 4px 0';
-        container.insertAdjacentElement('afterbegin', button);
-        return;
-    }
+    if (!text) return;
+    const button = createButton(container);
     // The text node stays React's; it is only emptied, and the heading keeps the tea buttons
     heading.setAttribute(TEXT_ATTR, text.nodeValue);
     text.nodeValue = '';

@@ -83,12 +83,27 @@ describe('combat buy supplies button', () => {
         expect(findConsumablesHeading(grid)?.textContent).toBe('消耗品');
     });
 
-    test('no heading in the block: the button goes at its top', () => {
-        const { grid, slots } = makeBlock({ heading: null });
+    test('no heading in the block: no button is added anywhere', () => {
+        const { grid } = makeBlock({ heading: null });
         injectButton(grid);
-        const button = grid.querySelector('button');
-        expect(button).not.toBeNull();
-        expect(button.nextElementSibling).toBe(slots);
+        expect(document.querySelector('button')).toBeNull();
+    });
+
+    test('a block that only contains the class text (not the game prefix) is left alone', () => {
+        const { grid } = makeBlock();
+        grid.className = 'GuildTrialBattlePanel_combatConsumablesX__a1b2c';
+        injectButton(grid);
+        expect(document.querySelector('button')).toBeNull();
+    });
+
+    test('a heading nested deeper than the block’s own children is not taken', () => {
+        const { grid, label } = makeBlock();
+        const inner = document.createElement('section');
+        label.remove();
+        inner.appendChild(label);
+        grid.prepend(inner);
+        injectButton(grid);
+        expect(document.querySelector('button')).toBeNull();
     });
 
     test('disable takes the button out and shows the heading again', () => {

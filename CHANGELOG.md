@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Switch from Listed date to Last recorded fill to see older listings that traded today. Fill dates need the Trade Ledger setting on, and the panel says so when it is off.
 
+### "Buy supplies" stays on its own heading
+
+The "Buy supplies" button no longer turns up in other spots, such as above the Labyrinth description or during a guild trial. It now only ever takes the place of the Consumables or Supplies heading it belongs to.
+
 <!-- shipped in 3.88.0 -->
 
 ### Capes can be valued at their decompose value, and philo can use owned stones for capes

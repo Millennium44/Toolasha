@@ -91,11 +91,24 @@ describe('skilling buy supplies button', () => {
         expect(heading.hasAttribute('data-mwi-skilling-supplies-text')).toBe(false);
     });
 
-    test('a block with no heading text gets the button at its top', () => {
-        const { container, heading } = makeBlock({ text: null, teaButtons: false });
+    test('a block with no heading text gets no button', () => {
+        const { container } = makeBlock({ text: null, teaButtons: false });
         injectButton(container);
-        expect(container.firstElementChild.textContent).toBe('Buy supplies');
-        expect(container.firstElementChild).not.toBe(heading);
+        expect(document.querySelector('button')).toBeNull();
+    });
+
+    test('a block with no heading at all gets no button', () => {
+        const { container, heading } = makeBlock();
+        heading.remove();
+        injectButton(container);
+        expect(document.querySelector('button')).toBeNull();
+    });
+
+    test('a container that only contains the class text is left alone', () => {
+        const { container } = makeBlock();
+        container.className = 'GuildTrialPanel_consumablesContainerWrap__k3j2h';
+        injectButton(container);
+        expect(document.querySelector('button')).toBeNull();
     });
 
     test('setting off: no button', () => {
