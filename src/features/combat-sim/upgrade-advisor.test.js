@@ -1739,6 +1739,57 @@ describe('runLabyrinthAllFightsAnalysis', () => {
             expect(result.skippedInert).toEqual([]);
         });
 
+        test('the single-fight Lab analysis skips the same gear, and still simulates a queued swap', async () => {
+            const runSingle = async (hrid, extraCandidates = []) => {
+                buildGameDataPayload.mockReturnValue(withCharms());
+                runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+                return runLabyrinthUpgradeAnalysis(
+                    {
+                        playerDTOs: [
+                            {
+                                equipment: worn(hrid),
+                                abilities: [],
+                                staminaLevel: 50,
+                                intelligenceLevel: 50,
+                                attackLevel: 50,
+                                meleeLevel: 50,
+                                defenseLevel: 50,
+                                rangedLevel: 50,
+                                magicLevel: 50,
+                            },
+                        ],
+                        playerIndex: 0,
+                        monsterHrid: '/monsters/goblin',
+                        roomLevel: 100,
+                        crates: [],
+                        hours: 1,
+                        communityBuffs: {},
+                        labyrinthCombatBuffs: [],
+                        upgradeMode: 'equipment',
+                        extraCandidates,
+                    },
+                    null,
+                    {}
+                );
+            };
+            const skipped = await runSingle('/items/advanced_ranged_charm');
+            expect(skipped.results.some((r) => r.candidate.description?.startsWith('Advanced Ranged Charm'))).toBe(
+                false
+            );
+            expect(skipped.skippedInert.length).toBeGreaterThan(0);
+
+            const odd = await runSingle('/items/odd_charm');
+            expect(odd.results.some((r) => r.candidate.description?.startsWith('Odd Charm'))).toBe(true);
+            expect(odd.skippedInert).toEqual([]);
+
+            const queued = enh('/items/advanced_ranged_charm', 'Advanced Ranged Charm', {
+                checkedSwap: true,
+                cost: 1000,
+            });
+            const kept = await runSingle('/items/advanced_ranged_charm', [queued]);
+            expect(kept.results.filter((r) => r.candidate.checkedSwap)).toHaveLength(1);
+        });
+
         test('a queued Check a swap row for an XP-only charm is never skipped', async () => {
             const queued = enh('/items/advanced_ranged_charm', 'Advanced Ranged Charm', {
                 checkedSwap: true,

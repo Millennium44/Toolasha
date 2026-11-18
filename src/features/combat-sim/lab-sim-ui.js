@@ -6250,6 +6250,12 @@ class LabSimUI {
                             (note.trailer ? ` ${note.trailer}` : '')
                     );
                 }
+                if (analysisResult?.skippedInert?.length) {
+                    this._setStatus(
+                        `${this.panel.querySelector('#mwi-labsim-status')?.textContent || ''}` +
+                            describeInertSkips(analysisResult.skippedInert)
+                    );
+                }
                 // The remembered set is per character and has no undo: writing this
                 // run under the character who arrived mid-analysis would delete the
                 // analysis they were keeping

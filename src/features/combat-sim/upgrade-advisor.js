@@ -7779,9 +7779,16 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // The breakdown each route-priced row was priced with, kept for this run only (never on the candidate,
     // so a saved row stores it once, as its costDetail)
     const routeDetails = new Map();
+    const skippedInert = [];
     const candidatesWithCost = candidates
         // No drink slot or combat scroll runs in the Labyrinth, so either from any source has nothing to measure
         .filter((c) => c.type !== 'community_buff' && labCanUse(c))
+        // Gear that changes only stats a Labyrinth fight never reads is not simulated (see `labyrinthInertReason`)
+        .filter((c) => {
+            const stats = labyrinthInertReason(c, gameData);
+            if (stats) skippedInert.push({ description: c.description, stats });
+            return !stats;
+        })
         .map((generated) => {
             const c = labSaleTaxRate == null ? generated : { ...generated, saleTaxRate: labSaleTaxRate };
             // A hand-checked swap of a copy already worn buys nothing: its builder priced it at zero
@@ -8063,6 +8070,8 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         },
         results,
         roomLevels,
+        // Gear left out because it changes only stats a Labyrinth fight never reads; `[{description, stats}]`
+        skippedInert,
     };
 }
 
