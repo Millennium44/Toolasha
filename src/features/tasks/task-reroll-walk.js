@@ -438,6 +438,8 @@ class TaskRerollWalk {
         this.readPresses = 0;
         /** True between a Read press and the sort that follows it */
         this.awaitingReadSort = false;
+        /** Whether this walk's closing Sort step has been pressed */
+        this.endSorted = false;
         /** Whether any card press has been made — after that, Read is never offered */
         this.walkBegun = false;
         this.step = null;
@@ -1412,6 +1414,7 @@ class TaskRerollWalk {
         this.manualFor.clear();
         this.readPresses = 0;
         this.awaitingReadSort = false;
+        this.endSorted = false;
         this.walkBegun = false;
         this.tally = { claimed: 0, kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
         this.pendingClaim = null;
@@ -1440,6 +1443,17 @@ class TaskRerollWalk {
         }
 
         this._replan();
+    }
+
+    /**
+     * Whether this walk put something new on the board: a reroll, a discard, a claim, or a Read that
+     * revealed tasks. Only then is the closing sort offered.
+     * @returns {boolean}
+     * @private
+     */
+    _boardChanged() {
+        const tally = this.tally || {};
+        return this.readPresses > 0 || tally.rerolled > 0 || tally.trashed > 0 || tally.claimed > 0;
     }
 
     /** Stop, leaving the board exactly as it is, and put the widget away. */
@@ -1490,6 +1504,20 @@ class TaskRerollWalk {
             // The board is mid-answer; look again shortly rather than ending
             this.state = 'waiting';
             this._replanSoon(UI_SETTLE_MS);
+        } else if (!this.message && !this.endSorted && this._boardChanged()) {
+            // The board is walked: one last press sorts it, so the walk ends on a tidy board. A step of
+            // its own rather than a sort on the way into Done, because the walk never moves the board
+            // between presses; a later re-plan that finds work replaces it, and the sort is still offered after.
+            // A walk that changed nothing (every card kept) has nothing to tidy and goes straight to Done.
+            this.step = {
+                kind: 'sort',
+                card: null,
+                slot: 0,
+                label: 'Sort the board to finish',
+                button: null,
+                signature: '',
+            };
+            this.state = 'ready';
         } else {
             this.state = this.message ? 'stopped' : 'done';
             this.summary = this._summaryText();
@@ -1521,6 +1549,19 @@ class TaskRerollWalk {
         if (this.state !== 'ready' || !this.step) return false;
 
         const planned = this.step;
+
+        // The closing sort is Toolasha's own sort, not a game button: one press, one forced pass (as the ↕ Sort
+        // control runs), then the walk is done
+        if (planned.kind === 'sort') {
+            this.endSorted = true;
+            try {
+                taskSorter.sortTasks(true);
+            } catch (error) {
+                console.error('[TaskRerollWalk] Closing sort failed:', error);
+            }
+            this._replan();
+            return true;
+        }
 
         // The Read press acts on the unread notice, not a task card, so the
         // slot and signature checks below do not apply to it — the button being
@@ -2309,7 +2350,9 @@ class TaskRerollWalk {
             this.state === 'ready'
                 ? this.step?.manual
                     ? 'The game only accepts this press straight from you — press the highlighted button on the card. This chip scrolls it into view.'
-                    : 'One press, one game action. Nothing else happens until you press again.'
+                    : this.step?.kind === 'sort'
+                      ? 'The board is walked. This press sorts it the way the Sort Tasks button does (no game button is pressed), and then the walk is done.'
+                      : 'One press, one game action. Nothing else happens until you press again.'
                 : this.state === 'idle'
                   ? 'Start at the top of the board. Every press does one thing, then says what the next would do.'
                   : this.state === 'done'
