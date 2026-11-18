@@ -9,8 +9,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Lab sim queued swaps in Upgrade runs, tidier
 
 - A restored or redrawn Upgrade run keeps its "including N queued" note.
-- A stopped run no longer picks a queued ability's best option from the options it reached before stopping.
-- A queued armor swap is priced like the generated row it replaces, following "Keep replaced gear".
+- A stopped run leaves queued abilities out (and says so) instead of listing one row per option it reached.
+- Queued gear is priced the way generated gear is, following "Keep replaced gear", in all-fights and single-fight runs.
 - A queued piece no longer shows twice when a generated pair only adds that piece.
 
 ### Lab sim budget plan tabs fill the buy amount
