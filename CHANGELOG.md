@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Overbid table stays shut for the item you are viewing
+
+A listing beaten on the item whose order book you have open no longer pops up the Overbid table, and leaving that page does not bring it up either. It still appears if a different listing is beaten.
+
 ### Lab sim "Open all in marketplace" asks for the full book count
 
 The budget plan's marketplace tabs now ask for every ability book a pick needs, as each row's own Market button does, instead of one.

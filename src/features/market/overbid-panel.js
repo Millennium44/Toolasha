@@ -28,7 +28,8 @@
  *
  * The panel opens by itself when a listing becomes beaten that it has not
  * already told you about, and closes when nothing is beaten. Closing it with
- * its X keeps it away until a different listing is beaten. Position and the
+ * its X keeps it away until a different listing is beaten. A listing of the
+ * item whose order book is on screen never opens it: you can see it is beaten. Position and the
  * minimized fold are remembered by the shared panel shell.
  *
  * ## Hiding an item
@@ -54,6 +55,8 @@ import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { formatKMB3Digits } from '../../utils/formatters.js';
 import { clampToBand } from '../../utils/market-values.js';
 import { itemLabel } from '../../utils/overlay-format.js';
+import { itemHridFromIcon } from '../../utils/item-icon.js';
+import { GAME } from '../../utils/selectors.js';
 
 /** Master switch for the panel */
 export const SETTING = 'market_overbidPanel';
@@ -228,6 +231,19 @@ function undercutAlerts() {
  * Classify the live listings against the current figures.
  * @returns {ReturnType<typeof classifyListings>}
  */
+/**
+ * The item whose order book the marketplace is showing, read off the page.
+ * @returns {{itemHrid: string, enhancementLevel: number}|null} Null when no order book is on screen
+ */
+function viewedMarketItem() {
+    const element = document.querySelector(GAME.MARKETPLACE_CURRENT_ITEM);
+    if (!element) return null;
+    const itemHrid = itemHridFromIcon(element, dataManager.getInitClientData?.()?.itemDetailMap);
+    if (!itemHrid) return null;
+    const match = element.querySelector('[class*="Item_enhancementLevel"]')?.textContent.match(/\+(\d+)/);
+    return { itemHrid, enhancementLevel: match ? parseInt(match[1], 10) : 0 };
+}
+
 function currentClassification() {
     return classifyListings(
         dataManager.getMarketListings(),
@@ -791,6 +807,16 @@ class OverbidPanel {
         }
 
         this.panel.setTitle(`Overbid table (${this.rows.length}${extra})`);
+        // A listing of the item whose order book is on screen is one the player is looking at being beaten:
+        // it never pops the panel and counts as seen, so leaving that page does not pop it either
+        const viewed = viewedMarketItem();
+        if (viewed) {
+            for (const row of this.rows) {
+                if (row.itemHrid === viewed.itemHrid && (row.enhancementLevel || 0) === viewed.enhancementLevel) {
+                    this.dismissed.add(row.id);
+                }
+            }
+        }
         const fresh = this.rows.some((row) => !this.dismissed.has(row.id));
 
         if (this.panel.isOpen()) {

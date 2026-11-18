@@ -437,6 +437,28 @@ describe('panel', () => {
         expect(root()).not.toBeNull();
     });
 
+    it('a listing of the item whose order book is on screen never pops the panel, even after leaving', () => {
+        const viewing = (level) =>
+            `<div class="MarketplacePanel_currentItem__x"><svg><use href="/static/media/items_sprite.svg#cheese"></use></svg>${
+                level ? `<div class="Item_enhancementLevel__y">+${level}</div>` : ''
+            }</div>`;
+        document.body.insertAdjacentHTML('beforeend', viewing(0));
+        hoisted.listings = [listing({ id: 1 }), listing({ id: 2, enhancementLevel: 2 })];
+        hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+        fire();
+        expect(root()).toBeNull();
+        // Leaving the order book does not bring it up for what was already seen
+        document.querySelector('[class*="MarketplacePanel_currentItem"]').remove();
+        fire();
+        expect(root()).toBeNull();
+        // The same item at another level is a different listing, and it still pops
+        document.body.insertAdjacentHTML('beforeend', viewing(0));
+        hoisted.observations[`${CHEESE}:2:sell`] = fresh(1);
+        fire();
+        expect(root()).not.toBeNull();
+        expect(root().querySelectorAll('tbody tr')).toHaveLength(2);
+    });
+
     it('drops a row once its figure ages past the freshness window, with no event', () => {
         hoisted.listings = [listing()];
         hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
