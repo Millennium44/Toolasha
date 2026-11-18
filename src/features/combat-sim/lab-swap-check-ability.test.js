@@ -819,6 +819,146 @@ describe('the ability order section is ranked apart from the paid swaps', () => 
     });
 });
 
+describe('queued swaps in an Upgrade run', () => {
+    const fight = (name, dto) => ({
+        monsterHrid: `/monsters/${name}`,
+        monsterName: name,
+        roomLevel: 50,
+        dto,
+        loadoutName: `${name} loadout`,
+    });
+    const params = (fights, extra) => ({
+        fights,
+        crates: [],
+        hours: 1,
+        precision: null,
+        communityBuffs: {},
+        labyrinthCombatBuffs: [],
+        ...extra,
+    });
+
+    describe('the builder Check and the Upgrade run share', () => {
+        const fights = [fight('mimic', fourAbilities())];
+
+        test('an item is one candidate, an ability its options, and the rest are told apart', () => {
+            const built = orderApi.buildQueuedCombatCandidates(
+                [
+                    { hrid: SWORD, level: 3 },
+                    { hrid: QUICK_STRIKE, level: 7 },
+                    { hrid: FIERCE_AURA, level: 5 },
+                    { hrid: '/abilities/no_such_thing', level: 5 },
+                    { hrid: '/items/no_such_slot', level: 2 },
+                ],
+                fights,
+                gameData
+            );
+            expect(built.candidates.filter((candidate) => candidate.checkedSwap)).toHaveLength(1);
+            expect(
+                built.candidates.filter((candidate) => candidate.checkedAbilityKey === `${QUICK_STRIKE}@7`).length
+            ).toBeGreaterThan(1);
+            // Casting it at 10 already covers a level 5 ask
+            expect(built.alreadyEquipped).toEqual([{ hrid: FIERCE_AURA, level: 5 }]);
+            expect(built.unreached).toEqual([
+                { hrid: '/abilities/no_such_thing', level: 5 },
+                { hrid: '/items/no_such_slot', level: 2 },
+            ]);
+            expect(built.skippedAbilities).toEqual([]);
+        });
+
+        test('equipmentOnly leaves the abilities out and names them', () => {
+            const built = orderApi.buildQueuedCombatCandidates(
+                [
+                    { hrid: SWORD, level: 3 },
+                    { hrid: QUICK_STRIKE, level: 7 },
+                ],
+                fights,
+                gameData,
+                true,
+                { equipmentOnly: true }
+            );
+            expect(built.candidates).toHaveLength(1);
+            expect(built.candidates[0].checkedSwap).toBe(true);
+            expect(built.skippedAbilities).toEqual([{ hrid: QUICK_STRIKE, level: 7 }]);
+        });
+
+        test('an empty queue builds nothing', () => {
+            expect(orderApi.buildQueuedCombatCandidates([], fights, gameData)).toEqual({
+                candidates: [],
+                unreached: [],
+                alreadyEquipped: [],
+                skippedAbilities: [],
+            });
+        });
+    });
+
+    test('a generated level-up the queued ability already is shows once, as the queued row', async () => {
+        state.sim = async () => ({ encounters: 600, labyAttemptCount: 1000, experienceGained: {}, simulatedTime: 1 });
+        const dto = fourAbilities();
+        const built = orderApi.buildQueuedCombatCandidates(
+            [{ hrid: SMACK, level: 13 }],
+            [fight('mimic', dto)],
+            gameData
+        );
+        const raw = await advisor.runLabyrinthAllFightsAnalysis(
+            params([fight('mimic', dto)], {
+                modes: ['ability_level'],
+                abilityLevelType: 'increment',
+                abilityTargetLevel: 1,
+                extraCandidates: built.candidates,
+            }),
+            () => {}
+        );
+        // Generated: every ability one level up, Smack 12 -> 13 among them
+        const generated = raw.results.filter(
+            (row) => row.candidate.type === 'ability_level' && row.candidate.upgradeHrid === SMACK
+        );
+        expect(generated).toHaveLength(1);
+
+        const merged = orderApi.dropRowsCoveredByCheckedAbilities(mergeCheckedAbilityRows(raw, gameData));
+        const smack13 = merged.results.filter(
+            (row) => row.candidate.upgradeHrid === SMACK && row.candidate.upgradeLevel === 13
+        );
+        expect(smack13).toHaveLength(1);
+        expect(smack13[0].candidate.checkedAbility).toBe(true);
+        // The other generated rows are untouched
+        expect(merged.results.some((row) => row.candidate.upgradeHrid === POKE)).toBe(true);
+    });
+
+    test('a folded ability row applies per fight through candidateForFight (Verify, together check), also after a save', async () => {
+        state.sim = async () => ({ encounters: 600, labyAttemptCount: 1000, experienceGained: {}, simulatedTime: 1 });
+        const dto = fourAbilities();
+        const built = orderApi.buildQueuedCombatCandidates(
+            [{ hrid: QUICK_STRIKE, level: 7 }],
+            [fight('mimic', dto)],
+            gameData
+        );
+        const raw = await advisor.runLabyrinthAllFightsAnalysis(
+            params([fight('mimic', dto)], { modes: [], extraCandidates: built.candidates }),
+            () => {}
+        );
+        const row = mergeCheckedAbilityRows(raw, gameData).results[0];
+
+        // The folded candidate alone names no way onto the bar, so applying it as it stands changes nothing
+        const bare = advisor.applyCandidateToDTO(fourAbilities(), row.candidate);
+        expect(bare.abilities.some((entry) => entry?.hrid === QUICK_STRIKE)).toBe(false);
+
+        for (const stored of [row, JSON.parse(JSON.stringify(row))]) {
+            const forFight = advisor.candidateForFight(stored, 0);
+            expect(advisor.candidateAppliesToDTO(forFight, fourAbilities(), gameData)).toBe(true);
+            const applied = advisor.applyCandidateToDTO(fourAbilities(), forFight);
+            expect(applied.abilities.find((entry) => entry?.hrid === QUICK_STRIKE)?.level).toBe(7);
+        }
+        // Any other row applies its own candidate
+        const plain = { candidate: { type: 'tier' }, fights: [{}] };
+        expect(advisor.candidateForFight(plain, 0)).toBe(plain.candidate);
+    });
+
+    test('nothing to drop leaves the very same analysis', () => {
+        const analysis = { results: [{ candidate: { type: 'ability_level', upgradeHrid: SMACK, upgradeLevel: 13 } }] };
+        expect(orderApi.dropRowsCoveredByCheckedAbilities(analysis)).toBe(analysis);
+    });
+});
+
 describe("a party member's unlisted book", () => {
     test("stays unpriced in the run rather than being priced from the live character's book bag", async () => {
         // Nobody lists the book: a path from nothing has no price

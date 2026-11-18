@@ -10647,6 +10647,98 @@ describe('the Lab single-fight analysis taxes resale as the analysed character p
     });
 });
 
+describe('a hand-checked swap beside a generated row for the same change', () => {
+    const generated = {
+        type: 'tier',
+        slot: MAIN_HAND,
+        currentHrid: '/items/fine_sword',
+        currentLevel: 10,
+        upgradeHrid: '/items/regal_sword_refined',
+        upgradeLevel: 10,
+        description: 'Generated',
+    };
+    const checked = { ...generated, description: 'Checked', checkedSwap: true, allLoadouts: true };
+    const player = () => ({
+        equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 10 } },
+        abilities: [],
+        staminaLevel: 50,
+        hrid: '/players/target',
+    });
+
+    beforeEach(() => {
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        getItemPrices.mockReturnValue({ ask: 200_000_000, bid: 150_000_000 });
+        resolveItemPrice.mockImplementation((_hrid, { side }) => ({ price: side === 'sell' ? 1_000_000 : 5_000_000 }));
+        runLabyrinthSimulation.mockReset();
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+    });
+
+    test('the whole-run pool keeps one row, and it is the checked one', async () => {
+        const { results } = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [{ monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto: player() }],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: [],
+                extraCandidates: [generated, checked],
+            },
+            null,
+            {}
+        );
+        expect(results).toHaveLength(1);
+        expect(results[0].candidate).toMatchObject({ description: 'Checked', checkedSwap: true });
+    });
+
+    test('the single-fight analysis keeps one row, and it is the checked one', async () => {
+        const { results } = await runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [player()],
+                playerIndex: 0,
+                selfHrid: null,
+                monsterHrid: '/monsters/goblin',
+                roomLevel: 100,
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                upgradeMode: 'ability_swap',
+                extraCandidates: [generated, checked],
+            },
+            null,
+            {}
+        );
+        const rows = results.filter((r) => r.candidate.upgradeHrid === '/items/regal_sword_refined');
+        expect(rows).toHaveLength(1);
+        expect(rows[0].candidate).toMatchObject({ description: 'Checked', checkedSwap: true });
+    });
+
+    test('a checked swap of a copy already worn stays free in the single-fight table, with no purchase breakdown', async () => {
+        const owned = { ...checked, noPurchase: true, cost: 0 };
+        const { results } = await runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [player()],
+                playerIndex: 0,
+                selfHrid: null,
+                monsterHrid: '/monsters/goblin',
+                roomLevel: 100,
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                upgradeMode: 'ability_swap',
+                extraCandidates: [owned],
+            },
+            null,
+            {}
+        );
+        const row = results.find((r) => r.candidate.checkedSwap);
+        expect(row.cost).toBe(0);
+        expect(row.costDetail).toBeNull();
+    });
+});
+
 describe('a pinned loss stays a loss in the plan (#562)', () => {
     const BASE = [0, 1].map((i) => ({ monsterHrid: `/monsters/m${i}`, roomLevel: 100, winRate: 0.5 }));
     const piece = (name, delta, extra = {}) => ({

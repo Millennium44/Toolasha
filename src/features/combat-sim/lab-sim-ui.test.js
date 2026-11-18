@@ -5751,6 +5751,156 @@ describe('Check a swap', () => {
         game.skipLevels = {};
     });
 
+    describe('queued swaps ride along in every Upgrade run', () => {
+        const tickOnly = (...keys) => {
+            for (const b of ui.panel.querySelectorAll('[data-lab-upgrade-dimension]')) {
+                b.checked = keys.includes(b.getAttribute('data-lab-upgrade-dimension'));
+                b.dispatchEvent(new window.Event('change', { bubbles: true }));
+            }
+        };
+        const status = () => ui.panel.querySelector('#mwi-labsim-status').textContent;
+        const twoFights = async (lowLevel, highLevel) => {
+            game.players = [{ hrid: 'p1', equipment: {}, abilities: [], houseRooms: {} }];
+            game.editedDTOs = { p1: { hrid: 'p1', equipment: {}, abilities: [] } };
+            game.monsters = [
+                { hrid: '/monsters/mimic', name: 'Mimic' },
+                { hrid: '/monsters/eye_watcher', name: 'Eye Watcher' },
+            ];
+            game.skipLevels = { '/monsters/mimic': 130, '/monsters/eye_watcher': 150 };
+            game.loadoutByMonster = { '/monsters/mimic': 'low', '/monsters/eye_watcher': 'high' };
+            game.loadoutNames = { low: 'Low Lab', high: 'High Lab' };
+            game.loadoutEquipment = {
+                low: { [BACK]: { hrid: CAPE, enhancementLevel: lowLevel } },
+                high: { [BACK]: { hrid: CAPE, enhancementLevel: highLevel } },
+            };
+            ui.destroy();
+            ui.buildPanel();
+            await settle();
+            ui._switchTab('upgrade');
+            const scope = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+            scope.value = 'all';
+            scope.dispatchEvent(new window.Event('change', { bubbles: true }));
+        };
+        let allSpy;
+        let saveSpy;
+        beforeEach(() => {
+            allSpy = vi.spyOn(upgradeAdvisor, 'runLabyrinthAllFightsAnalysis');
+        });
+        afterEach(() => {
+            allSpy.mockRestore();
+            saveSpy?.mockRestore();
+            game.loadoutByMonster = {};
+            game.loadoutNames = {};
+            game.loadoutEquipment = {};
+            game.monsters = [];
+            game.skipLevels = {};
+            game.players = [];
+            game.editedDTOs = null;
+        });
+
+        test('an all-fights run hands the queued candidates to the analysis and draws and saves their row', async () => {
+            await twoFights(5, 7);
+            saveSpy = vi.spyOn(ui, '_saveLabUpgradeResults').mockImplementation(() => {});
+            type('combat', 'Sinister Cape', '7');
+            ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+            tickOnly('combat_level');
+
+            await ui._onUpgradeAnalyze();
+
+            const params = allSpy.mock.calls[0][0];
+            expect(params.modes).toEqual(['combat_level']);
+            expect(params.extraCandidates).toHaveLength(1);
+            expect(params.extraCandidates[0]).toMatchObject({ checkedSwap: true, slot: BACK, reach: 1 });
+            // Claims are every loadout the character has, as Check passes them
+            expect(params.claimLoadouts.length).toBeGreaterThan(0);
+            const table = ui.panel.querySelector('#mwi-labsim-upgrade-results');
+            expect(table.textContent).toContain('Sinister Cape');
+            expect(status()).toContain('including 1 queued swap');
+            const saved = saveSpy.mock.calls[0][0];
+            expect(saved.results.some((row) => row.candidate.checkedSwap)).toBe(true);
+            // Check's own table is not touched by a generated run
+            expect(ui.panel.querySelector('#mwi-labsim-swap-results').innerHTML).toBe('');
+        });
+
+        test('with nothing queued the run is the generated one, with no extra candidates and no note', async () => {
+            await twoFights(5, 7);
+            tickOnly('combat_level');
+            await ui._onUpgradeAnalyze();
+            expect(allSpy.mock.calls[0][0].extraCandidates).toEqual([]);
+            expect(status()).not.toContain('queued');
+        });
+
+        test('a queued swap that reaches no loadout is reported, and nothing is added to the run', async () => {
+            await twoFights(7, 7);
+            type('combat', 'Sinister Cape', '7');
+            ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+            tickOnly('combat_level');
+
+            await ui._onUpgradeAnalyze();
+
+            expect(allSpy.mock.calls[0][0].extraCandidates).toEqual([]);
+            expect(status()).toContain('Not in any loadout: Sinister Cape +7');
+            expect(status()).not.toContain('including');
+        });
+
+        test('an ability-order-only run has no table, so the queue does not run in it', async () => {
+            await twoFights(5, 7);
+            type('combat', 'Sinister Cape', '7');
+            ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+            tickOnly('ability_order');
+
+            await ui._onUpgradeAnalyze();
+
+            for (const call of allSpy.mock.calls) {
+                expect(call[0].extraCandidates.some((candidate) => candidate.checkedSwap)).toBe(false);
+            }
+        });
+
+        test('Check still draws its own table and leaves the generated one alone', async () => {
+            await twoFights(5, 7);
+            type('combat', 'Sinister Cape', '7');
+            ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+
+            await ui._onCheckSwapsCombat();
+
+            expect(ui.panel.querySelector('#mwi-labsim-swap-results').textContent).toContain('Checked swaps');
+            expect(ui.panel.querySelector('#mwi-labsim-upgrade-results').innerHTML).toBe('');
+            expect(status()).toContain('Checked 1 swap');
+        });
+
+        test('a single-fight run adds the queued items as extra candidates', async () => {
+            game.players = [{ hrid: 'p1', equipment: {}, abilities: [], houseRooms: {} }];
+            game.editedDTOs = {
+                p1: { hrid: 'p1', equipment: { [BACK]: { hrid: CAPE, enhancementLevel: 5 } }, abilities: [] },
+            };
+            game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+            game.skipLevels = { '/monsters/mimic': 130 };
+            ui.destroy();
+            ui.buildPanel();
+            await settle();
+            const singleSpy = vi.spyOn(upgradeAdvisor, 'runLabyrinthUpgradeAnalysis');
+            try {
+                ui._switchTab('upgrade');
+                ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+                await ui._restoreUpgradeSelection();
+                ui.panel.querySelector('#mwi-labsim-level-source').value = 'configure';
+                type('combat', 'Sinister Cape', '7');
+                ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+                tickOnly('combat_level');
+
+                await ui._onUpgradeAnalyze();
+
+                const extras = singleSpy.mock.calls[0][0].extraCandidates;
+                expect(extras.filter((candidate) => candidate.checkedSwap)).toHaveLength(1);
+                expect(status()).toContain('including 1 queued swap');
+            } finally {
+                singleSpy.mockRestore();
+                game.players = [];
+                game.editedDTOs = null;
+            }
+        });
+    });
+
     test('a saved loadout no fight wears still counts as owned and claims its pieces', async () => {
         game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
         game.skipLevels = { '/monsters/mimic': 130 };

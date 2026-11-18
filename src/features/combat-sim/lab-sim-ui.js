@@ -142,15 +142,14 @@ import { collapseHeaderHtml, enhanceCollapsibles } from './collapsible-sections.
 import {
     MAX_QUEUED_SWAPS,
     extractAbilityOrderSection,
-    buildCombatAbilityCheck,
     buildCombatAbilityOrderCandidates,
-    buildCombatSwapCandidate,
+    buildQueuedCombatCandidates,
     checkedSwapKey,
     clampLevelFor,
     describeCheckedSwap,
+    dropRowsCoveredByCheckedAbilities,
     evaluateSkillingSwaps,
     groupFightsByLoadout,
-    isAbilitySwap,
     mergeCheckedAbilityRows,
     resolveEquipmentHrid,
     resolveSwapHrid,
@@ -1153,6 +1152,8 @@ class LabSimUI {
         this._editorEditTimer = null;
         this._triggerRefreshSeq = 0;
         this._checkedSwapSort = null;
+        // What the last Upgrade run did with the queued swaps, for its status line (see `_describeQueuedRun`)
+        this._queuedRunNote = null;
         this._skillingSwapSortHandler = null;
         this._skillLoadouts = {};
         /**
@@ -4308,8 +4309,9 @@ class LabSimUI {
         const what =
             kind === 'combat'
                 ? 'Put any piece of equipment, at the level you choose, into every fight loadout that uses its slot, ' +
-                  'and see what it does. Owned or not. Add queues it; Check runs the queue with this tab’s ' +
-                  'precision, hours and target scope. An ability works too (e.g. Critical Aura, level 7): it is ' +
+                  'and see what it does. Owned or not. Add queues it; Check runs the queue on its own with this tab’s ' +
+                  'precision, hours and target scope, and every Upgrade run also ranks the queue in its main table ' +
+                  '(items only in a single-fight run). An ability works too (e.g. Critical Aura, level 7): it is ' +
                   'tried in place of each ability a loadout casts and in a free slot, and the best is shown per loadout.'
                 : 'Put any piece of equipment, at the level you choose, into every skill kit that can feel it, and see ' +
                   'what it does to the clear rate. Owned or not. Add queues it; Check runs the queue.';
@@ -5275,6 +5277,56 @@ class LabSimUI {
     }
 
     /**
+     * What an Upgrade run did with the queued swaps, for the status line: how many of them are rows in the table,
+     * and which were left out (already equipped at that level or higher, in no loadout, abilities in a
+     * single-fight run).
+     * @param {{unreached: Array<Object>, alreadyEquipped: Array<Object>, skippedAbilities: Array<Object>}} queued
+     * @param {Object} analysis - The result the run draws
+     * @param {Object} gameData - Game data payload
+     * @returns {{analysis: Object, included: number, trailer: string}}
+     * @private
+     */
+    _describeQueuedRun(queued, analysis, gameData) {
+        const describeAll = (list) => list.map((swap) => describeCheckedSwap(swap, gameData)).join(', ');
+        const rows = (analysis?.results || []).filter(
+            (row) => row.candidate?.checkedSwap || (row.candidate?.checkedAbilityKey && !row.candidate.abilityOrder)
+        );
+        const trailer = [
+            queued.alreadyEquipped.length
+                ? `Already equipped at that level or higher: ${describeAll(queued.alreadyEquipped)}.`
+                : '',
+            queued.unreached.length ? `Not in any loadout: ${describeAll(queued.unreached)}.` : '',
+            queued.skippedAbilities.length
+                ? `Queued abilities need an all-fights run, use Check for: ${describeAll(queued.skippedAbilities)}.`
+                : '',
+        ]
+            .filter(Boolean)
+            .join(' ');
+        return { analysis, included: rows.length, trailer };
+    }
+
+    /**
+     * The candidates the queued combat swaps become over some fights: the one builder Check and every Upgrade run
+     * share, so a swap reaches the same loadouts and costs the same in either.
+     * @param {Array<{hrid: string, level: number}>} queue - The queued swaps
+     * @param {Array<Object>} fights - The run's fights, each with its loadout `dto`
+     * @param {Object} gameData - Game data payload
+     * @param {boolean} isSelf - Whether the loadouts are the live character's
+     * @param {Array<Object>|null} ownershipDtos - Every loadout the character has, for owned / still-worn checks
+     * @param {{equipmentOnly?: boolean}} [options] - Leave the abilities out (a single-fight analysis cannot fold them)
+     * @returns {{candidates: Array<Object>, unreached: Array<Object>, alreadyEquipped: Array<Object>,
+     *   skippedAbilities: Array<Object>}}
+     * @private
+     */
+    _buildQueuedCombatCandidates(queue, fights, gameData, isSelf, ownershipDtos, options = {}) {
+        return buildQueuedCombatCandidates(queue, fights, gameData, isSelf, {
+            allLoadouts: this._swapOptions.all.combat,
+            ownershipDtos,
+            equipmentOnly: Boolean(options.equipmentOnly),
+        });
+    }
+
+    /**
      * Check the queued swaps against the Upgrade tab's fights.
      *
      * The same analysis the generated rows go through, over the same fights (the
@@ -5438,31 +5490,13 @@ class LabSimUI {
                 return;
             }
 
-            const candidates = [];
-            const unreached = [];
-            const alreadyEquipped = [];
-            const fightDTOs = fights.map((fight) => fight.dto);
-            for (const swap of queue) {
-                if (isAbilitySwap(swap)) {
-                    // One candidate per way onto the bar; the rows are folded back into one afterwards
-                    const built = buildCombatAbilityCheck(swap, fightDTOs, gameData, isSelf, {
-                        allLoadouts: this._swapOptions.all.combat,
-                    });
-                    if (built?.candidates.length) candidates.push(...built.candidates);
-                    else if (built?.alreadyEquipped) alreadyEquipped.push(swap);
-                    else unreached.push(swap);
-                    continue;
-                }
-                const candidate = buildCombatSwapCandidate(
-                    swap,
-                    fights.map((fight) => fight.dto),
-                    gameData,
-                    isSelf,
-                    { allLoadouts: this._swapOptions.all.combat, ownershipDtos: ownershipDtos || undefined }
-                );
-                if (candidate && candidate.reach > 0) candidates.push(candidate);
-                else unreached.push(swap);
-            }
+            const { candidates, unreached, alreadyEquipped } = this._buildQueuedCombatCandidates(
+                queue,
+                fights,
+                gameData,
+                isSelf,
+                ownershipDtos
+            );
             const describeAll = (list) => list.map((swap) => describeCheckedSwap(swap, gameData)).join(', ');
             if (!candidates.length) {
                 resultsEl.style.display = 'none';
@@ -5870,7 +5904,21 @@ class LabSimUI {
                 // The table result a combined run saves again with the order section
                 let allFightsAnalysis = null;
                 if (!plan.orderOnly) {
-                    const analysisResult = await runLabyrinthAllFightsAnalysis(
+                    // The queued swaps ride along: the same candidates Check builds, over this run's fights, ranked
+                    // beside the generated rows. (An ability-order-only run has no table, so they do not run there.)
+                    const claimLoadouts = this._collectOwnedLoadouts(allFights);
+                    const queue = this._checkedSwaps.combat.slice();
+                    const queued = queue.length
+                        ? this._buildQueuedCombatCandidates(
+                              queue,
+                              fights,
+                              gameData,
+                              true,
+                              claimLoadouts.map((entry) => entry.dto)
+                          )
+                        : null;
+                    this._queuedRunNote = null;
+                    const rawResult = await runLabyrinthAllFightsAnalysis(
                         {
                             fights,
                             crates,
@@ -5891,7 +5939,8 @@ class LabSimUI {
                             guildShrineTargets,
                             guildShrineCapToGuild,
                             tokenLevels,
-                            claimLoadouts: this._collectOwnedLoadouts(allFights),
+                            extraCandidates: queued?.candidates || [],
+                            claimLoadouts,
                         },
                         ({ current, total, description, plan: runPlan }) => {
                             if (this._upgradeAborted) return;
@@ -5910,6 +5959,14 @@ class LabSimUI {
 
                     // A run torn down mid-analysis draws nothing on the panel built since
                     if (!isCurrent()) return;
+                    // A queued ability is several candidates; fold them to one row each, as Check does, and drop
+                    // the generated level-up rows the folded row already is
+                    const analysisResult = queued
+                        ? dropRowsCoveredByCheckedAbilities(
+                              rawResult?.baseline ? mergeCheckedAbilityRows(rawResult, gameData) : rawResult
+                          )
+                        : rawResult;
+                    if (queued) this._queuedRunNote = this._describeQueuedRun(queued, analysisResult, gameData);
                     // A fresh run supersedes any restored set, so its banner goes
                     this._restoredUpgradeAt = null;
                     this._restoredUpgradeMeta = null;
@@ -5964,6 +6021,24 @@ class LabSimUI {
             // The table result a combined run saves again with the order section
             let singleAnalysis = null;
             if (!plan.orderOnly) {
+                // The queued swaps ride along, built as Check builds them for a single fight. Items only: an ability
+                // is several candidates folded into one row afterwards, which the single-fight table cannot do
+                const queue = this._checkedSwaps.combat.slice();
+                const configureDTO = playerDTOs[playerIndex];
+                const configureIsSelf = selfHrid != null && configureDTO.hrid === selfHrid;
+                const configureFights = [{ monsterHrid, roomLevel, dto: configureDTO, loadoutName: 'Configure fight' }];
+                const queued = queue.length
+                    ? this._buildQueuedCombatCandidates(
+                          queue,
+                          configureFights,
+                          gameData,
+                          configureIsSelf,
+                          configureIsSelf
+                              ? this._collectOwnedLoadouts(configureFights).map((entry) => entry.dto)
+                              : null,
+                          { equipmentOnly: true }
+                      )
+                    : null;
                 const analysisResult = await runLabyrinthUpgradeAnalysis(
                     {
                         playerDTOs,
@@ -6002,11 +6077,8 @@ class LabSimUI {
                             labyrinthClearRate() || bundledLabyrinthClearRate
                         ).getPlayerEffectiveCombatLevel(),
                         maxTrials: upgradeUncapped ? undefined : upgradeMaxFights,
-                        extraCandidates: this._extraDimensionCandidates(
-                            plan.extraModes,
-                            playerDTOs[playerIndex],
-                            gameData,
-                            {
+                        extraCandidates: [
+                            ...this._extraDimensionCandidates(plan.extraModes, playerDTOs[playerIndex], gameData, {
                                 abilityTargetLevel,
                                 abilityLevelType,
                                 ...stepOptions,
@@ -6022,8 +6094,10 @@ class LabSimUI {
                                 communityBuffTargetLevel: this._getCommunityTargetLevel(),
                                 // The rule `runLabyrinthUpgradeAnalysis` reads `isSelf` by
                                 isSelf: selfHrid != null && playerDTOs[playerIndex]?.hrid === selfHrid,
-                            }
-                        ),
+                            }),
+                            // Last, so a queued item replaces a generated row for the same change
+                            ...(queued?.candidates || []),
+                        ],
                     },
                     ({ current, total, description }) => {
                         if (this._upgradeAborted) return;
@@ -6051,6 +6125,17 @@ class LabSimUI {
                 if (analysisResult?.roomLevels) analysisResult.roomLevels.targetFloor = this._getTargetFloor();
                 this._renderUpgradeResults(analysisResult, resultsEl);
                 singleAnalysis = analysisResult;
+                if (queued && analysisResult?.results?.length) {
+                    const note = this._describeQueuedRun(queued, analysisResult, gameData);
+                    this._setStatus(
+                        `Upgrade analysis complete: ${analysisResult.results.length} upgrades` +
+                            (note.included
+                                ? `, including ${note.included} queued swap${note.included === 1 ? '' : 's'}`
+                                : '') +
+                            '.' +
+                            (note.trailer ? ` ${note.trailer}` : '')
+                    );
+                }
                 // The remembered set is per character and has no undo: writing this
                 // run under the character who arrived mid-analysis would delete the
                 // analysis they were keeping
@@ -8901,7 +8986,10 @@ class LabSimUI {
                 ? ''
                 : '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No results — check that combat skip levels and loadouts are set.</div>';
             this._viewRedraws.delete(checked ? 'checked-combat' : 'combat');
-            if (!checked) this._setStatus('All-fights analysis produced no results.');
+            if (!checked) {
+                const note = this._queuedRunNote?.analysis === analysisResult ? this._queuedRunNote.trailer : '';
+                this._setStatus('All-fights analysis produced no results.' + (note ? ` ${note}` : ''));
+            }
             return;
         }
 
@@ -9313,14 +9401,20 @@ class LabSimUI {
         // A redraw for a verdict leaves the status line to the verify run that caused it
         if (checked || options.quiet) return;
         const budget = analysisResult.budget;
+        // Only for the run that built it: a restored or redrawn-from-storage set was not run with these swaps
+        const queuedNote = this._queuedRunNote?.analysis === analysisResult ? this._queuedRunNote : null;
         this._setStatus(
             `All-fights analysis complete: ${results.length} upgrades across ${baseline.fights.length} fights` +
+                (queuedNote?.included
+                    ? `, including ${queuedNote.included} queued swap${queuedNote.included === 1 ? '' : 's'}`
+                    : '') +
                 (budget?.sims ? `, ${budget.sims.toLocaleString()} simulations` : '') +
                 (budget?.reduced
                     ? ` at ${Math.round(budget.trialScale * 100)}% of the ${budget.requestedHours}h per fight — every fight simulated, win rates noisier.`
                     : '.') +
                 describeArchetypes(analysisResult.archetypes) +
-                (this._houseScanNote ? ` House rooms: ${this._houseScanNote}.` : '')
+                (this._houseScanNote ? ` House rooms: ${this._houseScanNote}.` : '') +
+                (queuedNote?.trailer ? ` ${queuedNote.trailer}` : '')
         );
     }
 

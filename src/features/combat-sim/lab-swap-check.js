@@ -923,6 +923,18 @@ function chooseRowPerLoadout(rows, baseline, contextFights) {
 }
 
 /**
+ * The listed fields of an object that are set.
+ * @param {Object} source - Any object
+ * @param {Array<string>} keys - Fields to copy
+ * @returns {Object}
+ */
+function pickDefined(source, keys) {
+    const picked = {};
+    for (const key of keys) if (source[key] !== undefined) picked[key] = source[key];
+    return picked;
+}
+
+/**
  * Fold the per-option rows of checked abilities into one row each.
  *
  * Each saved loadout keeps one option across every fight it covers (fewest summed
@@ -975,9 +987,17 @@ export function mergeCheckedAbilityRows(analysis, gameData) {
             }
             if (best) {
                 const option = bestRow.candidate;
+                // How this loadout takes the ability, kept on the fight: the folded row's own candidate names no
+                // single way onto the bar, and Verify and the together check apply it per fight
+                const how = pickDefined(option, ['slot', 'replacesHrid', 'levelUp', 'fillsFreeSlot']);
                 return option.fightNote
                     ? { ...best, note: option.fightNote, chosenOption: option }
-                    : { ...best, replaced: option.optionLabel, chosenOption: option };
+                    : {
+                          ...best,
+                          replaced: option.optionLabel,
+                          chosenOption: option,
+                          ...(option.abilityOrder ? {} : { option: how }),
+                      };
             }
             const dto = analysis.context?.fights?.[i]?.dto;
             const owned = (dto?.abilities || []).find((ability) => ability?.hrid === first.upgradeHrid);
@@ -1159,6 +1179,84 @@ export function buildCombatAbilityOrderCandidates(dtos, gameData, isSelf = true)
  */
 export function buildCombatAbilityCheck(swap, dtos, gameData, isSelf = true, options = {}) {
     return buildCombatAbilityCandidates(swap, dtos, gameData, isSelf, options);
+}
+
+/**
+ * The combat candidates the queued swaps become, over the fights a run covers. The one builder both Check and an
+ * Upgrade run use, so a swap reaches the same loadouts and is priced the same way in either.
+ *
+ * An ability is several candidates (one per way onto the bar) and one swap; an item is one candidate that reaches
+ * every loadout with a use for its slot. A swap that reaches no loadout is listed in `unreached`; an ability every
+ * reached loadout already casts at the level asked is listed in `alreadyEquipped`. With `equipmentOnly` the
+ * abilities are left out of `candidates` and listed in `skippedAbilities` (a single-fight analysis cannot fold an
+ * ability's several options into one row).
+ *
+ * @param {Array<{hrid: string, level: number}>} queue - The queued swaps
+ * @param {Array<Object>} fights - The run's fights, each with its loadout `dto`
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} [isSelf=true] - Whether the loadouts are the live character's
+ * @param {Object} [options] - `{ allLoadouts, ownershipDtos, equipmentOnly }`; `ownershipDtos` is every loadout
+ *   the character has (default: the fights' own), which is what "already owned" and "still worn elsewhere" read
+ * @returns {{candidates: Array<Object>, unreached: Array<Object>, alreadyEquipped: Array<Object>,
+ *   skippedAbilities: Array<Object>}}
+ */
+export function buildQueuedCombatCandidates(queue, fights, gameData, isSelf = true, options = {}) {
+    const { allLoadouts = false, ownershipDtos = null, equipmentOnly = false } = options;
+    const fightDTOs = (fights || []).map((fight) => fight.dto);
+    const candidates = [];
+    const unreached = [];
+    const alreadyEquipped = [];
+    const skippedAbilities = [];
+    for (const swap of queue || []) {
+        if (isAbilitySwap(swap)) {
+            if (equipmentOnly) {
+                skippedAbilities.push(swap);
+                continue;
+            }
+            // One candidate per way onto the bar; the rows are folded back into one afterwards
+            const built = buildCombatAbilityCheck(swap, fightDTOs, gameData, isSelf, { allLoadouts });
+            if (built?.candidates.length) candidates.push(...built.candidates);
+            else if (built?.alreadyEquipped) alreadyEquipped.push(swap);
+            else unreached.push(swap);
+            continue;
+        }
+        const candidate = buildCombatSwapCandidate(swap, fightDTOs, gameData, isSelf, {
+            allLoadouts,
+            ownershipDtos: ownershipDtos || undefined,
+        });
+        if (candidate && candidate.reach > 0) candidates.push(candidate);
+        else unreached.push(swap);
+    }
+    return { candidates, unreached, alreadyEquipped, skippedAbilities };
+}
+
+/**
+ * Drop the generated rows a hand-checked ability row already covers.
+ *
+ * A queued ability is simulated in every way onto the bar, one of which is raising the copy a loadout already
+ * casts; a generated "level up this ability" row to the same level is that same change, so the table would show
+ * it twice. Only exact repeats go (same ability, same level, a level-up): a generated swap is tried at the level of
+ * the ability it replaces in each loadout, which is not the level asked here, so it is a different change.
+ * Equipment needs no pass: the pool already keeps one candidate per assignment, and the queued one wins.
+ *
+ * @param {{results: Array<Object>}} analysis - After `mergeCheckedAbilityRows`
+ * @returns {Object} The analysis, with the repeats removed (the same object when none)
+ */
+export function dropRowsCoveredByCheckedAbilities(analysis) {
+    if (!Array.isArray(analysis?.results)) return analysis;
+    const covered = new Set();
+    for (const row of analysis.results) {
+        const candidate = row.candidate;
+        if (candidate?.checkedAbility && !candidate.abilityOrder)
+            covered.add(`${candidate.upgradeHrid}@${candidate.upgradeLevel}`);
+    }
+    if (!covered.size) return analysis;
+    const results = analysis.results.filter((row) => {
+        const candidate = row.candidate;
+        if (!candidate || candidate.checkedAbility || candidate.type !== 'ability_level') return true;
+        return !covered.has(`${candidate.upgradeHrid}@${candidate.upgradeLevel}`);
+    });
+    return results.length === analysis.results.length ? analysis : { ...analysis, results };
 }
 
 /**
