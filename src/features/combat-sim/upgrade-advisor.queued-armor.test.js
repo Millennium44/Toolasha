@@ -200,12 +200,41 @@ describe('a queued item that is also a generated forced-armor row', () => {
         expect(kept[0].cost).toBeGreaterThan(queued[0].cost);
     });
 
-    test('a queued item with no generated row keeps the price Check gives it', async () => {
+    test('is priced the same with no generated row at all (Equipment off, or no such level generated)', async () => {
+        state.armor = [generatedCape([worn(OLD_CAPE)])];
+        const withRow = rowsFor(await run(fights(), [{ hrid: CAPE, level: 0 }]), CAPE);
         state.armor = [];
-        const queued = rowsFor(await run(fights(), [{ hrid: CAPE, level: 0 }]), CAPE);
-        expect(queued).toHaveLength(1);
-        expect(queued[0].candidate.removedItems).toEqual([worn(OLD_CAPE)]);
-        expect(queued[0].candidate.keptItems).toBeUndefined();
+        const without = rowsFor(await run(fights(), [{ hrid: CAPE, level: 0 }]), CAPE);
+        expect(without).toHaveLength(1);
+        expect(without[0].cost).toBe(withRow[0].cost);
+        expect(without[0].candidate.keptItems).toEqual([worn(OLD_CAPE)]);
+        expect(without[0].candidate.removedItems).toEqual([]);
+        // With the setting off it is the straight swap that sells the old piece, as Check prices it
+        state.keep = false;
+        const sold = rowsFor(await run(fights(), [{ hrid: CAPE, level: 0 }]), CAPE);
+        expect(sold[0].cost).toBeLessThan(without[0].cost);
+        expect(sold[0].candidate.removedItems).toEqual([worn(OLD_CAPE)]);
+    });
+
+    test('the pricing note says one thing: kept, never also sold', async () => {
+        const [row] = rowsFor(await run(fights(), [{ hrid: CAPE, level: 0 }]), CAPE);
+        const note = row.candidate.pricingNote;
+        expect(note).not.toContain('less what the piece it replaces would sell for');
+        expect(note).not.toContain('still worn by a loadout');
+        expect(note.match(/resale is not credited/g)).toHaveLength(1);
+    });
+
+    test('the pieces an enhance route frees are kept too, not credited', async () => {
+        const two = () => [fight('mimic', { [BACK]: worn(CAPE) }), fight('eye', { [BACK]: worn(OLD_CAPE) })];
+        const queue = [{ hrid: CAPE, level: 3 }];
+        state.keep = false;
+        const credited = rowsFor(await run(two(), queue), CAPE).find((row) => row.candidate.checkedSwap);
+        expect(credited.candidate.freedItems).toEqual([worn(OLD_CAPE)]);
+        state.keep = true;
+        const kept = rowsFor(await run(two(), queue), CAPE).find((row) => row.candidate.checkedSwap);
+        expect(kept.candidate.freedItems).toEqual([]);
+        expect(kept.candidate.keptItems).toEqual([worn(OLD_CAPE)]);
+        expect(kept.cost).toBeGreaterThan(credited.cost);
     });
 
     test('a copy already worn stays free', async () => {

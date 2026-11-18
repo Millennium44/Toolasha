@@ -9301,27 +9301,44 @@ function pairIsQueuedPiece(pooled, queued, fights, gameData) {
     });
 }
 
+/** Slots the forced-armor generator works in: weapons, body, legs and the cape */
+const LAB_ARMOR_SLOTS = new Set([
+    ...WEAPON_SLOTS,
+    '/equipment_types/body',
+    '/equipment_types/legs',
+    '/equipment_types/back',
+]);
+
 /**
- * A queued swap that takes the place of a generated forced-armor row, priced the way that row is.
+ * A queued armor swap in an Upgrade run, priced the way a generated forced-armor row is.
  *
- * The generated row went through `labArmorForLoadout`, so under `labSim_keepReplacedGear` the gear it replaces is
- * kept and earns no resale credit. A queued swap for the same target arrives priced by Check's builder, which
- * ignores that setting; left alone, the same target would cost (and read) differently depending on whether it was
- * queued. It goes through the same helper, and is priced again from its new kept list.
+ * Generated forced-armor rows go through `labArmorForLoadout`, so under `labSim_keepReplacedGear` the gear they
+ * replace is kept and earns no resale credit. A queued swap arrives priced by Check's builder, which ignores the
+ * setting, so the same target would cost differently depending on whether a generated row happened to exist
+ * (the Equipment checkbox, the level the generator picked). Every queued armor-slot swap in an Upgrade run goes
+ * through the same helper, whether or not a generated row exists, and is priced again from its kept list. The
+ * pieces an enhance route frees are kept too. Check itself is not changed.
  *
  * @param {Object} queued - The queued candidate
- * @param {Object|undefined} existing - What the pool held under the same key
  * @param {boolean} keepReplaced - The `labSim_keepReplacedGear` setting
  * @returns {Object} The candidate to pool
  */
-function queuedOverGeneratedArmor(queued, existing, keepReplaced) {
-    if (!queued.checkedSwap || !existing?.labArmor || !keepReplaced) return queued;
+function queuedArmorPricedLikeGenerated(queued, keepReplaced) {
+    if (!queued.checkedSwap || !keepReplaced || !LAB_ARMOR_SLOTS.has(queued.slot)) return queued;
     // A copy already owned costs nothing and sells nothing
-    if (queued.noPurchase || !queued.removedItems?.length) return queued;
+    if (queued.noPurchase || !(queued.removedItems?.length || queued.freedItems?.length)) return queued;
     const armor = labArmorForLoadout(queued, null, keepReplaced);
+    if (armor.freedItems?.length) {
+        armor.keptItems = [...armor.keptItems, ...armor.freedItems];
+        armor.freedItems = [];
+    }
     // Priced again with the pieces kept, in the pool
     armor.cost = null;
-    armor.pricingNote = `${queued.pricingNote || ''} The piece it replaces is kept (Keep gear the forced armor swaps replace), so its resale is not credited.`;
+    // One consistent note: the route's own sentence says the replaced piece is sold, which no longer holds
+    armor.pricingNote =
+        queued.type === 'enhancement'
+            ? `${queued.pricingNote || ''} The other pieces it frees are kept (Keep gear the forced armor swaps replace), so their resale is not credited.`
+            : 'Checked by hand. Priced as buying it at this level; the piece it replaces is kept (Keep gear the forced armor swaps replace), so its resale is not credited.';
     return armor;
 }
 
@@ -9536,7 +9553,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         // A hand-checked swap replaces the generated one for the same change: it is the identity the
         // player asked for, and `allLoadouts` may widen its reach past the generated row's
         if (!candidatesByKey.has(key) || candidate.checkedSwap) {
-            candidatesByKey.set(key, queuedOverGeneratedArmor(candidate, candidatesByKey.get(key), keepReplacedGear));
+            candidatesByKey.set(key, queuedArmorPricedLikeGenerated(candidate, keepReplacedGear));
         }
     }
     // Which archetype each loadout resolved to, for the panel to say out loud.
