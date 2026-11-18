@@ -71,6 +71,11 @@ class AutoFillPrice {
         // text ("77.8M" ceiling, exact button target 77,84x,xxx) is not
         // pressed again on every 300ms tick. See clampPriceToTradableRange.
         this.clampState = new WeakMap();
+        // Modals whose price the player has edited themselves. The game posts
+        // a listing outside the tradable range (it waits for the band to move),
+        // so a price the player chose is theirs, and the clamp only ever pulls
+        // back a price Toolasha filled.
+        this.playerPricedModals = new WeakSet();
     }
 
     /**
@@ -220,6 +225,7 @@ class AutoFillPrice {
      * @param {HTMLElement} modal - Modal container element
      */
     watchPriceBand(modal) {
+        this.watchPlayerPriceEdits(modal);
         const interval = setInterval(() => {
             if (!modal.isConnected) {
                 clearInterval(interval);
@@ -229,6 +235,24 @@ class AutoFillPrice {
             this.clampPriceToTradableRange(modal);
         }, 300);
         this.timerRegistry.registerInterval(interval);
+    }
+
+    /**
+     * Note when the player edits the price themselves: typing in the price
+     * field, or pressing one of the row's own buttons (+/-, Min, Max, ÷2/×2).
+     * Clicks Toolasha sends through `.click()` are untrusted and do not count,
+     * so the strategy step and the bound press stay Toolasha's fill.
+     * @param {HTMLElement} modal - Modal container element
+     */
+    watchPlayerPriceEdits(modal) {
+        const inPriceRow = (target) =>
+            Boolean(target?.closest?.('div[class*="MarketplacePanel_priceInputs"]')) && modal.contains(target);
+        const mark = (event) => {
+            if (!inPriceRow(event.target)) return;
+            if (event.type === 'click' && (!event.isTrusted || !event.target.closest('button'))) return;
+            this.playerPricedModals.add(modal);
+        };
+        for (const type of ['input', 'keydown', 'click']) modal.addEventListener(type, mark, true);
     }
 
     /**
@@ -280,7 +304,9 @@ class AutoFillPrice {
      * exactly as filled.
      *
      * A price being typed is left alone: the input is read only when it is
-     * not focused. And a bound already pressed is not pressed again while the
+     * not focused. A price the player set themselves is never touched at all
+     * (see `watchPlayerPriceEdits`): the game posts outside the band and the
+     * listing waits for the band to reach it. And a bound already pressed is not pressed again while the
      * price still reads as what that press produced — the range is parsed
      * from rounded text ("77.8M"), while the game's own exact bound can be
      * e.g. 77,84x,xxx, which still reads "above 77.8M" forever if every tick
@@ -288,6 +314,7 @@ class AutoFillPrice {
      * @param {HTMLElement} modal - Modal container element
      */
     clampPriceToTradableRange(modal) {
+        if (this.playerPricedModals.has(modal)) return;
         const range = tradableRangeFrom(modal.textContent);
         if (!range) return;
 
@@ -339,6 +366,7 @@ class AutoFillPrice {
             this.unregisterHandlers = [];
             this.timerRegistry.clearAll();
             this.clampState = new WeakMap();
+            this.playerPricedModals = new WeakSet();
             this.isActive = false;
             this.isInitialized = false;
         } catch (error) {

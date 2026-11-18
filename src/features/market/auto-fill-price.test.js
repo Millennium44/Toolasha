@@ -456,6 +456,32 @@ describe('the clamp stays live on the interval while the modal is open', () => {
         expect(clicks).toEqual([]);
     });
 
+    test('a price the player typed outside the band is left there', () => {
+        const { modal, input, clicks } = orderModalWithPriceRow({
+            rangeText: 'Tradable range: 15.1M – 18.4M',
+            price: '20,000,000',
+            editing: true,
+        });
+        autoFillPrice.playerPricedModals = new WeakSet();
+        autoFillPrice.watchPriceBand(modal);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(900);
+        expect(clicks).toEqual([]);
+    });
+
+    test("Toolasha's own button presses do not count as the player's edit", () => {
+        const { modal, clicks } = orderModalWithPriceRow({
+            rangeText: 'Tradable range: 15.1M – 18.4M',
+            price: '20,000,000',
+        });
+        autoFillPrice.playerPricedModals = new WeakSet();
+        autoFillPrice.watchPriceBand(modal);
+        modal.querySelector('div[class*="MarketplacePanel_priceInputs"] button').click();
+        clicks.length = 0;
+        vi.advanceTimersByTime(300);
+        expect(clicks).toEqual(['Max']);
+    });
+
     test('a closed modal stops being watched', () => {
         const { modal, clicks } = orderModalWithPriceRow({
             rangeText: 'Tradable range: 15.1M – 18.4M',
