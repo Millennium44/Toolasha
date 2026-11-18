@@ -13,6 +13,8 @@
  * comparison still runs for gear you haven't bought yet.
  */
 
+import { MARKETPLACE_LOCATION } from './self-enhance-ladder.js';
+
 /** Anchorbound plate pieces, always offered */
 export const ANCHORBOUND_HRIDS = ['/items/anchorbound_plate_body', '/items/anchorbound_plate_legs'];
 
@@ -187,11 +189,8 @@ export function resolveItemEnhancement(itemHrid, playerDTO, inventory) {
     return owned === null ? DEFAULT_ARMOR_ENHANCEMENT : owned;
 }
 
-/** Locations whose items nobody can use (escrowed by a market listing) */
-const UNHELD_LOCATIONS = new Set(['/item_locations/market_listing', '/item_locations/marketplace']);
-
 /**
- * The level this item is actually held at — equipped in the analyzed loadout, else the best copy the
+ * The level this item is actually held at — the best of the analyzed loadout's piece and every copy the
  * character holds (inventory or worn) — or null when it isn't owned at all. Separate from
  * resolveItemEnhancement so callers can tell "owned at +0" from "not owned",
  * which the cape comparison needs to decide whether to assume a level.
@@ -201,21 +200,25 @@ const UNHELD_LOCATIONS = new Set(['/item_locations/market_listing', '/item_locat
  * @returns {number|null} Enhancement level, or null when not owned
  */
 export function findOwnedEnhancement(itemHrid, playerDTO, inventory) {
+    let best = null;
+    const consider = (level) => {
+        const floored = Math.max(0, Math.floor(Number(level) || 0));
+        if (best === null || floored > best) best = floored;
+    };
+
     for (const equipped of Object.values(playerDTO?.equipment || {})) {
-        if (equipped?.hrid === itemHrid) return Math.max(0, Math.floor(Number(equipped.enhancementLevel) || 0));
+        if (equipped?.hrid === itemHrid) consider(equipped.enhancementLevel);
     }
 
-    let best = null;
     for (const item of inventory || []) {
         if (item?.itemHrid !== itemHrid) continue;
         // Copies the character holds live in the same list: the bag, and whatever it is wearing right now
         // (any other equipment slot), which an analyzed saved loadout need not list. Copies escrowed by a
         // market listing are held by no one.
-        if (UNHELD_LOCATIONS.has(item.itemLocationHrid)) continue;
+        if (item.itemLocationHrid === MARKETPLACE_LOCATION) continue;
         // Equipped rows do not reliably carry a count: absent is one worn copy, only an explicit zero is skipped
         if (item.count != null && Number(item.count) <= 0) continue;
-        const level = Math.max(0, Math.floor(Number(item.enhancementLevel) || 0));
-        if (best === null || level > best) best = level;
+        consider(item.enhancementLevel);
     }
     return best;
 }

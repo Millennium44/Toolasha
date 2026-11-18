@@ -26,7 +26,7 @@ export const LADDER_SPARE_FROM_LEVEL = 5;
 
 const INVENTORY_LOCATION = '/item_locations/inventory';
 /** Escrowed by a market listing: neither held in the bag nor worn, so not a copy anyone can use */
-const MARKETPLACE_LOCATION = '/item_locations/marketplace';
+export const MARKETPLACE_LOCATION = '/item_locations/marketplace';
 
 /**
  * Whether an item can only be had by enhancing a copy yourself.

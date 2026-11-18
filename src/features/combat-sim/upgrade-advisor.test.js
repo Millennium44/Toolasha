@@ -274,6 +274,7 @@ const {
     goldPerPercent,
     replacedIn,
     widenReplacedDescription,
+    heldCopyUse,
     withLoadoutClaims,
     explainUpgradeCost,
     computeEconomics,
@@ -8559,6 +8560,47 @@ describe('a forced gear row for a piece the character already owns', () => {
             upgradeLevel: 7,
         };
         expect(calculateUpgradeCost(levelUp, buildGameData())).not.toBe(0);
+    });
+});
+
+describe('one owned copy used by several rows of a budget plan', () => {
+    const CLOAK = '/items/enchanted_cloak';
+    const ladder = (over) => ({ itemHrid: CLOAK, fromLevel: 10, toLevel: 10, fresh: false, isSelf: true, ...over });
+    const row = (name, slot, costDetail) => ({
+        candidate: { type: 'cross_slot', slot, upgradeHrid: `/items/${name}`, description: name },
+        cost: 10,
+        costDetail,
+        attemptsDelta: -1,
+        significant: true,
+    });
+    const free = (name, slot) => row(name, slot, { ladder: ladder({ alreadyHeld: true, owned: true }) });
+    const enhance = (name, slot) => row(name, slot, { ladder: ladder({ alreadyHeld: false, toLevel: 12 }) });
+
+    test('a row that equips the copy and a row that enhances it are not both taken', () => {
+        const plan = planWithinBudget(
+            [free('forced', '/equipment_types/back'), enhance('enh', '/equipment_types/neck')],
+            1000,
+            {
+                singleLoadout: true,
+            }
+        );
+        expect(plan.picks).toHaveLength(1);
+    });
+
+    test('two rows that only equip the same owned copy are both taken', () => {
+        const plan = planWithinBudget([free('a', '/equipment_types/back'), free('b', '/equipment_types/neck')], 1000, {
+            singleLoadout: true,
+        });
+        expect(plan.picks).toHaveLength(2);
+    });
+
+    test('rows on different copies, a fresh ladder and a party row are not tied together', () => {
+        const other = enhance('c', '/equipment_types/neck');
+        other.costDetail.ladder.fromLevel = 5;
+        const plan = planWithinBudget([free('forced', '/equipment_types/back'), other], 1000, { singleLoadout: true });
+        expect(plan.picks).toHaveLength(2);
+        expect(heldCopyUse({ costDetail: { ladder: ladder({ fresh: true }) } })).toBeNull();
+        expect(heldCopyUse({ costDetail: { ladder: ladder({ isSelf: false }) } })).toBeNull();
     });
 });
 

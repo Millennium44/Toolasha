@@ -4307,11 +4307,12 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
                 ...(held.taken ? { consumed: [{ hrid: itemHrid, level: held.level }] } : {}),
                 source: 'enhance',
                 ladder: {
+                    itemHrid,
                     fromLevel: held.level,
                     toLevel: Math.max(0, Math.floor(Number(enhancementLevel) || 0)),
                     fresh: false,
                     alreadyHeld: true,
-                    fromEquipped: Boolean(held.owned && held.equipped),
+                    fromEquipped: false,
                     isSelf: Boolean(isSelf),
                     baseCost: 0,
                     ...(held.owned ? { owned: true } : {}),
@@ -4431,6 +4432,7 @@ function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = tru
     const forfeit = plan.copy?.claimed ? sellValue(itemHrid, plan.copy.level) : 0;
     const consumed = plan.copy?.taken ? [{ hrid: itemHrid, level: plan.copy.level }] : [];
     const ladder = {
+        itemHrid,
         fromLevel: plan.fromLevel,
         toLevel: plan.toLevel,
         fresh: plan.fresh,
@@ -8395,6 +8397,24 @@ export function goldPerPercent(cost, deltaPct) {
 }
 
 /**
+ * The held copy a priced self-enhanced row depends on, for the budget plan's copy ledger.
+ *
+ * A row that equips a copy already owned (`alreadyHeld`) only relies on it: any number of rows may rely on
+ * the same copy. A row that enhances a held copy (a ladder that is neither fresh nor already held) uses it
+ * up, turning it into a different level. The two cannot both be taken for one copy, or the plan counts the
+ * enhance as cheap and also counts the free use of the copy it just changed.
+ *
+ * @param {Object} result - A priced result row
+ * @returns {{key: string, mode: 'relies'|'consumes'}|null} The copy and how the row uses it
+ */
+export function heldCopyUse(result) {
+    const ladder = result?.costDetail?.ladder;
+    if (!ladder?.itemHrid || ladder.isSelf === false || ladder.fresh) return null;
+    const key = `${ladder.itemHrid}@${Math.max(0, Math.floor(Number(ladder.fromLevel) || 0))}`;
+    return { key, mode: ladder.alreadyHeld ? 'relies' : 'consumes' };
+}
+
+/**
  * A name for a candidate that survives redraws, re-sorts and a verify pass: the same parts the result table keys its
  * rows by, unescaped. Never an array index. Pins and exclusions are filed under it.
  * @param {Object} result - A result row (`{candidate}`) or a bare candidate
@@ -8554,7 +8574,7 @@ function planWithinBudgetOnce(
         // `keys` is every group it conflicts with; `key` is the one it is filed
         // under for marginal-value bookkeeping (see `conflictKeys`)
         const keys = conflictKeys(result.candidate);
-        eligible.push({ result, savings: savingsOf(result), key: keys[0], keys });
+        eligible.push({ result, savings: savingsOf(result), key: keys[0], keys, copyUse: heldCopyUse(result) });
     }
 
     const picks = [];
@@ -8789,6 +8809,13 @@ function planWithinBudgetOnce(
         for (const entry of pinnedEntries) acceptPin(entry);
     }
 
+    // Copies the basket relies on or uses up. A copy one row uses free cannot be the copy another row enhances
+    const copyUsesOf = new Map();
+    const copyClashes = (entry) => {
+        if (!entry.copyUse) return false;
+        const other = copyUsesOf.get(entry.copyUse.key);
+        return Boolean(other) && (other.has('consumes') || entry.copyUse.mode === 'consumes');
+    };
     const remaining = [...eligible];
     let forced = seedId ? eligible.find((entry) => candidateKey(entry.result) === seedId) || null : null;
     if (seedId && !forced) return null;
@@ -8796,6 +8823,7 @@ function planWithinBudgetOnce(
         let best = null;
         for (const entry of remaining) {
             if (forced && entry !== forced) continue;
+            if (copyClashes(entry)) continue;
             // Sharing *any* key is a conflict: one ability swap rules out both
             // the other swaps into the slot it empties and the other offers of
             // the book it buys
@@ -8849,6 +8877,10 @@ function planWithinBudgetOnce(
         const { entry, marginal } = best;
         remaining.splice(remaining.indexOf(entry), 1);
         for (const key of entry.keys) taken.add(key);
+        if (entry.copyUse) {
+            if (!copyUsesOf.has(entry.copyUse.key)) copyUsesOf.set(entry.copyUse.key, new Set());
+            copyUsesOf.get(entry.copyUse.key).add(entry.copyUse.mode);
+        }
 
         // A piece nobody would now wear is gold spent on nothing: an earlier
         // pick in this group that this one beats in every room it covered is

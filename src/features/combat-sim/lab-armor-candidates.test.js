@@ -140,10 +140,17 @@ describe('resolveItemEnhancement', () => {
         ).toBe(6);
     });
 
+    test('a loadout wearing a lower level than the character holds is sized at the best held copy', () => {
+        const dto = player({ [BODY]: { hrid, enhancementLevel: 3 } });
+        const inventory = [{ itemHrid: hrid, enhancementLevel: 9, count: 1, itemLocationHrid: '/item_locations/body' }];
+        expect(resolveItemEnhancement(hrid, dto, inventory)).toBe(9);
+        // Nothing held (a party member): the loadout's own level stands
+        expect(resolveItemEnhancement(hrid, dto, null)).toBe(3);
+    });
+
     test('ignores empty stacks and copies escrowed by a market listing', () => {
         const inventory = [
-            { itemHrid: hrid, enhancementLevel: 15, count: 1, itemLocationHrid: '/item_locations/market_listing' },
-            { itemHrid: hrid, enhancementLevel: 13, count: 1, itemLocationHrid: '/item_locations/marketplace' },
+            { itemHrid: hrid, enhancementLevel: 15, count: 1, itemLocationHrid: '/item_locations/marketplace' },
             { itemHrid: hrid, enhancementLevel: 11, count: 0, itemLocationHrid: '/item_locations/inventory' },
         ];
         expect(resolveItemEnhancement(hrid, player({}), inventory)).toBe(DEFAULT_ARMOR_ENHANCEMENT);
@@ -747,9 +754,7 @@ describe('cape options', () => {
         });
 
         test('a copy on a market listing is not owned', () => {
-            const out = levels(quiverDto(), [
-                back('/items/sinister_cape_refined', 7, '/item_locations/market_listing'),
-            ]);
+            const out = levels(quiverDto(), [back('/items/sinister_cape_refined', 7, '/item_locations/marketplace')]);
             expect(out['/items/sinister_cape_refined']).toBe(5);
         });
     });
