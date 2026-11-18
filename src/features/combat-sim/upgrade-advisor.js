@@ -9257,7 +9257,8 @@ function pooledSwapCandidate(candidate, gameData) {
 function labArmorForLoadout(candidate, dto, keepReplaced) {
     const pooled = { ...candidate };
     if (keepReplaced) {
-        pooled.keptItems = pooled.removedItems;
+        // A queued swap can already carry kept pieces (another loadout still wears them); those stay kept
+        pooled.keptItems = [...(pooled.keptItems || []), ...(pooled.removedItems || [])];
         pooled.removedItems = [];
     }
     const weaponSlot = Object.keys(pooled.addedSlots || {}).find((slot) => WEAPON_SLOTS.has(slot));
@@ -9265,6 +9266,30 @@ function labArmorForLoadout(candidate, dto, keepReplaced) {
         pooled.labArmorWeapon = { slot: weaponSlot, hrid: dto?.equipment?.[weaponSlot]?.hrid || null };
     }
     return pooled;
+}
+
+/**
+ * A queued swap that takes the place of a generated forced-armor row, priced the way that row is.
+ *
+ * The generated row went through `labArmorForLoadout`, so under `labSim_keepReplacedGear` the gear it replaces is
+ * kept and earns no resale credit. A queued swap for the same target arrives priced by Check's builder, which
+ * ignores that setting; left alone, the same target would cost (and read) differently depending on whether it was
+ * queued. It goes through the same helper, and is priced again from its new kept list.
+ *
+ * @param {Object} queued - The queued candidate
+ * @param {Object|undefined} existing - What the pool held under the same key
+ * @param {boolean} keepReplaced - The `labSim_keepReplacedGear` setting
+ * @returns {Object} The candidate to pool
+ */
+function queuedOverGeneratedArmor(queued, existing, keepReplaced) {
+    if (!queued.checkedSwap || !existing?.labArmor || !keepReplaced) return queued;
+    // A copy already owned costs nothing and sells nothing
+    if (queued.noPurchase || !queued.removedItems?.length) return queued;
+    const armor = labArmorForLoadout(queued, null, keepReplaced);
+    // Priced again with the pieces kept, in the pool
+    armor.cost = null;
+    armor.pricingNote = `${queued.pricingNote || ''} The piece it replaces is kept (Keep gear the forced armor swaps replace), so its resale is not credited.`;
+    return armor;
 }
 
 /**
@@ -9469,7 +9494,9 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         const key = allFightsPoolKey(candidate);
         // A hand-checked swap replaces the generated one for the same change: it is the identity the
         // player asked for, and `allLoadouts` may widen its reach past the generated row's
-        if (!candidatesByKey.has(key) || candidate.checkedSwap) candidatesByKey.set(key, candidate);
+        if (!candidatesByKey.has(key) || candidate.checkedSwap) {
+            candidatesByKey.set(key, queuedOverGeneratedArmor(candidate, candidatesByKey.get(key), keepReplacedGear));
+        }
     }
     // Which archetype each loadout resolved to, for the panel to say out loud.
     // The guide narrows a loadout's swaps from every ability in the game to the
