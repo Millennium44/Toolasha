@@ -22,6 +22,18 @@ const GRID_CLASS = 'BattlePanel_combatConsumables';
 const HIDDEN_LABEL_ATTR = 'data-mwi-combat-supplies-label-hidden';
 
 /**
+ * True when the element carries a class of exactly this game prefix (`Prefix__hash`), not merely a class
+ * that contains the text somewhere.
+ * @param {Element} el
+ * @param {string} prefix - e.g. 'LabyrinthPanel_supplies'
+ * @returns {boolean}
+ */
+function hasGameClass(el, prefix) {
+    const classes = typeof el?.className === 'string' ? el.className.split(/\s+/) : [];
+    return classes.some((c) => c.startsWith(`${prefix}__`));
+}
+
+/**
  * The game's "Consumables" heading: the block's own `BattlePanel_label` child, found by class rather than
  * by text (players run the game in Chinese). Live DOM (2026-11-14): BattlePanel_combatConsumables holds a
  * BattlePanel_label ("Consumables") and then the BattlePanel_combatConsumableGrid. The one place to adjust
@@ -30,7 +42,8 @@ const HIDDEN_LABEL_ATTR = 'data-mwi-combat-supplies-label-hidden';
  * @returns {Element|null} The heading, or null when the block has none
  */
 export function findConsumablesHeading(block) {
-    return block?.querySelector?.(':scope > [class*="BattlePanel_label"]') || null;
+    if (!block) return null;
+    return [...block.children].find((child) => hasGameClass(child, 'BattlePanel_label')) || null;
 }
 
 /** Open the Consumables panel on its Combat tab (opens it, or switches tab; never closes it). */
@@ -67,20 +80,16 @@ function createButton() {
 }
 
 /**
- * Replace the "Consumables" heading with the button, once per rendered block. With no heading found the
- * button goes at the top of the block instead. `disable()` takes the button out and shows the heading again.
+ * Replace the "Consumables" heading with the button, once per rendered block. With no heading found nothing
+ * is added. `disable()` takes the button out and shows the heading again.
  * @param {Element} grid - The BattlePanel_combatConsumables element
  */
 export function injectButton(grid) {
-    if (!grid || grid.querySelector(`.${BUTTON_CLASS}`)) return;
-    const button = createButton();
+    if (!grid || !hasGameClass(grid, 'BattlePanel_combatConsumables') || grid.querySelector(`.${BUTTON_CLASS}`)) return;
+    // No heading, no button: never guess a spot in a block that is not the real consumables block
     const heading = findConsumablesHeading(grid);
-    if (!heading) {
-        button.style.margin = '0 0 4px 0';
-        button.style.display = 'block';
-        grid.insertAdjacentElement('afterbegin', button);
-        return;
-    }
+    if (!heading) return;
+    const button = createButton();
     // In the heading's place, as on the Labyrinth screen: same font and line from the heading's own class,
     // so the row keeps its height. The heading is hidden, not removed, so React still owns it.
     const holder = document.createElement('div');
@@ -104,7 +113,7 @@ export function disable() {
     unregister?.();
     unregister = null;
     document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((el) => {
-        // The holder that stood in for the heading goes with it; a fallback button stands alone
+        // The holder that stood in for the heading goes with it
         if (el.parentElement?.previousElementSibling?.hasAttribute(HIDDEN_LABEL_ATTR)) el.parentElement.remove();
         else el.remove();
     });

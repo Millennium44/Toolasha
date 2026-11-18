@@ -35,6 +35,7 @@ import feature, { injectButton, handleClick } from './labyrinth-missing-supplies
 // The entry screen: a wrapper holding the "Supplies" label and the supplies grid.
 function makeSuppliesBlock() {
     const wrapper = document.createElement('div');
+    wrapper.className = 'LabyrinthPanel_supplies__3n0yg';
     const label = document.createElement('div');
     label.className = 'LabyrinthPanel_label__2xYzA';
     label.textContent = 'Supplies';
@@ -43,6 +44,24 @@ function makeSuppliesBlock() {
     wrapper.append(label, grid);
     document.body.appendChild(wrapper);
     return { wrapper, label, grid };
+}
+
+// The live entry screen (test server, 2026-11-17): bottomArea > infoContainer > [supplies (label + suppliesGrid),
+// crates (label + cratesGrid), buttonsContainer (label + Enter)], beside entryScreen > instructionsPanel >
+// instructionsText ("The Labyrinth consists of floors...")
+function makeEntryScreen() {
+    const tab = document.createElement('div');
+    tab.className = 'LabyrinthPanel_labyrinthTab__3_b10';
+    tab.innerHTML =
+        '<div class="LabyrinthPanel_entryScreen__pOtpK"><div class="LabyrinthPanel_instructionsPanel__1a-j6">' +
+        '<div class="LabyrinthPanel_label__2p7tI">Instructions</div>' +
+        '<div class="LabyrinthPanel_instructionsText__1zfuT">The Labyrinth consists of floors of skilling and ' +
+        'combat challenges.</div></div></div>' +
+        '<div class="LabyrinthPanel_bottomArea__t8T1R"><div class="LabyrinthPanel_infoContainer__1LkYc">' +
+        '<div class="LabyrinthPanel_supplies__3n0yg"><div class="LabyrinthPanel_label__2p7tI">Supplies</div>' +
+        '<div class="LabyrinthPanel_suppliesGrid__30Vqz"></div></div></div></div>';
+    document.body.appendChild(tab);
+    return tab;
 }
 
 describe('labyrinth missing supplies', () => {
@@ -55,6 +74,29 @@ describe('labyrinth missing supplies', () => {
     afterEach(() => {
         feature.disable();
         document.body.innerHTML = '';
+    });
+
+    test('live entry screen: the button replaces only the Supplies label, never the description section', () => {
+        const tab = makeEntryScreen();
+        injectButton(tab.querySelector('[class*="LabyrinthPanel_suppliesGrid"]'));
+        const buttons = tab.querySelectorAll('button');
+        expect(buttons).toHaveLength(1);
+        expect(tab.querySelector('[class*="LabyrinthPanel_entryScreen"]').querySelector('button')).toBeNull();
+        expect(buttons[0].closest('[class*="LabyrinthPanel_supplies__"]')).not.toBeNull();
+    });
+
+    test('a grid whose parent is not the supplies block is left alone, even with a label further down', () => {
+        const tab = makeEntryScreen();
+        const grid = tab.querySelector('[class*="LabyrinthPanel_suppliesGrid"]');
+        const outer = document.createElement('div');
+        outer.className = 'LabyrinthPanel_infoContainer__1LkYc';
+        const label = tab.querySelector(
+            '[class*="LabyrinthPanel_instructionsPanel"] > [class*="LabyrinthPanel_label"]'
+        );
+        outer.append(grid, label.cloneNode(true));
+        tab.appendChild(outer);
+        injectButton(grid);
+        expect(document.querySelector('button')).toBeNull();
     });
 
     test('injectButton puts one button in place of the Supplies label, with the label hidden, not removed', () => {

@@ -29,6 +29,18 @@ export function handleClick() {
 
 const HIDDEN_LABEL_ATTR = 'data-mwi-lab-supplies-label-hidden';
 
+/**
+ * True when the element carries a class of exactly this game prefix (`Prefix__hash`), not merely a class
+ * that contains the text somewhere.
+ * @param {Element} el
+ * @param {string} prefix - e.g. 'LabyrinthPanel_supplies'
+ * @returns {boolean}
+ */
+function hasGameClass(el, prefix) {
+    const classes = typeof el?.className === 'string' ? el.className.split(/\s+/) : [];
+    return classes.some((c) => c.startsWith(`${prefix}__`));
+}
+
 function createButton() {
     const button = document.createElement('button');
     button.type = 'button';
@@ -61,9 +73,13 @@ function createButton() {
  * @param {Element} grid - The LabyrinthPanel_suppliesGrid element
  */
 export function injectButton(grid) {
-    const wrapper = grid?.parentElement;
-    if (!wrapper || wrapper.querySelector(`.${BUTTON_CLASS}`)) return;
-    const label = wrapper.querySelector('[class*="LabyrinthPanel_label"]');
+    // Only the real supplies grid, in its own LabyrinthPanel_supplies block, and only that block's own
+    // heading: a looser lookup can land on the entry screen's description or another section's label
+    if (!hasGameClass(grid, 'LabyrinthPanel_suppliesGrid')) return;
+    const wrapper = grid.parentElement;
+    if (!wrapper || !hasGameClass(wrapper, 'LabyrinthPanel_supplies')) return;
+    if (wrapper.querySelector(`.${BUTTON_CLASS}`)) return;
+    const label = [...wrapper.children].find((child) => hasGameClass(child, 'LabyrinthPanel_label'));
     if (!label) return;
     const holder = document.createElement('div');
     // The heading's own class: same font, margins and centering as the line it replaces
