@@ -234,6 +234,8 @@ describe('a queued item that is also a generated forced-armor row', () => {
         const kept = rowsFor(await run(two(), queue), CAPE).find((row) => row.candidate.checkedSwap);
         expect(kept.candidate.freedItems).toEqual([]);
         expect(kept.candidate.keptItems).toEqual([worn(OLD_CAPE)]);
+        // The source being enhanced stays an input the pricing can spend
+        expect(kept.candidate.removedItems).toBeUndefined();
         expect(kept.cost).toBeGreaterThan(credited.cost);
     });
 

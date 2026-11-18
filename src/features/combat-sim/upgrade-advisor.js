@@ -9339,9 +9339,12 @@ function queuedArmorPricedLikeGenerated(queued, keepReplaced) {
     if (!queued.checkedSwap || !keepReplaced || !LAB_ARMOR_SLOTS.has(queued.slot)) return queued;
     // A copy already owned costs nothing and sells nothing
     if (queued.noPurchase || !(queued.removedItems?.length || queued.freedItems?.length)) return queued;
-    const armor = labArmorForLoadout(queued, null, keepReplaced);
+    // An enhance route has no removedItems: its source is the worn copy (currentHrid), which an empty list would
+    // stop the pricing from treating as an input to spend. Only the pieces it frees from other loadouts are kept.
+    const enhances = !queued.removedItems?.length;
+    const armor = enhances ? { ...queued } : labArmorForLoadout(queued, null, keepReplaced);
     if (armor.freedItems?.length) {
-        armor.keptItems = [...armor.keptItems, ...armor.freedItems];
+        armor.keptItems = [...(armor.keptItems || []), ...armor.freedItems];
         armor.freedItems = [];
     }
     // Priced again with the pieces kept, in the pool
