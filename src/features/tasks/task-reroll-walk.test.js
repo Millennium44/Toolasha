@@ -255,6 +255,11 @@ const flush = async () => {
 const chipText = () => document.querySelector('.mwi-task-reroll-walk-advance')?.textContent || '';
 /** The chip's hover title, which carries a finished walk's summary */
 const chipTitle = () => document.querySelector('.mwi-task-reroll-walk-advance')?.title || '';
+/** A walk that changed the board ends on one more press: the walk's own sort, then Done */
+function pressClosingSort() {
+    expect(chipText().startsWith('▶ Sort the board to finish')).toBe(true);
+    walk.advance();
+}
 
 /**
  * The player presses a game button the walk asked for.
@@ -862,6 +867,7 @@ describe('the unread notice is read first', () => {
         expect(clicks).toEqual(['Notice:Read']);
         notice.remove();
         vi.advanceTimersByTime(3000);
+        pressClosingSort();
         expect(chipTitle()).toContain('✓ Done');
     });
 
@@ -1245,6 +1251,7 @@ describe('a discarded slot is done with, not walked again', () => {
 
         expect(clicks.filter((click) => click.endsWith(':10,000'))).toHaveLength(1);
         expect(walk.tally.goldSpent).toBe(10000);
+        pressClosingSort();
         expect(chipText()).toBe('↻ Walk again');
         expect(chipTitle()).toContain('✓ Done — 0 kept, 1 rerolled, 1 trashed · spent 10.0K🪙.');
     });
@@ -1389,6 +1396,62 @@ describe('the walk replans rather than clicking the wrong thing', () => {
     });
 });
 
+describe('a walk that changed the board ends with a sort', () => {
+    const FISHING = '/actions/fishing/shrimp';
+    const CLAIM = ['Claim Reward'];
+    const removeCard = (list, slot) => list.children[slot - 1].remove();
+
+    /** Claim the one finished card on a board whose other card is kept */
+    async function claimWalk() {
+        walk.protectedHrids = new Set([MILKING]);
+        const list = board([
+            { name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) },
+            { name: 'Fishing - Shrimp', buttons: CLAIM, quest: quest(FISHING) },
+        ]);
+        await walk.start();
+        walk.advance();
+        removeCard(list, 2);
+        vi.advanceTimersByTime(3000);
+        return list;
+    }
+
+    test('the last step sorts the board with one press, clicks no game button, then the walk is done', async () => {
+        await claimWalk();
+        sorter.sortTasks.mockClear();
+        const before = clicks.length;
+
+        expect(chipText()).toBe('▶ Sort the board to finish');
+        expect(sorter.sortTasks).not.toHaveBeenCalled();
+        walk.advance();
+
+        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
+        expect(sorter.sortTasks).toHaveBeenCalledWith(true);
+        expect(clicks).toHaveLength(before);
+        expect(chipText()).toBe('↻ Walk again');
+        // Nothing more happens on its own
+        vi.advanceTimersByTime(30000);
+        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
+    });
+
+    test('a walk that kept every card has nothing to tidy and is done without the step', async () => {
+        walk.protectedHrids = new Set([MILKING]);
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        sorter.sortTasks.mockClear();
+        await walk.start();
+        expect(chipText()).toBe('↻ Walk again');
+        expect(sorter.sortTasks).not.toHaveBeenCalled();
+    });
+
+    test('the next walk that changes the board offers the sort again', async () => {
+        await claimWalk();
+        walk.advance();
+        expect(chipText()).toBe('↻ Walk again');
+
+        await claimWalk();
+        expect(chipText()).toBe('▶ Sort the board to finish');
+    });
+});
+
 describe('what the walk spent', () => {
     /**
      * Pay once on a one-card board and let the reroll land as a protected task,
@@ -1413,6 +1476,7 @@ describe('what the walk spent', () => {
         walk.advance();
         setButtons(list, 1, AT_REST);
         vi.advanceTimersByTime(200);
+        pressClosingSort();
     }
 
     test('a coin payment is billed at the price the chooser quoted, and rides the label', async () => {
@@ -2108,6 +2172,7 @@ describe('finished tasks are claimed before anything is rerolled', () => {
         walk.advance();
         removeCard(list, 2);
         vi.advanceTimersByTime(3000);
+        pressClosingSort();
 
         expect(chipTitle()).toContain('✓ Done — 1 claimed, 1 kept, 0 rerolled, 0 trashed');
     });
@@ -2131,6 +2196,7 @@ describe('finished tasks are claimed before anything is rerolled', () => {
         removeCard(list, 1);
         vi.advanceTimersByTime(3000);
         expect(walk.tally.claimed).toBe(1);
+        pressClosingSort();
         expect(chipTitle()).toContain('1 claimed');
     });
 

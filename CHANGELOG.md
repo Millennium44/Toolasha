@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Swaps queued under "Check a swap" are now ranked in every Upgrade run's table, so the Budget plan, Verify and saved results consider them too. A single-fight run includes queued items; use Check for queued abilities there.
 
+### Task reroll walk ends with a sort
+
+A walk that rerolled, discarded, claimed or read tasks now ends on one more press, "Sort the board to finish", which sorts the board like the Sort Tasks button. A walk that kept every card goes straight to Done.
+
 ### Alchemy Best Items keeps its own-stock rows while you act
 
 The "Chain/hr (own stock)" table no longer empties and starts over each time an action completes. Each drink used made every tea-dependent figure count as stale, so this also saves recalculating them across Toolasha.
