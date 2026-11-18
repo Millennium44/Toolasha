@@ -3902,6 +3902,30 @@ describe('what a budget buys', () => {
         expect(planFor([folded, generated], 1000).picks).toHaveLength(1);
     });
 
+    test('two folded queued auras that fill the same empty slot are never both bought', () => {
+        const aura = (hrid) => {
+            const row = covering([0, 1, 2], { cost: 10 });
+            row.candidate = {
+                type: 'ability_swap',
+                slot: 'ability_1',
+                upgradeHrid: hrid,
+                checkedAbility: true,
+                fillsAny: ['ability_1'],
+            };
+            return row;
+        };
+        expect(planFor([aura('/abilities/critical_aura'), aura('/abilities/fierce_aura')], 1000).picks).toHaveLength(1);
+        // Nor alongside a generated fill of that slot
+        const generatedFill = covering([0, 1, 2], { cost: 10 });
+        generatedFill.candidate = {
+            type: 'ability_swap',
+            slot: 'ability_1',
+            upgradeHrid: '/abilities/mystic_aura',
+            fillsFreeSlot: true,
+        };
+        expect(planFor([aura('/abilities/critical_aura'), generatedFill], 1000).picks).toHaveLength(1);
+    });
+
     test('a second piece is valued only at what it adds', () => {
         // The cheap piece is the best thing room 0 can wear; the broad one is
         // better than nothing in room 1 and worse than the first in room 0, so

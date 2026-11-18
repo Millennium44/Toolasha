@@ -1039,6 +1039,16 @@ export function mergeCheckedAbilityRows(analysis, gameData) {
         // `replacesHrid` is gone
         const displaced = [...new Set(applied.map((fight) => fight.option?.replacesHrid).filter(Boolean))];
         if (displaced.length) candidate.replacesAny = displaced;
+        // And every empty slot they fill: two queued auras that each fill one loadout's free aura slot cannot
+        // both be bought
+        const filled = [
+            ...new Set(
+                applied
+                    .filter((fight) => fight.option?.fillsFreeSlot && fight.option.slot)
+                    .map((fight) => fight.option.slot)
+            ),
+        ];
+        if (filled.length) candidate.fillsAny = filled;
         delete candidate.poolKey;
         delete candidate.optionLabel;
         delete candidate.optionId;

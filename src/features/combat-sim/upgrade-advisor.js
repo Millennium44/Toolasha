@@ -8232,6 +8232,7 @@ export function conflictKeys(candidate) {
             if (hrid === candidate.upgradeHrid) continue;
             keys.push(`ability:${hrid}`, `ability_out:${hrid}`);
         }
+        for (const slot of candidate.fillsAny || []) keys.push(`ability_fill:${slot}`);
         return [...new Set(keys)];
     }
 

@@ -411,6 +411,38 @@ describe('the whole run: best replacement per loadout', () => {
         expect(row.attemptsDelta).toBeLessThan(0);
     });
 
+    test('a fold that fills an empty slot keeps the slot it fills, so the budget sees the competition for it', async () => {
+        // Any aura is better than none; the bar has its aura slot free
+        state.sim = async ({ playerDTOs }) => {
+            const has = playerDTOs[0].abilities.some((entry) => entry?.hrid === CRIT_AURA);
+            return {
+                encounters: (has ? 0.7 : 0.5) * 1000,
+                labyAttemptCount: 1000,
+                experienceGained: {},
+                simulatedTime: 1,
+            };
+        };
+        const bare = loadout([null, ability(SMACK, 12), ability(POKE, 14), ability(TOUGHNESS, 16)]);
+        const built = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [bare], gameData);
+        const raw = await advisor.runLabyrinthAllFightsAnalysis(
+            {
+                fights: [fight('mimic', bare)],
+                crates: [],
+                hours: 1,
+                precision: null,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: [],
+                extraCandidates: built.candidates,
+            },
+            () => {}
+        );
+        const row = mergeCheckedAbilityRows(raw, gameData).results[0];
+        expect(row.fights[0].option.fillsFreeSlot).toBe(true);
+        expect(row.candidate.fillsAny).toEqual([row.fights[0].option.slot]);
+        expect(advisor.conflictKeys(row.candidate)).toContain(`ability_fill:${row.fights[0].option.slot}`);
+    });
+
     test('fights sharing a saved loadout all take the one option that minimizes its summed attempts', async () => {
         // Replacing Smack is far better against the mimic and slightly worse against the cyclops
         // than replacing Poke, but Smack wins on summed attempts, so both fights must use it
