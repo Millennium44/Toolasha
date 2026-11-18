@@ -69,6 +69,7 @@ const dataManagerMock = vi.hoisted(() => ({
     getCurrentCharacterId: () => dataManagerMock.characterId,
     getCurrentCharacterGameMode: () => 'standard',
     getMarketListings: () => [],
+    getItemDetails: () => ({ name: 'Item A' }),
     getInitClientData: () => ({ itemDetailMap: {} }),
 }));
 
@@ -91,9 +92,10 @@ const estimatedListingAgeMock = vi.hoisted(() => ({
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({ default: dataManagerMock }));
+const settingsMock = vi.hoisted(() => ({ market_tradeLedger: false }));
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: () => false,
+        getSetting: (key) => settingsMock[key] ?? false,
         getSettingValue: (key, fallback) => fallback,
         Z_MODAL: 1000,
     },
@@ -133,6 +135,7 @@ beforeEach(() => {
 
     marketHistoryViewer.listings = [];
     marketHistoryViewer.filteredListings = [];
+    settingsMock.market_tradeLedger = false;
     marketHistoryViewer.dateBasis = 'listed';
     marketHistoryViewer.fillDateRange = { dateFrom: null, dateTo: null };
     marketHistoryViewer.lastFillTimes = new Map();
@@ -787,5 +790,62 @@ describe('an import whose log write fails after older rows were archived', () =>
         );
         // The table is refreshed: the archive did take rows
         expect(marketHistoryViewer.loadListings).toHaveBeenCalled();
+    });
+});
+
+describe('the fill-date control and the Trade Ledger setting', () => {
+    const proto = Object.getPrototypeOf(marketHistoryViewer);
+    const NOTE = '.mwi-market-history-ledger-note';
+
+    function draw(fillTimes) {
+        ledgerMock.getLastFillTimes.mockReturnValue(fillTimes);
+        marketHistoryViewer.listings = [
+            { id: 7, itemHrid: '/items/a', isSell: true, timestamp: 1000, filledQuantity: 1 },
+        ];
+        marketHistoryViewer.dateBasis = 'fill';
+        // Earlier suites stub the instance's applyFilters
+        proto.applyFilters.call(marketHistoryViewer);
+        marketHistoryViewer.modal = document.createElement('div');
+        const container = document.createElement('div');
+        container.className = 'mwi-market-history-table-container';
+        marketHistoryViewer.modal.appendChild(container);
+        marketHistoryViewer.renderControls = vi.fn();
+        marketHistoryViewer.renderPagination = vi.fn();
+        proto.renderTable.call(marketHistoryViewer);
+        return container;
+    }
+
+    afterEach(() => {
+        marketHistoryViewer.modal = null;
+    });
+
+    test('ledger off: the table says where fill dates come from', () => {
+        settingsMock.market_tradeLedger = false;
+        const container = draw(new Map());
+        expect(container.querySelector(NOTE)?.textContent).toMatch(/Trade Ledger, which is off/);
+    });
+
+    test('ledger on but nothing recorded: no note, and the fill date is blank', () => {
+        settingsMock.market_tradeLedger = true;
+        const container = draw(new Map());
+        expect(container.querySelector(NOTE)).toBeNull();
+        expect(container.querySelectorAll('tbody tr')).toHaveLength(1);
+        expect(container.querySelector('tbody td').textContent).toBe('—');
+    });
+
+    test('ledger on with a recorded fill: no note and the date is shown', () => {
+        settingsMock.market_tradeLedger = true;
+        const container = draw(new Map([['7', new Date(2026, 10, 17, 12).getTime()]]));
+        expect(container.querySelector(NOTE)).toBeNull();
+        expect(container.querySelectorAll('tbody tr')).toHaveLength(1);
+        expect(container.querySelector('tbody td').textContent).toBe('11-17 12:00:00');
+    });
+
+    test('the note is for the fill basis only', () => {
+        settingsMock.market_tradeLedger = false;
+        const container = draw(new Map());
+        marketHistoryViewer.dateBasis = 'listed';
+        proto.renderTable.call(marketHistoryViewer);
+        expect(container.querySelector(NOTE)).toBeNull();
     });
 });

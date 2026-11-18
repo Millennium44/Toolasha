@@ -1300,6 +1300,21 @@ class MarketHistoryViewer {
             tableContainer.appendChild(note);
         }
 
+        if (this.dateBasis === 'fill' && !config.getSetting('market_tradeLedger')) {
+            const note = document.createElement('div');
+            note.className = 'mwi-market-history-ledger-note';
+            note.textContent =
+                'Fill dates come from the Trade Ledger, which is off — turn it on in settings to record them.';
+            note.style.cssText = `
+                padding: 6px 10px;
+                margin-bottom: 6px;
+                color: #f0b429;
+                background: rgba(240, 180, 41, 0.12);
+                border-radius: 4px;
+            `;
+            tableContainer.appendChild(note);
+        }
+
         const table = document.createElement('table');
         table.style.cssText = `
             width: 100%;
