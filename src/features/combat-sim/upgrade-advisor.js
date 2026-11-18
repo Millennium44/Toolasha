@@ -4311,9 +4311,10 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
                     toLevel: Math.max(0, Math.floor(Number(enhancementLevel) || 0)),
                     fresh: false,
                     alreadyHeld: true,
-                    fromEquipped: false,
+                    fromEquipped: Boolean(held.owned && held.equipped),
                     isSelf: Boolean(isSelf),
                     baseCost: 0,
+                    ...(held.owned ? { owned: true } : {}),
                     ...(held.claimed ? { claimed: true, claimedForfeit: held.forfeit } : {}),
                 },
             };
@@ -4369,7 +4370,7 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
 /**
  * A copy of a self-enhanced item the live character holds unworn at or above the
  * level a swap asks for, best-fitting (lowest sufficient) first. The worn copy is
- * never returned: swapping to the piece already worn is not a swap. Only the live
+ * not returned (except for a forced gear row, which only asks whether the piece is owned): swapping to the piece already worn is not a swap. Only the live
  * character's rows read the inventory.
  * @param {string} itemHrid - Item HRID
  * @param {number} targetLevel - Level the swap asks for
@@ -4382,9 +4383,17 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
 function heldSwapCopy(itemHrid, targetLevel, isSelf, candidate = null) {
     if (!isSelf) return null;
     const target = Math.max(0, Math.floor(Number(targetLevel) || 0));
+    // A forced labyrinth gear row puts a piece the character owns into a loadout. Loadouts reference items, so
+    // a copy owned at that level, worn or in the bag, is free, and another loadout wearing it costs nothing:
+    // a copy forfeits its resale only when a route consumes it (an enhancement input), which this is not
+    const owned = candidate?.labArmor === true;
     const spares = markTakenCopies(copiesForPricing(itemHrid, { isSelf, candidate }), itemHrid, candidate)
-        .filter((copy) => !copy.equipped && copy.level >= target)
-        .map((copy) => ({ ...copy, forfeit: copy.claimed || copy.taken ? sellValue(itemHrid, copy.level) : 0 }));
+        .filter((copy) => (owned || !copy.equipped) && copy.level >= target)
+        .map((copy) => ({
+            ...copy,
+            ...(owned ? { claimed: false, owned: true } : {}),
+            forfeit: !owned && (copy.claimed || copy.taken) ? sellValue(itemHrid, copy.level) : 0,
+        }));
     // Cheapest first; among equals the lowest sufficient level, the best-fitting spare
     spares.sort((a, b) => a.forfeit - b.forfeit || a.level - b.level);
     return spares[0] || null;

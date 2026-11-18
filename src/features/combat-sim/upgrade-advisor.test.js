@@ -274,6 +274,7 @@ const {
     goldPerPercent,
     replacedIn,
     widenReplacedDescription,
+    withLoadoutClaims,
     explainUpgradeCost,
     computeEconomics,
     assignRankScores,
@@ -8492,6 +8493,72 @@ describe('what a cross-slot swap displaces', () => {
         const dto = { equipment: { [MAIN_HAND]: { hrid: '/items/vampiric_bow', enhancementLevel: 1 } } };
 
         expect(replacedIn(candidate, dto, gameData)).toBe('Vampiric Bow +1');
+    });
+});
+
+describe('a forced gear row for a piece the character already owns', () => {
+    const CAPE = '/items/grand_cape_refined';
+    const copy = (enhancementLevel, itemLocationHrid) => ({
+        itemHrid: CAPE,
+        enhancementLevel,
+        count: 1,
+        itemLocationHrid,
+    });
+    const forced = (level, extra = {}) => ({
+        type: 'cross_slot',
+        labArmor: true,
+        slot: BACK,
+        currentHrid: '/items/plain_cape',
+        currentLevel: 5,
+        upgradeHrid: CAPE,
+        upgradeLevel: level,
+        addedSlots: { [BACK]: { hrid: CAPE, enhancementLevel: level } },
+        clearedSlots: [],
+        removedItems: [],
+        keptItems: [{ hrid: '/items/plain_cape', enhancementLevel: 5 }],
+        ...extra,
+    });
+    afterEach(() => {
+        held.items = [];
+    });
+
+    test('a worn copy at the row level is free, though it is the only one and above +5', () => {
+        held.items = [copy(7, '/item_locations/back')];
+        expect(calculateUpgradeCost(forced(7), buildGameData())).toBe(0);
+    });
+
+    test('a bag copy another loadout wears is free too: it is referenced, not consumed', () => {
+        held.items = [copy(7, '/item_locations/inventory')];
+        const claims = new Map([[`${CAPE}@7`, 1]]);
+        const row = withLoadoutClaims(forced(7), claims);
+        expect(calculateUpgradeCost(row, buildGameData())).toBe(0);
+        const ladder = explainUpgradeCost(row, buildGameData()).ladder;
+        expect(ladder).toMatchObject({ alreadyHeld: true, owned: true, fromLevel: 7, toLevel: 7 });
+        expect(ladder.claimed).toBeUndefined();
+    });
+
+    test('a row above the best owned copy still prices the steps', () => {
+        held.items = [copy(7, '/item_locations/back')];
+        const cost = calculateUpgradeCost(forced(9), buildGameData());
+        expect(cost).not.toBe(0);
+    });
+
+    test('a party member row reads no inventory', () => {
+        held.items = [copy(7, '/item_locations/back')];
+        expect(calculateUpgradeCost(forced(7), buildGameData(), false)).not.toBe(0);
+    });
+
+    test('an in-place level-up of the worn piece is not made free by owning it', () => {
+        held.items = [copy(7, '/item_locations/back')];
+        const levelUp = {
+            type: 'enhancement',
+            slot: BACK,
+            currentHrid: CAPE,
+            currentLevel: 7,
+            upgradeHrid: CAPE,
+            upgradeLevel: 7,
+        };
+        expect(calculateUpgradeCost(levelUp, buildGameData())).not.toBe(0);
     });
 });
 

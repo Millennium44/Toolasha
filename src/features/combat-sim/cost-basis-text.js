@@ -107,6 +107,7 @@ export function ladderSentence(ladder, total = null, detail = null) {
         if (ladder.claimed) {
             return `You hold a spare at +${ladder.fromLevel}, which meets +${ladder.toLevel}, but another loadout wears it${forfeitNote}.`;
         }
+        if (ladder.owned) return `You already own it at +${ladder.fromLevel}, which meets +${ladder.toLevel}.`;
         return `You already hold a spare at +${ladder.fromLevel}, which meets +${ladder.toLevel}.`;
     }
     const span =
@@ -219,7 +220,11 @@ export function compactCostLines(
                         `using it gives up ${money(ladder.claimedForfeit)} of resale.`
                 );
             } else {
-                main(`You already hold a +${ladder.fromLevel} spare that meets +${ladder.toLevel}: nothing to buy.`);
+                main(
+                    ladder.owned
+                        ? `You already own it at +${ladder.fromLevel}, which meets +${ladder.toLevel}: nothing to buy.`
+                        : `You already hold a +${ladder.fromLevel} spare that meets +${ladder.toLevel}: nothing to buy.`
+                );
             }
         } else if (ladder.mirror) {
             const held = heldMirrorInputsNote(unnamedHeldLevels(ladder.mirror.heldLevels, detail.forgone));
