@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy Best Items keeps its own-stock rows while you act
+
+The "Chain/hr (own stock)" table no longer empties and starts over each time an action completes. Each drink used made every tea-dependent figure count as stale, so this also saves recalculating them across Toolasha.
+
 ### Combat sim follows the game's rules for Echo and Overkill
 
 Echo now also repeats auto attacks and heals at half strength, not only damage abilities, and an echo no longer life-steals or leeches mana. Overkill from every target of one area attack is now saved together for your next hit, instead of spilling into the next target of the same cast.

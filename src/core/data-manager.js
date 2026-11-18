@@ -53,6 +53,27 @@ function shallowEqualMaps(a, b) {
     return true;
 }
 
+/**
+ * What in the drink slots decides a buff: per action type, each slot's drink and whether it is on. The
+ * countdowns the game streams while a drink runs are left out.
+ * @param {Map<string, Array<Object|null>>} map - Action type to its drink slot rows
+ * @returns {string} The signature
+ */
+function drinkSlotsSignature(map) {
+    return [...map.entries()]
+        .map(
+            ([actionTypeHrid, drinks]) =>
+                `${actionTypeHrid}=` +
+                (drinks || [])
+                    .map((row, index) =>
+                        row ? `${row.slotIndex ?? index}:${row.itemHrid ?? ''}:${row.isActive !== false}` : '-'
+                    )
+                    .join(',')
+        )
+        .sort()
+        .join('|');
+}
+
 /** Retries of the static-data load before giving up (60 x 500 ms = 30 s). */
 const MAX_STATIC_DATA_ATTEMPTS = 60;
 
@@ -2321,11 +2342,15 @@ class DataManager {
             return;
         }
 
+        const before = drinkSlotsSignature(this.actionTypeDrinkSlotsMap);
         this.actionTypeDrinkSlotsMap.clear();
         for (const [actionTypeHrid, drinks] of Object.entries(drinkSlotsMap)) {
             this.actionTypeDrinkSlotsMap.set(actionTypeHrid, drinks || []);
         }
-        this.buffStateVersion++;
+        // The game resends the whole map each time a drink is used, with only the countdowns moved. Bumping on
+        // every copy threw away every figure keyed on the version (Best Items' own-stock rows emptied on each
+        // action). Only a different drink in a slot, or one turned on or off, changes a buff.
+        if (drinkSlotsSignature(this.actionTypeDrinkSlotsMap) !== before) this.buffStateVersion++;
     }
 
     /**
