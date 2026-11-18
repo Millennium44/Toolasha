@@ -791,6 +791,48 @@ describe('Check a swap', () => {
             }
         });
 
+        test('a stopped run leaves the queued abilities out of the table and the count, and says so', async () => {
+            await twoFights(5, 7);
+            type('combat', 'Sinister Cape', '7');
+            ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+            tickOnly('combat_level');
+            const option = (label) => ({
+                candidate: {
+                    checkedAbilityKey: '/abilities/fireball@20',
+                    upgradeHrid: '/abilities/fireball',
+                    upgradeLevel: 20,
+                    optionLabel: label,
+                },
+            });
+            const swapRow = { candidate: { checkedSwap: true, upgradeHrid: CAPE, upgradeLevel: 7 } };
+            const orderRow = { candidate: { checkedAbilityKey: 'ability_order', abilityOrder: true } };
+            const generatedRow = { candidate: { type: 'combat_level' } };
+            const partial = {
+                baseline: { fights: [{ monsterName: 'Mimic', winRate: 0.5 }], expectedAttempts: 2 },
+                results: [option('slot 1'), option('slot 2'), swapRow, orderRow, generatedRow],
+            };
+            const realBuild = ui._buildQueuedCombatCandidates.bind(ui);
+            const buildSpy = vi.spyOn(ui, '_buildQueuedCombatCandidates').mockImplementation((...args) => {
+                const built = realBuild(...args);
+                return { ...built, candidates: [...built.candidates, option('slot 1').candidate] };
+            });
+            const drawSpy = vi.spyOn(ui, '_renderAllFightsResults').mockImplementation(() => {});
+            try {
+                allSpy.mockImplementation(async () => {
+                    ui._upgradeAborted = true;
+                    return partial;
+                });
+                await ui._onUpgradeAnalyze();
+                const drawn = drawSpy.mock.calls[0][0];
+                expect(drawn.results).toEqual([swapRow, orderRow, generatedRow]);
+                expect(drawn.queuedNote.included).toBe(1);
+                expect(drawn.queuedNote.trailer).toContain('Left out because the run stopped');
+            } finally {
+                buildSpy.mockRestore();
+                drawSpy.mockRestore();
+            }
+        });
+
         test('the starting line says the queued swaps are part of the run', async () => {
             await twoFights(5, 7);
             type('combat', 'Sinister Cape', '7');

@@ -5318,10 +5318,11 @@ class LabSimUI {
      * @param {{unreached: Array<Object>, alreadyEquipped: Array<Object>, skippedAbilities: Array<Object>}} queued
      * @param {Object} analysis - The result the run draws
      * @param {Object} gameData - Game data payload
+     * @param {Array<Object>} [stoppedOut] - Queued abilities a stopped run left out of the table
      * @returns {{included: number, trailer: string}}
      * @private
      */
-    _describeQueuedRun(queued, analysis, gameData) {
+    _describeQueuedRun(queued, analysis, gameData, stoppedOut = []) {
         const describeAll = (list) => list.map((swap) => describeCheckedSwap(swap, gameData)).join(', ');
         const rows = (analysis?.results || []).filter(
             (row) => row.candidate?.checkedSwap || (row.candidate?.checkedAbilityKey && !row.candidate.abilityOrder)
@@ -5334,6 +5335,7 @@ class LabSimUI {
             queued.skippedAbilities.length
                 ? `Queued abilities need an all-fights run, use Check for: ${describeAll(queued.skippedAbilities)}.`
                 : '',
+            stoppedOut.length ? `Left out because the run stopped, use Check for: ${describeAll(stoppedOut)}.` : '',
         ]
             .filter(Boolean)
             .join(' ');
@@ -6001,10 +6003,29 @@ class LabSimUI {
                     // A queued ability is several candidates; fold them to one row each, as Check does, and drop
                     // the generated level-up rows the folded row already is
                     // A stopped run returns the options simulated so far with their baseline. Folding those would call
-                    // the best of a few options the ability's best, so a stopped run leaves each option as its own row
+                    // the best of a few options the ability's best, and leaving them unfolded draws one row per option
+                    // of the same ability, so, as Check does, a stopped run leaves the queued abilities out
+                    const stoppedOut = new Map();
+                    let drawn = rawResult;
+                    if (queued && this._upgradeAborted && Array.isArray(rawResult?.results)) {
+                        for (const candidate of queued.candidates) {
+                            if (candidate.checkedAbilityKey && !candidate.abilityOrder) {
+                                stoppedOut.set(candidate.checkedAbilityKey, {
+                                    hrid: candidate.upgradeHrid,
+                                    level: candidate.upgradeLevel,
+                                });
+                            }
+                        }
+                        drawn = {
+                            ...rawResult,
+                            results: rawResult.results.filter(
+                                (row) => !(row.candidate?.checkedAbilityKey && !row.candidate.abilityOrder)
+                            ),
+                        };
+                    }
                     const folded = queued
                         ? this._upgradeAborted
-                            ? rawResult
+                            ? drawn
                             : dropRowsCoveredByCheckedAbilities(
                                   rawResult?.baseline ? mergeCheckedAbilityRows(rawResult, gameData) : rawResult
                               )
@@ -6012,7 +6033,12 @@ class LabSimUI {
                     // The note rides on the result, so a restored or redrawn copy of it still says what the queue did
                     const analysisResult =
                         queued && folded
-                            ? { ...folded, queuedNote: this._describeQueuedRun(queued, folded, gameData) }
+                            ? {
+                                  ...folded,
+                                  queuedNote: this._describeQueuedRun(queued, folded, gameData, [
+                                      ...stoppedOut.values(),
+                                  ]),
+                              }
                             : folded;
                     // A fresh run supersedes any restored set, so its banner goes
                     this._restoredUpgradeAt = null;
