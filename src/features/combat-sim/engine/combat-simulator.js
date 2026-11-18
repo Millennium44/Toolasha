@@ -1077,9 +1077,6 @@ class CombatSimulator {
 
         const aliveTargets = targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0);
         const attackedTargets = new Set();
-        // Who this swing struck (not parried), for Echo below
-        const struckTargets = [];
-        let wasParried = false;
         const overkillPool = this._openOverkillPool(event.source);
 
         for (let i = 0; i < aliveTargets.length; i++) {
@@ -1127,9 +1124,6 @@ class CombatSimulator {
             if (parryTarget) {
                 target = source;
                 source = parryTarget;
-                wasParried = true;
-            } else {
-                struckTargets.push(target);
             }
 
             // Whether this blow is what put the target down — read before the
@@ -1269,8 +1263,8 @@ class CombatSimulator {
             }
         }
 
-        // Echo works on direct attacks, auto attacks included (the game's dev, 2026-11-18); a parry is not one
-        if (!wasParried) this._processEcho(event.source, 'autoAttack', null, struckTargets);
+        // Auto attacks do not echo: 0 echoes in 101 non-kill autos at Echo 0.168 (test server, 2026-11-18, issue
+        // #1036), though the game's dev said they do. Echo fires on ability casts only (`_processEcho` below).
         this._closeOverkillPool(event.source, overkillPool);
 
         // Re-arm BEFORE the encounter is torn down, exactly as `tryUseAbility`
@@ -2610,17 +2604,17 @@ class CombatSimulator {
     }
 
     /**
-     * Echo (talisman): a direct attack (a damage cast or an auto attack) repeats once, with the Echo chance, as a
+     * Echo (talisman): a damage cast repeats once, with the Echo chance, as a
      * second hit at half damage on every target it struck that is still standing. The repeat rolls its own accuracy
      * and crit, goes through the normal damage path (so Smite, Shatter and Overkill apply), is credited to the same
-     * ability (or to `autoAttack`), and does not itself echo or repeat the attack's side effects (stun, DoT, buffs,
+     * ability, and does not itself echo or repeat the attack's side effects (stun, DoT, buffs,
      * thorns, retaliation, life steal, mana leech, curse, fury). An attack that killed its target does not echo.
-     * Parries and thorns never echo. Heals echo too: see `_processHealEcho`.
+     * Parries and thorns never echo, and neither do auto attacks (measured 2026-11-18, #1036). Heals echo too: see `_processHealEcho`.
      *
      * @private
      * @param {Object} source - The attacker
-     * @param {string} label - The ability hrid, or 'autoAttack', the echo is credited to
-     * @param {Object|null} abilityEffect - The damage effect, or null for an auto attack
+     * @param {string} label - The ability hrid the echo is credited to
+     * @param {Object|null} abilityEffect - The damage effect
      * @param {Array<Object>} hitTargets - The units the attack struck
      */
     _processEcho(source, label, abilityEffect, hitTargets) {

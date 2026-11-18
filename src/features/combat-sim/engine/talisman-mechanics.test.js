@@ -986,27 +986,15 @@ describe('the game dev rules for Echo and Overkill (2026-11-18)', () => {
         expect(player.overkillPool).toBeNull();
     });
 
-    test('an auto attack echoes at half damage, credited to the auto attack, with no life steal or mana leech', () => {
+    test('an auto attack never echoes, even at Echo 1 (test server 2026-11-18, #1036)', () => {
         const { sim, player } = fightSim({ mechanics: { echo: 1 } });
-        player.combatDetails.combatStats.criticalRate = 10;
-        player.combatDetails.combatStats.criticalDamage = 0;
-        player.combatDetails.combatStats.lifeSteal = 0.5;
-        player.combatDetails.combatStats.manaLeech = 0.5;
-        player.combatDetails.currentHitpoints = 1;
-        player.combatDetails.currentManapoints = 0;
         seedSimRng(21);
         const calls = spyProcessAttack();
-        sim.processAutoAttackEvent(new AutoAttackEvent(sim.simulationTime, player));
-        const [swing, echo] = calls;
-        expect(calls).toHaveLength(2);
-        expect(swing.options).toBeFalsy();
-        expect(echo.options).toMatchObject({ isEcho: true, damageScale: 0.5 });
-        expect(echo.result.damageDone).toBe(Math.ceil(swing.result.damageDone / 2));
-        expect(swing.result.lifeStealHeal).toBeGreaterThan(0);
-        expect(echo.result.lifeStealHeal).toBe(0);
-        expect(echo.result.manaLeechMana).toBe(0);
-        const recorded = sim.simResult.attacks.player1[DUMMY_HRID].autoAttack;
-        expect(Object.values(recorded).reduce((sum, n) => sum + n, 0)).toBe(2);
+        for (let i = 0; i < 20; i++) {
+            sim.processAutoAttackEvent(new AutoAttackEvent(sim.simulationTime, player));
+        }
+        expect(calls).toHaveLength(20);
+        expect(calls.filter((c) => c.options?.isEcho)).toHaveLength(0);
     });
 
     test('an auto attack that kills, or a unit without Echo, draws no echo roll', () => {
