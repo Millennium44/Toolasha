@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat sim Echo no longer repeats auto attacks
+
+Measured in game, Echo never repeats an auto attack, only ability casts (all targets of an area cast). The sim now matches, so Echo talismans are no longer overvalued for auto-attack builds.
+
 ### Lab sim gear rows use the gear you already own
 
 - A cape or other piece you are wearing now counts as owned, so its row is offered at your level (a refined +7, not +5).
