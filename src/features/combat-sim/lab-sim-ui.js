@@ -1189,8 +1189,6 @@ class LabSimUI {
         this._editorEditTimer = null;
         this._triggerRefreshSeq = 0;
         this._checkedSwapSort = null;
-        // What the last Upgrade run did with the queued swaps, for its status line (see `_describeQueuedRun`)
-        this._queuedRunNote = null;
         this._skillingSwapSortHandler = null;
         this._skillLoadouts = {};
         /**
@@ -5320,7 +5318,7 @@ class LabSimUI {
      * @param {{unreached: Array<Object>, alreadyEquipped: Array<Object>, skippedAbilities: Array<Object>}} queued
      * @param {Object} analysis - The result the run draws
      * @param {Object} gameData - Game data payload
-     * @returns {{analysis: Object, included: number, trailer: string}}
+     * @returns {{included: number, trailer: string}}
      * @private
      */
     _describeQueuedRun(queued, analysis, gameData) {
@@ -5339,7 +5337,7 @@ class LabSimUI {
         ]
             .filter(Boolean)
             .join(' ');
-        return { analysis, included: rows.length, trailer };
+        return { included: rows.length, trailer };
     }
 
     /**
@@ -5959,7 +5957,6 @@ class LabSimUI {
                               claimLoadouts.map((entry) => entry.dto)
                           )
                         : null;
-                    this._queuedRunNote = null;
                     const rawResult = await runLabyrinthAllFightsAnalysis(
                         {
                             fights,
@@ -6003,12 +6000,16 @@ class LabSimUI {
                     if (!isCurrent()) return;
                     // A queued ability is several candidates; fold them to one row each, as Check does, and drop
                     // the generated level-up rows the folded row already is
-                    const analysisResult = queued
+                    const folded = queued
                         ? dropRowsCoveredByCheckedAbilities(
                               rawResult?.baseline ? mergeCheckedAbilityRows(rawResult, gameData) : rawResult
                           )
                         : rawResult;
-                    if (queued) this._queuedRunNote = this._describeQueuedRun(queued, analysisResult, gameData);
+                    // The note rides on the result, so a restored or redrawn copy of it still says what the queue did
+                    const analysisResult =
+                        queued && folded
+                            ? { ...folded, queuedNote: this._describeQueuedRun(queued, folded, gameData) }
+                            : folded;
                     // A fresh run supersedes any restored set, so its banner goes
                     this._restoredUpgradeAt = null;
                     this._restoredUpgradeMeta = null;
@@ -9035,7 +9036,7 @@ class LabSimUI {
                 : '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No results — check that combat skip levels and loadouts are set.</div>';
             this._viewRedraws.delete(checked ? 'checked-combat' : 'combat');
             if (!checked) {
-                const note = this._queuedRunNote?.analysis === analysisResult ? this._queuedRunNote.trailer : '';
+                const note = analysisResult?.queuedNote?.trailer || '';
                 this._setStatus('All-fights analysis produced no results.' + (note ? ` ${note}` : ''));
             }
             return;
@@ -9449,8 +9450,8 @@ class LabSimUI {
         // A redraw for a verdict leaves the status line to the verify run that caused it
         if (checked || options.quiet) return;
         const budget = analysisResult.budget;
-        // Only for the run that built it: a restored or redrawn-from-storage set was not run with these swaps
-        const queuedNote = this._queuedRunNote?.analysis === analysisResult ? this._queuedRunNote : null;
+        // Carried by the result itself (saved with it), so a restored or cloned redraw keeps it
+        const queuedNote = analysisResult.queuedNote || null;
         this._setStatus(
             `All-fights analysis complete: ${results.length} upgrades across ${baseline.fights.length} fights` +
                 (queuedNote?.included

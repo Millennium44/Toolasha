@@ -740,6 +740,27 @@ describe('Check a swap', () => {
             expect(ui.panel.querySelector('#mwi-labsim-swap-results').innerHTML).toBe('');
         });
 
+        test('a restored or cloned redraw of the run keeps the queued-swap note', async () => {
+            await twoFights(5, 7);
+            saveSpy = vi.spyOn(ui, '_saveLabUpgradeResults').mockImplementation(() => {});
+            type('combat', 'Sinister Cape', '7');
+            ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+            tickOnly('combat_level');
+            await ui._onUpgradeAnalyze();
+            expect(status()).toContain('including 1 queued swap');
+            // The saved record carries the note, and a copy read back from storage is a different object
+            const saved = saveSpy.mock.calls[0][0];
+            expect(saved.queuedNote).toMatchObject({ included: 1 });
+            const restored = JSON.parse(JSON.stringify(saved));
+            ui._setStatus('');
+            ui._renderAllFightsResults(restored, ui.panel.querySelector('#mwi-labsim-upgrade-results'));
+            expect(status()).toContain('including 1 queued swap');
+            // An older build's record has no note at all: the status simply omits it
+            delete restored.queuedNote;
+            ui._renderAllFightsResults(restored, ui.panel.querySelector('#mwi-labsim-upgrade-results'));
+            expect(status()).not.toContain('queued');
+        });
+
         test('the starting line says the queued swaps are part of the run', async () => {
             await twoFights(5, 7);
             type('combat', 'Sinister Cape', '7');
