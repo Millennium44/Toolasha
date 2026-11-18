@@ -8409,7 +8409,42 @@ export function candidateKey(result) {
  *   be honored the result is `{ picks: [], blocked: [{ kind, reason, ids }] }` with nothing silently dropped.
  *   `singleLoadout` makes two required pieces for one equipment slot a conflict (one DTO wears one piece).
  */
-export function planWithinBudget(
+export function planWithinBudget(results, budget, options = {}) {
+    const first = planWithinBudgetOnce(results, budget, options);
+    if (first.blocked?.length) return first;
+
+    // Greedy by gain per coin locks in the first of several mutually exclusive options for one thing (Life Drain
+    // 105 at 881M beats Life Drain 110 at 2.1B on ratio, and 110 is then refused as "a pick already uses what this
+    // needs"), even when the dearer one and everything else still fit and save more in all. Retry with each
+    // refused, better-on-its-own alternative planted first, and keep whichever plan saves the most.
+    const refused = first.skipped
+        .filter((entry) => entry.reason === 'a pick already uses what this needs')
+        .map((entry) => entry.result)
+        .filter((result) => {
+            const keys = conflictKeys(result.candidate);
+            const rivals = first.picks.filter(
+                (pick) => !pick.pinned && conflictKeys(pick.candidate).some((key) => keys.includes(key))
+            );
+            return rivals.length && rivals.every((pick) => pick.attemptsDelta > result.attemptsDelta);
+        })
+        .sort((a, b) => a.attemptsDelta - b.attemptsDelta)
+        .slice(0, MAX_SEEDED_PLANS);
+    let best = first;
+    for (const result of refused) {
+        const plan = planWithinBudgetOnce(results, budget, { ...options, seedId: candidateKey(result) });
+        if (plan && plan.attemptsSaved > best.attemptsSaved + 1e-9) best = plan;
+    }
+    return best;
+}
+
+/** Most alternative plans `planWithinBudget` will try beside the plain greedy one */
+const MAX_SEEDED_PLANS = 16;
+
+/**
+ * One greedy pass. `seedId` (a `candidateKey`) plants that row as the first fill pick; the pass returns null when
+ * it cannot be taken (not eligible, does not fit, conflicts with a pin, adds nothing).
+ */
+function planWithinBudgetOnce(
     results,
     budget,
     {
@@ -8419,6 +8454,7 @@ export function planWithinBudget(
         excluded = null,
         singleLoadout = false,
         excludeCostUnpriced = false,
+        seedId = null,
     } = {}
 ) {
     const requiredIds = new Set(required || []);
@@ -8739,9 +8775,12 @@ export function planWithinBudget(
     }
 
     const remaining = [...eligible];
+    let forced = seedId ? eligible.find((entry) => candidateKey(entry.result) === seedId) || null : null;
+    if (seedId && !forced) return null;
     while (remaining.length) {
         let best = null;
         for (const entry of remaining) {
+            if (forced && entry !== forced) continue;
             // Sharing *any* key is a conflict: one ability swap rules out both
             // the other swaps into the slot it empties and the other offers of
             // the book it buys
@@ -8786,7 +8825,11 @@ export function planWithinBudget(
                 best = contender;
             }
         }
-        if (!best) break;
+        if (!best) {
+            if (forced) return null;
+            break;
+        }
+        forced = null;
 
         const { entry, marginal } = best;
         remaining.splice(remaining.indexOf(entry), 1);

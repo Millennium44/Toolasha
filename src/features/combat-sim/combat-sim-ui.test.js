@@ -1103,6 +1103,28 @@ describe('planUpgradeBudget', () => {
             { baseline: BASELINE, metricKey: 'profit' }
         );
 
+        // One purchase, and the budget is spent on the target that gains most within it (75), not locked to the
+        // cheaper-per-coin 70
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.picks[0].candidate.description).toContain('Lv75');
+        expect(plan.totalCost).toBe(300_000_000);
+    });
+
+    test('two targets for one ability: the one that fits the budget is the one bought', () => {
+        const plan = planUpgradeBudget(
+            [
+                abilityRow('Berserk', { hrid: '/abilities/berserk', level: 70, cost: 140_600_000 }),
+                abilityRow('Berserk', {
+                    hrid: '/abilities/berserk',
+                    level: 75,
+                    cost: 300_000_000,
+                    profitGain: 3_100_000,
+                }),
+            ],
+            200_000_000,
+            { baseline: BASELINE, metricKey: 'profit' }
+        );
+
         expect(plan.picks).toHaveLength(1);
         expect(plan.totalCost).toBe(140_600_000);
     });
