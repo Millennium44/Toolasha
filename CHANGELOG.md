@@ -13,6 +13,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A budget plan never counts one owned copy twice, once free and once enhanced.
 - A row that replaces different pieces in different fights names all of them.
 
+### Lab sim skips gear a labyrinth fight cannot feel
+
+Upgrade runs no longer simulate gear that only changes stats a labyrinth fight never uses, such as charm XP or a task badge's task damage. The status line lists what was skipped, and a swap you queue by hand is always simulated.
+
+### Lab sim CSV export names each row's kind
+
+The all-fights CSV's Type column now says ability level, ability swap, house room, gear and so on instead of "gear" for everything, and coin costs export as whole coins.
+
 ### Lab sim queued swaps in Upgrade runs, tidier
 
 - A restored or redrawn Upgrade run keeps its "including N queued" note.
