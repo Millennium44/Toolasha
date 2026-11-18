@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat sim follows the game's rules for Echo and Overkill
+
+Echo now also repeats auto attacks and heals at half strength, not only damage abilities, and an echo no longer life-steals or leeches mana. Overkill from every target of one area attack is now saved together for your next hit, instead of spilling into the next target of the same cast.
+
 ### Listing prices you set outside the tradable range stay put
 
 Auto-fill no longer snaps a price you typed or stepped yourself back to the range's Min or Max. The game posts those listings and they fill once the range moves. Auto-fill still pulls its own fill back into the range.
