@@ -6000,10 +6000,14 @@ class LabSimUI {
                     if (!isCurrent()) return;
                     // A queued ability is several candidates; fold them to one row each, as Check does, and drop
                     // the generated level-up rows the folded row already is
+                    // A stopped run returns the options simulated so far with their baseline. Folding those would call
+                    // the best of a few options the ability's best, so a stopped run leaves each option as its own row
                     const folded = queued
-                        ? dropRowsCoveredByCheckedAbilities(
-                              rawResult?.baseline ? mergeCheckedAbilityRows(rawResult, gameData) : rawResult
-                          )
+                        ? this._upgradeAborted
+                            ? rawResult
+                            : dropRowsCoveredByCheckedAbilities(
+                                  rawResult?.baseline ? mergeCheckedAbilityRows(rawResult, gameData) : rawResult
+                              )
                         : rawResult;
                     // The note rides on the result, so a restored or redrawn copy of it still says what the queue did
                     const analysisResult =

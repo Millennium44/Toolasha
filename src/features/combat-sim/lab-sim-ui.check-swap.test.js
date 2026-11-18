@@ -22,6 +22,7 @@ vi.mock('../../utils/enhancement-input-pricing.js', () => {
 // so a `guild shrine guild-allowed cap` test spies on individual exports
 // rather than replacing the whole module.
 import * as upgradeAdvisor from './upgrade-advisor.js';
+import * as swapCheck from './lab-swap-check.js';
 
 const geometry = vi.hoisted(() => ({ saved: null, wasOpen: false, restoreCalls: [], saveCalls: [], openCalls: [] }));
 const game = vi.hoisted(() => ({
@@ -759,6 +760,35 @@ describe('Check a swap', () => {
             delete restored.queuedNote;
             ui._renderAllFightsResults(restored, ui.panel.querySelector('#mwi-labsim-upgrade-results'));
             expect(status()).not.toContain('queued');
+        });
+
+        test('a stopped run does not fold the options it got to into a best-of row', async () => {
+            await twoFights(5, 7);
+            type('combat', 'Sinister Cape', '7');
+            ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+            tickOnly('combat_level');
+            const partial = {
+                baseline: { fights: [{ monsterName: 'Mimic', winRate: 0.5 }], expectedAttempts: 2 },
+                results: [],
+            };
+            const mergeSpy = vi.spyOn(swapCheck, 'mergeCheckedAbilityRows');
+            try {
+                // Stop lands while the analysis is running, and it hands back what it had
+                allSpy.mockImplementation(async () => {
+                    ui._upgradeAborted = true;
+                    return partial;
+                });
+                await ui._onUpgradeAnalyze();
+                expect(mergeSpy).not.toHaveBeenCalled();
+
+                // The same result from a run nobody stopped is folded
+                ui._upgradeAborted = false;
+                allSpy.mockImplementation(async () => partial);
+                await ui._onUpgradeAnalyze();
+                expect(mergeSpy).toHaveBeenCalled();
+            } finally {
+                mergeSpy.mockRestore();
+            }
         });
 
         test('the starting line says the queued swaps are part of the run', async () => {
