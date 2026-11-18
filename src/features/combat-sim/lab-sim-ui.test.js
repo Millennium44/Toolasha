@@ -6390,6 +6390,46 @@ describe('the all-fights Combat levels table', () => {
         expect(levelLine).toContain('combat level');
         expect(levelLine).toContain('5');
     });
+
+    // The CSV's Type column is read off the candidate's own type, with the game's shapes: an ability level is
+    // not gear, a house room is not gear, and a checked swap's description never decides anything
+    const typed = (type, description, extra = {}) => ({
+        ...gear,
+        candidate: { type, slot: 'x', description, ...extra },
+        ...extra.row,
+    });
+    const csvLines = () => {
+        const [, ...lines] = csv.saved[0].split(/\r?\n/).filter(Boolean);
+        return Object.fromEntries(lines.map((l) => [l.split(',')[0], l.split(',')[1]]));
+    };
+
+    test('the CSV names each row its real kind, not gear for everything', () => {
+        const rows = [
+            typed('enhancement', 'Manticore Shield +7 → +10'),
+            typed('ability_level', 'Pestilent Shot Lv62 → Lv65'),
+            typed('house', 'Archery Range Lv3 → Lv4'),
+            typed('ability_swap', 'Critical Aura 60 (replaces Fierce Aura, replaces Mystic Aura)'),
+            typed('ability_order', 'Order: Poke → Smack'),
+            typed('guild_shrine', 'Shrine of Gathering Lv2'),
+            typed('tier', 'Anchorbound Plate Legs +10 → Anchorbound Plate Legs ★ +10'),
+            { ...typed('labyrinth_buff', 'Damage token'), costType: 'token', tokenCost: 5 },
+        ];
+        ui._renderAllFightsResults(analysis([...rows, defense()]), container);
+        container.previousElementSibling.querySelector('button').click();
+
+        expect(csvLines()).toMatchObject({
+            'Manticore Shield +7 → +10': 'gear',
+            'Pestilent Shot Lv62 → Lv65': 'ability level',
+            'Archery Range Lv3 → Lv4': 'house room',
+            'Order: Poke → Smack': 'ability order',
+            'Shrine of Gathering Lv2': 'guild shrine',
+            'Anchorbound Plate Legs +10 → Anchorbound Plate Legs ★ +10': 'gear',
+            'Damage token': 'token buff',
+            'Defense 125 → 130': 'combat level',
+        });
+        // The description holds commas, so the CSV quotes it; read it back by prefix
+        expect(csv.saved[0]).toMatch(/Critical Aura 60[^\n]*ability swap/);
+    });
 });
 
 describe('the Ability order Include option', () => {

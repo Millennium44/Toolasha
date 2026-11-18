@@ -1089,6 +1089,31 @@ function finiteOrNull(value) {
     return Number.isFinite(value) ? value : null;
 }
 
+/** What each candidate type is called in the CSV's Type column; anything not listed is a piece of gear. */
+const CSV_KIND_BY_TYPE = {
+    combat_level: 'combat level',
+    ability_level: 'ability level',
+    ability_swap: 'ability swap',
+    ability_order: 'ability order',
+    house: 'house room',
+    guild_shrine: 'guild shrine',
+    community_buff: 'community buff',
+    labyrinth_buff: 'token buff',
+    drink: 'consumable',
+    scroll: 'consumable',
+};
+
+/**
+ * The kind of change a result row is, for the CSV's Type column. Read off the candidate's own type (and the
+ * row's currency for a token buff), never off its description text.
+ * @param {Object} row - A result row
+ * @returns {string} e.g. 'gear', 'ability level', 'house room', 'combat level', 'token buff'
+ */
+export function csvUpgradeKind(row) {
+    if (row?.costType === 'token') return 'token buff';
+    return CSV_KIND_BY_TYPE[row?.candidate?.type] || 'gear';
+}
+
 /**
  * What the Combat levels table scores on: hours per attempt saved (lower is
  * better) and the average win-rate change (higher is better), counted equally.
@@ -9382,7 +9407,7 @@ class LabSimUI {
                 // has no trouble holding two currencies in two columns.
                 rows: [...sorted, ...levelSorted, ...tokenResults].map((r) => ({
                     upgrade: r.candidate?.description || '',
-                    type: r.costType === 'token' ? 'token buff' : isLevelRow(r) ? 'combat level' : 'gear',
+                    type: csvUpgradeKind(r),
                     cost: r.cost ?? null,
                     // Infinity does not survive a spreadsheet; the credit-funded
                     // row's value figure is its (negative) cost column
