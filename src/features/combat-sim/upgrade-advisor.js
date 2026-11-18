@@ -2475,6 +2475,51 @@ function labCanUse(candidate) {
 }
 
 /**
+ * Stats a Labyrinth fight never reads. Experience (skill and combat) is tallied only when a zone monster dies,
+ * and a Labyrinth room restarts without that step (engine/combat-simulator.js, the `this.labyrinth` branch);
+ * `focusTraining` only picks which skill that experience goes to; loot stats only scale drops; and
+ * `taskDamage` pays nothing because the Labyrinth passes run with task damage off (runLabyrinthSimulation gets
+ * no `taskDamageMode`, so it is off). Scales are the game's own: fractions (`rangedExperience: 0.035` is 3.5%).
+ */
+const LABYRINTH_INERT_STATS = new Set([
+    'focusTraining',
+    'taskDamage',
+    'combatDropRate',
+    'combatDropQuantity',
+    'combatRareFind',
+]);
+
+function isLabyrinthInertStat(key) {
+    return LABYRINTH_INERT_STATS.has(key) || /Experience$/.test(key);
+}
+
+/**
+ * Why a gear candidate cannot change a Labyrinth fight, or null when it might.
+ *
+ * Decided from the stats of the item(s) it takes off and puts on, base and per-enhancement alike: it is
+ * skipped only when it has at least one combat stat and every one of them is inert in the Labyrinth. An item
+ * with no stats in the data is never skipped (missing data is not proof). Only plain enhancement and tier
+ * rows qualify; a hand-checked ("Check a swap") row is the player's own question and is always simulated.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data (itemDetailMap)
+ * @returns {string|null} The inert stats it changes, e.g. "rangedExperience", or null to simulate it
+ */
+export function labyrinthInertReason(candidate, gameData) {
+    if (!candidate || (candidate.type !== 'enhancement' && candidate.type !== 'tier')) return null;
+    if (candidate.checkedSwap || candidate.checkedAbility || candidate.addedSlots) return null;
+    const keys = new Set();
+    for (const hrid of [candidate.currentHrid, candidate.upgradeHrid]) {
+        if (!hrid) continue;
+        const detail = gameData?.itemDetailMap?.[hrid]?.equipmentDetail;
+        if (!detail) return null;
+        for (const key of Object.keys(detail.combatStats || {})) keys.add(key);
+        for (const key of Object.keys(detail.combatEnhancementBonuses || {})) keys.add(key);
+    }
+    if (keys.size === 0 || [...keys].some((key) => !isLabyrinthInertStat(key))) return null;
+    return [...keys].join(', ');
+}
+
+/**
  * Whether a drink candidate adds a coffee to a free slot rather than replacing a worn drink.
  * Read off `currentHrid` too, so a candidate remembered from before the flag existed is still recognized.
  * @param {Object} candidate - Upgrade candidate
@@ -9749,9 +9794,17 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // (a pre-priced row's builder priced it without these claims), kept for this run only
     const routeDetails = new Map();
     const pricedOn = new Map();
+    // Gear whose every stat is one a Labyrinth fight never reads is not simulated: its change would be exactly
+    // zero. Said in the status line rather than silently missing (`skippedInert` on the result)
+    const skippedInert = [];
     const candidates = [...candidatesByKey.values()]
         // No drink slot or combat scroll runs in the Labyrinth: dropped before pricing, not only by `appliesTo`
         .filter(labCanUse)
+        .filter((pooled) => {
+            const stats = labyrinthInertReason(pooled, gameData);
+            if (stats) skippedInert.push({ description: pooled.description, stats });
+            return !stats;
+        })
         .map((pooled) => {
             const candidate = withLoadoutClaims(pooled, loadoutClaims);
             const isSelfRow = candidate.isSelf ?? true;
@@ -10070,6 +10123,8 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         // Which build guide each loadout was read as playing — see
         // `summariseArchetypes`. Empty when swaps were not part of the run.
         archetypes,
+        // Gear left out because it changes only stats a Labyrinth fight never reads; `[{description, stats}]`
+        skippedInert,
         // Handed back so a combination check re-runs against the same random
         // draws and the same trial counts, rather than against a fresh sample
         pairing: { seed: simSeed, rules: [...pairedRules.entries()] },

@@ -9527,6 +9527,7 @@ class LabSimUI {
                     ? ` at ${Math.round(budget.trialScale * 100)}% of the ${budget.requestedHours}h per fight — every fight simulated, win rates noisier.`
                     : '.') +
                 describeArchetypes(analysisResult.archetypes) +
+                describeInertSkips(analysisResult.skippedInert) +
                 (this._houseScanNote ? ` House rooms: ${this._houseScanNote}.` : '') +
                 (queuedNote?.trailer ? ` ${queuedNote.trailer}` : '')
         );
@@ -13491,6 +13492,27 @@ export function describeArchetypes(archetypes) {
         return `${name} → ${entry.label || entry.archetype}`;
     });
     return ` Swaps: ${parts.join(', ')}.`;
+}
+
+/**
+ * The status clause for gear the analysis left out because every stat it changes is one a Labyrinth fight never
+ * reads (experience, loot, task damage). Said out loud so the missing rows are not mistaken for a bug.
+ *
+ * @param {Array<{description: string, stats: string}>} skipped - `skippedInert` from the analysis
+ * @returns {string} Status clause, empty when nothing was left out
+ */
+export function describeInertSkips(skipped) {
+    if (!skipped?.length) return '';
+    const shown = skipped
+        .slice(0, 6)
+        .map((entry) => entry.description)
+        .join(', ');
+    const more = skipped.length > 6 ? `, and ${skipped.length - 6} more` : '';
+    return (
+        ` Not simulated (they change only stats a Labyrinth fight never reads: experience, loot, task damage): ` +
+        `${skipped.length} gear upgrade${skipped.length === 1 ? '' : 's'} — ${shown}${more}. ` +
+        'A hand-checked swap is always simulated.'
+    );
 }
 
 const labSimUI = new LabSimUI();

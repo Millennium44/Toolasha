@@ -421,6 +421,7 @@ const {
     default: ui,
     describeAllFightsPlan,
     describeArchetypes,
+    describeInertSkips,
     liveCombatRoomLevel,
     planPurchases,
 } = await import('./lab-sim-ui.js');
@@ -6429,6 +6430,26 @@ describe('the all-fights Combat levels table', () => {
         });
         // The description holds commas, so the CSV quotes it; read it back by prefix
         expect(csv.saved[0]).toMatch(/Critical Aura 60[^\n]*ability swap/);
+    });
+
+    test('the status line names the gear left out for changing nothing a Labyrinth fight reads', () => {
+        ui._renderAllFightsResults(
+            {
+                ...analysis([gear]),
+                skippedInert: [
+                    { description: 'Advanced Ranged Charm +3 → +7', stats: 'focusTraining, rangedExperience' },
+                    { description: 'Expert Task Badge +3 → +7', stats: 'taskDamage' },
+                ],
+            },
+            container
+        );
+        const status = ui.panel.querySelector('#mwi-labsim-status').textContent;
+        expect(status).toContain('Not simulated');
+        expect(status).toContain('2 gear upgrades');
+        expect(status).toContain('Advanced Ranged Charm +3 → +7');
+        expect(status).toContain('Expert Task Badge +3 → +7');
+        expect(describeInertSkips([])).toBe('');
+        expect(describeInertSkips(undefined)).toBe('');
     });
 
     test('the CSV cost is whole coins, not float noise', () => {

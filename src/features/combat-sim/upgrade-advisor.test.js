@@ -226,6 +226,7 @@ const {
     primaryLevelsAlongside,
     runLabyrinthUpgradeAnalysis,
     runLabyrinthAllFightsAnalysis,
+    labyrinthInertReason,
     runLabyrinthCombinationCheck,
     labAllFightsTrialBudget,
     matchingCostDetail,
@@ -1610,6 +1611,144 @@ describe('runLabyrinthAllFightsAnalysis', () => {
         for (const level of result.results.filter((r) => r.candidate.type === 'combat_level')) {
             expect(level.costDetail).toBeNull();
         }
+    });
+
+    describe('gear that cannot change a Labyrinth fight is not simulated', () => {
+        const CHARM = '/equipment_types/charm';
+        const TRINKET = '/equipment_types/trinket';
+        // Real itemDetailMap shapes (fractions: 0.035 is +3.5% Ranged experience; 0.0035 per enhancement level)
+        const withCharms = () => {
+            const gameData = buildGameData();
+            gameData.itemDetailMap['/items/advanced_ranged_charm'] = {
+                name: 'Advanced Ranged Charm',
+                isTradable: true,
+                itemLevel: 50,
+                sortIndex: 10,
+                equipmentDetail: {
+                    type: CHARM,
+                    combatStats: { focusTraining: '/skills/ranged', rangedExperience: 0.035 },
+                    combatEnhancementBonuses: { rangedExperience: 0.0035000000000000005 },
+                },
+            };
+            gameData.itemDetailMap['/items/expert_task_badge'] = {
+                name: 'Expert Task Badge',
+                isTradable: true,
+                itemLevel: 80,
+                sortIndex: 11,
+                equipmentDetail: {
+                    type: TRINKET,
+                    combatStats: { taskDamage: 0.15 },
+                    noncombatStats: { taskSpeed: 0.15 },
+                    combatEnhancementBonuses: { taskDamage: 0.015 },
+                },
+            };
+            // A charm that also adds a real combat stat must still be simulated
+            gameData.itemDetailMap['/items/odd_charm'] = {
+                name: 'Odd Charm',
+                isTradable: true,
+                itemLevel: 50,
+                sortIndex: 12,
+                equipmentDetail: {
+                    type: CHARM,
+                    combatStats: { rangedExperience: 0.03, rangedDamage: 4 },
+                    combatEnhancementBonuses: { rangedExperience: 0.003 },
+                },
+            };
+            return gameData;
+        };
+        const enh = (hrid, name, extra = {}) => ({
+            type: 'enhancement',
+            slot: CHARM,
+            currentHrid: hrid,
+            currentLevel: 3,
+            upgradeHrid: hrid,
+            upgradeLevel: 7,
+            description: `${name} +3 → +7`,
+            isSelf: true,
+            ...extra,
+        });
+        const run = async (equipment, gameData, extraCandidates = []) => {
+            buildGameDataPayload.mockReturnValue(gameData);
+            runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+            return runLabyrinthAllFightsAnalysis(
+                {
+                    fights: [
+                        {
+                            monsterHrid: '/monsters/goblin',
+                            monsterName: 'Goblin',
+                            roomLevel: 100,
+                            dto: {
+                                equipment,
+                                staminaLevel: 50,
+                                intelligenceLevel: 50,
+                                attackLevel: 50,
+                                meleeLevel: 50,
+                                defenseLevel: 50,
+                                rangedLevel: 50,
+                                magicLevel: 50,
+                            },
+                        },
+                    ],
+                    crates: [],
+                    hours: 1,
+                    communityBuffs: {},
+                    labyrinthCombatBuffs: [],
+                    modes: ['equipment'],
+                    extraCandidates,
+                },
+                null,
+                {}
+            );
+        };
+        const worn = (hrid) => ({ [CHARM]: { hrid, enhancementLevel: 3 } });
+
+        test('labyrinthInertReason reads the item stats, base and per enhancement level', () => {
+            const data = withCharms();
+            expect(labyrinthInertReason(enh('/items/advanced_ranged_charm', 'x'), data)).toBe(
+                'focusTraining, rangedExperience'
+            );
+            expect(labyrinthInertReason(enh('/items/expert_task_badge', 'x', { slot: TRINKET }), data)).toBe(
+                'taskDamage'
+            );
+            // One real stat anywhere keeps it in
+            expect(labyrinthInertReason(enh('/items/odd_charm', 'x'), data)).toBeNull();
+            // A tier step is judged on both items
+            expect(
+                labyrinthInertReason(
+                    { type: 'tier', currentHrid: '/items/advanced_ranged_charm', upgradeHrid: '/items/odd_charm' },
+                    data
+                )
+            ).toBeNull();
+            // Missing data is not proof of inertness
+            expect(labyrinthInertReason(enh('/items/unknown_charm', 'x'), data)).toBeNull();
+            expect(labyrinthInertReason(enh('/items/fine_sword', 'x', { slot: MAIN_HAND }), data)).toBeNull();
+        });
+
+        test('an XP-only charm enhancement is left out and named in skippedInert', async () => {
+            const result = await run(worn('/items/advanced_ranged_charm'), withCharms());
+            expect(result.results.some((r) => r.candidate.description?.startsWith('Advanced Ranged Charm'))).toBe(
+                false
+            );
+            expect(result.skippedInert.length).toBeGreaterThan(0);
+            expect(result.skippedInert.every((s) => s.description.startsWith('Advanced Ranged Charm'))).toBe(true);
+        });
+
+        test('a charm that also changes a real stat is still simulated, and nothing is skipped', async () => {
+            const result = await run(worn('/items/odd_charm'), withCharms());
+            expect(result.results.some((r) => r.candidate.description?.startsWith('Odd Charm'))).toBe(true);
+            expect(result.skippedInert).toEqual([]);
+        });
+
+        test('a queued Check a swap row for an XP-only charm is never skipped', async () => {
+            const queued = enh('/items/advanced_ranged_charm', 'Advanced Ranged Charm', {
+                checkedSwap: true,
+                cost: 1000,
+            });
+            const result = await run(worn('/items/advanced_ranged_charm'), withCharms(), [queued]);
+            const rows = result.results.filter((r) => r.candidate.checkedSwap);
+            expect(rows).toHaveLength(1);
+            expect(result.skippedInert.some((s) => s.description === queued.description)).toBe(false);
+        });
     });
 
     test('a breakdown that disagrees with the Cost cell is dropped, so Watch never prices off it', () => {
