@@ -13,6 +13,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Queued gear is priced the way generated gear is, following "Keep replaced gear", in all-fights and single-fight runs.
 - A queued piece no longer shows twice when a generated pair only adds that piece.
 
+### Budget plans take the better level when it fits
+
+A budget plan no longer locks in the cheapest level of an ability because it was best value per coin. When a higher level of the same ability fits the budget and saves more overall, the plan takes it.
+
 ### Lab sim budget plan tabs fill the buy amount
 
 The marketplace tabs from a budget plan now put each tab's missing count, such as a whole stack of ability books, into the Buy box instead of leaving it at 1.
