@@ -835,10 +835,18 @@ export function planPurchases(picks) {
             continue;
         }
 
+        // An ability row buys a stack of books (`quantity`), which is the count the
+        // tab asks for; gear is one. Two picks naming the same item need the larger
+        // count, not the sum: both are the same purchase toward one level.
+        const count = Math.max(1, Math.ceil(Number(buy.quantity) || 1));
         const key = `${buy.itemHrid}+${buy.enhancementLevel}`;
-        if (seen.has(key)) continue;
+        if (seen.has(key)) {
+            const same = items.find((item) => !item.routeKey && `${item.itemHrid}+${item.enhancementLevel}` === key);
+            if (same && count > same.count) same.count = count;
+            continue;
+        }
         seen.add(key);
-        items.push(buy);
+        items.push({ ...buy, count });
     }
 
     return items;
@@ -922,8 +930,8 @@ async function openPlanInMarketplace(picks) {
 
     for (const item of items) {
         const material = {
-            // One of each is what a plan buys, so "missing 1" is literally the
-            // count this list is asking you to acquire
+            // `count` from planPurchases: one for gear, the book stack for an
+            // ability, the route's count for a route input
             itemHrid: item.itemHrid,
             itemName: item.name,
             missing: item.count || 1,

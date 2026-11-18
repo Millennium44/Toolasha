@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab sim "Open all in marketplace" asks for the full book count
+
+The budget plan's marketplace tabs now ask for every ability book a pick needs, as each row's own Market button does, instead of one.
+
 ### Market History can sort and filter by last recorded fill
 
 Switch from Listed date to Last recorded fill to see older listings that traded today. Fill dates need the Trade Ledger setting on, and the panel says so when it is off.

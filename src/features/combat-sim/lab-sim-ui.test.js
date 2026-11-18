@@ -10043,10 +10043,30 @@ describe('a budget plan shops a route-priced pick by what its route buys', () =>
             ).toEqual([
                 { itemHrid: '/items/shard', enhancementLevel: 0, count: 40 },
                 { itemHrid: '/items/plain_spear', enhancementLevel: 13, count: 1 },
-                { itemHrid: '/items/ring', enhancementLevel: 2, count: undefined },
+                { itemHrid: '/items/ring', enhancementLevel: 2, count: 1 },
             ]);
             // The route's own target item is never on the list
             expect(items.some((item) => item.itemHrid === '/items/refined_spear')).toBe(false);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    test('an ability pick asks for its whole book stack, the larger one when two picks share a book', async () => {
+        const { default: combatSimUI } = await import('./combat-sim-ui.js');
+        const buys = {
+            a: { itemHrid: '/items/life_drain', enhancementLevel: 0, quantity: 430, name: 'Life Drain' },
+            b: { itemHrid: '/items/entangle', enhancementLevel: 0, quantity: 37, name: 'Entangle' },
+            c: { itemHrid: '/items/life_drain', enhancementLevel: 0, quantity: 600, name: 'Life Drain' },
+            d: { itemHrid: '/items/entangle', enhancementLevel: 0, quantity: 12, name: 'Entangle' },
+        };
+        const spy = vi.spyOn(combatSimUI, 'upgradeRowPurchase').mockImplementation((pick) => buys[pick.key]);
+        try {
+            const items = planPurchases(['a', 'b', 'c', 'd'].map((key) => ({ key })));
+            expect(items.map(({ itemHrid, count }) => ({ itemHrid, count }))).toEqual([
+                { itemHrid: '/items/life_drain', count: 600 },
+                { itemHrid: '/items/entangle', count: 37 },
+            ]);
         } finally {
             spy.mockRestore();
         }
