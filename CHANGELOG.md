@@ -7709,6 +7709,35 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.89.0](https://github.com/Millennium44/Toolasha/compare/v3.88.0...v3.89.0) (2026-11-18)
+
+
+### Features
+
+* filter Market History by last recorded fill ([948dce5](https://github.com/Millennium44/Toolasha/commit/948dce52d171cd67238b113ead66f313ee2c7ccb))
+* lab sim Upgrade runs include the queued Check a swap entries ([5c429d3](https://github.com/Millennium44/Toolasha/commit/5c429d3cdb5d85b7eefcd282bf9ac59f662bbe2c))
+* lab sim Upgrade runs include the queued Check a swap entries ([deac993](https://github.com/Millennium44/Toolasha/commit/deac99339c4988eb68b63e3efbfe7e0940463bcb))
+* Market History says when fill dates wait on the Trade Ledger loading ([7833f78](https://github.com/Millennium44/Toolasha/commit/7833f789bcb8828dbaa8d676677e3452f2a53bf8))
+* say when Market History fill dates need the Trade Ledger ([2b432b5](https://github.com/Millennium44/Toolasha/commit/2b432b55de77ea943b93a9af570ba6c8dca9881a))
+* task reroll walk ends with a Sort the board step ([8244b1c](https://github.com/Millennium44/Toolasha/commit/8244b1c64db1dee82a114b165259480fdd313498))
+
+
+### Bug Fixes
+
+* auto-fill stops clamping a listing price the player set outside the tradable range ([cf9bedd](https://github.com/Millennium44/Toolasha/commit/cf9bedd44e6c62270bf55be39602cd76f40b9909))
+* Buy supplies button only replaces its own heading, never a fallback spot ([37a4c27](https://github.com/Millennium44/Toolasha/commit/37a4c279e0a09921ec07183cde37bf6562b76024))
+* combat sim echoes auto attacks and heals, and pools a cast's overkill ([6f4533b](https://github.com/Millennium44/Toolasha/commit/6f4533b291b0fed8363404c0e6c0b6d91993dc9f))
+* drink slot resends no longer reset every tea-dependent figure ([37501ff](https://github.com/Millennium44/Toolasha/commit/37501ff9e82ccd4094bf36b8f15977df22a76771))
+* folded queued abilities that fill an empty slot conflict in the budget plan ([bb8c174](https://github.com/Millennium44/Toolasha/commit/bb8c1740851e384ab22f7877f1ad783cef037677))
+* lab sim Open all in marketplace asks for the full ability book count ([aa6b605](https://github.com/Millennium44/Toolasha/commit/aa6b6056c5579706103af06f545d55177497d022))
+* overbid table does not pop up for the item whose order book is open ([3f5e4cf](https://github.com/Millennium44/Toolasha/commit/3f5e4cfbe62bcc4fd1e5b72cecf5c4e0f069d2c5))
+* queued ability rows conflict with swaps they displace, and the starting line counts queued swaps ([d25831d](https://github.com/Millennium44/Toolasha/commit/d25831db2d43018e1d4805452ce33f9e5893755c))
+
+
+### Tests
+
+* move the Check a swap tests to their own file ([befe833](https://github.com/Millennium44/Toolasha/commit/befe8338b411bb24b49dadbd80796e9d2982878d))
+
 ## [3.88.0](https://github.com/Millennium44/Toolasha/compare/v3.87.0...v3.88.0) (2026-11-16)
 
 ### Features
