@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab sim budget plan tabs fill the buy amount
+
+The marketplace tabs from a budget plan now put each tab's missing count, such as a whole stack of ability books, into the Buy box instead of leaving it at 1.
+
 <!-- shipped in 3.89.0 -->
 
 ### Lab sim Upgrade runs include your queued swaps

@@ -180,6 +180,7 @@ import {
     setupMarketplaceCleanupObserver,
     watchTabForAcquisition,
 } from '../../utils/marketplace-tabs.js';
+import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import {
     ensureSimPhoneStyles,
     ensureSimUpgradePhoneStyles,
@@ -871,6 +872,35 @@ const TAB_OWNER = 'lab-sim';
 let marketPlanCleanupStarted = false;
 
 /**
+ * The buy-box autofill the plan's tabs arm, made on first use: it registers a
+ * document-wide modal observer, which a player who never opens a plan should
+ * not pay for.
+ */
+let marketPlanAutofill = null;
+
+/** @returns {Object} The plan tabs' autofill manager, initialized once */
+function planAutofill() {
+    if (!marketPlanAutofill) {
+        marketPlanAutofill = createAutofillManager('LabSimPlan-Market');
+        marketPlanAutofill.initialize();
+    }
+    return marketPlanAutofill;
+}
+
+/**
+ * Arm the buy box with what a plan tab still lacks. Read from the tab on every
+ * modal, since the acquisition watch lowers it as books arrive, and tied to the
+ * tab's item so it never fills a buy box for anything else.
+ * @param {HTMLElement} tab - The plan tab
+ * @param {string} itemHrid - Its item
+ */
+function armPlanTab(tab, itemHrid) {
+    planAutofill().setPendingCalculation(() => parseInt(tab?.getAttribute('data-missing-quantity') || '0', 10), {
+        itemHrid,
+    });
+}
+
+/**
  * Drop every tab this panel pinned, and the bookkeeping array alongside them —
  * called both when the marketplace is closed out from under them and when the
  * user clears them by hand, so neither path leaves the other thinking tabs are
@@ -879,6 +909,7 @@ let marketPlanCleanupStarted = false;
 function clearMarketPlanTabs() {
     removeMaterialTabs({ owner: TAB_OWNER });
     marketPlanTabs.length = 0;
+    marketPlanAutofill?.clearQuantity();
 }
 
 /**
@@ -911,7 +942,7 @@ async function waitForMarketplaceTabs(attempts = 30) {
  * @param {Array<Object>} picks - Picks from `planWithinBudget`
  * @returns {Promise<number>} How many tabs were added
  */
-async function openPlanInMarketplace(picks) {
+export async function openPlanInMarketplace(picks) {
     const items = planPurchases(picks);
     if (!items.length) return 0;
 
@@ -940,7 +971,10 @@ async function openPlanInMarketplace(picks) {
         const tab = createMaterialTab(
             material,
             reference,
-            () => navigateToMarketplace(item.itemHrid, item.enhancementLevel),
+            () => {
+                armPlanTab(tab, item.itemHrid);
+                navigateToMarketplace(item.itemHrid, item.enhancementLevel);
+            },
             {
                 owner: TAB_OWNER,
                 onDismiss: () => {
@@ -951,6 +985,9 @@ async function openPlanInMarketplace(picks) {
         );
         insertTabInOrder(container, tab, 'material');
         marketPlanTabs.push(tab);
+        // The market opened on the first item before any tab existed: arm it now,
+        // as a click on its tab would have
+        if (item === items[0]) armPlanTab(tab, item.itemHrid);
 
         // Retire the tab on its own once the item is in inventory, instead of
         // leaving "missing: 1" pinned forever — see watchTabForAcquisition for
