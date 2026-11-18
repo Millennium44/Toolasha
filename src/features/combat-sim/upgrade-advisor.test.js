@@ -273,6 +273,7 @@ const {
     valuePerMillion,
     goldPerPercent,
     replacedIn,
+    widenReplacedDescription,
     explainUpgradeCost,
     computeEconomics,
     assignRankScores,
@@ -8491,6 +8492,59 @@ describe('what a cross-slot swap displaces', () => {
         const dto = { equipment: { [MAIN_HAND]: { hrid: '/items/vampiric_bow', enhancementLevel: 1 } } };
 
         expect(replacedIn(candidate, dto, gameData)).toBe('Vampiric Bow +1');
+    });
+});
+
+describe('naming every piece a forced gear row replaces across fights', () => {
+    const gameData = {
+        itemDetailMap: {
+            '/items/chimerical_quiver': { name: 'Chimerical Quiver' },
+            '/items/enchanted_cloak': { name: 'Enchanted Cloak' },
+            '/items/sinister_cape_refined': { name: 'Sinister Cape (R)' },
+        },
+    };
+    const wearing = (hrid, enhancementLevel) => ({ dto: { equipment: { [BACK]: { hrid, enhancementLevel } } } });
+    const row = () => ({
+        type: 'cross_slot',
+        labArmor: true,
+        slot: BACK,
+        upgradeHrid: '/items/sinister_cape_refined',
+        upgradeLevel: 7,
+        addedSlots: { [BACK]: { hrid: '/items/sinister_cape_refined', enhancementLevel: 7 } },
+        clearedSlots: [],
+        description: 'Chimerical Quiver +5 → Sinister Cape ★ +7',
+    });
+    const quiver = wearing('/items/chimerical_quiver', 5);
+    const cloak = wearing('/items/enchanted_cloak', 5);
+
+    test('different pieces in different fights are all named, joined by a slash', () => {
+        const widened = widenReplacedDescription(row(), [true, true, true], [quiver, cloak, quiver], gameData);
+        expect(widened.description).toBe('Chimerical Quiver +5 / Enchanted Cloak +5 → Sinister Cape ★ +7');
+    });
+
+    test('the key does not change, so pins and exclusions filed under it still match', () => {
+        const before = candidateKey({ ...row() });
+        const widened = { ...row(), ...widenReplacedDescription(row(), [true, true], [quiver, cloak], gameData) };
+        expect(widened.description).not.toBe(row().description);
+        expect(candidateKey(widened)).toBe(before);
+        // A row widened again from an already-widened one keeps the first identity
+        const again = widenReplacedDescription(widened, [true, true], [quiver, cloak], gameData);
+        expect(again.keyDescription).toBe(row().description);
+    });
+
+    test('one piece replaced everywhere leaves the row alone', () => {
+        expect(widenReplacedDescription(row(), [true, true], [quiver, quiver], gameData)).toEqual({});
+    });
+
+    test('a fight the row does not reach does not contribute its piece', () => {
+        expect(widenReplacedDescription(row(), [true, false], [quiver, cloak], gameData)).toEqual({});
+    });
+
+    test('a fight that wears nothing in the slot adds no name, and a row that is not forced gear is untouched', () => {
+        const empty = { dto: { equipment: {} } };
+        expect(widenReplacedDescription(row(), [true, true], [quiver, empty], gameData)).toEqual({});
+        const plain = { ...row(), labArmor: undefined };
+        expect(widenReplacedDescription(plain, [true, true], [quiver, cloak], gameData)).toEqual({});
     });
 });
 

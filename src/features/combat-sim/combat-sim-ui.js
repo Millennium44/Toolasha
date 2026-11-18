@@ -1118,7 +1118,13 @@ export function columnMenuLabel(column) {
  */
 export function upgradeRowKey(result) {
     const c = result?.candidate || {};
-    const parts = [c.type || 'equipment', c.slot ?? '', c.upgradeHrid ?? '', c.upgradeLevel ?? '', c.description ?? ''];
+    const parts = [
+        c.type || 'equipment',
+        c.slot ?? '',
+        c.upgradeHrid ?? '',
+        c.upgradeLevel ?? '',
+        c.keyDescription ?? c.description ?? '',
+    ];
     return parts.join('|').replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 }
 

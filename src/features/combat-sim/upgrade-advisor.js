@@ -8393,9 +8393,15 @@ export function goldPerPercent(cost, deltaPct) {
  */
 export function candidateKey(result) {
     const c = result?.candidate || result || {};
-    return [c.type || 'equipment', c.slot ?? '', c.upgradeHrid ?? '', c.upgradeLevel ?? '', c.description ?? ''].join(
-        '|'
-    );
+    // `keyDescription` is the description a row was first keyed by, kept when the shown one is widened to name
+    // every piece it replaces across fights, so pins, exclusions and saved picks filed under it still match
+    return [
+        c.type || 'equipment',
+        c.slot ?? '',
+        c.upgradeHrid ?? '',
+        c.upgradeLevel ?? '',
+        c.keyDescription ?? c.description ?? '',
+    ].join('|');
 }
 
 /**
@@ -9294,6 +9300,37 @@ function pooledSwapCandidate(candidate, gameData) {
 }
 
 /**
+ * The shown description of a forced gear row that replaces a different piece in different fights.
+ *
+ * One purchase serves every loadout, so "what it replaces" is per room (a quiver in the ranged loadouts, a
+ * cloak in the magic ones) and the generated description names only the first loadout's piece. Where the
+ * fights the row reaches replace more than one distinct piece, the description names each, joined by " / ".
+ * The identity the row was keyed by is kept as `keyDescription` so the widened text never changes its key.
+ *
+ * @param {Object} candidate - A pooled candidate
+ * @param {Array<boolean>} appliesTo - Per fight, whether the row is about it
+ * @param {Array<Object>} fights - The run's fights, each with a `dto`
+ * @param {Object} gameData - For item names
+ * @returns {{description: string, keyDescription: string}|{}} Fields to merge into the row, or none
+ */
+export function widenReplacedDescription(candidate, appliesTo, fights, gameData) {
+    if (!candidate?.labArmor || typeof candidate.description !== 'string') return {};
+    const arrow = candidate.description.indexOf(' → ');
+    if (arrow < 0) return {};
+    const names = [];
+    fights.forEach((fight, i) => {
+        if (!appliesTo[i]) return;
+        const name = replacedIn(candidate, fight.dto, gameData);
+        if (name && !names.includes(name)) names.push(name);
+    });
+    if (names.length < 2) return {};
+    return {
+        description: `${names.join(' / ')}${candidate.description.slice(arrow)}`,
+        keyDescription: candidate.keyDescription ?? candidate.description,
+    };
+}
+
+/**
  * A forced labyrinth armor candidate as a whole-run candidate.
  *
  * Two things are added to it. The keep-gear rule, which is the same one the
@@ -9648,11 +9685,13 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             // live character's own copies and books say nothing about what another player holds
             const repriced = prePricedAgainstClaims(candidate) || candidate.cost == null;
             const cost = repriced ? calculateUpgradeCost(candidate, gameData, isSelfRow) : candidate.cost;
+            const appliesTo = fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto, gameData));
             const row = withLoadoutClaims(
                 {
                     ...candidate,
                     cost,
-                    appliesTo: fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto, gameData)),
+                    appliesTo,
+                    ...widenReplacedDescription(candidate, appliesTo, fights, gameData),
                 },
                 loadoutClaims
             );
