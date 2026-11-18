@@ -185,6 +185,10 @@ Every brief to a sub-agent carries these lines:
   stack on that PR: a stack cut from its old head has to be restacked every time it moves. The integrator
   resolves the overlap once, at landing.
 - **Run only the tests your change reaches, never the full gates** — the integrator runs those once.
+- **Run them at the default heap.** Never raise `NODE_OPTIONS=--max-old-space-size` to get a suite through: the
+  gates and CI run the default, so a file that only passes with more memory fails there. A worker that exits
+  mid-file ("Worker exited unexpectedly") means the file has outgrown it; split a self-contained `describe` into
+  `<module>.<topic>.test.js` and check the test count is unchanged.
 - **No background polling loops** (`until grep …; do sleep …`) — run tests in the foreground. **No
   whole-disk searches** (`find /`, a drive root) — search the repo or a named scratch folder only. Both
   have left processes running for hours after the agent finished.
