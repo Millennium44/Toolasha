@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Market History can sort and filter by last recorded fill
 
-Switch from Listed date to Last recorded fill to see older listings that traded today. The date filter has a Today button, and listings without a recorded fill keep a blank fill date.
+Switch from Listed date to Last recorded fill to see older listings that traded today. Fill dates need the Trade Ledger setting on, and the panel says so when it is off.
 
 <!-- shipped in 3.88.0 -->
 
