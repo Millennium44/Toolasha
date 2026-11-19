@@ -8,6 +8,10 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 const state = vi.hoisted(() => ({
     materials: { cost: 100, hasCost: true, hasMissingPrices: false },
     protection: { price: 0, itemHrid: null },
+    /** The protection answer when the item's own copy is left out (`includeSelf: false`) */
+    others: { price: 0, itemHrid: null, partial: false },
+    /** The guarded market price of the item itself */
+    market: { price: 0, partial: false },
 }));
 
 vi.mock('../../utils/tester-shop.js', () => ({ testerShopEnabled: () => false, testerGearPrice: () => null }));
@@ -16,7 +20,9 @@ vi.mock('../enhancement/enhancement-params-source.js', () => ({
 }));
 vi.mock('../../utils/enhancement-input-pricing.js', () => ({
     perAttemptMaterialCost: () => state.materials,
-    getCheapestProtectionPrice: () => state.protection,
+    getCheapestProtectionPrice: (hrid, options = {}) =>
+        options.includeSelf === false ? state.others : state.protection,
+    priceGuarded: () => state.market,
 }));
 
 const { calculateDirectEnhancementCost, quoteDirectEnhancement } = await import('./direct-enhancement-cost.js');
@@ -105,5 +111,122 @@ describe('quoteDirectEnhancement', () => {
             expect.objectContaining({ cost: 0, seconds: 0, xp: 0 })
         );
         expect(quoteDirectEnhancement('/items/nothing', 0, 3, { itemDetailMap: {} })).toBeNull();
+    });
+});
+
+describe('quoteDirectEnhancement with the own copy at craft price', () => {
+    const MIRROR = '/items/mirror_of_protection';
+    const base = (extra = {}) => ({ ...extra });
+    beforeEach(() => {
+        state.materials = { cost: 100, hasCost: true, hasMissingPrices: false };
+        state.protection = { price: 0, itemHrid: null };
+        state.others = { price: 0, itemHrid: null, partial: false };
+        state.market = { price: 0, partial: false };
+    });
+
+    test('a copy cheaper to craft than to buy is spent at craft price, and the crafts are counted', () => {
+        state.market = { price: 90_000, partial: false };
+        state.others = { price: 80_000, itemHrid: MIRROR, partial: false };
+        state.protection = { price: 80_000, itemHrid: MIRROR, partial: false };
+        const bought = quoteDirectEnhancement(SWORD, 0, 12, gameData);
+        const crafted = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 100 });
+        expect(bought.selfCopyCrafts).toBe(0);
+        expect(crafted.protectionItemHrid).toBe(SWORD);
+        expect(crafted.selfCopyCrafts).toBeGreaterThan(0);
+        expect(crafted.cost).toBeLessThan(bought.cost);
+        // The crafts are the protections the plan spends
+        expect(crafted.selfCopyCrafts).toBeGreaterThan(0.5);
+    });
+
+    test('a market copy cheaper than the craft is bought, and no craft is counted', () => {
+        state.market = { price: 50, partial: false };
+        state.others = { price: 80_000, itemHrid: MIRROR, partial: false };
+        const quote = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 100 });
+        expect(quote.protectionItemHrid).toBe(SWORD);
+        expect(quote.selfCopyCrafts).toBe(0);
+    });
+
+    test('a tie between market and craft buys the copy: no extra craft time', () => {
+        state.market = { price: 100, partial: false };
+        state.others = { price: 80_000, itemHrid: MIRROR, partial: false };
+        expect(quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 100 }).selfCopyCrafts).toBe(0);
+    });
+
+    test('a cheaper mirror still wins over a crafted copy', () => {
+        state.market = { price: 90_000, partial: false };
+        state.others = { price: 10, itemHrid: MIRROR, partial: false };
+        const quote = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 5_000 });
+        expect(quote.protectionItemHrid).toBe(MIRROR);
+        expect(quote.selfCopyCrafts).toBe(0);
+    });
+
+    test('a market copy that is itself a partial craft bill does not lower the complete craft price', () => {
+        state.market = { price: 1, partial: true };
+        state.others = { price: 80_000, itemHrid: MIRROR, partial: false };
+        const quote = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 100 });
+        // Not priced at the floor of 1: at the complete 100
+        const floor = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 100_000 });
+        expect(quote.cost).toBeLessThan(floor.cost);
+        expect(quote.selfCopyCrafts).toBeGreaterThan(0);
+        const cheap = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 2 });
+        expect(cheap.cost).toBeLessThan(quote.cost);
+    });
+
+    test('a partial mirror price is still a floor when the plan spends it, but not when it spends the crafted copy', () => {
+        state.market = { price: 90_000, partial: false };
+        state.others = { price: 1, itemHrid: MIRROR, partial: true };
+        expect(quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 5_000 })).toBeNull();
+        state.others = { price: 90_000, itemHrid: MIRROR, partial: true };
+        const quote = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 100 });
+        expect(quote.protectionItemHrid).toBe(SWORD);
+        expect(quote.selfCopyCrafts).toBeGreaterThan(0);
+    });
+
+    test('no craft price, or none above 0, leaves the old market-only answer', () => {
+        state.market = { price: 90_000, partial: false };
+        state.protection = { price: 90_000, itemHrid: SWORD, partial: false };
+        const plain = quoteDirectEnhancement(SWORD, 0, 12, gameData);
+        for (const selfCopyCraftCost of [null, 0, -5, NaN, undefined]) {
+            expect(quoteDirectEnhancement(SWORD, 0, 12, gameData, base({ selfCopyCraftCost }))).toEqual(plain);
+        }
+        expect(plain.selfCopyCrafts).toBe(0);
+    });
+
+    test('a run that spends no protection has no crafts', () => {
+        state.market = { price: 90_000, partial: false };
+        const quote = quoteDirectEnhancement(SWORD, 0, 1, gameData, { selfCopyCraftCost: 100 });
+        expect(quote.selfCopyCrafts).toBe(0);
+        expect(quote.protectFrom).toBe(0);
+    });
+});
+
+describe('a custom price on the own copy', () => {
+    beforeEach(() => {
+        state.materials = { cost: 100, hasCost: true, hasMissingPrices: false };
+        state.protection = { price: 0, itemHrid: null };
+        state.others = { price: 80_000, itemHrid: '/items/mirror_of_protection', partial: false };
+        state.market = { price: 0, partial: false };
+    });
+
+    test('is used as is: no crafted copy competes, even when crafting is cheaper', () => {
+        state.market = { price: 90_000, partial: false, custom: true };
+        const quote = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 100 });
+        const mirrorOnly = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 100_000_000 });
+        // The mirror at 80000 is cheaper than the custom 90000: the copy is not used, and nothing is crafted
+        expect(quote.selfCopyCrafts).toBe(0);
+        expect(quote.cost).toBe(mirrorOnly.cost);
+        state.others = { price: 0, itemHrid: null, partial: false };
+        state.market = { price: 5_000, partial: false, custom: true };
+        const own = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 1 });
+        expect(own.protectionItemHrid).toBe(SWORD);
+        expect(own.selfCopyCrafts).toBe(0);
+    });
+
+    test('a custom 0 or unpriced copy stays unpriced: it is not replaced by the craft price', () => {
+        state.others = { price: 0, itemHrid: null, partial: false };
+        state.market = { price: null, partial: false, custom: true };
+        const quote = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 1 });
+        expect(quote.protectionItemHrid).not.toBe(SWORD);
+        expect(quote.selfCopyCrafts).toBe(0);
     });
 });

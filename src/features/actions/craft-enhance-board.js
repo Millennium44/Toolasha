@@ -48,6 +48,8 @@ import {
     MAX_TARGET_LEVEL,
     OWNED_MODES,
     arrangeCraftEnhanceRows,
+    bestLevelByVolume,
+    capProfitByVolume,
     normalizeOwnedMode,
     normalizeTargetLevel,
 } from './craft-enhance-rank.js';
@@ -150,6 +152,92 @@ function goldCell(value, missingNote = '', signed = true) {
 }
 
 /**
+ * A profit/hr cell held to what the market trades: the capped figure, muted, with the uncapped one in the tooltip.
+ * Falls back to the ordinary cell when the volume does not cap it.
+ * @param {Object} level - A row's `base` or `target`
+ * @param {{known?: boolean, unitsPerDay?: number}|undefined} volume - The measured volume at that level, if asked
+ * @param {number} atLevel - The level the volume is for
+ * @returns {HTMLTableCellElement}
+ */
+function profitPerHourCell(level, volume, atLevel) {
+    const cap = capProfitByVolume(level, volume);
+    if (!cap.capped) return goldCell(level.profitPerHour, reasonText(level));
+    const td = cell(formatKMB(Math.round(cap.profitPerHour)), { textAlign: 'right', color: MUTED });
+    td.setAttribute('data-ce-capped', 'true');
+    td.title = cappedNote(level, volume, cap, atLevel);
+    return td;
+}
+
+/**
+ * The tooltip text of a figure held to the market's volume.
+ * @param {Object} level - The level's figures
+ * @param {{unitsPerDay: number}} volume - The measured volume
+ * @param {Object} cap - From capProfitByVolume
+ * @param {number} atLevel - The level the volume is for
+ * @returns {string}
+ */
+function cappedNote(level, volume, cap, atLevel) {
+    return (
+        `Capped by the market: about ${Math.round(volume.unitsPerDay)} traded a day at +${atLevel} ` +
+        `(${Math.round(cap.unitsPerHourCap * 100) / 100} an hour), fewer than the ` +
+        `${Math.round(level.unitsPerHour * 100) / 100} an hour you could make.\n` +
+        `Uncapped: ${formatKMB(Math.round(cap.uncappedPerHour))} an hour. Sorting uses the uncapped figure.`
+    );
+}
+
+/** How a sweep level's route reads in the tooltip */
+const SWEEP_ROUTE_LABELS = { craft: '', 'refine-base': ' (via base)', 'held-base': ' (via a held base)' };
+
+/**
+ * The best of the usual sale levels (+0, the item's breakpoints, the target), each held to what the market trades
+ * there, and every candidate's figure on hover. A level with no full figure is listed with why and is never counted
+ * as 0 or chosen. A volume not looked up yet, or not measurable, leaves that level uncapped and says so.
+ * @param {Object} row - A ranking row
+ * @param {Function} volumeOf - `(level) => {known, unitsPerDay}|undefined`
+ * @returns {HTMLTableCellElement}
+ */
+function bestLevelCell(row, volumeOf) {
+    const { best, entries } = bestLevelByVolume(row.sweep || [], row.candidateLevels, volumeOf);
+    const lines = entries.map((item) => {
+        const { entry, cap } = item;
+        const mark = best && best.level === item.level ? '  ← best' : '';
+        if (!Number.isFinite(entry.profitPerHour) || entry.status !== 'ok') {
+            return `+${item.level}: no figure (${reasonText(entry) || 'unpriced'})`;
+        }
+        const route = SWEEP_ROUTE_LABELS[entry.route] || '';
+        let volumeNote = '';
+        if (item.volumeState === 'pending') volumeNote = ' (volume not checked yet)';
+        else if (item.volumeState === 'unknown') volumeNote = ' (volume unknown)';
+        const volume = volumeOf(item.level);
+        const figure = cap.capped
+            ? `${formatKMB(Math.round(cap.profitPerHour))} an hour, held to about ${Math.round(volume.unitsPerDay)} ` +
+              `traded a day (uncapped ${formatKMB(Math.round(cap.uncappedPerHour))})`
+            : `${formatKMB(Math.round(entry.profitPerHour))} an hour`;
+        return `+${item.level}: ${figure}${route}${volumeNote}${mark}`;
+    });
+    const note =
+        'Each level is crafted, enhanced from +0 and sold at that level, on its cheapest route. Only +0, the usual ' +
+        'breakpoints and the target are considered, each held to the volume the market trades at that level.';
+    if (!best) {
+        const td = cell('—', { textAlign: 'right', color: MUTED });
+        td.setAttribute('data-ce-missing', 'true');
+        td.setAttribute('data-ce-best', 'none');
+        td.title = [...lines, note].join('\n');
+        return td;
+    }
+    const rounded = Math.round(best.profitPerHour);
+    const td = cell(`+${best.level} ${formatKMB(rounded)}`, {
+        textAlign: 'right',
+        color: best.cap.capped ? MUTED : rounded >= 0 ? GOOD : BAD,
+    });
+    td.setAttribute('data-ce-best', String(best.level));
+    if (best.cap.capped) td.setAttribute('data-ce-capped', 'true');
+    if (best.volumeState === 'pending') td.setAttribute('data-ce-volume', 'pending');
+    td.title = [...lines, note].join('\n');
+    return td;
+}
+
+/**
  * @param {Object} level - A row's `base` or `target`
  * @returns {string} The reasons it has no profit, in words
  */
@@ -200,15 +288,38 @@ function routeTooltip(row, target) {
     }
     // A saving is claimed only when both routes were priced: with one side unpriced nothing was compared
     const compared = Number.isFinite(route.directCost) && Number.isFinite(route.baseCost);
+    const forTheHour =
+        'It costs more to enhance, but the whole hour (crafts, enhancing and any crafted protection copies) earns more.';
     if (route.route === 'refine-base')
         lines.push(
             compared
-                ? `Cheaper by enhancing the base first: saves ${money(route.saved)}`
+                ? route.saved > 0
+                    ? `Cheaper by enhancing the base first: saves ${money(route.saved)}`
+                    : forTheHour
                 : 'Only the base route could be priced.'
         );
-    else if (route.route === 'craft' && compared && route.saved > 0)
-        lines.push('Enhancing the star item itself is cheaper.');
+    else if (route.route === 'craft' && compared)
+        lines.push(route.saved > 0 ? 'Enhancing the star item itself is cheaper.' : route.saved < 0 ? forTheHour : '');
     return lines.filter(Boolean).join('\n');
+}
+
+/**
+ * The Enhance cell's note about protection copies crafted at craft price: they are extra crafts, so their time and
+ * XP are in the row's per-hour figures. Empty when the run spends none.
+ * @param {Object} row - A ranking row
+ * @returns {string}
+ */
+function selfCopyTooltip(row) {
+    const run = row.route?.enhance;
+    const crafts = Number(run?.selfCopyCrafts) || 0;
+    if (!(crafts > 0)) return '';
+    const base =
+        row.route.route === 'craft' ? row.itemName : (row.route.baseHrid || '').split('/').pop().replace(/_/g, ' ');
+    return (
+        `Protects with about ${Math.round(crafts * 100) / 100} copies of ${base} crafted at craft cost (cheaper ` +
+        `than buying one): that many extra crafts per item, ${Math.round(Number(run.extraCraftSeconds) || 0)} s more ` +
+        'per item in the hourly figures.'
+    );
 }
 
 class CraftEnhanceBoard {
@@ -598,18 +709,34 @@ class CraftEnhanceBoard {
     }
 
     /**
+     * Redraw once for every volume that lands in the same turn: a row asks for several levels at once.
+     * @param {number} generation - The run the lookup belongs to
+     */
+    scheduleRedraw(generation) {
+        if (this.redrawQueued) return;
+        this.redrawQueued = true;
+        queueMicrotask(() => {
+            this.redrawQueued = false;
+            if (generation === this.generation && this.panel) this.redrawTable();
+        });
+    }
+
+    /**
      * Ask for the volume of the rows on screen, once each, and redraw as they land.
      * @param {Array<Object>} visible - The rows being drawn
      */
     requestVolumes(visible) {
         const generation = this.generation;
-        const level = this.targetLevel;
+        const target = this.targetLevel;
         for (const row of visible.slice(0, VOLUME_ROWS)) {
-            const key = `${row.itemHrid}:${level}`;
-            if (this.volumes.has(key) || this.volumePending.has(key)) continue;
-            const token = {};
-            this.volumePending.set(key, token);
-            this.loadVolume(key, row.itemHrid, level, token, generation);
+            // The target's, and every level Best considers (+0 and the item's breakpoints)
+            for (const level of new Set([target, ...(row.candidateLevels || [])])) {
+                const key = `${row.itemHrid}:${level}`;
+                if (this.volumes.has(key) || this.volumePending.has(key)) continue;
+                const token = {};
+                this.volumePending.set(key, token);
+                this.loadVolume(key, row.itemHrid, level, token, generation);
+            }
         }
     }
 
@@ -627,7 +754,7 @@ class CraftEnhanceBoard {
             // A run abandoned since (character switch, new target) leaves this answer unused
             if (generation !== this.generation || this.volumePending.get(key) !== token) return;
             this.volumes.set(key, volume);
-            this.redrawTable();
+            this.scheduleRedraw(generation);
         } catch (error) {
             console.error('[CraftEnhance] Reading volume failed:', error);
         } finally {
@@ -713,6 +840,7 @@ class CraftEnhanceBoard {
             ['hour', `Profit/hr +${target}`, 'right'],
             [null, 'Profit/item +0', 'right'],
             ['base', 'Profit/hr +0', 'right'],
+            [null, 'Best level', 'right'],
             ['craftXp', 'Craft XP/hr', 'right'],
             ['enhanceXp', 'Enhance XP/hr', 'right'],
             [null, `Vol/day +${target}`, 'right'],
@@ -810,14 +938,16 @@ class CraftEnhanceBoard {
             via.style.cssText = `color: ${MUTED}; font-size: 10px;`;
             enhanceCell.appendChild(via);
         }
-        const routeNote = routeTooltip(row, target);
+        const routeNote = [routeTooltip(row, target), selfCopyTooltip(row)].filter(Boolean).join('\n');
         if (routeNote) enhanceCell.title = routeNote;
         tr.appendChild(enhanceCell);
         tr.appendChild(goldCell(t.saleAfterTax, `No real sell quote at +${target}`, false));
         tr.appendChild(goldCell(t.profitPerUnit, reasonText(t)));
-        tr.appendChild(goldCell(t.profitPerHour, reasonText(t)));
+        tr.appendChild(profitPerHourCell(t, this.volumes.get(`${row.itemHrid}:${target}`), target));
         tr.appendChild(goldCell(b.profitPerUnit, reasonText(b)));
-        tr.appendChild(goldCell(b.profitPerHour, reasonText(b)));
+        // +0 is one of Best's candidate levels, so its volume is looked up too; until it lands +0 stays uncapped
+        tr.appendChild(profitPerHourCell(b, this.volumes.get(`${row.itemHrid}:0`), 0));
+        tr.appendChild(bestLevelCell(row, (lvl) => this.volumes.get(`${row.itemHrid}:${lvl}`)));
         tr.appendChild(goldCell(t.craftXpPerHour, 'Not known', false));
         tr.appendChild(goldCell(t.enhanceXpPerHour, 'Not known', false));
 

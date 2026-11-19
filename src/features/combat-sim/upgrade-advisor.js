@@ -84,17 +84,12 @@ import {
     singleStepLevels,
     normalizeLevelSteps,
 } from '../../utils/ability-level-step.js';
+import { breakpointsFor, JEWELRY_EQUIPMENT_TYPES } from '../../utils/enhancement-breakpoints.js';
 import { findMaxLabyrinthLevel, defaultThreshold } from './labyrinth-level-finder.js';
 import { measureRoomLevelGains, ROOM_LEVEL_SHORTLIST_SIZE } from './labyrinth-upgrade-levels.js';
 import { roomXpPerHour } from '../combat/labyrinth-formulas.js';
 
-/** Enhancement breakpoints by slot type */
-const BREAKPOINTS_DEFAULT = [7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
-const BREAKPOINTS_JEWELRY = [5, 7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
-const BREAKPOINTS_BACK = [3, 5, 7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
-const BREAKPOINTS_REFINED = [10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
-
-const JEWELRY_SLOTS = new Set(['/equipment_types/earrings', '/equipment_types/ring', '/equipment_types/neck']);
+const JEWELRY_SLOTS = JEWELRY_EQUIPMENT_TYPES;
 
 // Threat selection needs another living player, and Revive needs a dead ally. None can affect
 // a solo simulation, so spending workers on those candidates can only reproduce the baseline.
@@ -297,16 +292,11 @@ function getNextBreakpoint(currentLevel, slot, itemHrid) {
  * @returns {number[]}
  */
 function getNextBreakpoints(currentLevel, slot, itemHrid, count, cap = Infinity) {
-    let breakpoints;
-    if (slot === '/equipment_types/back') {
-        breakpoints = BREAKPOINTS_BACK;
-    } else if (itemHrid.includes('_refined')) {
-        breakpoints = BREAKPOINTS_REFINED;
-    } else if (JEWELRY_SLOTS.has(slot)) {
-        breakpoints = BREAKPOINTS_JEWELRY;
-    } else {
-        breakpoints = BREAKPOINTS_DEFAULT;
-    }
+    const breakpoints = breakpointsFor(itemHrid, {
+        isBack: slot === '/equipment_types/back',
+        isJewelry: JEWELRY_SLOTS.has(slot),
+        backFirst: true,
+    });
     return breakpoints.filter((bp) => bp > currentLevel && bp <= cap).slice(0, count);
 }
 

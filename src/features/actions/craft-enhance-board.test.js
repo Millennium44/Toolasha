@@ -700,3 +700,318 @@ describe('the enhancement route', () => {
         expect(state.panel.panel.querySelector('[data-ce-row$="/ring"] [data-ce-missing]')).not.toBeNull();
     });
 });
+
+describe('protection copies crafted at craft cost', () => {
+    const run = (over = {}) => ({ selfCopyCrafts: 2.5, extraCraftSeconds: 90, ...over });
+
+    test('the Enhance cell says how many copies are crafted, of the item or of the base', async () => {
+        state.rows = [
+            row('sword', { route: { route: 'craft', offered: false, enhance: run() } }),
+            row('ring', {
+                route: { route: 'refine-base', offered: true, baseHrid: '/items/sinister_ring', enhance: run() },
+            }),
+        ];
+        openBoard();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        const title = (name) => {
+            const cells = state.panel.panel.querySelectorAll(`[data-ce-row$="/${name}"] td`);
+            return cells[4].title;
+        };
+        expect(title('sword')).toContain('2.5 copies of sword crafted at craft cost');
+        expect(title('sword')).toContain('90 s more per item');
+        expect(title('ring')).toContain('2.5 copies of sinister ring crafted at craft cost');
+    });
+
+    test('a run that crafts none says nothing about it', async () => {
+        state.rows = [row('sword', { route: { route: 'craft', offered: false, enhance: run({ selfCopyCrafts: 0 }) } })];
+        openBoard();
+        await flush();
+        const cells = state.panel.panel.querySelectorAll('[data-ce-row$="/sword"] td');
+        expect(cells[4].title).not.toContain('crafted at craft cost');
+    });
+});
+
+describe('profit per hour held to what the market trades', () => {
+    const hourCell = (name) => state.panel.panel.querySelectorAll(`[data-ce-row$="/${name}"] td`)[7];
+    const zeroHourCell = (name) => state.panel.panel.querySelectorAll(`[data-ce-row$="/${name}"] td`)[9];
+    const names = () =>
+        [...state.panel.panel.querySelectorAll('[data-ce-row]')].map((tr) => tr.getAttribute('data-ce-row'));
+
+    test('a known volume below the hourly output caps the figure, muted, and the tooltip gives both', async () => {
+        // 24 a day is 1 an hour; 37.5 an hour could be made at 5170 each
+        state.volume = { '/items/sword': { unitsPerDay: 24, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        const capped = hourCell('sword');
+        expect(capped.getAttribute('data-ce-capped')).toBe('true');
+        expect(capped.textContent).toBe('5.2K');
+        expect(capped.title).toContain('about 24 traded a day at +5');
+        expect(capped.title).toContain('Uncapped: 193.9K an hour');
+    });
+
+    test('a measured zero caps to 0, and an unknown volume caps nothing', async () => {
+        state.volume = { '/items/sword': { unitsPerDay: 0, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(hourCell('sword').textContent).toBe('0');
+        expect(hourCell('sword').getAttribute('data-ce-capped')).toBe('true');
+        // The robe's volume was not measurable: its (unpriced) cell is unchanged, and a priced one would be too
+        expect(hourCell('robe').hasAttribute('data-ce-capped')).toBe(false);
+    });
+
+    test('an unknown volume leaves a priced figure uncapped', async () => {
+        state.rows = [row('sword')];
+        state.volume = { '/items/sword': { unitsPerDay: 0, days: 0, known: false } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(hourCell('sword').hasAttribute('data-ce-capped')).toBe(false);
+        expect(hourCell('sword').textContent).toBe('193.9K');
+    });
+
+    test('before the volume arrives the figure is uncapped', async () => {
+        state.rows = [row('sword')];
+        openBoard();
+        expect(hourCell('sword').textContent).toBe('193.9K');
+        expect(hourCell('sword').hasAttribute('data-ce-capped')).toBe(false);
+    });
+
+    test('a volume above the hourly output does not cap', async () => {
+        state.rows = [row('sword')];
+        state.volume = { '/items/sword': { unitsPerDay: 10_000, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(hourCell('sword').hasAttribute('data-ce-capped')).toBe(false);
+        expect(hourCell('sword').textContent).toBe('193.9K');
+    });
+
+    test('a level that loses on every unit keeps its uncapped figure', async () => {
+        state.rows = [row('sword', { target: level({ profitPerUnit: -100, profitPerHour: -3750 }) })];
+        state.volume = { '/items/sword': { unitsPerDay: 0, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(hourCell('sword').hasAttribute('data-ce-capped')).toBe(false);
+        expect(hourCell('sword').textContent).toBe('-3.8K');
+    });
+
+    test('rows keep their uncapped order when volumes arrive', async () => {
+        state.rows = [row('sword'), row('axe', { target: level({ profitPerUnit: 100, profitPerHour: 3750 }) })];
+        openBoard();
+        expect(names()).toEqual(['/actions/cheesesmithing/sword', '/actions/cheesesmithing/axe']);
+        // Capped, the sword would earn far less than the axe
+        state.volume = {
+            '/items/sword': { unitsPerDay: 24, known: true },
+            '/items/axe': { unitsPerDay: 1e9, known: true },
+        };
+        await flush();
+        await flush();
+        expect(names()).toEqual(['/actions/cheesesmithing/sword', '/actions/cheesesmithing/axe']);
+        expect(hourCell('sword').getAttribute('data-ce-capped')).toBe('true');
+    });
+
+    test('+0 is capped only when its own volume has been measured: none is looked up for it', async () => {
+        state.rows = [row('sword', { base: level({ level: 0, profitPerUnit: 400, profitPerHour: 15000 }) })];
+        state.volume = { '/items/sword': { unitsPerDay: 24, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(state.volumeCalls).toEqual(['/items/sword:5']);
+        expect(zeroHourCell('sword').hasAttribute('data-ce-capped')).toBe(false);
+        board.volumes.set('/items/sword:0', { unitsPerDay: 24, known: true });
+        state.panel.render();
+        expect(zeroHourCell('sword').getAttribute('data-ce-capped')).toBe('true');
+        expect(zeroHourCell('sword').textContent).toBe('400');
+    });
+});
+
+describe('the best level column', () => {
+    const entry = (lvl, over = {}) => level({ level: lvl, route: null, ...over });
+    const bestCell = (name) => state.panel.panel.querySelector(`[data-ce-row$="/${name}"] [data-ce-best]`);
+
+    test('shows the level and its profit an hour, and the tooltip lists every level with the missing ones explained', async () => {
+        const sweep = [
+            entry(0, { profitPerHour: 5000 }),
+            entry(1, { profitPerHour: 12000, route: 'craft' }),
+            unpricedLevel(['sale'], { level: 2, route: null }),
+            unpricedLevel(['enhance'], { level: 3, route: null }),
+            entry(4, { profitPerHour: 9000, route: 'held-base' }),
+            entry(5, { profitPerHour: 8000, route: 'refine-base' }),
+        ];
+        state.rows = [
+            row('sword', { sweep, best: { level: 1, profitPerHour: 12000, profitPerUnit: 200, route: 'craft' } }),
+        ];
+        openBoard();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        const cell = bestCell('sword');
+        expect(cell.getAttribute('data-ce-best')).toBe('1');
+        expect(cell.textContent).toBe('+1 12.0K');
+        expect(cell.title).toContain('+0: 5.0K an hour');
+        expect(cell.title).toContain('+1: 12.0K an hour (volume not checked yet)  ← best');
+        expect(cell.title).toContain('+2: no figure (no sale quote)');
+        expect(cell.title).toContain('+3: no figure (enhance unpriced)');
+        expect(cell.title).toContain('+4: 9.0K an hour (via a held base) (volume not checked yet)');
+        expect(cell.title).toContain('+5: 8.0K an hour (via base) (volume unknown)');
+    });
+
+    test('a row with no priced level reads "—", never 0, and says why', async () => {
+        const sweep = [unpricedLevel(['input'], { level: 0 }), unpricedLevel(['input'], { level: 5 })];
+        state.rows = [row('sword', { sweep, best: null })];
+        openBoard();
+        await flush();
+        const cell = bestCell('sword');
+        expect(cell.getAttribute('data-ce-best')).toBe('none');
+        expect(cell.textContent).toBe('—');
+        expect(cell.title).toContain('+0: no figure (input unpriced)');
+    });
+
+    test('a best level that loses money is shown as a loss, in red', async () => {
+        state.rows = [
+            row('sword', {
+                sweep: [entry(0, { profitPerHour: -4000 })],
+                best: { level: 0, profitPerHour: -4000, profitPerUnit: -40, route: null },
+            }),
+        ];
+        openBoard();
+        await flush();
+        expect(bestCell('sword').textContent).toBe('+0 -4.0K');
+    });
+
+    test('a row without a sweep draws a dash and does not break the table', async () => {
+        state.rows = [row('sword')];
+        openBoard();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        expect(bestCell('sword').textContent).toBe('—');
+    });
+
+    test('the column is not a sort key, so the ranking and volumes leave the order alone', async () => {
+        openBoard();
+        await flush();
+        const header = [...state.panel.panel.querySelectorAll('th')].find((th) =>
+            th.textContent.startsWith('Best level')
+        );
+        expect(header.textContent).toBe('Best level');
+        expect(header.hasAttribute('data-ce-sort')).toBe(false);
+    });
+});
+
+describe('the best level column and the volume cap', () => {
+    const cellOf = (name, attr) => state.panel.panel.querySelector(`[data-ce-row$="/${name}"] [${attr}]`);
+    const sweepRow = (bestLevel) => {
+        const levels = [0, 1, 5].map((lvl) =>
+            level({ level: lvl, route: null, profitPerHour: lvl === bestLevel ? 193875 : 1000 })
+        );
+        return row('sword', {
+            sweep: levels,
+            best: { level: bestLevel, profitPerHour: 193875, profitPerUnit: 5170, route: null },
+        });
+    };
+
+    test('a best level of +N shows the same capped figure and note as Profit/hr +N', async () => {
+        state.rows = [sweepRow(5)];
+        state.volume = { '/items/sword': { unitsPerDay: 24, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        const best = cellOf('sword', 'data-ce-best');
+        const hour = state.panel.panel.querySelectorAll('[data-ce-row$="/sword"] td')[7];
+        expect(best.getAttribute('data-ce-capped')).toBe('true');
+        expect(best.textContent).toBe('+5 5.2K');
+        expect(best.textContent.split(' ')[1]).toBe(hour.textContent);
+        expect(best.title).toContain('+5: 5.2K an hour, held to about 24 traded a day (uncapped 193.9K)');
+    });
+
+    test('a best level below +N stays uncapped, and the hover says why', async () => {
+        state.rows = [sweepRow(1)];
+        state.volume = { '/items/sword': { unitsPerDay: 0, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        const best = cellOf('sword', 'data-ce-best');
+        expect(best.hasAttribute('data-ce-capped')).toBe(false);
+        expect(best.textContent).toBe('+1 193.9K');
+        expect(best.title).toContain('+5: 0 an hour, held to about 0 traded a day (uncapped 1.0K)');
+    });
+
+    test('an unknown or pending volume leaves a best +N uncapped', async () => {
+        state.rows = [sweepRow(5)];
+        openBoard();
+        expect(cellOf('sword', 'data-ce-best').textContent).toBe('+5 193.9K');
+        await flush();
+        await flush();
+        expect(cellOf('sword', 'data-ce-best').hasAttribute('data-ce-capped')).toBe(false);
+    });
+});
+
+describe('the best level looks at the usual sale levels and each one volume', () => {
+    const entry = (lvl, hour, over = {}) =>
+        level({ level: lvl, route: null, profitPerHour: hour, profitPerUnit: hour / 37.5, ...over });
+    const necklace = () =>
+        row('necklace', {
+            targetLevel: 5,
+            target: entry(5, 628_000),
+            candidateLevels: [0, 3, 5],
+            sweep: [entry(0, 1000), entry(1, 463_000), entry(3, 2000), entry(4, 9000), entry(5, 628_000)],
+            best: { level: 5, profitPerHour: 628_000, profitPerUnit: 1, route: null },
+        });
+    const bestCell = () => state.panel.panel.querySelector('[data-ce-row$="/necklace"] [data-ce-best]');
+
+    test('volume is looked up at +0, the breakpoints and the target, and nowhere else', async () => {
+        state.rows = [necklace()];
+        openBoard();
+        await flush();
+        await flush();
+        expect(state.volumeCalls.sort()).toEqual(['/items/necklace:0', '/items/necklace:3', '/items/necklace:5']);
+    });
+
+    test('a candidate nobody trades is held to 0 and the next best level is named instead of "+N 0"', async () => {
+        state.rows = [necklace()];
+        state.volume = { '/items/necklace': { unitsPerDay: 0, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        // Every candidate measured at 0: all held to 0, ties go to the lowest
+        expect(bestCell().textContent).toBe('+0 0');
+        // Only +5 untraded; the others unmeasured (uncapped): the best is the best of those, not +5 at 0
+        state.volume = {};
+        board.volumes.clear();
+        board.volumes.set('/items/necklace:5', { unitsPerDay: 0, known: true });
+        board.volumes.set('/items/necklace:0', { known: false, unitsPerDay: 0 });
+        board.volumes.set('/items/necklace:3', { known: false, unitsPerDay: 0 });
+        state.panel.render();
+        expect(bestCell().textContent).toBe('+3 2.0K');
+    });
+
+    test('an unchecked volume is uncapped and says so; the cell redraws as each volume lands', async () => {
+        state.rows = [necklace()];
+        openBoard();
+        expect(bestCell().getAttribute('data-ce-volume')).toBe('pending');
+        expect(bestCell().title).toContain('(volume not checked yet)');
+        state.volume = { '/items/necklace': { unitsPerDay: 24, known: true } };
+        await flush();
+        await flush();
+        expect(bestCell().getAttribute('data-ce-capped')).toBe('true');
+        expect(bestCell().title).toContain('held to about 24 traded a day');
+        expect(bestCell().title).not.toContain('+1:');
+    });
+
+    test('row order still uses the uncapped +N figure', async () => {
+        state.rows = [necklace(), row('sword')];
+        state.volume = { '/items/necklace': { unitsPerDay: 0, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        const names = [...state.panel.panel.querySelectorAll('[data-ce-row]')].map((tr) =>
+            tr.getAttribute('data-ce-row')
+        );
+        // Held to 0 in Best, the necklace still ranks on its uncapped +5 figure
+        expect(names[0]).toContain('necklace');
+    });
+});

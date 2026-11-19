@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Craft & Enhance shows each row's best level
+
+A new "Best level" column names the level that earns the most per hour among the usual sale levels (+0, the item's breakpoints and your target), holding each to what the market trades there. Every level's figure is on hover.
+
+### Craft & Enhance profit per hour follows what the market trades
+
+Once a row's daily volume loads, Profit/hr is held to about a day's trades spread over the hour, shown muted with the uncapped figure on hover. Rows keep their order.
+
+### Craft & Enhance can protect with a copy you craft
+
+Protecting with a copy of the item itself now costs the cheaper of buying one and crafting one (with the extra craft's time and XP), and a row only takes it when it earns more per hour. A custom price you set for the item still wins.
+
 ### Faster start-up reads
 
 The Combat and Lab sim panels, dungeon runs, chat history and task protection now load their saved data in one read each instead of dozens, so the start-up queue clears about two seconds sooner on a large profile.

@@ -18,6 +18,7 @@ import {
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { calculateDirectEnhancementCost } from '../combat-sim/direct-enhancement-cost.js';
+import { breakpointsFor } from '../../utils/enhancement-breakpoints.js';
 
 export { getSkillActionsForDisplay, calculateSkillPerformance, findOptimalTeas, resolveActiveAlchemyItemContext };
 
@@ -56,12 +57,6 @@ for (const [eqType, loc] of Object.entries(EQUIPMENT_TYPE_TO_LOCATION)) {
     if (!LOCATION_TO_EQUIPMENT_TYPES[loc]) LOCATION_TO_EQUIPMENT_TYPES[loc] = [];
     LOCATION_TO_EQUIPMENT_TYPES[loc].push(eqType);
 }
-
-// Enhancement breakpoints — same as combat upgrade advisor
-const BREAKPOINTS_DEFAULT = [7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
-const BREAKPOINTS_JEWELRY = [5, 7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
-const BREAKPOINTS_BACK = [3, 5, 7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
-const BREAKPOINTS_REFINED = [10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
 
 const JEWELRY_LOCATIONS = new Set(['/item_locations/neck', '/item_locations/ring', '/item_locations/earrings']);
 
@@ -163,10 +158,10 @@ export function getPlayerSkillLevel(skillName) {
  * @returns {number[]}
  */
 function getBreakpoints(locationHrid, itemHrid) {
-    if (itemHrid.includes('_refined')) return BREAKPOINTS_REFINED;
-    if (JEWELRY_LOCATIONS.has(locationHrid)) return BREAKPOINTS_JEWELRY;
-    if (locationHrid === '/item_locations/back') return BREAKPOINTS_BACK;
-    return BREAKPOINTS_DEFAULT;
+    return breakpointsFor(itemHrid, {
+        isJewelry: JEWELRY_LOCATIONS.has(locationHrid),
+        isBack: locationHrid === '/item_locations/back',
+    });
 }
 
 /**

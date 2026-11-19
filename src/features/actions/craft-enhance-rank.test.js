@@ -12,7 +12,11 @@ import {
     arrangeCraftEnhanceRows,
     buildCraftEnhanceRow,
     buildDungeonInputIndex,
+    bestLevelByVolume,
+    bestLevelOf,
+    candidateLevelsFor,
     buildHeldPool,
+    capProfitByVolume,
     chooseEnhanceRoute,
     craftUnitFigures,
     dungeonInputKind,
@@ -1298,5 +1302,528 @@ describe('buildCraftEnhanceRow: a held base that covers part of the hour', () =>
     test('unknown crafting XP on the fresh side leaves the blended XP unknown, not the held figure alone', () => {
         const built = via([candidate(0.5)], { craftXpPerUnit: null });
         expect(built.target.craftXpPerHour).toBeNull();
+    });
+});
+
+describe('crafted protection copies in the level and the blend', () => {
+    const copies = { cost: 40, seconds: 36, xp: 30, xpKnown: true, extraCraftSeconds: 72, extraCraftXp: 40 };
+    const level = (enhance) =>
+        evaluateLevel({
+            level: 5,
+            craftCostPerUnit: 60,
+            unpricedInputs: [],
+            secondsPerUnit: 36,
+            otherNetPerUnit: 0,
+            craftXpPerUnit: 20,
+            enhance,
+            saleAfterTax: 300,
+        });
+
+    test('the copies crafted add their seconds to the cycle and their XP to the craft XP, not the enhancing XP', () => {
+        const rated = level(copies);
+        // 36 craft + 36 enhance + 72 for the copies
+        expect(rated.unitsPerHour).toBeCloseTo(3600 / 144, 6);
+        expect(rated.craftXpPerHour).toBeCloseTo(60 * (3600 / 144), 6);
+        expect(rated.enhanceXpPerHour).toBeCloseTo(30 * (3600 / 144), 6);
+        // The cost is the run's; the copies' price is already inside it
+        expect(rated.profitPerUnit).toBe(300 - 60 - 40);
+    });
+
+    test('a quote with no such fields is rated as before', () => {
+        const rated = level({ cost: 40, seconds: 36, xp: 30 });
+        expect(rated.unitsPerHour).toBeCloseTo(50, 6);
+        expect(rated.craftXpPerHour).toBeCloseTo(1000, 6);
+    });
+
+    test('copies whose crafting XP is unknown leave the craft XP null, and the profit alone', () => {
+        const rated = level({ ...copies, extraCraftXp: null });
+        expect(rated.craftXpPerHour).toBeNull();
+        expect(rated.profitPerHour).toBeGreaterThan(0);
+    });
+
+    test('a held base blends the copies of its part and of the fresh part, and unknown XP stays unknown', () => {
+        const heldRun = {
+            cost: 100,
+            seconds: 10,
+            xp: 10,
+            xpKnown: true,
+            selfCopyCrafts: 1,
+            extraCraftSeconds: 10,
+            extraCraftXp: 4,
+        };
+        const candidate = (over = {}) => ({
+            level: 3,
+            count: 1,
+            coverage: 0.5,
+            unitValue: 50,
+            via: 'sale',
+            enhance: heldRun,
+            craftCostPerUnit: 40,
+            secondsPerUnit: 30,
+            otherNetPerUnit: 0,
+            craftXpPerUnit: 15,
+            ...over,
+        });
+        const fresh = {
+            cost: 500,
+            seconds: 20,
+            xp: 10,
+            xpKnown: true,
+            selfCopyCrafts: 3,
+            extraCraftSeconds: 30,
+            extraCraftXp: 12,
+        };
+        const build = (heldBase, freshRun = fresh) =>
+            row('ring', {
+                over: { enhance: freshRun, viaBase: freshRun, baseHrid: '/items/ring', heldBases: [heldBase] },
+            });
+        const built = build(candidate());
+        expect(built.route.route).toBe('held-base');
+        expect(built.route.enhance.selfCopyCrafts).toBeCloseTo(2, 9);
+        expect(built.route.enhance.extraCraftSeconds).toBeCloseTo(20, 9);
+        expect(built.route.enhance.extraCraftXp).toBeCloseTo(8, 9);
+        const unknownHeld = build(candidate({ enhance: { ...heldRun, extraCraftXp: null } }));
+        expect(unknownHeld.target.craftXpPerHour).toBeNull();
+        expect(build(candidate(), { ...fresh, extraCraftXp: null }).target.craftXpPerHour).toBeNull();
+        // Full coverage has no fresh part to be unknown
+        const whole = build(candidate({ coverage: 1 }), { ...fresh, extraCraftXp: null });
+        expect(whole.target.craftXpPerHour).not.toBeNull();
+    });
+});
+
+describe('capProfitByVolume', () => {
+    const lvl = (over = {}) => ({
+        status: 'ok',
+        profitPerUnit: 200,
+        unitsPerHour: 50,
+        profitPerHour: 10000,
+        ...over,
+    });
+
+    test('a measured volume under the hourly output holds the hour to what the market takes', () => {
+        const capped = capProfitByVolume(lvl(), { known: true, unitsPerDay: 240 });
+        // 10 an hour at 200 each
+        expect(capped).toEqual({ capped: true, profitPerHour: 2000, uncappedPerHour: 10000, unitsPerHourCap: 10 });
+    });
+
+    test('a volume at or above the hourly output changes nothing', () => {
+        expect(capProfitByVolume(lvl(), { known: true, unitsPerDay: 1200 }).capped).toBe(false);
+        expect(capProfitByVolume(lvl(), { known: true, unitsPerDay: 5000 }).profitPerHour).toBe(10000);
+    });
+
+    test('a measured 0 caps to 0, but unknown, missing and malformed volumes are not 0', () => {
+        expect(capProfitByVolume(lvl(), { known: true, unitsPerDay: 0 }).profitPerHour).toBe(0);
+        for (const volume of [null, undefined, { known: false, unitsPerDay: 0 }, { unitsPerDay: 0 }, { known: true }]) {
+            const none = capProfitByVolume(lvl(), volume);
+            expect(none.capped).toBe(false);
+            expect(none.profitPerHour).toBe(10000);
+        }
+        expect(capProfitByVolume(lvl(), { known: true, unitsPerDay: -5 }).capped).toBe(false);
+    });
+
+    test('a losing level and a level without a full figure are not capped', () => {
+        const volume = { known: true, unitsPerDay: 0 };
+        const losing = capProfitByVolume(lvl({ profitPerUnit: -10, profitPerHour: -500 }), volume);
+        expect(losing).toEqual(expect.objectContaining({ capped: false, profitPerHour: -500 }));
+        const unpriced = capProfitByVolume(
+            lvl({ status: 'unpriced', profitPerUnit: null, profitPerHour: null }),
+            volume
+        );
+        expect(unpriced).toEqual(expect.objectContaining({ capped: false, profitPerHour: null }));
+        expect(capProfitByVolume(null, volume).profitPerHour).toBeNull();
+    });
+});
+
+describe('the sweep from +0 to the target and its best level', () => {
+    const run = (cost, seconds = 0) => ({ cost, seconds, xp: 10, xpKnown: true });
+    // 100 units an hour at +0: 36 s a craft, 60 coins each. A level's hour is (sale - 60 - run cost) x 3600 / (36 + seconds)
+    const spec = (level, saleAfterTax, enhance, over = {}) => ({
+        level,
+        saleAfterTax,
+        enhance,
+        viaBase: null,
+        ...over,
+    });
+    const swept = (levels, over = {}) => row('ring', { saleN: 400, enhance: run(100), over: { levels, ...over } });
+    const hours = (built) => built.sweep.map((entry) => [entry.level, entry.status, entry.profitPerHour]);
+
+    test('+0 and the target are the row own figures: one function rates every level', () => {
+        const built = swept([spec(1, 260, run(20)), spec(2, 300, run(50, 36))]);
+        expect(built.sweep.map((entry) => entry.level)).toEqual([0, 1, 2, 5]);
+        expect(built.sweep[0]).toEqual(expect.objectContaining({ ...built.base, route: null }));
+        expect(built.sweep[3]).toEqual(expect.objectContaining({ ...built.target, route: built.route.route }));
+        expect(built.sweep[1].profitPerHour).toBeCloseTo((260 - 60 - 20) * 100, 6);
+        expect(built.sweep[2].profitPerHour).toBeCloseTo((300 - 60 - 50) * 50, 6);
+    });
+
+    test('the best level is the highest profit per hour, target included', () => {
+        const built = swept([spec(1, 260, run(20)), spec(2, 300, run(50, 36))]);
+        // +1: 18000, +2: 9500, +5: 24000, +0: 14000
+        expect(built.best).toEqual(expect.objectContaining({ level: 5, profitPerHour: 24000 }));
+        const lowerTarget = row('ring', { saleN: 200, enhance: run(100), over: { levels: [spec(1, 260, run(20))] } });
+        expect(lowerTarget.best.level).toBe(1);
+    });
+
+    test('a level with no sale quote or an enhancement that cannot be priced is skipped, not counted as 0', () => {
+        const built = swept([spec(1, null, run(20)), spec(2, 900, null), spec(3, 260, run(20))]);
+        expect(built.sweep[1]).toEqual(expect.objectContaining({ status: 'unpriced', profitPerHour: null }));
+        expect(built.sweep[1].reasons).toEqual(['sale']);
+        expect(built.sweep[2].reasons).toEqual(['enhance']);
+        // The skipped levels would have won (900) or been 0: neither
+        expect(built.best.level).toBe(5);
+        expect(hours(built).filter(([, status]) => status === 'unpriced')).toHaveLength(2);
+    });
+
+    test('a negative best is still the best, and nothing priced at all has no best', () => {
+        const losing = row('ring', {
+            sale0: 10,
+            saleN: 20,
+            enhance: run(400),
+            over: { levels: [spec(1, 15, run(100))] },
+        });
+        expect(losing.best.level).toBe(0);
+        expect(losing.best.profitPerHour).toBeLessThan(0);
+        const none = row('ring', { sale0: null, saleN: null, over: { levels: [spec(1, null, run(20))] } });
+        expect(none.best).toBeNull();
+    });
+
+    test('a tie goes to the lower level', () => {
+        // +1 and +2 both 18000 an hour (90 units at 200, 100 units at 180)
+        const built = swept([spec(1, 260, run(20)), spec(2, 280, run(20, 4))], { enhance: run(100) });
+        expect(built.sweep[1].profitPerHour).toBeCloseTo(18000, 6);
+        expect(built.sweep[2].profitPerHour).toBeCloseTo(18000, 6);
+        const tied = row('ring', {
+            saleN: 9,
+            enhance: run(100),
+            over: { levels: [spec(1, 260, run(20)), spec(2, 280, run(20, 4))] },
+        });
+        expect(tied.best.level).toBe(1);
+        expect(
+            bestLevelOf([
+                { level: 0, status: 'ok', profitPerHour: 5 },
+                { level: 1, status: 'ok', profitPerHour: 5 },
+            ]).level
+        ).toBe(0);
+    });
+
+    test('a held base serves the levels at or above its own, on the same rules as the target', () => {
+        const held = {
+            level: 3,
+            count: 100,
+            coverage: 1,
+            unitValue: 50,
+            via: 'sale',
+            enhance: run(10),
+            craftCostPerUnit: 20,
+            secondsPerUnit: 36,
+            otherNetPerUnit: 0,
+            craftXpPerUnit: 20,
+        };
+        const built = row('ring', {
+            saleN: 400,
+            enhance: run(300),
+            over: {
+                viaBase: run(300),
+                baseHrid: '/items/base',
+                levels: [spec(1, 260, run(200)), spec(3, 260, run(200), { heldBases: [{ ...held, enhance: run(0) }] })],
+                heldBases: [{ ...held, enhance: run(10) }],
+            },
+        });
+        // Below the held level there is no held base; at and above it the cheaper held route is taken
+        expect(built.sweep[1].route).not.toBe('held-base');
+        expect(built.sweep[2].level).toBe(3);
+        expect(built.sweep[2].route).toBe('held-base');
+        expect(built.sweep[3].route).toBe('held-base');
+        expect(built.route.route).toBe('held-base');
+    });
+
+    test('a row with no levels given holds +0 and the target only', () => {
+        const built = row('ring', {});
+        expect(built.sweep.map((entry) => entry.level)).toEqual([0, 5]);
+    });
+
+    test('levels at or above the target, or below 1, are ignored: the target is rated once', () => {
+        const built = swept([spec(0, 999, run(1)), spec(5, 999, run(1)), spec(7, 999, run(1)), spec(2, 260, run(20))]);
+        expect(built.sweep.map((entry) => entry.level)).toEqual([0, 2, 5]);
+    });
+});
+
+describe('a level keeps the better hour of crafted-copy and market-only protection', () => {
+    const plain = (cost, seconds = 0) => ({ cost, seconds, xp: 10, xpKnown: true });
+    const withCopies = (cost, extraCraftSeconds, marketOnly) => ({
+        ...plain(cost),
+        selfCopyCrafts: 2,
+        extraCraftSeconds,
+        extraCraftXp: 0,
+        marketOnly,
+    });
+    const rate = (enhance, over = {}) => row('ring', { saleN: 400, enhance, over });
+
+    test('crafted copies win when cheaper and fast enough, and lose when their crafts cost more hour than they save', () => {
+        // Market-only: 400 - 60 - 150 = 190 an item in 36 s. Crafted: 100 an item cheaper in run cost
+        const wins = rate(withCopies(50, 10, plain(150)));
+        expect(wins.target.enhanceCost).toBe(50);
+        const loses = rate(withCopies(50, 200, plain(150)));
+        expect(loses.target.enhanceCost).toBe(150);
+        expect(loses.route.enhance.selfCopyCrafts ?? 0).toBe(0);
+    });
+
+    test('a tie keeps the market-only quote', () => {
+        const tie = rate(withCopies(150, 0, plain(150)));
+        expect(tie.route.enhance.selfCopyCrafts ?? 0).toBe(0);
+    });
+
+    test('a crafted quote is used when the market-only one cannot be priced, and vice versa', () => {
+        expect(rate(withCopies(50, 10, null)).target.enhanceCost).toBe(50);
+        expect(rate(withCopies(50, 10, null)).target.status).toBe('ok');
+    });
+
+    test('the pick is made at swept levels too', () => {
+        const built = row('ring', {
+            saleN: 400,
+            enhance: plain(100),
+            over: {
+                levels: [{ level: 2, saleAfterTax: 300, enhance: withCopies(50, 500, plain(60)), viaBase: null }],
+            },
+        });
+        expect(built.sweep[1].enhanceCost).toBe(60);
+    });
+
+    test('a held base blend picks per level the same way', () => {
+        const held = (enhance) => ({
+            level: 3,
+            count: 100,
+            coverage: 1,
+            unitValue: 50,
+            via: 'sale',
+            enhance,
+            craftCostPerUnit: 20,
+            secondsPerUnit: 36,
+            otherNetPerUnit: 0,
+            craftXpPerUnit: 20,
+        });
+        const built = row('ring', {
+            saleN: 400,
+            enhance: plain(300),
+            over: {
+                viaBase: plain(300),
+                baseHrid: '/items/base',
+                heldBases: [held(withCopies(10, 5000, plain(40)))],
+            },
+        });
+        expect(built.route.route).toBe('held-base');
+        expect(built.target.enhanceCost).toBe(40);
+    });
+});
+
+describe('candidateLevelsFor', () => {
+    test('+0, the breakpoints at or below the target, and the target itself', () => {
+        expect(candidateLevelsFor('/items/sword', '/equipment_types/main_hand', 10)).toEqual([0, 7, 10]);
+        expect(candidateLevelsFor('/items/sword', '/equipment_types/main_hand', 5)).toEqual([0, 5]);
+        expect(candidateLevelsFor('/items/sword', '/equipment_types/main_hand', 13)).toEqual([0, 7, 10, 12, 13]);
+    });
+
+    test('jewelry, back-slot and refined items use their own lists', () => {
+        expect(candidateLevelsFor('/items/necklace_of_speed', '/equipment_types/neck', 10)).toEqual([0, 5, 7, 10]);
+        expect(candidateLevelsFor('/items/cape', '/equipment_types/back', 10)).toEqual([0, 3, 5, 7, 10]);
+        expect(candidateLevelsFor('/items/ring_refined', '/equipment_types/ring', 12)).toEqual([0, 10, 12]);
+    });
+
+    test('an unknown equipment type is the default list; the target is never listed twice', () => {
+        expect(candidateLevelsFor('/items/sword', null, 7)).toEqual([0, 7]);
+        expect(candidateLevelsFor('/items/sword', undefined, 3)).toEqual([0, 3]);
+    });
+});
+
+describe('bestLevelByVolume', () => {
+    const lvl = (level, profitPerHour, over = {}) => ({
+        level,
+        status: 'ok',
+        profitPerUnit: profitPerHour / 10,
+        unitsPerHour: 10,
+        profitPerHour,
+        ...over,
+    });
+    const sweep = [lvl(0, 100), lvl(1, 463), lvl(2, 50), lvl(7, 300), lvl(10, 628)];
+    const volumes = (map) => (level) => map[level];
+
+    test('a level the market does not trade is held to 0 and another candidate wins (the +10 that read 0)', () => {
+        const { best } = bestLevelByVolume(sweep, [0, 1, 7, 10], volumes({ 10: { known: true, unitsPerDay: 0 } }));
+        expect(best.level).toBe(1);
+        expect(best.profitPerHour).toBe(463);
+    });
+
+    test('non-candidate levels are not considered, however good', () => {
+        const { best, entries } = bestLevelByVolume(sweep, [0, 7, 10], volumes({}));
+        expect(entries.map((item) => item.level)).toEqual([0, 7, 10]);
+        expect(best.level).toBe(10);
+    });
+
+    test('pending and unknown volumes leave a level uncapped and say which', () => {
+        const { entries } = bestLevelByVolume(sweep, [0, 7, 10], volumes({ 7: { known: false, unitsPerDay: 0 } }));
+        expect(entries.map((item) => [item.level, item.volumeState])).toEqual([
+            [0, 'pending'],
+            [7, 'unknown'],
+            [10, 'pending'],
+        ]);
+        expect(entries[1].profitPerHour).toBe(300);
+    });
+
+    test('a measured volume holds a level to what is traded; a loss is not capped; a tie goes to the lower level', () => {
+        const losing = [lvl(0, -50, { profitPerUnit: -5 }), lvl(1, 100), lvl(2, 100)];
+        const { best, entries } = bestLevelByVolume(losing, [0, 1, 2], volumes({ 0: { known: true, unitsPerDay: 0 } }));
+        expect(entries[0].profitPerHour).toBe(-50);
+        expect(best.level).toBe(1);
+        const capped = bestLevelByVolume(sweep, [10], volumes({ 10: { known: true, unitsPerDay: 24 } }));
+        // 1 an hour at 62.8 each
+        expect(capped.best.profitPerHour).toBeCloseTo(62.8, 6);
+        expect(capped.best.cap.capped).toBe(true);
+    });
+
+    test('a level with no full figure is never chosen; nothing priced has no best', () => {
+        const unpriced = lvl(3, null, { status: 'unpriced', profitPerUnit: null, unitsPerHour: null });
+        expect(bestLevelByVolume([unpriced, lvl(0, 10)], [0, 3], volumes({})).best.level).toBe(0);
+        expect(bestLevelByVolume([unpriced], [3], volumes({})).best).toBeNull();
+    });
+
+    test('without candidate levels every swept level counts', () => {
+        expect(bestLevelByVolume(sweep, null, volumes({})).entries).toHaveLength(5);
+    });
+});
+
+describe('bonus drops of crafted protection copies in the level', () => {
+    const rated = (extraCraftNet) =>
+        evaluateLevel({
+            level: 5,
+            craftCostPerUnit: 60,
+            unpricedInputs: [],
+            secondsPerUnit: 36,
+            otherNetPerUnit: 3,
+            craftXpPerUnit: 20,
+            enhance: { cost: 40, seconds: 36, xp: 30, extraCraftNet },
+            saleAfterTax: 300,
+        });
+
+    test('are added to the profit per item, and absent means none', () => {
+        expect(rated(10).profitPerUnit).toBe(300 + 3 + 10 - 60 - 40);
+        expect(rated(undefined).profitPerUnit).toBe(300 + 3 - 60 - 40);
+    });
+});
+
+describe('every route and variant is scored on its complete hour', () => {
+    const run = (cost, seconds, marketCost, extraCraftSeconds = 0) => ({
+        cost,
+        seconds,
+        xp: 10,
+        xpKnown: true,
+        selfCopyCrafts: extraCraftSeconds > 0 ? 1 : 0,
+        extraCraftSeconds,
+        extraCraftXp: 0,
+        marketOnly: { cost: marketCost, seconds, xp: 10, xpKnown: true },
+    });
+    // A 60 coin craft in 36 s sold for 400. Crafted direct: 50 + 200 s of extra crafts; crafted base: 60 + 10 s.
+    // Market-only direct 150, base 160, all with 10 s of enhancing.
+    const direct = run(50, 10, 150, 200);
+    const viaBase = run(60, 10, 160, 10);
+    const rate = (over = {}) =>
+        row('ring', {
+            sale0: 200,
+            saleN: 400,
+            cost: 60,
+            enhance: direct,
+            over: { viaBase, baseHrid: '/items/base', ...over },
+        });
+
+    test('the crafted base route is kept though the crafted direct route costs less in gold', () => {
+        const built = rate();
+        // Direct market-only: 190 an item in 46 s = 14870 an hour. Crafted base: 280 an item in 56 s = 18000 an hour
+        expect(built.route.route).toBe('refine-base');
+        expect(built.target.profitPerHour).toBeCloseTo(18000, 6);
+        expect(built.route.enhance.selfCopyCrafts).toBe(1);
+        // Each route is reported at the variant it uses: the chosen crafted base at 60, direct at its best hour (150)
+        expect(built.route.directCost).toBe(150);
+        expect(built.route.baseCost).toBe(60);
+        expect(built.route.saved).toBe(90);
+    });
+
+    test('the same choice is made at a swept level', () => {
+        const built = rate({
+            levels: [{ level: 2, saleAfterTax: 400, enhance: direct, viaBase }],
+        });
+        expect(built.sweep[1].level).toBe(2);
+        expect(built.sweep[1].route).toBe('refine-base');
+        expect(built.sweep[1].profitPerHour).toBeCloseTo(18000, 6);
+    });
+
+    test('a held base is scored on its hour, beside the fresh routes', () => {
+        const held = {
+            level: 3,
+            count: 100,
+            coverage: 1,
+            unitValue: 50,
+            via: 'sale',
+            enhance: run(10, 10, 20, 0),
+            craftCostPerUnit: 60,
+            secondsPerUnit: 36,
+            otherNetPerUnit: 0,
+            craftXpPerUnit: 20,
+        };
+        const built = rate({ heldBases: [held] });
+        // 400 - 60 - 10 = 330 an item in 46 s beats the crafted base route's 18000 an hour
+        expect(built.route.route).toBe('held-base');
+        expect(built.target.profitPerHour).toBeCloseTo((330 * 3600) / 46, 6);
+    });
+
+    test('an unpriced route is never chosen, whatever its hour would have been', () => {
+        const built = rate({ viaBase: null });
+        expect(built.route.route).toBe('craft');
+        expect(built.target.status).toBe('ok');
+        expect(built.target.profitPerHour).toBeCloseTo((190 * 3600) / 46, 6);
+    });
+
+    test('equal hours keep the item itself, market-only first', () => {
+        const same = { cost: 100, seconds: 10, xp: 10, xpKnown: true };
+        const built = rate({ viaBase: same, enhance: same });
+        expect(built.route.route).toBe('craft');
+    });
+});
+
+describe('route savings follow the variant each route uses', () => {
+    const plain = (cost, seconds = 10) => ({ cost, seconds, xp: 10, xpKnown: true });
+    const baseRun = { ...plain(20), selfCopyCrafts: 1, extraCraftSeconds: 0, extraCraftXp: 0, marketOnly: plain(100) };
+    const rate = (over = {}) =>
+        row('ring', {
+            sale0: 200,
+            saleN: 400,
+            cost: 60,
+            enhance: plain(80),
+            over: { viaBase: baseRun, baseHrid: '/items/b', ...over },
+        });
+
+    test('a base that costs 20 with crafted copies (100 market-only) against a direct 80 saves 60, not -20', () => {
+        const built = rate();
+        expect(built.route.route).toBe('refine-base');
+        expect(built.route.baseCost).toBe(20);
+        expect(built.route.directCost).toBe(80);
+        expect(built.route.saved).toBe(60);
+    });
+
+    test('a held base is measured against the cheapest fresh route at its used variant', () => {
+        const held = {
+            level: 3,
+            count: 100,
+            coverage: 1,
+            unitValue: 50,
+            via: 'sale',
+            enhance: plain(5),
+            craftCostPerUnit: 60,
+            secondsPerUnit: 36,
+            otherNetPerUnit: 0,
+            craftXpPerUnit: 20,
+        };
+        const built = rate({ heldBases: [held] });
+        expect(built.route.route).toBe('held-base');
+        // Fresh best is 60 + 20 (the crafted base run); the held base is 60 + 5
+        expect(built.route.heldBase.saved).toBe(15);
     });
 });
