@@ -1709,3 +1709,81 @@ describe('bonus drops of crafted protection copies in the level', () => {
         expect(rated(undefined).profitPerUnit).toBe(300 + 3 - 60 - 40);
     });
 });
+
+describe('every route and variant is scored on its complete hour', () => {
+    const run = (cost, seconds, marketCost, extraCraftSeconds = 0) => ({
+        cost,
+        seconds,
+        xp: 10,
+        xpKnown: true,
+        selfCopyCrafts: extraCraftSeconds > 0 ? 1 : 0,
+        extraCraftSeconds,
+        extraCraftXp: 0,
+        marketOnly: { cost: marketCost, seconds, xp: 10, xpKnown: true },
+    });
+    // A 60 coin craft in 36 s sold for 400. Crafted direct: 50 + 200 s of extra crafts; crafted base: 60 + 10 s.
+    // Market-only direct 150, base 160, all with 10 s of enhancing.
+    const direct = run(50, 10, 150, 200);
+    const viaBase = run(60, 10, 160, 10);
+    const rate = (over = {}) =>
+        row('ring', {
+            sale0: 200,
+            saleN: 400,
+            cost: 60,
+            enhance: direct,
+            over: { viaBase, baseHrid: '/items/base', ...over },
+        });
+
+    test('the crafted base route is kept though the crafted direct route costs less in gold', () => {
+        const built = rate();
+        // Direct market-only: 190 an item in 46 s = 14870 an hour. Crafted base: 280 an item in 56 s = 18000 an hour
+        expect(built.route.route).toBe('refine-base');
+        expect(built.target.profitPerHour).toBeCloseTo(18000, 6);
+        expect(built.route.enhance.selfCopyCrafts).toBe(1);
+        // The two routes' own costs are still reported, and the saving is negative: chosen for the hour, not the cost
+        expect(built.route.directCost).toBe(150);
+        expect(built.route.baseCost).toBe(160);
+        expect(built.route.saved).toBeLessThan(0);
+    });
+
+    test('the same choice is made at a swept level', () => {
+        const built = rate({
+            levels: [{ level: 2, saleAfterTax: 400, enhance: direct, viaBase }],
+        });
+        expect(built.sweep[1].level).toBe(2);
+        expect(built.sweep[1].route).toBe('refine-base');
+        expect(built.sweep[1].profitPerHour).toBeCloseTo(18000, 6);
+    });
+
+    test('a held base is scored on its hour, beside the fresh routes', () => {
+        const held = {
+            level: 3,
+            count: 100,
+            coverage: 1,
+            unitValue: 50,
+            via: 'sale',
+            enhance: run(10, 10, 20, 0),
+            craftCostPerUnit: 60,
+            secondsPerUnit: 36,
+            otherNetPerUnit: 0,
+            craftXpPerUnit: 20,
+        };
+        const built = rate({ heldBases: [held] });
+        // 400 - 60 - 10 = 330 an item in 46 s beats the crafted base route's 18000 an hour
+        expect(built.route.route).toBe('held-base');
+        expect(built.target.profitPerHour).toBeCloseTo((330 * 3600) / 46, 6);
+    });
+
+    test('an unpriced route is never chosen, whatever its hour would have been', () => {
+        const built = rate({ viaBase: null });
+        expect(built.route.route).toBe('craft');
+        expect(built.target.status).toBe('ok');
+        expect(built.target.profitPerHour).toBeCloseTo((190 * 3600) / 46, 6);
+    });
+
+    test('equal hours keep the item itself, market-only first', () => {
+        const same = { cost: 100, seconds: 10, xp: 10, xpKnown: true };
+        const built = rate({ viaBase: same, enhance: same });
+        expect(built.route.route).toBe('craft');
+    });
+});

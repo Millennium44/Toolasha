@@ -691,7 +691,7 @@ export function buildCraftEnhanceRow({
      *   each with its `enhance` to this level) and `saleAfterTax`
      * @returns {{route: Object, result: Object}}
      */
-    const rateWith = (level, { enhance, viaBase, candidates, saleAfterTax }) => {
+    const rateWith = (level, { enhance, viaBase, candidates, saleAfterTax, gate = true }) => {
         const chosen = chooseEnhanceRoute({ level, direct: enhance, viaBase });
 
         // The routes above share one craft cost, so the enhancement run alone told them apart. A held base changes the
@@ -717,7 +717,7 @@ export function buildCraftEnhanceRow({
             // The whole blended hour must beat staying fresh: a mixed hour can run out of shared stock the fresh
             // hour alone would not, so a cheaper held portion is not enough
             const total = mix(heldTotal, freshMixedTotal, share);
-            if (!(total < (freshTotal ?? Infinity))) continue;
+            if (gate && !(total < (freshTotal ?? Infinity))) continue;
             if (held && !(total < held.total)) continue;
             const fresh = chosen.enhance;
             const enhanceXpKnown = candidate.enhance.xpKnown !== false && (share >= 1 || fresh.xpKnown !== false);
@@ -795,28 +795,79 @@ export function buildCraftEnhanceRow({
         return { route, result };
     };
 
-    // A run quoted with crafted protection copies carries its market-only quote beside it (`marketOnly`). Which is the
-    // better hour depends on the sale and the craft, so a level is rated both ways, every run on its crafted-copy
-    // quote and every run on its market-only one, and keeps the higher profit per hour; a tie keeps market-only, the
-    // quote before crafted copies existed, so a level is never worse than it was.
+    // A run quoted with crafted protection copies carries its market-only quote beside it (`marketOnly`). The routes
+    // to a level (the item itself, the base first, a held base), each run crafted or market-only, are all scored on
+    // their complete hourly result and the best hour is kept: a route cheaper in gold can be the worse hour once its
+    // extra crafting time is counted, so no route is dropped on cost first. An unpriced route is never a candidate.
+    // Ties keep the earlier option: market-only before crafted, the item itself before the base, a fresh route
+    // before a held one.
     const hasAlternative = (run) => Boolean(run) && Object.prototype.hasOwnProperty.call(run, 'marketOnly');
     const marketOf = (run) => (hasAlternative(run) ? run.marketOnly : run);
+    const variantsOf = (run) => {
+        if (!run) return [];
+        if (!hasAlternative(run)) return [run];
+        return run.marketOnly ? [run.marketOnly, run] : [run];
+    };
+    const full = (rated) => rated.result.status === 'ok' && Number.isFinite(rated.result.profitPerHour);
     const rateLevel = (level, inputs) => {
-        const crafted = rateWith(level, inputs);
         const candidates = inputs.candidates ?? [];
-        if (![inputs.enhance, inputs.viaBase, ...candidates.map((c) => c?.enhance)].some(hasAlternative))
-            return crafted;
-        const market = rateWith(level, {
-            ...inputs,
-            enhance: marketOf(inputs.enhance),
-            viaBase: marketOf(inputs.viaBase),
-            candidates: candidates.map((c) => ({ ...c, enhance: marketOf(c?.enhance) })),
-        });
-        const full = (rated) => rated.result.status === 'ok' && Number.isFinite(rated.result.profitPerHour);
-        if (full(crafted) && (!full(market) || crafted.result.profitPerHour > market.result.profitPerHour)) {
-            return crafted;
+        const fresh = [
+            ...variantsOf(inputs.enhance).map((run) => ({ enhance: run, viaBase: null })),
+            ...variantsOf(inputs.viaBase).map((run) => ({ enhance: null, viaBase: run })),
+        ];
+        const held = candidates.flatMap((candidate) =>
+            variantsOf(candidate?.enhance).map((run) => ({ ...candidate, enhance: run }))
+        );
+        const scenarios = [
+            ...fresh.map((option) => ({ ...option, candidates: [] })),
+            // A held base runs beside a fresh route for the crafts it cannot cover (or alone when it covers them all)
+            ...[...fresh, { enhance: null, viaBase: null }].flatMap((option) =>
+                held.map((candidate) => ({ ...option, candidates: [candidate] }))
+            ),
+        ];
+        let best = null;
+        for (const scenario of scenarios) {
+            const rated = rateWith(level, { ...inputs, ...scenario, gate: false });
+            if (full(rated) && (best === null || rated.result.profitPerHour > best.result.profitPerHour)) best = rated;
         }
-        return market;
+        if (best === null) {
+            // Nothing could be priced: the market-only rating says why (which price is missing)
+            return rateWith(level, {
+                ...inputs,
+                enhance: marketOf(inputs.enhance),
+                viaBase: marketOf(inputs.viaBase),
+                candidates: candidates.map((c) => ({ ...c, enhance: marketOf(c?.enhance) })),
+            });
+        }
+        // The route's comparison figures are the two routes' own costs; `saved` is what the chosen one saves over the
+        // other and is negative when it was chosen for the better hour at a higher cost
+        const costs = chooseEnhanceRoute({
+            level,
+            direct: marketOf(inputs.enhance),
+            viaBase: marketOf(inputs.viaBase),
+        });
+        const winner = best.route.route;
+        const other =
+            winner === ENHANCE_ROUTES.BASE
+                ? costs.directCost
+                : winner === ENHANCE_ROUTES.DIRECT
+                  ? costs.baseCost
+                  : null;
+        const own = winner === ENHANCE_ROUTES.BASE ? costs.baseCost : costs.directCost;
+        const saved = Number.isFinite(other) && Number.isFinite(own) ? other - own : 0;
+        const route = { ...best.route, directCost: costs.directCost, baseCost: costs.baseCost, saved };
+        if (route.heldBase) {
+            // What the held base saves is measured against the cheapest fresh route, whichever the hour preferred
+            const cheapest = Math.min(...[costs.directCost, costs.baseCost].filter((cost) => Number.isFinite(cost)));
+            route.heldBase = {
+                ...route.heldBase,
+                saved:
+                    Number.isFinite(cheapest) && craftCostPerUnit !== null
+                        ? craftCostPerUnit + cheapest - route.heldBase.total
+                        : null,
+            };
+        }
+        return { ...best, route };
     };
 
     const rated = rateLevel(targetLevel, { enhance, viaBase, candidates: heldBases, saleAfterTax: saleTarget });

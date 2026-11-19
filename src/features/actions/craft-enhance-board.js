@@ -288,14 +288,18 @@ function routeTooltip(row, target) {
     }
     // A saving is claimed only when both routes were priced: with one side unpriced nothing was compared
     const compared = Number.isFinite(route.directCost) && Number.isFinite(route.baseCost);
+    const forTheHour =
+        'It costs more to enhance, but the whole hour (crafts, enhancing and any crafted protection copies) earns more.';
     if (route.route === 'refine-base')
         lines.push(
             compared
-                ? `Cheaper by enhancing the base first: saves ${money(route.saved)}`
+                ? route.saved > 0
+                    ? `Cheaper by enhancing the base first: saves ${money(route.saved)}`
+                    : forTheHour
                 : 'Only the base route could be priced.'
         );
-    else if (route.route === 'craft' && compared && route.saved > 0)
-        lines.push('Enhancing the star item itself is cheaper.');
+    else if (route.route === 'craft' && compared)
+        lines.push(route.saved > 0 ? 'Enhancing the star item itself is cheaper.' : route.saved < 0 ? forTheHour : '');
     return lines.filter(Boolean).join('\n');
 }
 

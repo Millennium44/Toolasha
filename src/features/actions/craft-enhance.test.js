@@ -775,11 +775,11 @@ describe('enhancing the base before refining', () => {
 
     test('the star item itself wins when it is cheaper, and a tie keeps it', async () => {
         starFixture();
-        game.enhanceQuotes['/items/ring'] = { cost: 6000, seconds: 80, xp: 600, xpKnown: true };
+        game.enhanceQuotes['/items/ring'] = { cost: 6000, seconds: 120, xp: 600, xpKnown: true };
         expect((await run()).route.route).toBe('craft');
         clearCraftEnhanceCache();
         game.stamp += 1;
-        game.enhanceQuotes['/items/ring'] = { cost: 5000, seconds: 80, xp: 600, xpKnown: true };
+        game.enhanceQuotes['/items/ring'] = { cost: 5000, seconds: 120, xp: 600, xpKnown: true };
         const tie = await run();
         expect(tie.route.route).toBe('craft');
         expect(tie.target.enhanceCost).toBe(5000);
@@ -1306,9 +1306,9 @@ describe('the stock is spread over the hour of crafts', () => {
     test('a blend that costs more than staying fresh is not taken, though its held crafts are cheaper', async () => {
         const action = starFixture();
         game.profits[action.hrid].totalItemsPerHour = 10;
-        game.heldProfits[action.hrid] = { ...game.profits[action.hrid], totalItemsPerHour: 20 };
+        game.heldProfits[action.hrid] = { ...game.profits[action.hrid], totalItemsPerHour: 10 };
         game.quotes['/items/ring:3'] = { price: 1000, source: 'book', estimated: false };
-        game.enhanceQuotes['/items/ring:3'] = { cost: 2240, seconds: 40, xp: 300, xpKnown: true };
+        game.enhanceQuotes['/items/ring:3'] = { cost: 2240, seconds: 120, xp: 300, xpKnown: true };
         // 20 leather covers the fresh hour (10 crafts x 2); the mixed hour (15 crafts) buys 10 more
         game.inventory = [stack('/items/griffin_leather', 20), stack('/items/ring', 10, 3)];
         const row = (await rankCraftEnhance({ targetLevel: 5, ownedMode: 'sunk' }))[0];
