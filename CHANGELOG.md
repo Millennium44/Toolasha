@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sim refine rows show the resale credit
+
+The Upgrade advisor's refine and enhance cost lines now name the resale credit for the piece they replace ("less 78.9M for your +0 sold = 166.1M"), so the ladder figure and the Cost cell add up.
+
 ### Craft & Enhance counts only the dungeon drops you hold
 
 The sale-value and sunk modes now apply only to the drops in your inventory, spread over an hour of crafts; anything an hour needs beyond that is priced at the buy price. A ★ recipe can also start from a base you already hold at its level ("via held +N base").
