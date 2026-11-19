@@ -955,6 +955,67 @@ describe('the run history read behind feature startup', () => {
         warn.mockRestore();
     });
 
+    test('an unreadable history is re-read on a 2 s / 8 s / 30 s ladder, warned once, then left alone', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        game.runsUnreadable = true;
+        // No chat passes: only the timed retries read
+        const chat = vi.spyOn(annotations, 'waitForChat').mockImplementation(() => {});
+        await annotations.initialize();
+        await annotations._startupLoad;
+        expect(game.repairCalls).toBe(1);
+
+        await vi.advanceTimersByTimeAsync(1_900);
+        expect(game.repairCalls).toBe(1);
+        await vi.advanceTimersByTimeAsync(200);
+        expect(game.repairCalls).toBe(2);
+        await vi.advanceTimersByTimeAsync(8_000);
+        expect(game.repairCalls).toBe(3);
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(game.repairCalls).toBe(4);
+        await vi.advanceTimersByTimeAsync(300_000);
+        expect(game.repairCalls).toBe(4);
+        expect(warn).toHaveBeenCalledTimes(1);
+        chat.mockRestore();
+        warn.mockRestore();
+    });
+
+    test('a retry that reads the history labels the waiting messages and ends the streak', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        game.runsUnreadable = true;
+        game.allRuns = [storedRun({ timestamp: aug4(9, 0, 0).toISOString(), duration: 240_000 })];
+        chatLog();
+        await annotations.initialize();
+        await annotations._startupLoad;
+        expect(annotations.initComplete).toBe(false);
+
+        game.runsUnreadable = false;
+        await vi.advanceTimersByTimeAsync(2_100);
+
+        expect(annotations.initComplete).toBe(true);
+        expect(labels()[0]).toBe('[Run #2: 4m 32s]');
+        expect(annotations._retryTimer).toBeNull();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(game.repairCalls).toBe(1 + 1);
+        warn.mockRestore();
+    });
+
+    test('a switch cancels the pending retry', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        game.runsUnreadable = true;
+        const chat = vi.spyOn(annotations, 'waitForChat').mockImplementation(() => {});
+        await annotations.initialize();
+        await annotations._startupLoad;
+        expect(annotations._retryTimer).not.toBeNull();
+
+        annotations.cleanup();
+        await vi.advanceTimersByTimeAsync(60_000);
+
+        expect(game.repairCalls).toBe(1);
+        expect(annotations._retryTimer).toBeNull();
+        chat.mockRestore();
+        warn.mockRestore();
+    });
+
     test('an empty but readable history is complete and numbers from chat alone', async () => {
         game.allRuns = [];
         chatLog();
