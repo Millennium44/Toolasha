@@ -1770,6 +1770,23 @@ describe('Best holds every route variant to the volume before choosing (#1053)',
         expect(capBestVariant(losing, known(0)).cap.profitPerHour).toBe(-50);
     });
 
+    test("a capped variant reports its own run's cost and the saving against the other route (Codex round 1)", () => {
+        // Direct costs 150 market-only or 50 with crafted copies; the base route costs 100 (240 an item, uncapped winner)
+        const built = build({
+            viaBase: { cost: 100, seconds: 10, xp: 10, xpKnown: true },
+            baseHrid: '/items/base',
+        });
+        expect(built.route.route).toBe('refine-base');
+        const targetEntry = built.sweep[built.sweep.length - 1];
+        const choice = capBestVariant(targetEntry, known(24));
+        const info = choice.entry.routeInfo;
+        expect(info.route).toBe('craft');
+        expect(info.enhance.selfCopyCrafts).toBe(1);
+        expect(info.directCost).toBe(50);
+        expect(info.baseCost).toBe(100);
+        expect(info.saved).toBe(50);
+    });
+
     test('ties keep the earlier variant, and an entry without variants is its own', () => {
         const mk = (route, perHour) => ({
             level: 5,

@@ -862,19 +862,26 @@ export function buildCraftEnhanceRow({
         };
         const finishRoute = (pick) => {
             const winner = pick.route.route;
+            // A fresh route is reported at its own run's cost (the variant the cap chose may not be the route's best
+            // hour); the other route stays at its best hour's cost, which is what it is compared with
+            const ownRun = Number(pick.route.enhance?.cost);
+            const figures = {
+                directCost: winner === ENHANCE_ROUTES.DIRECT && Number.isFinite(ownRun) ? ownRun : costs.directCost,
+                baseCost: winner === ENHANCE_ROUTES.BASE && Number.isFinite(ownRun) ? ownRun : costs.baseCost,
+            };
             const other =
                 winner === ENHANCE_ROUTES.BASE
-                    ? costs.directCost
+                    ? figures.directCost
                     : winner === ENHANCE_ROUTES.DIRECT
-                      ? costs.baseCost
+                      ? figures.baseCost
                       : null;
-            const own = winner === ENHANCE_ROUTES.BASE ? costs.baseCost : costs.directCost;
+            const own = winner === ENHANCE_ROUTES.BASE ? figures.baseCost : figures.directCost;
             const saved = Number.isFinite(other) && Number.isFinite(own) ? other - own : 0;
-            const finished = { ...pick.route, directCost: costs.directCost, baseCost: costs.baseCost, saved };
+            const finished = { ...pick.route, directCost: figures.directCost, baseCost: figures.baseCost, saved };
             if (finished.heldBase) {
                 // What the held base saves is measured against the cheapest fresh route, whichever the hour preferred
                 const cheapest = Math.min(
-                    ...[costs.directCost, costs.baseCost].filter((cost) => Number.isFinite(cost))
+                    ...[figures.directCost, figures.baseCost].filter((cost) => Number.isFinite(cost))
                 );
                 finished.heldBase = {
                     ...finished.heldBase,
