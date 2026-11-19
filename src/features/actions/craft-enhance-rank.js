@@ -668,7 +668,7 @@ export function buildCraftEnhanceRow({
      *   each with its `enhance` to this level) and `saleAfterTax`
      * @returns {{route: Object, result: Object}}
      */
-    const rateLevel = (level, { enhance, viaBase, candidates, saleAfterTax }) => {
+    const rateWith = (level, { enhance, viaBase, candidates, saleAfterTax }) => {
         const chosen = chooseEnhanceRoute({ level, direct: enhance, viaBase });
 
         // The routes above share one craft cost, so the enhancement run alone told them apart. A held base changes the
@@ -711,6 +711,7 @@ export function buildCraftEnhanceRow({
                         : mix(candidate.craftXpPerUnit, craftXpPerUnit, share),
                 enhance: {
                     ...candidate.enhance,
+                    marketOnly: undefined,
                     cost: mix(Number(candidate.enhance.cost), Number(fresh?.cost), share),
                     seconds: mix(Number(candidate.enhance.seconds), Number(fresh?.seconds), share),
                     xp: mix(Number(candidate.enhance.xp), Number(fresh?.xp), share),
@@ -764,6 +765,30 @@ export function buildCraftEnhanceRow({
             result = evaluateLevel({ ...common, level, enhance: chosen.enhance, saleAfterTax });
         }
         return { route, result };
+    };
+
+    // A run quoted with crafted protection copies carries its market-only quote beside it (`marketOnly`). Which is the
+    // better hour depends on the sale and the craft, so a level is rated both ways, every run on its crafted-copy
+    // quote and every run on its market-only one, and keeps the higher profit per hour; a tie keeps market-only, the
+    // quote before crafted copies existed, so a level is never worse than it was.
+    const hasAlternative = (run) => Boolean(run) && Object.prototype.hasOwnProperty.call(run, 'marketOnly');
+    const marketOf = (run) => (hasAlternative(run) ? run.marketOnly : run);
+    const rateLevel = (level, inputs) => {
+        const crafted = rateWith(level, inputs);
+        const candidates = inputs.candidates ?? [];
+        if (![inputs.enhance, inputs.viaBase, ...candidates.map((c) => c?.enhance)].some(hasAlternative))
+            return crafted;
+        const market = rateWith(level, {
+            ...inputs,
+            enhance: marketOf(inputs.enhance),
+            viaBase: marketOf(inputs.viaBase),
+            candidates: candidates.map((c) => ({ ...c, enhance: marketOf(c?.enhance) })),
+        });
+        const full = (rated) => rated.result.status === 'ok' && Number.isFinite(rated.result.profitPerHour);
+        if (full(crafted) && (!full(market) || crafted.result.profitPerHour > market.result.profitPerHour)) {
+            return crafted;
+        }
+        return market;
     };
 
     const rated = rateLevel(targetLevel, { enhance, viaBase, candidates: heldBases, saleAfterTax: saleTarget });

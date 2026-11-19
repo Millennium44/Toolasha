@@ -409,14 +409,22 @@ export function rankCraftEnhance({
         const enhanceFrom = (itemHrid, startLevel, selfCopy = null, level = targetLevel) => {
             const key = `${itemHrid}:${startLevel}:${level}:${selfCopy ? `${selfCopy.cost}|${selfCopy.seconds}|${selfCopy.xp}` : ''}`;
             if (!enhanceByItem.has(key)) {
-                const quote = enhanceWithDrinks(
-                    quoteDirectEnhancement(itemHrid, startLevel, level, gameData, {
-                        params,
-                        selfCopyCraftCost: selfCopy?.cost ?? null,
-                    }),
-                    drinkCost
+                const quoteWith = (copy) =>
+                    enhanceWithDrinks(
+                        quoteDirectEnhancement(itemHrid, startLevel, level, gameData, {
+                            params,
+                            selfCopyCraftCost: copy?.cost ?? null,
+                        }),
+                        drinkCost
+                    );
+                const crafted = selfCopy ? quoteWith(selfCopy) : null;
+                const market = quoteWith(null);
+                // The crafted-copy quote carries the market-only one beside it: which is the better hour depends on
+                // the sale and the craft, so the level's rating (rateLevel) keeps whichever earns more an hour
+                enhanceByItem.set(
+                    key,
+                    crafted ? { ...withSelfCopyCrafts(crafted, selfCopy), marketOnly: market } : market
                 );
-                enhanceByItem.set(key, quote && withSelfCopyCrafts(quote, selfCopy));
             }
             return enhanceByItem.get(key);
         };
@@ -491,10 +499,12 @@ export function rankCraftEnhance({
          * @returns {Promise<{cost: number, seconds: number, xp: number|null}|null>}
          */
         async function baseCopyFor(baseHrid, recipe) {
-            if (!baseCopies.has(baseHrid)) {
-                baseCopies.set(baseHrid, await costBaseCopy(baseHrid, recipe));
+            // The XP credited depends on whether the base is crafted in the recipe's own skill
+            const key = `${baseHrid}|${recipe.action.type ?? ''}|${recipe.skill?.skillHrid ?? ''}`;
+            if (!baseCopies.has(key)) {
+                baseCopies.set(key, await costBaseCopy(baseHrid, recipe));
             }
-            return baseCopies.get(baseHrid);
+            return baseCopies.get(key);
         }
 
         async function costBaseCopy(baseHrid, recipe) {
@@ -543,10 +553,10 @@ export function rankCraftEnhance({
                 return crafts > 0 && Number.isFinite(crafts) ? crafts : null;
             };
             const craftsPerHour = craftsPerHourOf(profit);
-            const pricingOf = (materials, pool, hourCrafts = craftsPerHour) => ({
+            const pricingOf = (materials, pool, hourCrafts = craftsPerHour, mode = ownedMode) => ({
                 materials,
                 index,
-                ownedMode,
+                ownedMode: mode,
                 heldPool: pool,
                 craftsPerHour: hourCrafts,
                 valueDrop: (hrid) => saleAfterTaxAt(hrid, 0),
@@ -578,11 +588,18 @@ export function rankCraftEnhance({
             const xpKnown = craftXpPerUnit !== null;
             // One more copy of the item itself costs this to craft: a complete figure only, so an unpriced input or
             // drink (counted above) or a recipe with no rate leaves the copy at market price
+            // The copy is a bought bill: every input at its buy price as Buy mode counts it, whatever is held or sunk,
+            // since the extra crafts are made on top of the hour's stock
+            const bought = priceCraftMaterials(pricingOf(profit.materialCosts, null, craftsPerHour, OWNED_MODES.BUY));
+            const boughtFigures =
+                bought.unpriced.length === 0 && !(profit.teaCosts || []).some((tea) => tea.missingPrice)
+                    ? craftUnitFigures({ materialCostPerAction: bought.costPerAction, profit, taxRate })
+                    : null;
             const selfCopy =
-                priced.unpriced.length === 0 && figures && figures.craftCostPerUnit > 0
+                boughtFigures && boughtFigures.craftCostPerUnit > 0
                     ? {
-                          cost: figures.craftCostPerUnit,
-                          seconds: figures.secondsPerUnit,
+                          cost: boughtFigures.craftCostPerUnit,
+                          seconds: boughtFigures.secondsPerUnit,
                           xp: craftXpPerUnit,
                       }
                     : null;

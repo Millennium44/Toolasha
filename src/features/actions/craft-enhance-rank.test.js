@@ -1545,3 +1545,71 @@ describe('the sweep from +0 to the target and its best level', () => {
         expect(built.sweep.map((entry) => entry.level)).toEqual([0, 2, 5]);
     });
 });
+
+describe('a level keeps the better hour of crafted-copy and market-only protection', () => {
+    const plain = (cost, seconds = 0) => ({ cost, seconds, xp: 10, xpKnown: true });
+    const withCopies = (cost, extraCraftSeconds, marketOnly) => ({
+        ...plain(cost),
+        selfCopyCrafts: 2,
+        extraCraftSeconds,
+        extraCraftXp: 0,
+        marketOnly,
+    });
+    const rate = (enhance, over = {}) => row('ring', { saleN: 400, enhance, over });
+
+    test('crafted copies win when cheaper and fast enough, and lose when their crafts cost more hour than they save', () => {
+        // Market-only: 400 - 60 - 150 = 190 an item in 36 s. Crafted: 100 an item cheaper in run cost
+        const wins = rate(withCopies(50, 10, plain(150)));
+        expect(wins.target.enhanceCost).toBe(50);
+        const loses = rate(withCopies(50, 200, plain(150)));
+        expect(loses.target.enhanceCost).toBe(150);
+        expect(loses.route.enhance.selfCopyCrafts ?? 0).toBe(0);
+    });
+
+    test('a tie keeps the market-only quote', () => {
+        const tie = rate(withCopies(150, 0, plain(150)));
+        expect(tie.route.enhance.selfCopyCrafts ?? 0).toBe(0);
+    });
+
+    test('a crafted quote is used when the market-only one cannot be priced, and vice versa', () => {
+        expect(rate(withCopies(50, 10, null)).target.enhanceCost).toBe(50);
+        expect(rate(withCopies(50, 10, null)).target.status).toBe('ok');
+    });
+
+    test('the pick is made at swept levels too', () => {
+        const built = row('ring', {
+            saleN: 400,
+            enhance: plain(100),
+            over: {
+                levels: [{ level: 2, saleAfterTax: 300, enhance: withCopies(50, 500, plain(60)), viaBase: null }],
+            },
+        });
+        expect(built.sweep[1].enhanceCost).toBe(60);
+    });
+
+    test('a held base blend picks per level the same way', () => {
+        const held = (enhance) => ({
+            level: 3,
+            count: 100,
+            coverage: 1,
+            unitValue: 50,
+            via: 'sale',
+            enhance,
+            craftCostPerUnit: 20,
+            secondsPerUnit: 36,
+            otherNetPerUnit: 0,
+            craftXpPerUnit: 20,
+        });
+        const built = row('ring', {
+            saleN: 400,
+            enhance: plain(300),
+            over: {
+                viaBase: plain(300),
+                baseHrid: '/items/base',
+                heldBases: [held(withCopies(10, 5000, plain(40)))],
+            },
+        });
+        expect(built.route.route).toBe('held-base');
+        expect(built.target.enhanceCost).toBe(40);
+    });
+});
