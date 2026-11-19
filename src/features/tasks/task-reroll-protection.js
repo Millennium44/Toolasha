@@ -79,9 +79,8 @@ class TaskRerollProtection {
         // through the adopt-once migration — the character the user confirmed
         // claims them and the bare key is deleted — so an alt that never opened
         // the shield config gets the defaults instead of the main's thresholds.
-        // The protected list and the six cap records are still read together —
-        // one JSON read and one readonly transaction for the rest — instead of
-        // seven awaited round trips one after another.
+        // The protected list and the six cap records are read together — one
+        // readonly transaction — instead of seven awaited round trips one after another.
         //
         // A character switch tearing the feature down while this read is in
         // flight used to leave the resumed tail pushing four registrations
@@ -91,14 +90,13 @@ class TaskRerollProtection {
         // or a full redraw), so the leaked registrations do no visible harm,
         // but they would sit there doing a duplicate pass over every task
         // card until the *next* switch's teardown clears the array wholesale.
-        const [saved, caps] = await Promise.all([
-            storage.getJSON(getStorageKey(), 'settings', []),
-            storage.getMany(
-                CAP_BASES.flatMap((base) => [characterKey(base), base]),
-                'settings'
-            ),
-        ]);
+        const listKey = getStorageKey();
+        const caps = await storage.getMany(
+            [listKey, ...CAP_BASES.flatMap((base) => [characterKey(base), base])],
+            'settings'
+        );
         if (!stillOurs(ticket)) return;
+        const saved = storage.parseJSON(caps.get(listKey), listKey, []);
         // Publish this owned list before awaiting caps, so edits made while
         // the cap read is pending are not replaced by a stale saved snapshot.
         this.protectedHrids = new Set(saved);

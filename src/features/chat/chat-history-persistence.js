@@ -1403,6 +1403,30 @@ async function readStoredRecord(key) {
 }
 
 /**
+ * `readStoredRecord` for several keys of the store on one readonly transaction.
+ *
+ * The caller treats any unreadable record as the whole read not having been made, which is exactly
+ * the all-or-nothing answer of `tryGetMany`; every entry then comes back `ok: false`, as a failed single read does.
+ *
+ * @param {Array<string>} keys - Record keys
+ * @returns {Promise<Array<{ok: boolean, record: *}>>} One read per key, in order
+ */
+async function readStoredRecords(keys) {
+    try {
+        const reads = await storage.tryGetMany(keys, CHAT_HISTORY_STORE);
+        if (!reads) return keys.map(() => ({ ok: false, record: null }));
+        return keys.map((key) => {
+            const read = reads.get(key);
+            if (!read) return { ok: false, record: null };
+            return { ok: true, record: read.found ? read.value : null };
+        });
+    } catch (error) {
+        console.error('[ChatHistoryPersistence] Could not read stored chat history:', error);
+        return keys.map(() => ({ ok: false, record: null }));
+    }
+}
+
+/**
  * The tabs of a stored record this build can use, or an empty map.
  * @param {*} record - Whatever the read returned
  * @param {number} perTab - Message cap per tab
@@ -1910,7 +1934,7 @@ class ChatHistoryPersistence {
         const prior = this.finalFlush;
         const loading = (async () => {
             await settleQuietly(prior);
-            const reads = await Promise.all(keys.map((key) => readStoredRecord(key)));
+            const reads = await readStoredRecords(keys);
             // Before the first thing this tail touches. The generation is what
             // catches the switch: `disable()` runs on `character_switching`,
             // which fires before `getCurrentCharacterId()` moves, so an id

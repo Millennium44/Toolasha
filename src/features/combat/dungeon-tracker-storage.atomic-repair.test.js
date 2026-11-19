@@ -326,10 +326,10 @@ describe('atomic repair concurrency and repeat behavior', () => {
         const entered = deferred();
         const release = deferred();
         let holdOther = true;
-        const tryGet = storage.tryGet.bind(storage);
-        vi.spyOn(storage, 'tryGet').mockImplementation(async (...args) => {
-            const result = await tryGet(...args);
-            if (holdOther && args[0] === RUNS_KEY) {
+        const tryGetMany = storage.tryGetMany.bind(storage);
+        vi.spyOn(storage, 'tryGetMany').mockImplementation(async (...args) => {
+            const result = await tryGetMany(...args);
+            if (holdOther && args[0].includes(RUNS_KEY)) {
                 entered.resolve();
                 await release.promise;
             }
@@ -357,16 +357,16 @@ describe('atomic repair concurrency and repeat behavior', () => {
         other._resetCache();
     });
 
-    test('another tab cold-loading old runs and new tombstones cannot prune away the replacement', async () => {
+    test('another tab cold-loading across a repair reads one consistent snapshot and cannot prune away the replacement', async () => {
         await history.getAllRuns();
         const other = new history.constructor();
         const entered = deferred();
         const release = deferred();
         let hold = true;
-        const tryGet = storage.tryGet.bind(storage);
-        vi.spyOn(storage, 'tryGet').mockImplementation(async (...args) => {
-            const result = await tryGet(...args);
-            if (hold && args[0] === RUNS_KEY) {
+        const tryGetMany = storage.tryGetMany.bind(storage);
+        vi.spyOn(storage, 'tryGetMany').mockImplementation(async (...args) => {
+            const result = await tryGetMany(...args);
+            if (hold && args[0].includes(RUNS_KEY)) {
                 hold = false;
                 entered.resolve();
                 await release.promise;
@@ -377,9 +377,13 @@ describe('atomic repair concurrency and repeat behavior', () => {
         await entered.promise;
         expect(await history.repairSwappedDateRuns()).toBe(1);
         release.resolve();
-        expect(await reading).toEqual([{ ...broken(), ...rederiveSwappedRun(broken()) }]);
+        // The four records come from one transaction now, so the read whose snapshot predates the repair
+        // holds the whole pre-repair state (old runs AND old tombstones), never old runs beside new
+        // tombstones; the durable repair is untouched and a fresh load sees it
+        expect(await reading).toEqual([broken()]);
         await assertRepaired();
         other._resetCache();
+        expect(await reload()).toEqual([{ ...broken(), ...rederiveSwappedRun(broken()) }]);
     });
 
     test('preexisting tombstones survive and a corrected identity already deleted stays deleted', async () => {

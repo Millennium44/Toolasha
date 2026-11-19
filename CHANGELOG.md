@@ -18,6 +18,10 @@ Once a row's daily volume loads, Profit/hr is held to about a day's trades sprea
 
 Protecting with a copy of the item itself now costs the cheaper of buying one and crafting one (with the extra craft's time and XP), and a row only takes it when it earns more per hour. A custom price you set for the item still wins.
 
+### Faster start-up reads
+
+The Combat and Lab sim panels, dungeon runs, chat history and task protection now load their saved data in one read each instead of dozens, so the start-up queue clears about two seconds sooner on a large profile.
+
 ### Sim refine rows show the resale credit
 
 The Upgrade advisor's refine and enhance cost lines now name the resale credit for the piece they replace ("less 78.9M for your +0 sold = 166.1M"), so the ladder figure and the Cost cell add up.

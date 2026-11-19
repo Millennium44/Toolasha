@@ -7,7 +7,7 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { sessionKey, archiveSession } from './combat-session-history.js';
-import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+import { characterKey, readScoped, readScopedFrom, writeScoped } from '../../utils/character-key.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
 import {
@@ -637,7 +637,15 @@ class CombatStatsDataCollector {
             // Memory is about to be replaced by what storage holds, so what this page last wrote no longer
             // describes it
             this._writtenPrints.clear();
-            const saved = await readScoped(CONSUMABLE_TRACKER_KEY, COMBAT_STORE, null, DISCARD_LEGACY);
+            // The three records (each with its legacy bare key) in one readonly transaction. Their keys are
+            // built now, with `owner`, and every step below re-checks the character before using what it read.
+            const batchBases = [CONSUMABLE_TRACKER_KEY, PARTY_TRACKERS_KEY, PARTY_SNAPSHOTS_KEY];
+            const batch = await storage.getMany(
+                batchBases.flatMap((base) => [characterKey(base), base]),
+                COMBAT_STORE
+            );
+            if (dataManager.getCurrentCharacterId() !== owner) return;
+            const saved = await readScopedFrom(CONSUMABLE_TRACKER_KEY, batch, COMBAT_STORE, null, DISCARD_LEGACY);
             if (dataManager.getCurrentCharacterId() !== owner) return;
             if (saved) {
                 // Restore tracking state
@@ -695,7 +703,13 @@ class CombatStatsDataCollector {
             }
 
             // Load party member trackers (MCS-style)
-            const savedPartyTrackers = await readScoped(PARTY_TRACKERS_KEY, COMBAT_STORE, null, DISCARD_LEGACY);
+            const savedPartyTrackers = await readScopedFrom(
+                PARTY_TRACKERS_KEY,
+                batch,
+                COMBAT_STORE,
+                null,
+                DISCARD_LEGACY
+            );
             if (dataManager.getCurrentCharacterId() !== owner) return;
             if (savedPartyTrackers) {
                 const now = Date.now();
@@ -728,7 +742,7 @@ class CombatStatsDataCollector {
             }
 
             // Load party snapshots
-            const savedSnapshots = await readScoped(PARTY_SNAPSHOTS_KEY, COMBAT_STORE, null, DISCARD_LEGACY);
+            const savedSnapshots = await readScopedFrom(PARTY_SNAPSHOTS_KEY, batch, COMBAT_STORE, null, DISCARD_LEGACY);
             if (dataManager.getCurrentCharacterId() !== owner) return;
             if (savedSnapshots) {
                 this.partyConsumableSnapshots = savedSnapshots;

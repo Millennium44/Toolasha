@@ -78,7 +78,12 @@ vi.mock('../../core/storage.js', () => ({
             if (world.gate) await world.gate;
             return [];
         },
-        getMany: async (keys) => new Map(keys.map((key) => [key, null])),
+        // The one read initialize() parks on: the protected list now rides in the cap batch
+        getMany: async (keys) => {
+            if (world.gate) await world.gate;
+            return new Map(keys.map((key) => [key, null]));
+        },
+        parseJSON: (raw, _key, fallback = null) => (raw === null ? fallback : raw),
         setJSON: async () => {},
     },
 }));

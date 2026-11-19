@@ -22,6 +22,8 @@ const game = vi.hoisted(() => ({
     listeners: {},
     /** Fired once inside the next read — lets a test land a switch inside it */
     onRead: null,
+    /** Key lists of every batched read, in order */
+    batches: [],
 }));
 
 vi.mock('../../core/storage.js', () => ({
@@ -46,6 +48,21 @@ vi.mock('../../core/storage.js', () => ({
             // could never do.
             const value = raw == null ? raw : structuredClone(raw);
             const result = value == null ? { found: false, value: null } : { found: true, value };
+            if (hold) await hold;
+            return result;
+        },
+        // One transaction: the hook fires once and every key is snapshotted before it is held, all or nothing
+        tryGetMany: async (keys, storeName) => {
+            game.batches.push([...keys]);
+            const hold = game.onRead?.();
+            if (game.unreadable) return null;
+            const result = new Map(
+                keys.map((key) => {
+                    const raw = game.saved[storeName]?.[key];
+                    const value = raw == null ? raw : structuredClone(raw);
+                    return [key, value == null ? { found: false, value: null } : { found: true, value }];
+                })
+            );
             if (hold) await hold;
             return result;
         },
@@ -97,6 +114,7 @@ const {
     RUNS_STORE,
     RUNS_KEY,
     RUNS_CLEARED_KEY,
+    RUNS_DATE_REPAIR_BACKUPS_KEY,
     RUNS_DELETED_KEY,
     RUNS_DATE_REPAIR_KEY,
     AVERAGE_BASELINE_KEY,
@@ -115,6 +133,7 @@ function seedRuns(runs) {
 }
 
 beforeEach(() => {
+    game.batches = [];
     game.onRead = null;
     game.unreadable = false;
     game.writeFails = false;
@@ -468,6 +487,31 @@ describe('saveTeamRun', () => {
         await new Promise((resolve) => setTimeout(resolve, PERSIST_COALESCE_MS + 20));
 
         expect(game.saved.unifiedRuns.allRuns).toEqual([]);
+    });
+
+    test('the run history and its three related records are read in one transaction', async () => {
+        const run = { timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 };
+        // Cleared-at present, tombstones and repair backups absent: an absent key is not an unreadable one
+        game.saved.unifiedRuns = { allRuns: [run], allRunsClearedAt: 0 };
+        dungeonTrackerStorage._resetCache();
+        game.batches = [];
+
+        expect(await dungeonTrackerStorage.getAllRuns()).toEqual([run]);
+
+        expect(game.batches).toHaveLength(1);
+        expect(game.batches[0]).toEqual(
+            expect.arrayContaining([RUNS_KEY, RUNS_CLEARED_KEY, RUNS_DELETED_KEY, RUNS_DATE_REPAIR_BACKUPS_KEY])
+        );
+        expect(game.batches[0]).toHaveLength(4);
+    });
+
+    test('a batch that could not be read leaves the history unloaded, then a later read loads it', async () => {
+        const run = { timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 };
+        seedRuns([run]);
+        game.unreadable = true;
+        expect(await dungeonTrackerStorage.getAllRunsOrNull()).toBeNull();
+        game.unreadable = false;
+        expect(await dungeonTrackerStorage.getAllRunsOrNull()).toEqual([run]);
     });
 
     test('a run is not written over a history that could not be read first', async () => {

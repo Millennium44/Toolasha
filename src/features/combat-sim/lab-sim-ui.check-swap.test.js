@@ -111,6 +111,16 @@ vi.mock('../../core/storage.js', () => ({
             }
             return key in storage.values ? { found: true, value: storage.values[key] } : { found: false, value: null };
         },
+        // One transaction, answered through the per-key reads (so a held key holds the batch); the checked
+        // batch is all or nothing
+        getMany: async function (keys, store) {
+            return new Map(await Promise.all(keys.map(async (key) => [key, await this.get(key, store, null)])));
+        },
+        tryGetMany: async function (keys, store) {
+            const reads = await Promise.all(keys.map((key) => this.tryGet(key, store)));
+            if (reads.some((read) => read === null)) return null;
+            return new Map(keys.map((key, i) => [key, reads[i]]));
+        },
         set: async (key, value) => {
             storage.written[key] = value;
         },

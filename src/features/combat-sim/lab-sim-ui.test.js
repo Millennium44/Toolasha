@@ -130,6 +130,28 @@ vi.mock('../../core/storage.js', () => ({
             }
             return key in storage.values ? { found: true, value: storage.values[key] } : { found: false, value: null };
         },
+        // One transaction, not through the per-key reads, so a spy on those sees only single reads. A held
+        // key holds the batch; the checked batch is all or nothing
+        getMany: async (keys) =>
+            new Map(
+                await Promise.all(
+                    keys.map(async (key) => [
+                        key,
+                        key in storage.pending ? await storage.pending[key] : (storage.values[key] ?? null),
+                    ])
+                )
+            ),
+        tryGetMany: async (keys) => {
+            if (storage.unreadable) return null;
+            return new Map(
+                await Promise.all(
+                    keys.map(async (key) => {
+                        const value = key in storage.pending ? await storage.pending[key] : storage.values[key];
+                        return [key, value == null ? { found: false, value: null } : { found: true, value }];
+                    })
+                )
+            );
+        },
         set: async (key, value) => {
             storage.written[key] = value;
         },
@@ -9344,5 +9366,68 @@ describe('a budget plan shops a route-priced pick by what its route buys', () =>
         });
         expect(html).toContain('Craft ');
         expect(html).not.toContain('Buy ');
+    });
+});
+
+describe('the Lab Sim panel reads what it remembers in one batch', () => {
+    beforeEach(() => {
+        ui.destroy();
+        storage.written = {};
+        storage.values = {};
+        storage.pending = {};
+        storage.unreadable = false;
+        game.characterId = 'me';
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        vi.restoreAllMocks();
+        storage.values = {};
+        storage.unreadable = false;
+    });
+
+    test('stored values come back, absent ones keep their defaults, no single read is made for them', async () => {
+        storage.values = {
+            labSimTokenBuffLevels_me: { labyrinthCombatDamageLevel: 7 },
+            labSimUpgradeTargetFloor_me: 12,
+            // Another character's record is never served to this one
+            labSimUpgradeTargetFloor_alt: 99,
+        };
+        const storageModule = (await import('../../core/storage.js')).default;
+        const many = vi.spyOn(storageModule, 'getMany');
+        const tryMany = vi.spyOn(storageModule, 'tryGetMany');
+        const single = vi.spyOn(storageModule, 'get');
+        const singleTry = vi.spyOn(storageModule, 'tryGet');
+
+        ui.buildPanel();
+        await settle();
+
+        // One batch of the panel's own (the comparison store reads its runs in another)
+        const panelBatches = many.mock.calls.filter(([keys]) => keys.includes('labSimTokenBuffLevels_me'));
+        expect(panelBatches).toHaveLength(1);
+        expect(tryMany).toHaveBeenCalledTimes(1);
+        expect(tryMany.mock.calls[0][0]).toEqual(
+            expect.arrayContaining(['labSimUpgradeTargetFloor_me', 'labSimUpgradeTargetFloor'])
+        );
+        expect(tryMany.mock.calls[0][0]).not.toContain('labSimUpgradeTargetFloor_alt');
+        const asked = new Set([...panelBatches[0][0], ...tryMany.mock.calls[0][0]]);
+        expect(single.mock.calls.map((call) => call[0]).filter((key) => asked.has(key))).toEqual([]);
+        expect(singleTry.mock.calls.map((call) => call[0]).filter((key) => asked.has(key))).toEqual([]);
+        expect(ui._tokenBuffOverrides).toEqual({ labyrinthCombatDamageLevel: 7 });
+    });
+
+    test('a checked batch that could not be read is re-read one key at a time, not taken for absent', async () => {
+        storage.values = { labSimTokenBuffLevels_me: { labyrinthCombatDamageLevel: 7 } };
+        storage.unreadable = true;
+        const storageModule = (await import('../../core/storage.js')).default;
+        const singleTry = vi.spyOn(storageModule, 'tryGet');
+
+        ui.buildPanel();
+        await settle();
+
+        // The plain batch still answers; the all-or-nothing one fell back to the per-key reads that say
+        // exactly which could not be made (every one, here)
+        expect(ui._tokenBuffOverrides).toEqual({ labyrinthCombatDamageLevel: 7 });
+        expect(singleTry.mock.calls.map((call) => call[0])).toContain('labSimUpgradeTargetFloor_me');
     });
 });

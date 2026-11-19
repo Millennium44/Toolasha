@@ -493,8 +493,10 @@ export class LabComparisonStore {
         this._loaded = true;
         this._keys = { runs: runsKey, baseline: baselineKey };
         try {
-            this.runs = sanitizeLabRuns(await storage.get(runsKey, 'settings', null));
-            const savedBaseline = await storage.get(baselineKey, 'settings', null);
+            // One readonly transaction: the baseline names a run in the list, so they are read as one snapshot
+            const read = await storage.getMany([runsKey, baselineKey], 'settings');
+            this.runs = sanitizeLabRuns(read.get(runsKey) ?? null);
+            const savedBaseline = read.get(baselineKey) ?? null;
             this.baselineId = this.runs.some((entry) => entry.id === savedBaseline) ? savedBaseline : null;
         } catch (error) {
             console.error('[LabSimComparison] Failed to load recorded runs:', error);

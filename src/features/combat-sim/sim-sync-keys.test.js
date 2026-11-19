@@ -30,6 +30,10 @@ vi.mock('../../core/storage.js', () => ({
             const store = db.get(storeName);
             return Promise.resolve(store?.has(key) ? store.get(key) : fallback);
         },
+        getMany: (keys, storeName) => {
+            const store = db.get(storeName);
+            return Promise.resolve(new Map(keys.map((key) => [key, store?.has(key) ? store.get(key) : null])));
+        },
     },
 }));
 

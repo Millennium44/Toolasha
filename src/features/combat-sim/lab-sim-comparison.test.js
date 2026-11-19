@@ -12,7 +12,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const db = vi.hoisted(() => ({ values: new Map(), failWrites: false, characterId: 'char1' }));
+const db = vi.hoisted(() => ({ values: new Map(), failWrites: false, characterId: 'char1', batches: [] }));
 
 vi.mock('../../utils/character-key.js', () => ({
     characterKey: (base) => `${base}_${db.characterId}`,
@@ -21,6 +21,11 @@ vi.mock('../../utils/character-key.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, _store, fallback = null) => (db.values.has(key) ? db.values.get(key) : fallback),
+        // One transaction: absent keys read as null, as the real one does
+        getMany: async (keys) => {
+            db.batches.push([...keys]);
+            return new Map(keys.map((key) => [key, db.values.has(key) ? db.values.get(key) : null]));
+        },
         set: async (key, value) => {
             if (db.failWrites) throw new Error('quota');
             // Round-tripped, because storage is not a place to keep a reference
@@ -66,6 +71,7 @@ beforeEach(() => {
     db.values = new Map();
     db.failWrites = false;
     db.characterId = 'char1';
+    db.batches = [];
 });
 
 describe('what a finished run is recorded as', () => {
@@ -282,6 +288,29 @@ describe('the store behind it', () => {
         expect(reopened.baselineId).toBe(pinned);
         expect(db.values.get(`${LAB_COMPARISON_KEY}_char1`)).toHaveLength(2);
         expect(db.values.get(`${LAB_COMPARISON_BASELINE_KEY}_char1`)).toBe(pinned);
+    });
+
+    test('the runs and the baseline are read in one batch for the character asked about', async () => {
+        const kept = run({ roomLevel: 100 });
+        db.values.set(`${LAB_COMPARISON_KEY}_char1`, [kept]);
+        db.values.set(`${LAB_COMPARISON_BASELINE_KEY}_char1`, kept.id);
+        // Another character's records must never be served to this one
+        db.values.set(`${LAB_COMPARISON_KEY}_char2`, [run({ roomLevel: 200 })]);
+
+        const store = new LabComparisonStore();
+        await store.load();
+
+        expect(db.batches).toEqual([[`${LAB_COMPARISON_KEY}_char1`, `${LAB_COMPARISON_BASELINE_KEY}_char1`]]);
+        expect(store.runs.map((e) => e.settings.roomLevel)).toEqual([100]);
+        expect(store.baselineId).toBe(kept.id);
+    });
+
+    test('a baseline that names no stored run, and a character with nothing stored, read as none', async () => {
+        db.values.set(`${LAB_COMPARISON_BASELINE_KEY}_char1`, 'gone');
+        const store = new LabComparisonStore();
+        await store.load();
+        expect(store.runs).toEqual([]);
+        expect(store.baselineId).toBeNull();
     });
 
     test('a switch inside the write does not unpin the arriving character’s baseline', async () => {
