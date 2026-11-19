@@ -1146,6 +1146,8 @@ const CALLER_KEYED_MODULES = new Set([
     'utils/name-keyed-store.js',
     'utils/persisted-record.js',
     'utils/scoped-data-repair.js',
+    // Reads the options a panel remembers, by the bases its callers name (scanned as the `scoped` sink)
+    'utils/startup-batch.js',
 ]);
 
 /**
@@ -1251,6 +1253,7 @@ describe('what the scan can read', () => {
             'collectionRecord',
             'loadUpgradeResults',
             'saveUpgradeResults',
+            'scoped',
         ]);
     });
 

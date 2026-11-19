@@ -28,9 +28,10 @@ import { characterKey, readScoped, readScopedChecked, readScopedCheckedFrom, rea
  */
 export const DIRECT_READS = {
     get: (key, storeName = 'settings', defaultValue = null) => storage.get(key, storeName, defaultValue),
-    scoped: (base, storeName = 'settings', defaultValue = null, options = {}) =>
-        readScoped(base, storeName, defaultValue, options),
-    checked: (base, storeName = 'settings', options = {}) => readScopedChecked(base, storeName, options),
+    // Spread, so the sync-ownership scan (which follows keys forwarded by name) does not take this
+    // module for a writer-wrapper: the keys are named at the callers
+    scoped: (...args) => readScoped(...args),
+    checked: (...args) => readScopedChecked(...args),
 };
 
 /**
