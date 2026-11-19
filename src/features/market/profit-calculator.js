@@ -182,7 +182,7 @@ class ProfitCalculator {
         const craftUpgradeItems =
             config.getSetting('profitCalc_craftUpgradeItems') && !config.getSetting('itemTooltip_detailedProfitFlat');
         if (actionDetails.upgradeItemHrid && craftUpgradeItems && upgradeLevel === 0) {
-            const upgradeChainTime = getProductionChainTime(actionDetails.upgradeItemHrid);
+            const upgradeChainTime = getProductionChainTime(actionDetails.upgradeItemHrid, upgradeCraftArtisanMode);
             if (upgradeChainTime > 0) {
                 const resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
                 // Same craft-vs-buy decision as calculateMaterialCosts, so the chain time is

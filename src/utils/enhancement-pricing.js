@@ -433,13 +433,16 @@ function _computeProductionCost(itemHrid, mode = 'ask', context = 'profit', roun
  * Get total crafting chain time for an item's upgrade path (recursive).
  * Sums base action times through the upgrade item chain, stopping when market is cheaper.
  * @param {string} itemHrid - Item HRID to get production chain time for
+ * @param {string|null} [artisanMode=null] - ARTISAN_MATERIAL_MODE.WORST_CASE picks each craft-versus-buy step
+ *   from per-craft rounded costs, the route getProductionCostDetailed takes with the same mode
  * @returns {number} Total chain time in seconds (base times, no speed bonuses applied)
  */
-export function getProductionChainTime(itemHrid) {
+export function getProductionChainTime(itemHrid, artisanMode = null) {
+    const modeKey = artisanMode === ARTISAN_MATERIAL_MODE.WORST_CASE ? 'whole' : 'avg';
     const feedVersion = _feedVersion();
     const buffVersion = _buffVersion();
     const customVersion = _customVersion();
-    const cached = _chainTimeCache.get(itemHrid);
+    const cached = _chainTimeCache.get(`${itemHrid}|${modeKey}`);
     if (
         cached &&
         cached.version === feedVersion &&
@@ -448,8 +451,8 @@ export function getProductionChainTime(itemHrid) {
     ) {
         return cached.value;
     }
-    const result = _computeProductionChainTime(itemHrid);
-    _chainTimeCache.set(itemHrid, { version: feedVersion, buffVersion, customVersion, value: result });
+    const result = _computeProductionChainTime(itemHrid, artisanMode);
+    _chainTimeCache.set(`${itemHrid}|${modeKey}`, { version: feedVersion, buffVersion, customVersion, value: result });
     return result;
 }
 
@@ -459,9 +462,10 @@ export function getProductionChainTime(itemHrid) {
  * same condition, so a caller that wants what the chain teaches (not only how long it takes) sees the same actions.
  *
  * @param {string} itemHrid - Item HRID
+ * @param {string|null} [artisanMode=null] - As for {@link getProductionChainTime}
  * @returns {string[]} Action hrids, empty when the item has no timed producing action
  */
-export function getProductionChainActions(itemHrid) {
+export function getProductionChainActions(itemHrid, artisanMode = null) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return [];
 
@@ -476,14 +480,14 @@ export function getProductionChainActions(itemHrid) {
         actions.push(found.actionHrid);
         if (!action.upgradeItemHrid) break;
         const marketPrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask', side: 'buy' }) || 0;
-        const craftPrice = getProductionCost(action.upgradeItemHrid, 'ask');
+        const craftPrice = getProductionCostDetailed(action.upgradeItemHrid, 'ask', 'profit', artisanMode).cost;
         if (!(craftPrice > 0 && (marketPrice === 0 || craftPrice < marketPrice))) break;
         current = action.upgradeItemHrid;
     }
     return actions;
 }
 
-function _computeProductionChainTime(itemHrid) {
+function _computeProductionChainTime(itemHrid, artisanMode = null) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return 0;
 
@@ -498,9 +502,9 @@ function _computeProductionChainTime(itemHrid) {
 
     if (action.upgradeItemHrid) {
         const marketPrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask', side: 'buy' }) || 0;
-        const craftPrice = getProductionCost(action.upgradeItemHrid, 'ask');
+        const craftPrice = getProductionCostDetailed(action.upgradeItemHrid, 'ask', 'profit', artisanMode).cost;
         if (craftPrice > 0 && (marketPrice === 0 || craftPrice < marketPrice)) {
-            totalTime += getProductionChainTime(action.upgradeItemHrid);
+            totalTime += getProductionChainTime(action.upgradeItemHrid, artisanMode);
         }
     }
 
