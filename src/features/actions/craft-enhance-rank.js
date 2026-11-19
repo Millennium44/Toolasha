@@ -636,9 +636,10 @@ export function buildCraftEnhanceRow({
                 ? candidate.freshCraftCostPerUnit
                 : craftCostPerUnit;
         const freshMixedTotal = freshTotal === null ? null : freshCraft + Number(chosen.enhance.cost);
-        // Strictly cheaper than the fresh route per craft it covers, else the fresh route stands
-        if (!(heldTotal < (freshMixedTotal ?? Infinity))) continue;
+        // The whole blended hour must beat staying fresh: a mixed hour can run out of shared stock the fresh
+        // hour alone would not, so a cheaper held portion is not enough
         const total = mix(heldTotal, freshMixedTotal, share);
+        if (!(total < (freshTotal ?? Infinity))) continue;
         if (held && !(total < held.total)) continue;
         const fresh = chosen.enhance;
         const enhanceXpKnown = candidate.enhance.xpKnown !== false && (share >= 1 || fresh.xpKnown !== false);
