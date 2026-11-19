@@ -31,6 +31,7 @@ import dataManager from '../core/data-manager.js';
 import marketAPI from '../api/marketplace.js';
 import { getItemPrice, getItemPrices } from './market-data.js';
 import { getArtisanBonus } from './artisan-bonus.js';
+import { ARTISAN_MATERIAL_MODE, artisanInputTotal } from './artisan-material-mode.js';
 import { findProducingAction } from './production-index.js';
 import { baseCapeIsPlainZero, getCapeBaseValue, getCapeBaseValueStamp, isUntradableCape } from './untradable-cape.js';
 import { getMarketValuesEpoch } from './market-values.js';
@@ -284,15 +285,19 @@ export function getProductionCost(itemHrid, mode = 'ask', context = 'profit') {
  * partial bill makes this one partial too.
  * @param {string} itemHrid - The item
  * @param {'ask'|'bid'} [mode='ask'] - Pricing side to use for input materials
+ * @param {string} [context='profit'] - Pricing context
+ * @param {string|null} [artisanMode=null] - Pass ARTISAN_MATERIAL_MODE.WORST_CASE to round each input's
+ *   Artisan-reduced count up per craft (a craft consumes whole units); any other value keeps the averaged count
  * @returns {{cost: number, partial: boolean}} Coins per unit produced and whether an input was unpriced
  */
-export function getProductionCostDetailed(itemHrid, mode = 'ask', context = 'profit') {
+export function getProductionCostDetailed(itemHrid, mode = 'ask', context = 'profit', artisanMode = null) {
+    const roundPerCraft = artisanMode === ARTISAN_MATERIAL_MODE.WORST_CASE;
     // Game data not loaded yet: nothing can be priced. Unpriced (cost 0, flagged partial), never a
     // throw, and not cached, so the answer is recomputed once the data arrives
     if (!dataManager.getInitClientData()) return { cost: 0, partial: true };
     // The cape setting is part of the key: a refined cape's upgrade item is priced by it
     // The pricing context is part of the key: a decompose cape base is read on that context's Sell side
-    const cacheKey = `${itemHrid}|${mode}|${context}|${getCapeBaseValueStamp()}`;
+    const cacheKey = `${itemHrid}|${mode}|${context}|${getCapeBaseValueStamp()}|${roundPerCraft ? 'whole' : 'avg'}`;
     const feedVersion = _feedVersion();
     const buffVersion = _buffVersion();
     const customVersion = _customVersion();
@@ -311,12 +316,12 @@ export function getProductionCostDetailed(itemHrid, mode = 'ask', context = 'pro
     // The prices this cost reads, kept with it for the replay above; null (unknown) without a recorder
     const recorder = typeof marketAPI?.recordPriceReads === 'function' ? marketAPI.recordPriceReads() : null;
     // A recipe that leads back to its own output cannot be costed: unpriced, partial, never remembered
-    const inProgress = `${itemHrid}|${mode}`;
+    const inProgress = `${itemHrid}|${mode}|${roundPerCraft ? 'whole' : 'avg'}`;
     if (_costing.has(inProgress)) return { cost: 0, partial: true, volatile: true };
     _costing.add(inProgress);
     let result;
     try {
-        result = _computeProductionCost(itemHrid, mode, context);
+        result = _computeProductionCost(itemHrid, mode, context, roundPerCraft);
     } finally {
         _costing.delete(inProgress);
         recorder?.stop();
@@ -332,7 +337,7 @@ export function getProductionCostDetailed(itemHrid, mode = 'ask', context = 'pro
 /** Items whose production cost is being worked out right now, to stop a recipe cycle */
 const _costing = new Set();
 
-function _computeProductionCost(itemHrid, mode = 'ask', context = 'profit') {
+function _computeProductionCost(itemHrid, mode = 'ask', context = 'profit', roundPerCraft = false) {
     const gameData = dataManager.getInitClientData();
     const itemDetails = gameData.itemDetailMap[itemHrid];
 
@@ -356,18 +361,24 @@ function _computeProductionCost(itemHrid, mode = 'ask', context = 'profit') {
     // resolveActionContext drops a drink that is slotted but out of stock and no longer
     // buffed, matching the Missing Materials panel.
     const artisanBonus = getArtisanBonus(action.type);
+    const craftArtisanMode = roundPerCraft ? ARTISAN_MATERIAL_MODE.WORST_CASE : null;
+    // Units of one input a single craft consumes: averaged, or rounded up when each craft is billed whole
+    const unitsPerCraft = (count) =>
+        roundPerCraft && artisanBonus > 0
+            ? artisanInputTotal(count, artisanBonus, 1, ARTISAN_MATERIAL_MODE.WORST_CASE)
+            : count * (1 - artisanBonus);
 
     // Sum up input material costs (artisan tea reduces material quantities, not upgrade items)
     if (action.inputItems) {
         for (const input of action.inputItems) {
             if (input.itemHrid === '/items/coin') {
-                totalPrice += input.count * (1 - artisanBonus);
+                totalPrice += unitsPerCraft(input.count);
                 continue;
             }
             // Inputs are bought, so a per-side custom price must answer with its buy figure
             let inputPrice = getItemPrice(input.itemHrid, { mode, side: 'buy' }) || 0;
             if (inputPrice === 0) {
-                const crafted = getProductionCostDetailed(input.itemHrid, mode, context);
+                const crafted = getProductionCostDetailed(input.itemHrid, mode, context, craftArtisanMode);
                 inputPrice = crafted.cost;
                 if (crafted.partial) partial = true;
                 if (crafted.volatile) volatile = true;
@@ -387,7 +398,7 @@ function _computeProductionCost(itemHrid, mode = 'ask', context = 'profit') {
                 volatile = true;
             }
             if (!(inputPrice > 0) && input.count > 0) partial = true;
-            totalPrice += inputPrice * input.count * (1 - artisanBonus);
+            totalPrice += inputPrice * unitsPerCraft(input.count);
         }
     }
 
@@ -395,7 +406,7 @@ function _computeProductionCost(itemHrid, mode = 'ask', context = 'profit') {
     // Use min(market, craft) so refined items reflect the cheapest way to obtain the base item
     if (action.upgradeItemHrid) {
         const upgradeMarketPrice = getItemPrice(action.upgradeItemHrid, { mode, side: 'buy' }) || 0;
-        const upgradeCraft = getProductionCostDetailed(action.upgradeItemHrid, mode, context);
+        const upgradeCraft = getProductionCostDetailed(action.upgradeItemHrid, mode, context, craftArtisanMode);
         const upgradeCraftPrice = upgradeCraft.cost;
         let upgradePrice;
         if (upgradeMarketPrice > 0 && upgradeCraftPrice > 0) {

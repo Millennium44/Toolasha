@@ -89,11 +89,19 @@ class ProfitCalculator {
      *   a recipe that retains enhancement). Callers with no selected stack leave it at +0.
      * @param {{equipment: Map, drinks: Array}|null} [options.actionContext=null] - Gear and drinks to
      *   cost the action with (a queued row's own loadout); the per-skill default when omitted
+     * @param {string|null} [options.upgradeCraftArtisanMode=null] - ARTISAN_MATERIAL_MODE.WORST_CASE bills a
+     *   crafted upgrade item's own inputs rounded up per craft; null keeps the averaged bill
      * @returns {Promise<Object|null>} Profit data or null if not craftable
      */
     async calculateProfit(
         itemHrid,
-        { actionHrid, keepSellTax = false, upgradeItemLevel = 0, actionContext = null } = {}
+        {
+            actionHrid,
+            keepSellTax = false,
+            upgradeItemLevel = 0,
+            actionContext = null,
+            upgradeCraftArtisanMode = null,
+        } = {}
     ) {
         // Get item details
         const itemDetails = dataManager.getItemDetails(itemHrid);
@@ -181,7 +189,9 @@ class ProfitCalculator {
                 // charged exactly when the upgrade item is costed as crafted
                 const craftCost = getProductionCostDetailed(
                     actionDetails.upgradeItemHrid,
-                    getPricingMode('profit', 'buy')
+                    getPricingMode('profit', 'buy'),
+                    'profit',
+                    upgradeCraftArtisanMode
                 ).cost;
                 if (craftCost > 0 && (!(resolved.price > 0) || craftCost < resolved.price)) {
                     const chainTimeWithSpeed =
@@ -224,6 +234,7 @@ class ProfitCalculator {
         // Calculate material costs (with artisan reduction if applicable)
         const materialCosts = this.calculateMaterialCosts(actionDetails, artisanBonus, {
             upgradeItemLevel: upgradeLevel,
+            upgradeCraftArtisanMode,
         });
 
         // Total material cost per action
@@ -546,9 +557,14 @@ class ProfitCalculator {
      * @param {Object} [options]
      * @param {number} [options.upgradeItemLevel=0] - Enhancement level of the upgrade item, priced
      *   at that level's market price (an enhanced copy has no crafting-cost shortcut)
+     * @param {string|null} [options.upgradeCraftArtisanMode=null] - See calculateProfit
      * @returns {Array} Array of material cost objects
      */
-    calculateMaterialCosts(actionDetails, artisanBonus = 0, { upgradeItemLevel = 0 } = {}) {
+    calculateMaterialCosts(
+        actionDetails,
+        artisanBonus = 0,
+        { upgradeItemLevel = 0, upgradeCraftArtisanMode = null } = {}
+    ) {
         const costs = [];
 
         // Check for upgrade item (e.g., Crimson Bulwark → Rainbow Bulwark)
@@ -576,7 +592,12 @@ class ProfitCalculator {
                     // Inputs of the craft are bought on the same side the market price above is
                     // quoted on, or a bid-side mode compares a bid purchase with an ask craft
                     const crafted = craftEnabled
-                        ? getProductionCostDetailed(actionDetails.upgradeItemHrid, getPricingMode('profit', 'buy'))
+                        ? getProductionCostDetailed(
+                              actionDetails.upgradeItemHrid,
+                              getPricingMode('profit', 'buy'),
+                              'profit',
+                              upgradeCraftArtisanMode
+                          )
                         : { cost: 0, partial: false };
                     const craftCost = crafted.cost;
                     isCrafted = craftCost > 0 && (!(resolved.price > 0) || craftCost < resolved.price);
