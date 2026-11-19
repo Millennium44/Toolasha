@@ -91,6 +91,9 @@ class ProfitCalculator {
      *   cost the action with (a queued row's own loadout); the per-skill default when omitted
      * @param {string|null} [options.upgradeCraftArtisanMode=null] - ARTISAN_MATERIAL_MODE.WORST_CASE bills a
      *   crafted upgrade item's own inputs rounded up per craft; null keeps the averaged bill
+     * @param {boolean} [options.upgradeItemOwned=false] - The upgrade item is one the caller already holds, so it is
+     *   not crafted and no crafting chain time is added to the action. The material lines are unchanged: the caller
+     *   that sets this prices the upgrade item itself.
      * @returns {Promise<Object|null>} Profit data or null if not craftable
      */
     async calculateProfit(
@@ -101,6 +104,7 @@ class ProfitCalculator {
             upgradeItemLevel = 0,
             actionContext = null,
             upgradeCraftArtisanMode = null,
+            upgradeItemOwned = false,
         } = {}
     ) {
         // Get item details
@@ -181,7 +185,7 @@ class ProfitCalculator {
         let upgradeChainCrafted = false;
         const craftUpgradeItems =
             config.getSetting('profitCalc_craftUpgradeItems') && !config.getSetting('itemTooltip_detailedProfitFlat');
-        if (actionDetails.upgradeItemHrid && craftUpgradeItems && upgradeLevel === 0) {
+        if (actionDetails.upgradeItemHrid && craftUpgradeItems && upgradeLevel === 0 && !upgradeItemOwned) {
             const upgradeChainTime = getProductionChainTime(actionDetails.upgradeItemHrid, upgradeCraftArtisanMode);
             if (upgradeChainTime > 0) {
                 const resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });

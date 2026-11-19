@@ -44,9 +44,12 @@ import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
 import { productionRecipes, stateFingerprint } from './production-arbitrage.js';
 import {
+    OWNED_MODES,
     buildCraftEnhanceRow,
     buildDungeonInputIndex,
+    buildHeldPool,
     craftUnitFigures,
+    dungeonInputKind,
     hasDungeonInput,
     normalizeOwnedMode,
     normalizeTargetLevel,
@@ -57,7 +60,7 @@ import {
 export const CRAFT_ENHANCE_SETTING = 'actions_craftEnhance';
 /** The target level the window remembers */
 export const TARGET_LEVEL_SETTING = 'actions_craftEnhance_targetLevel';
-/** Whether owned dungeon drops count at their sale value or at 0 */
+/** Whether the dungeon drops held count at their sale value or at 0 (or, in buy mode, are not counted at all) */
 export const OWNED_MODE_SETTING = 'actions_craftEnhance_ownedDrops';
 
 /** Recipes costed before the main thread is handed back */
@@ -67,6 +70,78 @@ const BATCH_SIZE = 8;
 const GEAR_SKILLS = new Set(['/skills/cheesesmithing', '/skills/crafting', '/skills/tailoring']);
 
 let cache = { fingerprint: null, rows: null, pending: null, isCurrent: null };
+
+/** The dungeon index of the game data last seen; it is static for a session and costs a pass over every action */
+const dungeonIndexCache = new WeakMap();
+
+/**
+ * @param {Object} gameData - The game's `initClientData`
+ * @returns {{drops: Map, tokenShop: Map}}
+ */
+function dungeonIndexFor(gameData) {
+    let index = dungeonIndexCache.get(gameData);
+    if (!index) {
+        index = buildDungeonInputIndex(gameData);
+        dungeonIndexCache.set(gameData, index);
+    }
+    return index;
+}
+
+/**
+ * The recipes the window rates: gear that can be enhanced and sold, with a dungeon input among its direct inputs.
+ * @param {Object} gameData - The game's `initClientData`
+ * @param {{drops: Map, tokenShop: Map}} index - From {@link dungeonIndexFor}
+ * @returns {Array<Object>}
+ */
+function qualifyingRecipes(gameData, index) {
+    return productionRecipes().filter((recipe) => {
+        if (!GEAR_SKILLS.has(recipe.skill.skillHrid)) return false;
+        const output = gameData.itemDetailMap?.[recipe.itemHrid];
+        // Only a tradable piece that can be enhanced has anything to sell at +N
+        if (!output?.isTradable || !(output.enhancementCosts?.length > 0)) return false;
+        return hasDungeonInput(recipe.action, index);
+    });
+}
+
+/**
+ * What the character holds of the items a row could draw on, as a string that changes exactly when a row could.
+ *
+ * The rows depend on the stacks of the dungeon inputs and of the upgrade items (a base held at some level), nothing
+ * else in the inventory, so unrelated changes (every action moves the inventory) do not make the window recompute.
+ * No inventory loaded and an empty one are different keys, because the first holds nothing known and the second
+ * holds nothing. Buy mode ignores the inventory entirely, so it has none.
+ *
+ * @param {string} ownedMode - The mode in force
+ * @param {Object|null} gameData - The game's `initClientData`
+ * @param {number} targetLevel - Held bases above it are not candidates and are left out
+ * @param {Map<string, number>|null} [pool] - The held pool to digest; the inventory's own by default
+ * @returns {string}
+ */
+export function heldStockDigest(
+    ownedMode,
+    gameData,
+    targetLevel,
+    pool = buildHeldPool(dataManager.getInventory?.() ?? null)
+) {
+    if (ownedMode === OWNED_MODES.BUY) return 'ignored';
+    if (!pool) return 'no-inventory';
+    if (!gameData) return 'no-data';
+    const index = dungeonIndexFor(gameData);
+    const watched = new Set();
+    for (const recipe of qualifyingRecipes(gameData, index)) {
+        for (const input of recipe.action.inputItems || []) {
+            if (input?.itemHrid && dungeonInputKind(input.itemHrid, index)) watched.add(input.itemHrid);
+        }
+        if (recipe.action.upgradeItemHrid) watched.add(recipe.action.upgradeItemHrid);
+    }
+    const parts = [];
+    for (const [key, count] of pool) {
+        const split = key.lastIndexOf(':');
+        const level = Number(key.slice(split + 1));
+        if (watched.has(key.slice(0, split)) && level <= targetLevel) parts.push(`${key}=${count}`);
+    }
+    return `held:${parts.sort().join(',')}`;
+}
 
 /** Drop the memoised ranking */
 export function clearCraftEnhanceCache() {
@@ -205,7 +280,7 @@ function benchDigest(params) {
  * @param {Object} args - The run's inputs
  * @returns {string}
  */
-export function craftEnhanceFingerprint({ targetLevel, ownedMode, params, priceStamp }) {
+export function craftEnhanceFingerprint({ targetLevel, ownedMode, params, priceStamp, heldDigest = '' }) {
     return [
         // Artisan rounding moves every craft cost, so a change of the setting is a different ranking
         getArtisanMaterialMode(),
@@ -213,6 +288,8 @@ export function craftEnhanceFingerprint({ targetLevel, ownedMode, params, priceS
         dataManager.getCurrentCharacterId?.() ?? '',
         targetLevel,
         ownedMode,
+        // Held stacks of the inputs and bases: a change of what is held reprices the split
+        heldDigest,
         benchDigest(params),
         config.getSettingValue('expectedValue_respectPricingMode', true),
         config.getSettingValue('profitCalc_pricingMode', 'hybrid'),
@@ -228,11 +305,14 @@ export function craftEnhanceFingerprint({ targetLevel, ownedMode, params, priceS
  */
 export function craftEnhanceStateKey() {
     try {
+        const targetLevel = normalizeTargetLevel(config.getSettingValue(TARGET_LEVEL_SETTING, 5));
+        const ownedMode = normalizeOwnedMode(config.getSettingValue(OWNED_MODE_SETTING, 'market'));
         return craftEnhanceFingerprint({
-            targetLevel: normalizeTargetLevel(config.getSettingValue(TARGET_LEVEL_SETTING, 5)),
-            ownedMode: normalizeOwnedMode(config.getSettingValue(OWNED_MODE_SETTING, 'market')),
+            targetLevel,
+            ownedMode,
             params: getAutoDetectedParams(),
             priceStamp: craftEnhancePriceStamp(),
+            heldDigest: heldStockDigest(ownedMode, dataManager.getInitClientData(), targetLevel),
         });
     } catch (error) {
         console.error('[CraftEnhance] Reading the state key failed:', error);
@@ -261,7 +341,16 @@ export function rankCraftEnhance({
     const targetLevel = normalizeTargetLevel(requestedLevel ?? config.getSettingValue(TARGET_LEVEL_SETTING, 5));
     const ownedMode = normalizeOwnedMode(requestedMode ?? config.getSettingValue(OWNED_MODE_SETTING, 'market'));
     const params = getAutoDetectedParams();
-    const fingerprint = craftEnhanceFingerprint({ targetLevel, ownedMode, params, priceStamp });
+    // Read once: the key and the pricing see the same inventory, and a stack changing mid-run cannot split a row
+    const inventory = dataManager.getInventory?.() ?? null;
+    const heldPool = buildHeldPool(inventory);
+    const fingerprint = craftEnhanceFingerprint({
+        targetLevel,
+        ownedMode,
+        params,
+        priceStamp,
+        heldDigest: heldStockDigest(ownedMode, dataManager.getInitClientData(), targetLevel, heldPool),
+    });
 
     if (cache.fingerprint === fingerprint) {
         if (cache.rows) return Promise.resolve(cache.rows);
@@ -279,19 +368,28 @@ export function rankCraftEnhance({
 
     let pending = null;
     pending = (async () => {
-        const index = buildDungeonInputIndex(gameData);
+        const index = dungeonIndexFor(gameData);
         const taxRate = outputTaxRate();
-
-        const recipes = productionRecipes().filter((recipe) => {
-            if (!GEAR_SKILLS.has(recipe.skill.skillHrid)) return false;
-            const output = gameData.itemDetailMap?.[recipe.itemHrid];
-            // Only a tradable piece that can be enhanced has anything to sell at +N
-            if (!output?.isTradable || !(output.enhancementCosts?.length > 0)) return false;
-            return hasDungeonInput(recipe.action, index);
-        });
+        const recipes = qualifyingRecipes(gameData, index);
 
         const drinkCost = enhancingDrinkCost(params);
+        // Enhancement runs by item AND starting level: a run from +3 is not a run from +0
         const enhanceByItem = new Map();
+        const enhanceFrom = (itemHrid, startLevel) => {
+            const key = `${itemHrid}:${startLevel}`;
+            if (!enhanceByItem.has(key)) {
+                enhanceByItem.set(
+                    key,
+                    enhanceWithDrinks(
+                        quoteDirectEnhancement(itemHrid, startLevel, targetLevel, gameData, { params }),
+                        drinkCost
+                    )
+                );
+            }
+            return enhanceByItem.get(key);
+        };
+        const itemName = (hrid) => gameData.itemDetailMap?.[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
+        const round2 = (value) => Math.round(value * 100) / 100;
         // Artisan rounds per craft. The average is the calculator's own; the worst case bills each craft's
         // requirement rounded up. Hybrid has no run length here (the rate is per hour), so it reads as expected.
         const artisanMode = getArtisanMaterialMode();
@@ -316,7 +414,10 @@ export function rankCraftEnhance({
                 if (!profit || (profit.actionHrid && profit.actionHrid !== recipe.actionHrid)) continue;
 
                 try {
-                    rows.push(buildRow(recipe, profit));
+                    const row = await buildRow(recipe, profit);
+                    // Superseded while a held-base figure was costed
+                    if (!isCurrent()) return abandon();
+                    rows.push(row);
                 } catch (error) {
                     console.error(`[CraftEnhance] Rating ${recipe.actionHrid} failed:`, error);
                 }
@@ -334,11 +435,12 @@ export function rankCraftEnhance({
          * @param {Object} profit - The calculator's answer
          * @returns {Object} A row
          */
-        function buildRow(recipe, profit) {
-            const priced = priceCraftMaterials({
-                materials: profit.materialCosts,
+        async function buildRow(recipe, profit) {
+            const pricingOf = (materials, pool) => ({
+                materials,
                 index,
                 ownedMode,
+                heldPool: pool,
                 valueDrop: (hrid) => saleAfterTaxAt(hrid, 0),
                 valueToken: (hrid) => tokenRouteDetail(index, hrid)?.value ?? null,
                 tokenEstimated: (hrid) => Boolean(tokenRouteDetail(index, hrid)?.estimated),
@@ -353,6 +455,7 @@ export function rankCraftEnhance({
                           )
                         : material.amount,
             });
+            const priced = priceCraftMaterials(pricingOf(profit.materialCosts, heldPool));
             const figures = craftUnitFigures({
                 materialCostPerAction: priced.costPerAction,
                 profit,
@@ -363,24 +466,11 @@ export function rankCraftEnhance({
                 if (tea.missingPrice) priced.unpriced.push({ itemHrid: tea.itemHrid, reason: 'tea' });
             }
 
-            if (!enhanceByItem.has(recipe.itemHrid)) {
-                enhanceByItem.set(
-                    recipe.itemHrid,
-                    enhanceWithDrinks(
-                        quoteDirectEnhancement(recipe.itemHrid, 0, targetLevel, gameData, { params }),
-                        drinkCost
-                    )
-                );
-            }
+            const directRun = enhanceFrom(recipe.itemHrid, 0);
 
             // Enhancing the cheaper base first, then refining it, reaches the same +N: refinement keeps every level
             const baseHrid = refinementBaseOf(recipe);
-            if (baseHrid && !enhanceByItem.has(baseHrid)) {
-                enhanceByItem.set(
-                    baseHrid,
-                    enhanceWithDrinks(quoteDirectEnhancement(baseHrid, 0, targetLevel, gameData, { params }), drinkCost)
-                );
-            }
+            const baseRun = baseHrid ? enhanceFrom(baseHrid, 0) : null;
 
             // The crafting XP of one action. When the calculator charged the upgrade item's production chain time,
             // the chain's actions are inside the same hour, so what they teach is counted too. One chain action
@@ -402,14 +492,113 @@ export function rankCraftEnhance({
                 dataManager.getSkills()?.find((skill) => skill.skillHrid === recipe.skill.skillHrid)?.level ?? 1;
             const requiredLevel = recipe.action.levelRequirement?.level || 1;
 
+            // Starting the base-first route from a base the character already holds, one candidate per held level
+            // at or below the target. Buy mode ignores what is held, and nothing is held when no inventory is loaded.
+            const heldBases = [];
+            const heldBaseLevels =
+                baseHrid && heldPool && ownedMode !== OWNED_MODES.BUY
+                    ? Array.from({ length: targetLevel + 1 }, (_, held) => held).filter(
+                          (held) => (heldPool.get(`${baseHrid}:${held}`) || 0) >= 1
+                      )
+                    : [];
+            if (heldBaseLevels.length > 0) {
+                // Without the base's crafting chain the action is shorter and teaches less, so it is costed again
+                // with the base owned; its own price comes out of the lines and the held base's goes in
+                let heldProfit = null;
+                try {
+                    heldProfit = await profitCalculator.calculateProfit(recipe.itemHrid, {
+                        actionHrid: recipe.actionHrid,
+                        keepSellTax: true,
+                        upgradeCraftArtisanMode: worstCase ? ARTISAN_MATERIAL_MODE.WORST_CASE : null,
+                        upgradeItemOwned: true,
+                    });
+                } catch (error) {
+                    console.error(`[CraftEnhance] Costing ${recipe.actionHrid} with a held base failed:`, error);
+                }
+                if (!isCurrent()) return null;
+                const sameRecipe =
+                    heldProfit && (!heldProfit.actionHrid || heldProfit.actionHrid === recipe.actionHrid);
+                const teaGap = (heldProfit?.teaCosts || []).some((tea) => tea.missingPrice);
+                const baseKind = dungeonInputKind(baseHrid, index);
+                const perHeldUnit =
+                    (Number(heldProfit?.outputAmount) || 1) * (1 + (Number(heldProfit?.gourmetBonus) || 0));
+                const recipeXp = calculateExpPerHour(recipe.actionHrid)?.modifiedXP;
+                for (const heldLevel of sameRecipe && !teaGap ? heldBaseLevels : []) {
+                    // The held base's own cost: a dungeon input counts as sunk (0) when the mode says so; anything else,
+                    // and every sunk-less case, is the sale it would fetch at its level. No real quote is no candidate.
+                    let unitValue = null;
+                    let via = null;
+                    if (baseKind && ownedMode === OWNED_MODES.SUNK) {
+                        unitValue = 0;
+                    } else {
+                        const sale = saleAfterTaxAt(baseHrid, heldLevel);
+                        if (sale > 0) {
+                            unitValue = sale;
+                            via = 'sale';
+                        } else if (heldLevel === 0 && baseKind?.token) {
+                            const tokenValue = tokenRouteDetail(index, baseHrid)?.value;
+                            if (tokenValue > 0) {
+                                unitValue = tokenValue;
+                                via = 'token';
+                            }
+                        }
+                    }
+                    if (unitValue === null) continue;
+                    // A +0 base is the same stack an ordinary input of the same item would draw on: one copy is spent here
+                    const rest = new Map(heldPool);
+                    if (heldLevel === 0) rest.set(`${baseHrid}:0`, (rest.get(`${baseHrid}:0`) || 0) - 1);
+                    const restPriced = priceCraftMaterials(
+                        pricingOf(
+                            profit.materialCosts.filter((material) => !material.isUpgradeItem),
+                            rest
+                        )
+                    );
+                    if (restPriced.unpriced.length > 0) continue;
+                    const figures = craftUnitFigures({
+                        materialCostPerAction: restPriced.costPerAction + unitValue,
+                        profit: heldProfit,
+                        taxRate,
+                    });
+                    if (!figures) continue;
+                    heldBases.push({
+                        level: heldLevel,
+                        count: heldPool.get(`${baseHrid}:${heldLevel}`) || 0,
+                        unitValue,
+                        via,
+                        enhance: enhanceFrom(baseHrid, heldLevel),
+                        craftCostPerUnit: figures.craftCostPerUnit,
+                        secondsPerUnit: figures.secondsPerUnit,
+                        otherNetPerUnit: figures.otherNetPerUnit,
+                        craftXpPerUnit: Number.isFinite(recipeXp) ? recipeXp / perHeldUnit : null,
+                    });
+                }
+            }
+
             const notes = [];
+            if (ownedMode !== OWNED_MODES.BUY && !heldPool) {
+                notes.push(
+                    'The inventory is not loaded, so nothing is counted as held and dungeon inputs are priced as bought.'
+                );
+            }
+            // What the stack covers: the split prices the next craft, and a stack that holds N whole crafts' worth of
+            // an input runs out after N, so the hourly figure is an upper bound beyond that
+            for (const input of priced.heldInputs || []) {
+                if (!(input.held > 0)) continue;
+                const crafts = input.needed > 0 ? Math.floor(input.stock / input.needed + 1e-9) : 0;
+                notes.push(
+                    `Holds ${round2(input.stock)} ${itemName(input.itemHrid)}; one craft uses ${round2(input.needed)}: ` +
+                        `${round2(input.held)} from stock` +
+                        (input.bought > 0 ? `, ${round2(input.bought)} bought` : '') +
+                        `. The stock covers ${crafts} craft${crafts === 1 ? '' : 's'}; later crafts buy these inputs, so ` +
+                        'the hourly figure is a best case.'
+                );
+            }
             if (!xpKnown)
                 notes.push('The crafting XP of the recipe or its upgrade chain is not known, so it is left out.');
             if (priced.estimated.length > 0) {
                 notes.push('An input is priced from the game value estimate, not a live order.');
             }
-            const baseRun = baseHrid ? enhanceByItem.get(baseHrid) : null;
-            if (enhanceByItem.get(recipe.itemHrid) === null && !baseRun) {
+            if (directRun === null && !baseRun) {
                 notes.push(
                     drinkCost.unpriced.length > 0
                         ? 'An enhancing drink has no price, so the enhancement cost is unknown.'
@@ -419,10 +608,10 @@ export function rankCraftEnhance({
             if (worstCase && (Number(profit.artisanBonus) || 0) > 0) {
                 notes.push('Artisan worst case: each craft is billed its requirement rounded up to whole units.');
             }
-            if (baseHrid && !baseRun && enhanceByItem.get(recipe.itemHrid)) {
+            if (baseHrid && !baseRun && directRun) {
                 notes.push('Enhancing the base first could not be priced, so it was not considered.');
             }
-            if (baseHrid && baseRun && !enhanceByItem.get(recipe.itemHrid)) {
+            if (baseHrid && baseRun && !directRun) {
                 notes.push('Enhancing the star item itself could not be priced; the base route is used.');
             }
             if (profit.bonusRevenue?.hasMissingPrices)
@@ -451,9 +640,10 @@ export function rankCraftEnhance({
                 figures,
                 craftXpPerUnit,
                 targetLevel,
-                enhance: enhanceByItem.get(recipe.itemHrid),
-                viaBase: baseHrid ? enhanceByItem.get(baseHrid) : null,
+                enhance: directRun,
+                viaBase: baseRun,
                 baseHrid,
+                heldBases,
                 saleBase: saleAfterTaxAt(recipe.itemHrid, 0),
                 saleTarget: saleAfterTaxAt(recipe.itemHrid, targetLevel),
                 notes,

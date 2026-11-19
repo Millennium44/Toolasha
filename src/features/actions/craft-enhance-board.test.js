@@ -583,6 +583,59 @@ describe('the enhancement route', () => {
         expect(badge.parentElement.title).not.toContain('saves');
     });
 
+    test('a held base is badged with its level, and the tooltip says what it covers and what it saves', async () => {
+        state.rows = [
+            row('ring', {
+                route: route({
+                    route: 'held-base',
+                    heldBase: { level: 3, count: 2, unitValue: 960, via: 'sale', total: 140, saved: 220 },
+                }),
+                target: level({ enhanceCost: 900 }),
+            }),
+        ];
+        openBoard();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        const badge = state.panel.panel.querySelector('[data-ce-route="held-base"]');
+        expect(badge.textContent).toContain('via held +3 base');
+        const title = badge.parentElement.title;
+        expect(title).toContain('Starts from your held +3 sinister ring (you hold 2)');
+        expect(title).toContain('counted at 960 (what it would sell for)');
+        expect(title).toContain('It covers 2 crafts');
+        expect(title).toContain('220 cheaper per item');
+    });
+
+    test('a held base chosen with nothing to compare against claims no saving', async () => {
+        state.rows = [
+            row('ring', {
+                route: route({
+                    route: 'held-base',
+                    heldBase: { level: 0, count: 1, unitValue: 0, via: null, total: 10, saved: null },
+                }),
+            }),
+        ];
+        openBoard();
+        await flush();
+        const title = state.panel.panel.querySelector('[data-ce-route="held-base"]').parentElement.title;
+        expect(title).toContain('counted at 0 (sunk)');
+        expect(title).toContain('It covers 1 craft;');
+        expect(title).toContain('nothing was compared');
+        expect(title).not.toContain('cheaper per item');
+    });
+
+    test('a craft cost that rests on held units says how many crafts the stock covers', async () => {
+        state.rows = [
+            row('sword', {
+                heldInputs: [{ itemHrid: '/items/griffin_leather', needed: 2, held: 1, bought: 1, stock: 5 }],
+            }),
+        ];
+        openBoard();
+        await flush();
+        const cell = state.panel.panel.querySelector('[data-ce-row$="/sword"] td:nth-child(4)');
+        expect(cell.title).toContain('griffin leather: holds 5, one craft needs 2 (1 bought)');
+        expect(cell.title).toContain('the stock covers 2 crafts');
+    });
+
     test('the direct route has no badge but still explains the comparison', async () => {
         state.rows = [row('ring', { route: route({ route: 'craft', directCost: 2000, baseCost: 3000, saved: 1000 }) })];
         openBoard();

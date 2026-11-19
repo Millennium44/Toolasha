@@ -22,12 +22,18 @@
  *
  * ## What is owned versus bought
  *
- * Phase 1 values every unit of a dungeon input the same way, with no inventory split:
+ * Within one recipe a dungeon input is split into the units the character holds and the shortfall:
  *
- * - `market` (default): what the drop would fetch if sold now, after the market tax, which is the
- *   opportunity cost of using it. A token-shop input is valued through its token (tokens it costs times
- *   the best coins a token converts to), after tax, the same figure the token tooltip uses.
- * - `sunk`: dungeon inputs cost 0.
+ * - `market` (default): the units held are valued at what they would fetch if sold now, after the market tax,
+ *   which is the opportunity cost of using them. A token-shop input is valued through its token (tokens it costs
+ *   times the best coins a token converts to), after tax, the same figure the token tooltip uses.
+ * - `sunk`: the units held cost 0.
+ * - `buy`: nothing held is counted; every unit is bought.
+ *
+ * In `market` and `sunk` the units NOT held are bought at the buy side of the pricing mode, like `buy` prices
+ * them. One held stack is drawn down once across every line of a recipe that uses the item, so it is never
+ * counted for two inputs. The split prices the next craft: a stack covers only as many crafts as it holds
+ * whole copies of what one craft needs, and the row says how many (`heldInputs`).
  *
  * Inputs that are not dungeon inputs are bought at the buy side of the pricing mode, untaxed, exactly
  * as the profit calculator priced them. Buying pays no market tax; only the sale does.
@@ -175,24 +181,53 @@ export function hasDungeonInput(action, index) {
 }
 
 /**
+ * Held units by item and level, from the character's inventory.
+ *
+ * Only stacks in the inventory count (not equipment, not the market). The pool is keyed
+ * `${itemHrid}:${enhancementLevel}`, because a production input is consumed at +0 while an upgrade item can be any level.
+ *
+ * @param {Array<{itemHrid: string, count?: number, enhancementLevel?: number, itemLocationHrid?: string}>|null} inventory -
+ *   `dataManager.getInventory()`; null when no inventory is loaded
+ * @returns {Map<string, number>|null} Null when the inventory is not loaded, which is not the same as empty: an
+ *   empty Map is a character holding nothing
+ */
+export function buildHeldPool(inventory) {
+    if (!Array.isArray(inventory)) return null;
+    const pool = new Map();
+    for (const stack of inventory) {
+        if (stack?.itemLocationHrid !== '/item_locations/inventory') continue;
+        const count = Number(stack.count);
+        if (!stack.itemHrid || !(count > 0)) continue;
+        const key = `${stack.itemHrid}:${Math.max(0, Math.floor(Number(stack.enhancementLevel) || 0))}`;
+        pool.set(key, (pool.get(key) || 0) + count);
+    }
+    return pool;
+}
+
+/**
  * The crafting materials of one action, priced for this ranking.
  *
  * `materials` are the profit calculator's own per-action lines, so the Artisan-reduced `amount` (not
  * `baseAmount`) and its buy-side price are what a non-dungeon input costs. Dungeon inputs are re-priced:
  *
- * - `market`: the drop's after-tax sale value from `valueDrop`, else for a token-shop item the token
- *   route from `valueToken`; neither answering makes the input **unpriced**, not free.
- * - `buy`: the calculator's own buy-side price, untaxed. A token-shop item takes the cheaper of that and the
- *   token route (an owned token is a cheaper way in than the market). Neither priced is **unpriced**.
- * - `sunk`: 0, flagged `sunk`.
+ * - `buy`: every unit at the calculator's own buy-side price, untaxed. A token-shop item takes the cheaper of that
+ *   and the token route (an owned token is a cheaper way in than the market). Neither priced is **unpriced**.
+ *   What the character holds is ignored.
+ * - `market` and `sunk`: the units the character holds (from `heldPool`, +0 stacks) are valued as owned and the
+ *   shortfall is bought as `buy` prices it. Owned is, for `market`, the drop's after-tax sale value from
+ *   `valueDrop`, else for a token-shop item the token route from `valueToken`; for `sunk` it is 0. A line whose
+ *   held part or bought part cannot be priced is **unpriced** whole, never a partial sum.
  *
- * The same item may appear on more than one line; each is priced on its own.
+ * One stack is drawn down across the lines: the same item on two lines (or as the upgrade item and an input) cannot
+ * be held twice. `heldPool` is not changed. A null `heldPool` (no inventory loaded) holds nothing, so every unit is
+ * bought: the safe direction, since owned is never dearer than bought.
  *
  * @param {Object} args - Inputs
  * @param {Array<{itemHrid: string, amount: number, totalCost: number, missingPrice?: boolean}>} args.materials -
  *   The calculator's `materialCosts`
  * @param {{drops: Map, tokenShop: Map}} args.index - From {@link buildDungeonInputIndex}
  * @param {string} args.ownedMode - {@link OWNED_MODES}
+ * @param {Map<string, number>|null} [args.heldPool] - From {@link buildHeldPool}
  * @param {(itemHrid: string) => number|null} args.valueDrop - After-tax sale value of one unit, or null
  *   when nothing real prices it
  * @param {(itemHrid: string) => number|null} args.valueToken - After-tax value of one unit bought with
@@ -203,15 +238,59 @@ export function hasDungeonInput(action, index) {
  *   the calculator's own averaged `amount` (Artisan worst case rounds each craft up). A line priced at an
  *   amount other than the calculator's is costed as its buy price times that amount.
  * @returns {{costPerAction: number, unpriced: Array<{itemHrid: string, reason: string}>,
- *   dungeonInputs: Array<Object>, estimated: string[]}} `costPerAction` is meaningful only when `unpriced` is empty
+ *   dungeonInputs: Array<Object>, estimated: string[], heldInputs: Array<Object>}} `costPerAction` is meaningful
+ *   only when `unpriced` is empty. `dungeonInputs` has one entry per priced portion (`held` says which);
+ *   `heldInputs` is per item: `{itemHrid, needed, held, bought, stock}` for the units one craft needs, the part
+ *   covered from the stack, the shortfall, and the whole +0 stack.
  */
-export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, valueToken, tokenEstimated, amountOf }) {
+export function priceCraftMaterials({
+    materials,
+    index,
+    ownedMode,
+    heldPool = null,
+    valueDrop,
+    valueToken,
+    tokenEstimated,
+    amountOf,
+}) {
     const mode = normalizeOwnedMode(ownedMode);
     const unpriced = [];
     const dungeonInputs = [];
     // Inputs whose price is only the game's value-map estimate: usable, but the row says so
     const estimated = [];
+    const heldSummary = new Map();
+    // Drawn down as lines use it; a copy, so one row never spends another's stack
+    const remaining = new Map(heldPool || []);
     let costPerAction = 0;
+
+    /** What buying one unit costs: the buy side, or for a token-shop item the cheaper token route */
+    const boughtPrice = (material, kind) => {
+        const bought = material?.missingPrice ? null : Number(material?.askPrice);
+        const buyPrice = bought > 0 ? bought : null;
+        const tokenPrice = kind.token ? valueToken?.(material.itemHrid) : null;
+        const candidates = [];
+        if (buyPrice) candidates.push({ unitValue: buyPrice, via: 'buy' });
+        if (tokenPrice > 0) candidates.push({ unitValue: tokenPrice, via: 'token' });
+        if (candidates.length === 0) return null;
+        return candidates.reduce((low, next) => (next.unitValue < low.unitValue ? next : low));
+    };
+    /** What using one unit already held costs: its sale (or token) value, or 0 when sunk */
+    const ownedPrice = (material, kind) => {
+        if (mode === OWNED_MODES.SUNK) return { unitValue: 0, via: null };
+        // Selling what you hold is the alternative to using it; for a drop that can be sold that is the
+        // figure. A shop item the market will not price is valued through the tokens it costs.
+        let unitValue = kind.drop ? valueDrop?.(material.itemHrid) : null;
+        let via = 'sale';
+        if (!(unitValue > 0) && kind.token) {
+            unitValue = valueToken?.(material.itemHrid);
+            via = 'token';
+        }
+        return unitValue > 0 ? { unitValue, via } : null;
+    };
+    const noteEstimated = (material, price) => {
+        if (price.via === 'buy' && material?.estimatedPrice) estimated.push(material.itemHrid);
+        if (price.via === 'token' && tokenEstimated?.(material.itemHrid)) estimated.push(material.itemHrid);
+    };
 
     for (const material of materials || []) {
         const calculatorAmount = Number(material?.amount) || 0;
@@ -231,48 +310,62 @@ export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, va
             continue;
         }
 
-        if (mode === OWNED_MODES.SUNK) {
-            dungeonInputs.push({ itemHrid: material.itemHrid, amount, unitValue: 0, sunk: true, via: null, kind });
-            continue;
-        }
+        // Units of this line covered by the stack: none in `buy`, and none when nothing is known to be held
+        const key = `${material.itemHrid}:0`;
+        const stock = mode === OWNED_MODES.BUY ? 0 : remaining.get(key) || 0;
+        const heldUnits = Math.min(stock, amount);
+        const boughtUnits = amount - heldUnits > 1e-9 ? amount - heldUnits : 0;
 
-        if (mode === OWNED_MODES.BUY) {
-            const bought = material?.missingPrice ? null : Number(material?.askPrice);
-            const buyPrice = bought > 0 ? bought : null;
-            const tokenPrice = kind.token ? valueToken?.(material.itemHrid) : null;
-            const candidates = [];
-            if (buyPrice) candidates.push({ unitValue: buyPrice, via: 'buy' });
-            if (tokenPrice > 0) candidates.push({ unitValue: tokenPrice, via: 'token' });
-            if (candidates.length === 0) {
-                unpriced.push({ itemHrid: material.itemHrid, reason: 'dungeon-input' });
-                continue;
-            }
-            const best = candidates.reduce((low, next) => (next.unitValue < low.unitValue ? next : low));
-            costPerAction += best.unitValue * amount;
-            if (best.via === 'buy' && material?.estimatedPrice) estimated.push(material.itemHrid);
-            if (best.via === 'token' && tokenEstimated?.(material.itemHrid)) estimated.push(material.itemHrid);
-            dungeonInputs.push({ itemHrid: material.itemHrid, amount, ...best, sunk: false, kind });
-            continue;
-        }
-
-        // Selling what you hold is the alternative to using it; for a drop that can be sold that is the
-        // figure. A shop item the market will not price is valued through the tokens it costs.
-        let unitValue = kind.drop ? valueDrop?.(material.itemHrid) : null;
-        let via = 'sale';
-        if (!(unitValue > 0) && kind.token) {
-            unitValue = valueToken?.(material.itemHrid);
-            via = 'token';
-        }
-        if (!(unitValue > 0)) {
+        const own = heldUnits > 0 ? ownedPrice(material, kind) : null;
+        const buy = boughtUnits > 0 ? boughtPrice(material, kind) : null;
+        // A line with a part that cannot be priced is unpriced whole; a partial sum would read as a full price
+        if ((heldUnits > 0 && !own) || (boughtUnits > 0 && !buy)) {
             unpriced.push({ itemHrid: material.itemHrid, reason: 'dungeon-input' });
             continue;
         }
-        costPerAction += unitValue * amount;
-        if (via === 'token' && tokenEstimated?.(material.itemHrid)) estimated.push(material.itemHrid);
-        dungeonInputs.push({ itemHrid: material.itemHrid, amount, unitValue, sunk: false, via, kind });
+
+        if (mode !== OWNED_MODES.BUY) {
+            remaining.set(key, stock - heldUnits);
+            const seen = heldSummary.get(material.itemHrid) || {
+                itemHrid: material.itemHrid,
+                needed: 0,
+                held: 0,
+                bought: 0,
+                stock: heldPool?.get(key) || 0,
+            };
+            seen.needed += amount;
+            seen.held += heldUnits;
+            seen.bought += boughtUnits;
+            heldSummary.set(material.itemHrid, seen);
+        }
+        if (own) {
+            costPerAction += own.unitValue * heldUnits;
+            noteEstimated(material, own);
+            dungeonInputs.push({
+                itemHrid: material.itemHrid,
+                amount: heldUnits,
+                unitValue: own.unitValue,
+                sunk: mode === OWNED_MODES.SUNK,
+                via: own.via,
+                kind,
+                held: true,
+            });
+        }
+        if (buy) {
+            costPerAction += buy.unitValue * boughtUnits;
+            noteEstimated(material, buy);
+            dungeonInputs.push({
+                itemHrid: material.itemHrid,
+                amount: boughtUnits,
+                ...buy,
+                sunk: false,
+                kind,
+                held: false,
+            });
+        }
     }
 
-    return { costPerAction, unpriced, dungeonInputs, estimated };
+    return { costPerAction, unpriced, dungeonInputs, estimated, heldInputs: [...heldSummary.values()] };
 }
 
 /**
@@ -399,8 +492,11 @@ export function evaluateLevel({
     };
 }
 
-/** The two ways a refined (star) item reaches +N: enhance the star item itself, or enhance its cheaper base first */
-export const ENHANCE_ROUTES = Object.freeze({ DIRECT: 'craft', BASE: 'refine-base' });
+/**
+ * The ways a refined (star) item reaches +N: enhance the star item itself, enhance its cheaper base first, or start
+ * from a base the character already holds (at its held level) and enhance it the rest of the way
+ */
+export const ENHANCE_ROUTES = Object.freeze({ DIRECT: 'craft', BASE: 'refine-base', HELD_BASE: 'held-base' });
 
 /**
  * Pick the enhancement route for a level.
@@ -453,6 +549,12 @@ export function chooseEnhanceRoute({ level, direct, viaBase }) {
  *   on the base item of a refinement, which is then refined (see {@link chooseEnhanceRoute}); omit when the
  *   recipe has no such route
  * @param {string|null} [args.baseHrid] - The base the refinement route enhances, for the tooltip
+ * @param {Array<Object>} [args.heldBases] - Candidates that start from a base the character holds, one per held
+ *   level at or below the target: `{level, count, unitValue, via, enhance, craftCostPerUnit, secondsPerUnit,
+ *   otherNetPerUnit, craftXpPerUnit}`. The base's own price is already inside `craftCostPerUnit` (and the chain
+ *   a bought base needs is already out of `secondsPerUnit` and the XP). A candidate with no `enhance` or no
+ *   `craftCostPerUnit` is not priceable and is never chosen. They apply to the target level only: a held +3 base
+ *   makes a +3 item, so it cannot lower the +0 figure.
  * @param {number|null} args.saleBase - Sale at +0 after tax
  * @param {number|null} args.saleTarget - Sale at the target after tax
  * @param {string[]} [args.notes] - Plain-language caveats for the row's tooltip
@@ -467,6 +569,7 @@ export function buildCraftEnhanceRow({
     enhance,
     viaBase = null,
     baseHrid = null,
+    heldBases = [],
     saleBase,
     saleTarget,
     notes = [],
@@ -484,7 +587,50 @@ export function buildCraftEnhanceRow({
 
     const base = evaluateLevel({ ...common, level: 0, enhance: null, saleAfterTax: saleBase });
     const chosen = chooseEnhanceRoute({ level: targetLevel, direct: enhance, viaBase });
-    const target = evaluateLevel({ ...common, level: targetLevel, enhance: chosen.enhance, saleAfterTax: saleTarget });
+
+    // The routes above share one craft cost, so the enhancement run alone told them apart. A held base changes the
+    // craft side too (its price, its missing chain), so it is compared on craft plus enhancement, and only against
+    // a fresh route that has both. A fresh route that cannot be priced leaves any priceable held base the winner.
+    const freshTotal =
+        chosen.enhance && craftCostPerUnit !== null ? craftCostPerUnit + Number(chosen.enhance.cost) : null;
+    let held = null;
+    for (const candidate of heldBases) {
+        if (!candidate?.enhance || !Number.isFinite(candidate.craftCostPerUnit)) continue;
+        const total = candidate.craftCostPerUnit + Number(candidate.enhance.cost);
+        if (!Number.isFinite(total)) continue;
+        if (total < (freshTotal ?? Infinity) && (!held || total < held.total)) held = { ...candidate, total };
+    }
+
+    let route = { ...chosen, offered: Boolean(baseHrid), baseHrid: baseHrid || null, heldBase: null };
+    let target;
+    if (held) {
+        route = {
+            ...route,
+            route: ENHANCE_ROUTES.HELD_BASE,
+            enhance: held.enhance,
+            heldBase: {
+                level: held.level,
+                count: held.count,
+                unitValue: held.unitValue,
+                via: held.via,
+                total: held.total,
+                // Null when the fresh routes could not be priced, so nothing was compared
+                saved: freshTotal === null ? null : freshTotal - held.total,
+            },
+        };
+        target = evaluateLevel({
+            level: targetLevel,
+            craftCostPerUnit: held.craftCostPerUnit,
+            unpricedInputs: [],
+            secondsPerUnit: held.secondsPerUnit,
+            otherNetPerUnit: held.otherNetPerUnit,
+            craftXpPerUnit: held.craftXpPerUnit,
+            enhance: held.enhance,
+            saleAfterTax: saleTarget,
+        });
+    } else {
+        target = evaluateLevel({ ...common, level: targetLevel, enhance: chosen.enhance, saleAfterTax: saleTarget });
+    }
 
     return {
         ...recipe,
@@ -492,10 +638,13 @@ export function buildCraftEnhanceRow({
         base,
         target,
         // Which way +N is reached; `offered` is whether the recipe has a base route at all
-        route: { ...chosen, offered: Boolean(baseHrid), baseHrid: baseHrid || null },
+        route,
         dungeonInputs: priced.dungeonInputs,
+        heldInputs: priced.heldInputs || [],
         estimatedInputs: priced.estimated || [],
-        sunkInputs: priced.dungeonInputs.filter((input) => input.sunk).map((input) => input.itemHrid),
+        sunkInputs: [
+            ...new Set(priced.dungeonInputs.filter((input) => input.sunk && input.amount > 0).map((i) => i.itemHrid)),
+        ],
         notes,
         // Filled in by the window for visible rows: {known, unitsPerDay}, null until asked
         volume: null,
@@ -590,6 +739,7 @@ export default {
     SORT_KEYS,
     normalizeTargetLevel,
     normalizeOwnedMode,
+    buildHeldPool,
     buildDungeonInputIndex,
     dungeonInputKind,
     hasDungeonInput,
