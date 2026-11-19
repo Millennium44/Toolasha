@@ -95,3 +95,43 @@ describe('rows without the field', () => {
         expect(() => ladderSentence(refine.ladder, 100, null)).not.toThrow();
     });
 });
+
+describe('refine and enhance rows name the resale credit that lands the Cost', () => {
+    const credits = [{ hrid: '/items/kraken_tunic', name: 'Kraken Tunic', enhancementLevel: 0, price: 80_000_000 }];
+    const base = { gross: 245_000_000, credit: 78_900_000, net: 166_100_000, credits };
+
+    test('refine ladder: ladder less credit equals Cost', () => {
+        const refine = {
+            ...base,
+            source: 'refine',
+            ladder: {
+                fromLevel: 10,
+                toLevel: 10,
+                refine: { lines: ['100 × Pirate Refinement Shard @ 2.45M = 245.00M'], materialCost: 245_000_000 },
+            },
+        };
+        const text = ladderSentence(refine.ladder, refine.gross, refine);
+        expect(text).toContain('= 245.0M, less 78.9M for your +0 sold = 166.1M.');
+    });
+
+    test('enhance ladder on a spare also names the credit', () => {
+        const enhance = { ...base, source: 'enhance', ladder: { fromLevel: 5, toLevel: 10, fresh: false } };
+        expect(ladderSentence(enhance.ladder, enhance.gross, enhance)).toContain(
+            'on the spare copy you hold, less 78.9M for your +0 sold = 166.1M.'
+        );
+    });
+
+    test('no credit leaves the refine sentence unchanged', () => {
+        const refine = {
+            gross: 100,
+            credit: 0,
+            net: 100,
+            credits: [],
+            source: 'refine',
+            ladder: { fromLevel: 10, toLevel: 10, refine: { lines: ['x'], materialCost: 100 } },
+        };
+        expect(ladderSentence(refine.ladder, 100, refine)).toBe(
+            'Refine your spare +10 (all levels transfer): x = 100.'
+        );
+    });
+});
