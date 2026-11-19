@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.90.0 -->
+
 ### Combat sim import sends your talismans
 
 The Combat Sim's "Import from Toolasha" now carries your slotted combat talismans (yours and your party's), so the sim applies their lines. The sim's Test page gets its own "Combat Sim (Test)" link in the game's sidebar, and the import stays current as you slot talismans or change belts.
@@ -7803,111 +7805,103 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.90.0](https://github.com/Millennium44/Toolasha/compare/v3.89.0...v3.90.0) (2026-11-19)
 
-
 ### Features
 
-* combat sim export sends talismans and supports the Shykai Test page ([c64e909](https://github.com/Millennium44/Toolasha/commit/c64e909068b2183258afbee3243214d712f72648))
-* combat sim import sends slotted talismans, runs on the sim Test page ([8c2b18c](https://github.com/Millennium44/Toolasha/commit/8c2b18c5776a375c9a7a63cc7ffaa8c3975210ed))
-* craft & enhance best level holds each usual sale level to its own volume ([d0c1636](https://github.com/Millennium44/Toolasha/commit/d0c1636b0be10e0763095a8c7037ae3fc0c190b2))
-* Craft & Enhance enhances the cheaper base before refining, and follows the Artisan worst-case setting ([9a86f2a](https://github.com/Millennium44/Toolasha/commit/9a86f2ae842c23efa6248f46fb3f3618f042eefa))
-* craft & enhance holds profit per hour to the volume the market trades ([624bb3e](https://github.com/Millennium44/Toolasha/commit/624bb3e24a4765fa9088f8b8f575aaad853ac4ba))
-* craft & enhance phase 2 (self-copy protection, volume cap, best level) ([c13e369](https://github.com/Millennium44/Toolasha/commit/c13e369c42efc6253d4e678381e24be85f9a4f6f))
-* Craft & Enhance prices held dungeon inputs as owned and the shortfall as bought, and starts from a held base ([8489686](https://github.com/Millennium44/Toolasha/commit/8489686d33059b75085e3533a59d847440bd65c8))
-* craft & enhance protects with an item copy at the cheaper of market and craft cost ([65c8ec3](https://github.com/Millennium44/Toolasha/commit/65c8ec3836fb1788b49854f8df3d8f33cd43750a))
-* Craft & Enhance spreads the held stock over one hour of crafts ([6d3a884](https://github.com/Millennium44/Toolasha/commit/6d3a88499a536046ff67d33f71d4eccdd3e6d59e))
-* craft & enhance sweeps +0 to +N and names the best level ([18581c2](https://github.com/Millennium44/Toolasha/commit/18581c26a5157368a04225b2fc1dee15429d9f71))
-* labyrinth step buttons carry out the shroud and beacon plans one press at a time ([4cc81f6](https://github.com/Millennium44/Toolasha/commit/4cc81f6ec6b290c6df965c831462f5fd8b91c25b))
-* labyrinth step buttons get an on/off switch in the toolbar settings panel ([920e738](https://github.com/Millennium44/Toolasha/commit/920e73801b29d0573490bc3c6165f7636825877e))
-* sim rows show the refine price when buying a refined item wins ([7f818c2](https://github.com/Millennium44/Toolasha/commit/7f818c27298e76154ae9ecc11f9ef1ba9a10d567))
-* sim rows show the refine price when buying a refined item wins ([9cbadb2](https://github.com/Millennium44/Toolasha/commit/9cbadb24b8ec24897814f8f291f3edf67a99e64b))
-
+- combat sim export sends talismans and supports the Shykai Test page ([c64e909](https://github.com/Millennium44/Toolasha/commit/c64e909068b2183258afbee3243214d712f72648))
+- combat sim import sends slotted talismans, runs on the sim Test page ([8c2b18c](https://github.com/Millennium44/Toolasha/commit/8c2b18c5776a375c9a7a63cc7ffaa8c3975210ed))
+- craft & enhance best level holds each usual sale level to its own volume ([d0c1636](https://github.com/Millennium44/Toolasha/commit/d0c1636b0be10e0763095a8c7037ae3fc0c190b2))
+- Craft & Enhance enhances the cheaper base before refining, and follows the Artisan worst-case setting ([9a86f2a](https://github.com/Millennium44/Toolasha/commit/9a86f2ae842c23efa6248f46fb3f3618f042eefa))
+- craft & enhance holds profit per hour to the volume the market trades ([624bb3e](https://github.com/Millennium44/Toolasha/commit/624bb3e24a4765fa9088f8b8f575aaad853ac4ba))
+- craft & enhance phase 2 (self-copy protection, volume cap, best level) ([c13e369](https://github.com/Millennium44/Toolasha/commit/c13e369c42efc6253d4e678381e24be85f9a4f6f))
+- Craft & Enhance prices held dungeon inputs as owned and the shortfall as bought, and starts from a held base ([8489686](https://github.com/Millennium44/Toolasha/commit/8489686d33059b75085e3533a59d847440bd65c8))
+- craft & enhance protects with an item copy at the cheaper of market and craft cost ([65c8ec3](https://github.com/Millennium44/Toolasha/commit/65c8ec3836fb1788b49854f8df3d8f33cd43750a))
+- Craft & Enhance spreads the held stock over one hour of crafts ([6d3a884](https://github.com/Millennium44/Toolasha/commit/6d3a88499a536046ff67d33f71d4eccdd3e6d59e))
+- craft & enhance sweeps +0 to +N and names the best level ([18581c2](https://github.com/Millennium44/Toolasha/commit/18581c26a5157368a04225b2fc1dee15429d9f71))
+- labyrinth step buttons carry out the shroud and beacon plans one press at a time ([4cc81f6](https://github.com/Millennium44/Toolasha/commit/4cc81f6ec6b290c6df965c831462f5fd8b91c25b))
+- labyrinth step buttons get an on/off switch in the toolbar settings panel ([920e738](https://github.com/Millennium44/Toolasha/commit/920e73801b29d0573490bc3c6165f7636825877e))
+- sim rows show the refine price when buying a refined item wins ([7f818c2](https://github.com/Millennium44/Toolasha/commit/7f818c27298e76154ae9ecc11f9ef1ba9a10d567))
 
 ### Bug Fixes
 
-* combat sim stops Echo on auto attacks ([2dafe3a](https://github.com/Millennium44/Toolasha/commit/2dafe3a7561976dc70869a495188def470159a89))
-* combat sim talismans go inside player, and Metz export drops them ([64fe0ed](https://github.com/Millennium44/Toolasha/commit/64fe0ed30c0c395a9e2c3d47d348db49c1d7707a))
-* craft & enhance +N cells describe the one run the volume cap chose ([ad25944](https://github.com/Millennium44/Toolasha/commit/ad25944445d2005edd08404655461b99a733041e))
-* craft & enhance best level +N carries the same volume cap as profit per hour +N ([be13c90](https://github.com/Millennium44/Toolasha/commit/be13c90fa44242a52f0ee7cfe6c769ce81a07c25))
-* craft & enhance capped variant reports its own route cost and saving ([f097222](https://github.com/Millennium44/Toolasha/commit/f0972220621cf4ec0b0a8c8fc6848317993ef0fd))
-* craft & enhance caps every route variant by volume before picking ([afa3188](https://github.com/Millennium44/Toolasha/commit/afa3188d8bb144641f3d94e174903d3f032ac5cd))
-* craft & enhance caps every route variant by volume before picking ([#1053](https://github.com/Millennium44/Toolasha/issues/1053)) ([8de13f8](https://github.com/Millennium44/Toolasha/commit/8de13f86ace4838aa8ffdf0cbaaeab163ad1fd7a))
-* Craft & Enhance chain time and XP follow the worst-case Artisan route ([7bc4aca](https://github.com/Millennium44/Toolasha/commit/7bc4acaa3905ef6061827bbc119799cd5005619c))
-* Craft & Enhance held-base coverage follows the mixed hour of held and fresh crafts ([35038af](https://github.com/Millennium44/Toolasha/commit/35038af3508592540c8646ed4c6369c6fd1cc453))
-* craft & enhance keeps a custom price on the item's own protection copy ([0ccaa06](https://github.com/Millennium44/Toolasha/commit/0ccaa06d1eb67c0766ec99ceed07296b140f3192))
-* craft & enhance keeps the better hour of crafted and bought protection copies ([7879be9](https://github.com/Millennium44/Toolasha/commit/7879be9b681b92976fb1155ee6645ad3d0ffefc7))
-* Craft & Enhance no longer double-counts a held +0 dungeon base or prices a held base with unknown crafts per hour ([cfd5cb4](https://github.com/Millennium44/Toolasha/commit/cfd5cb45bb1dfef8c73ce5c9e567b7d7d8309efd))
-* craft & enhance prices base copies with worst-case Artisan rounding and counts copy bonus drops ([323e31b](https://github.com/Millennium44/Toolasha/commit/323e31bfac33050270863a279f615ab5b3b9b86a))
-* Craft & Enhance prices shared inputs over the mixed hour of held and fresh crafts ([427605a](https://github.com/Millennium44/Toolasha/commit/427605a60153409c0105c7f018415cb70cc0d42d))
-* craft & enhance reports route costs and savings from the variant each route uses ([4f24edf](https://github.com/Millennium44/Toolasha/commit/4f24edfb649215c9fd107ff2ce3223d99d168b83))
-* craft & enhance scores every route and protection variant on its complete hour ([796636c](https://github.com/Millennium44/Toolasha/commit/796636ca9503a0c64d0bb837be99c22578efa2ab))
-* Craft & Enhance takes a held base only when the blended hour beats staying fresh ([a7c6814](https://github.com/Millennium44/Toolasha/commit/a7c68141bb9afe56bef2dbd2e4243d33bbd4c86d))
-* Craft & Enhance worst-case Artisan also rounds a crafted upgrade item's inputs ([dcee831](https://github.com/Millennium44/Toolasha/commit/dcee831fa7144b500c61c94de17bce3688f0c2d0))
-* held-base tooltip in Craft & Enhance no longer calls a fully covered hour part bought ([ab4c88a](https://github.com/Millennium44/Toolasha/commit/ab4c88a4295482e5d8559e05d28a23ab8c9a9d67))
-* lab sim budget plan buys refine materials for a refine-priced pick ([d6f71c4](https://github.com/Millennium44/Toolasha/commit/d6f71c4b844b681af4ead95737a821b27cb65bbc))
-* lab sim budget plan copy ledger follows the picks that stand and covers pinned rows ([2f16ce3](https://github.com/Millennium44/Toolasha/commit/2f16ce31c080ffefce7968625f3104bf913d3f98))
-* lab sim budget plan counts two same-level copies as two ([7476fcb](https://github.com/Millennium44/Toolasha/commit/7476fcbeb48b9eb7a85eec74110258bddbd136ed)), closes [#1041](https://github.com/Millennium44/Toolasha/issues/1041)
-* lab sim budget plan picks the best total among same-slot options ([e88a187](https://github.com/Millennium44/Toolasha/commit/e88a187f632a65a1199b6d66ccac2dd9459b1bd8))
-* lab sim budget plan tabs fill the buy box with the missing count ([3852fb6](https://github.com/Millennium44/Toolasha/commit/3852fb64cc1c89955165404fc036a74e10b09659))
-* lab sim budget plans do not spend one owned copy twice, and owned level takes the best held copy ([3e2463a](https://github.com/Millennium44/Toolasha/commit/3e2463a6a982679093ab7a51c3117c8a29571ea2))
-* lab sim counts a cape or quiver you are wearing as owned when pricing forced back-slot rows ([061bbf8](https://github.com/Millennium44/Toolasha/commit/061bbf8d8c948311408baca8c9c2c565c2b27c44))
-* lab sim CSV export names each row its real kind ([fe576cf](https://github.com/Millennium44/Toolasha/commit/fe576cfa24db94b6f6c0594cd020babb62e93bd4))
-* lab sim CSV export rounds coin figures to whole coins ([01866f3](https://github.com/Millennium44/Toolasha/commit/01866f34e1c0ecde8c318d8a0ecee4eab4d14a72))
-* lab sim does not fold a stopped Upgrade run's queued abilities into a best-of row ([4c32213](https://github.com/Millennium44/Toolasha/commit/4c32213cb2cb07d2fdcc7beb99819e2661ddf30c))
-* lab sim keeps a queued enhancement's worn source eligible as a pricing input ([e114163](https://github.com/Millennium44/Toolasha/commit/e114163916f3ec2872eeda8c612383489ccc9673))
-* lab sim keeps the queued-swap note on a restored or redrawn Upgrade run ([ff48102](https://github.com/Millennium44/Toolasha/commit/ff48102d5e596dcdb58feddb43b5a7922584255c))
-* lab sim leaves queued abilities out of a stopped Upgrade run's table ([3e722ba](https://github.com/Millennium44/Toolasha/commit/3e722bab13c03a7ae71f0f7850b65575059faace))
-* lab sim names every piece a forced gear row replaces across fights ([0bc4a39](https://github.com/Millennium44/Toolasha/commit/0bc4a396f0e6771340ffd6ce7a1cb90cf4527ef6))
-* lab sim plan ledger treats a row met by the worn copy as using it ([ae5824d](https://github.com/Millennium44/Toolasha/commit/ae5824d8ab81a038f3d5546dcb575c61e91d7cf6))
-* lab sim prices a forced gear row free when you already own the piece at that level ([35fb35a](https://github.com/Millennium44/Toolasha/commit/35fb35a84293404a441a199c3b859c5801e08786))
-* lab sim prices a queued swap over a forced-armor row the way that row is priced ([0c27236](https://github.com/Millennium44/Toolasha/commit/0c27236afb3843c9fade0eee29a0bc4d221be7ec))
-* lab sim prices every queued armor swap in an Upgrade run under Keep replaced gear ([0fa044c](https://github.com/Millennium44/Toolasha/commit/0fa044c13ec54d0c9f6a4c94f9fae8659942dae2))
-* lab sim shows a queued piece once when a generated pair is only that piece ([c973537](https://github.com/Millennium44/Toolasha/commit/c9735371dc4970e10f01a74d3a82a968aeff12de))
-* lab sim single-fight run prices queued armor and folds a worn-piece pair like the whole-run table ([d9af941](https://github.com/Millennium44/Toolasha/commit/d9af941da6dd6b0510d7ad5aa79ca89fe8ff7646))
-* lab sim single-fight upgrades skip gear a Labyrinth fight cannot feel ([fcb47f0](https://github.com/Millennium44/Toolasha/commit/fcb47f01f98c2f47cc825ea5bde8fd1b4436c827))
-* lab sim skips gear that cannot change a Labyrinth fight ([a654f1d](https://github.com/Millennium44/Toolasha/commit/a654f1d4e4f27f983d543368cf6e100e115e28f5))
-* loadout exports carry the loadout's talismans, snapshot refresh is lighter ([553d88b](https://github.com/Millennium44/Toolasha/commit/553d88bf7bab3c48f7349a76679d071f33062712))
-* sim refine and enhance rows name the resale credit ([69adfbf](https://github.com/Millennium44/Toolasha/commit/69adfbffdcf48ca311db175883dcf4debfc0c455))
-* sim snapshot refreshes on talisman and belt changes, Test sim gets a link ([46db8d6](https://github.com/Millennium44/Toolasha/commit/46db8d6a739abf3adebf468afea74f1359f4d4bd))
-* unreadable dungeon run history is re-read on a bounded backoff, warned once ([916c0af](https://github.com/Millennium44/Toolasha/commit/916c0af081fd9f465ea7072a38885fa313e04bab))
-
+- combat sim stops Echo on auto attacks ([2dafe3a](https://github.com/Millennium44/Toolasha/commit/2dafe3a7561976dc70869a495188def470159a89))
+- combat sim talismans go inside player, and Metz export drops them ([64fe0ed](https://github.com/Millennium44/Toolasha/commit/64fe0ed30c0c395a9e2c3d47d348db49c1d7707a))
+- craft & enhance +N cells describe the one run the volume cap chose ([ad25944](https://github.com/Millennium44/Toolasha/commit/ad25944445d2005edd08404655461b99a733041e))
+- craft & enhance best level +N carries the same volume cap as profit per hour +N ([be13c90](https://github.com/Millennium44/Toolasha/commit/be13c90fa44242a52f0ee7cfe6c769ce81a07c25))
+- craft & enhance capped variant reports its own route cost and saving ([f097222](https://github.com/Millennium44/Toolasha/commit/f0972220621cf4ec0b0a8c8fc6848317993ef0fd))
+- craft & enhance caps every route variant by volume before picking ([afa3188](https://github.com/Millennium44/Toolasha/commit/afa3188d8bb144641f3d94e174903d3f032ac5cd))
+- craft & enhance caps every route variant by volume before picking ([#1053](https://github.com/Millennium44/Toolasha/issues/1053)) ([8de13f8](https://github.com/Millennium44/Toolasha/commit/8de13f86ace4838aa8ffdf0cbaaeab163ad1fd7a))
+- Craft & Enhance chain time and XP follow the worst-case Artisan route ([7bc4aca](https://github.com/Millennium44/Toolasha/commit/7bc4acaa3905ef6061827bbc119799cd5005619c))
+- Craft & Enhance held-base coverage follows the mixed hour of held and fresh crafts ([35038af](https://github.com/Millennium44/Toolasha/commit/35038af3508592540c8646ed4c6369c6fd1cc453))
+- craft & enhance keeps a custom price on the item's own protection copy ([0ccaa06](https://github.com/Millennium44/Toolasha/commit/0ccaa06d1eb67c0766ec99ceed07296b140f3192))
+- craft & enhance keeps the better hour of crafted and bought protection copies ([7879be9](https://github.com/Millennium44/Toolasha/commit/7879be9b681b92976fb1155ee6645ad3d0ffefc7))
+- Craft & Enhance no longer double-counts a held +0 dungeon base or prices a held base with unknown crafts per hour ([cfd5cb4](https://github.com/Millennium44/Toolasha/commit/cfd5cb45bb1dfef8c73ce5c9e567b7d7d8309efd))
+- craft & enhance prices base copies with worst-case Artisan rounding and counts copy bonus drops ([323e31b](https://github.com/Millennium44/Toolasha/commit/323e31bfac33050270863a279f615ab5b3b9b86a))
+- Craft & Enhance prices shared inputs over the mixed hour of held and fresh crafts ([427605a](https://github.com/Millennium44/Toolasha/commit/427605a60153409c0105c7f018415cb70cc0d42d))
+- craft & enhance reports route costs and savings from the variant each route uses ([4f24edf](https://github.com/Millennium44/Toolasha/commit/4f24edfb649215c9fd107ff2ce3223d99d168b83))
+- craft & enhance scores every route and protection variant on its complete hour ([796636c](https://github.com/Millennium44/Toolasha/commit/796636ca9503a0c64d0bb837be99c22578efa2ab))
+- Craft & Enhance takes a held base only when the blended hour beats staying fresh ([a7c6814](https://github.com/Millennium44/Toolasha/commit/a7c68141bb9afe56bef2dbd2e4243d33bbd4c86d))
+- Craft & Enhance worst-case Artisan also rounds a crafted upgrade item's inputs ([dcee831](https://github.com/Millennium44/Toolasha/commit/dcee831fa7144b500c61c94de17bce3688f0c2d0))
+- held-base tooltip in Craft & Enhance no longer calls a fully covered hour part bought ([ab4c88a](https://github.com/Millennium44/Toolasha/commit/ab4c88a4295482e5d8559e05d28a23ab8c9a9d67))
+- lab sim budget plan buys refine materials for a refine-priced pick ([d6f71c4](https://github.com/Millennium44/Toolasha/commit/d6f71c4b844b681af4ead95737a821b27cb65bbc))
+- lab sim budget plan copy ledger follows the picks that stand and covers pinned rows ([2f16ce3](https://github.com/Millennium44/Toolasha/commit/2f16ce31c080ffefce7968625f3104bf913d3f98))
+- lab sim budget plan counts two same-level copies as two ([7476fcb](https://github.com/Millennium44/Toolasha/commit/7476fcbeb48b9eb7a85eec74110258bddbd136ed)), closes [#1041](https://github.com/Millennium44/Toolasha/issues/1041)
+- lab sim budget plan picks the best total among same-slot options ([e88a187](https://github.com/Millennium44/Toolasha/commit/e88a187f632a65a1199b6d66ccac2dd9459b1bd8))
+- lab sim budget plan tabs fill the buy box with the missing count ([3852fb6](https://github.com/Millennium44/Toolasha/commit/3852fb64cc1c89955165404fc036a74e10b09659))
+- lab sim budget plans do not spend one owned copy twice, and owned level takes the best held copy ([3e2463a](https://github.com/Millennium44/Toolasha/commit/3e2463a6a982679093ab7a51c3117c8a29571ea2))
+- lab sim counts a cape or quiver you are wearing as owned when pricing forced back-slot rows ([061bbf8](https://github.com/Millennium44/Toolasha/commit/061bbf8d8c948311408baca8c9c2c565c2b27c44))
+- lab sim CSV export names each row its real kind ([fe576cf](https://github.com/Millennium44/Toolasha/commit/fe576cfa24db94b6f6c0594cd020babb62e93bd4))
+- lab sim CSV export rounds coin figures to whole coins ([01866f3](https://github.com/Millennium44/Toolasha/commit/01866f34e1c0ecde8c318d8a0ecee4eab4d14a72))
+- lab sim does not fold a stopped Upgrade run's queued abilities into a best-of row ([4c32213](https://github.com/Millennium44/Toolasha/commit/4c32213cb2cb07d2fdcc7beb99819e2661ddf30c))
+- lab sim keeps a queued enhancement's worn source eligible as a pricing input ([e114163](https://github.com/Millennium44/Toolasha/commit/e114163916f3ec2872eeda8c612383489ccc9673))
+- lab sim keeps the queued-swap note on a restored or redrawn Upgrade run ([ff48102](https://github.com/Millennium44/Toolasha/commit/ff48102d5e596dcdb58feddb43b5a7922584255c))
+- lab sim leaves queued abilities out of a stopped Upgrade run's table ([3e722ba](https://github.com/Millennium44/Toolasha/commit/3e722bab13c03a7ae71f0f7850b65575059faace))
+- lab sim names every piece a forced gear row replaces across fights ([0bc4a39](https://github.com/Millennium44/Toolasha/commit/0bc4a396f0e6771340ffd6ce7a1cb90cf4527ef6))
+- lab sim plan ledger treats a row met by the worn copy as using it ([ae5824d](https://github.com/Millennium44/Toolasha/commit/ae5824d8ab81a038f3d5546dcb575c61e91d7cf6))
+- lab sim prices a forced gear row free when you already own the piece at that level ([35fb35a](https://github.com/Millennium44/Toolasha/commit/35fb35a84293404a441a199c3b859c5801e08786))
+- lab sim prices a queued swap over a forced-armor row the way that row is priced ([0c27236](https://github.com/Millennium44/Toolasha/commit/0c27236afb3843c9fade0eee29a0bc4d221be7ec))
+- lab sim prices every queued armor swap in an Upgrade run under Keep replaced gear ([0fa044c](https://github.com/Millennium44/Toolasha/commit/0fa044c13ec54d0c9f6a4c94f9fae8659942dae2))
+- lab sim shows a queued piece once when a generated pair is only that piece ([c973537](https://github.com/Millennium44/Toolasha/commit/c9735371dc4970e10f01a74d3a82a968aeff12de))
+- lab sim single-fight run prices queued armor and folds a worn-piece pair like the whole-run table ([d9af941](https://github.com/Millennium44/Toolasha/commit/d9af941da6dd6b0510d7ad5aa79ca89fe8ff7646))
+- lab sim single-fight upgrades skip gear a Labyrinth fight cannot feel ([fcb47f0](https://github.com/Millennium44/Toolasha/commit/fcb47f01f98c2f47cc825ea5bde8fd1b4436c827))
+- lab sim skips gear that cannot change a Labyrinth fight ([a654f1d](https://github.com/Millennium44/Toolasha/commit/a654f1d4e4f27f983d543368cf6e100e115e28f5))
+- loadout exports carry the loadout's talismans, snapshot refresh is lighter ([553d88b](https://github.com/Millennium44/Toolasha/commit/553d88bf7bab3c48f7349a76679d071f33062712))
+- sim refine and enhance rows name the resale credit ([69adfbf](https://github.com/Millennium44/Toolasha/commit/69adfbffdcf48ca311db175883dcf4debfc0c455))
+- sim snapshot refreshes on talisman and belt changes, Test sim gets a link ([46db8d6](https://github.com/Millennium44/Toolasha/commit/46db8d6a739abf3adebf468afea74f1359f4d4bd))
+- unreadable dungeon run history is re-read on a bounded backoff, warned once ([916c0af](https://github.com/Millennium44/Toolasha/commit/916c0af081fd9f465ea7072a38885fa313e04bab))
 
 ### Performance Improvements
 
-* batch feature start-up storage reads ([#846](https://github.com/Millennium44/Toolasha/issues/846)) ([22bae0d](https://github.com/Millennium44/Toolasha/commit/22bae0ddaf081cd3139f5bc4a5ba02b306751474))
-* batch startup reads of dungeon runs, chat history, tasks, lab comparison, combat stats ([39803f3](https://github.com/Millennium44/Toolasha/commit/39803f39cd9dfbc99d4a56aab7e0ec0bc02f37be))
-* batch the combat and lab sim panels' startup reads ([8726a06](https://github.com/Millennium44/Toolasha/commit/8726a062b5af34266b8ca55f4ad1ebbc80cf26e2))
-
+- batch feature start-up storage reads ([#846](https://github.com/Millennium44/Toolasha/issues/846)) ([22bae0d](https://github.com/Millennium44/Toolasha/commit/22bae0ddaf081cd3139f5bc4a5ba02b306751474))
+- batch startup reads of dungeon runs, chat history, tasks, lab comparison, combat stats ([39803f3](https://github.com/Millennium44/Toolasha/commit/39803f39cd9dfbc99d4a56aab7e0ec0bc02f37be))
+- batch the combat and lab sim panels' startup reads ([8726a06](https://github.com/Millennium44/Toolasha/commit/8726a062b5af34266b8ca55f4ad1ebbc80cf26e2))
 
 ### Documentation
 
-* agents run test suites at the default heap and split a file that outgrows it ([6b1ee3a](https://github.com/Millennium44/Toolasha/commit/6b1ee3a5ab7edd6f19b94bd795468e73867046c9))
-* changelog entries for craft & enhance phase 2 ([17194b2](https://github.com/Millennium44/Toolasha/commit/17194b2f5e889d8834cc58fabbadeb5a00212837))
-* changelog entry for batched start-up reads ([e5b7474](https://github.com/Millennium44/Toolasha/commit/e5b747468bebd4aad718fb5329ea663d72a68b08))
-* changelog entry for the Craft & Enhance inventory split ([56d6407](https://github.com/Millennium44/Toolasha/commit/56d640709f40a8968cd97a794ed42aa309698874))
-* changelog entry for the dungeon run-history retry ([f6f8856](https://github.com/Millennium44/Toolasha/commit/f6f8856bbe4fa0758b0d4c5481d4e9772af128a6))
-* changelog for budget plans taking the better same-slot level ([9f6a006](https://github.com/Millennium44/Toolasha/commit/9f6a006471625fd4bc800fb1a4a91d9dfe542ff2))
-* changelog for Echo no longer repeating auto attacks ([fb486f7](https://github.com/Millennium44/Toolasha/commit/fb486f70f16489175a25a5a0bde779fe1b70b4d3))
-* changelog for lab sim gear rows using owned gear ([635dd69](https://github.com/Millennium44/Toolasha/commit/635dd69805348a41660ffb93c244ab54eade4ad4))
-* changelog for lab sim inert-gear skip and CSV kinds ([7da6a8a](https://github.com/Millennium44/Toolasha/commit/7da6a8a26f9e282244db6d8ff35deabd539f331c))
-* changelog for the queued-swap Upgrade run edges ([#1035](https://github.com/Millennium44/Toolasha/issues/1035)) ([5e2aae3](https://github.com/Millennium44/Toolasha/commit/5e2aae3e1f1c9caef1c557df6eda5e628c67ef19))
-* changelog matches the review fixes for the queued-swap edges ([61f9adf](https://github.com/Millennium44/Toolasha/commit/61f9adfe018b46614cae0f0f08c94c49a30fb134))
-
+- agents run test suites at the default heap and split a file that outgrows it ([6b1ee3a](https://github.com/Millennium44/Toolasha/commit/6b1ee3a5ab7edd6f19b94bd795468e73867046c9))
+- changelog entries for craft & enhance phase 2 ([17194b2](https://github.com/Millennium44/Toolasha/commit/17194b2f5e889d8834cc58fabbadeb5a00212837))
+- changelog entry for batched start-up reads ([e5b7474](https://github.com/Millennium44/Toolasha/commit/e5b747468bebd4aad718fb5329ea663d72a68b08))
+- changelog entry for the Craft & Enhance inventory split ([56d6407](https://github.com/Millennium44/Toolasha/commit/56d640709f40a8968cd97a794ed42aa309698874))
+- changelog entry for the dungeon run-history retry ([f6f8856](https://github.com/Millennium44/Toolasha/commit/f6f8856bbe4fa0758b0d4c5481d4e9772af128a6))
+- changelog for budget plans taking the better same-slot level ([9f6a006](https://github.com/Millennium44/Toolasha/commit/9f6a006471625fd4bc800fb1a4a91d9dfe542ff2))
+- changelog for Echo no longer repeating auto attacks ([fb486f7](https://github.com/Millennium44/Toolasha/commit/fb486f70f16489175a25a5a0bde779fe1b70b4d3))
+- changelog for lab sim gear rows using owned gear ([635dd69](https://github.com/Millennium44/Toolasha/commit/635dd69805348a41660ffb93c244ab54eade4ad4))
+- changelog for lab sim inert-gear skip and CSV kinds ([7da6a8a](https://github.com/Millennium44/Toolasha/commit/7da6a8a26f9e282244db6d8ff35deabd539f331c))
+- changelog for the queued-swap Upgrade run edges ([#1035](https://github.com/Millennium44/Toolasha/issues/1035)) ([5e2aae3](https://github.com/Millennium44/Toolasha/commit/5e2aae3e1f1c9caef1c557df6eda5e628c67ef19))
+- changelog matches the review fixes for the queued-swap edges ([61f9adf](https://github.com/Millennium44/Toolasha/commit/61f9adfe018b46614cae0f0f08c94c49a30fb134))
 
 ### Tests
 
-* catch cross-bundle util duplication in the normal test run ([427a8b5](https://github.com/Millennium44/Toolasha/commit/427a8b52365cd103f026c1f71f90f404c50954b1))
-* finish the startup batch's test mocks and the sync-ownership scan ([e0d9f60](https://github.com/Millennium44/Toolasha/commit/e0d9f604b4c137846c01c9ccb0be6edcbd6a1ca0))
-
+- catch cross-bundle util duplication in the normal test run ([427a8b5](https://github.com/Millennium44/Toolasha/commit/427a8b52365cd103f026c1f71f90f404c50954b1))
+- finish the startup batch's test mocks and the sync-ownership scan ([e0d9f60](https://github.com/Millennium44/Toolasha/commit/e0d9f604b4c137846c01c9ccb0be6edcbd6a1ca0))
 
 ### Build System
 
-* allow the stateless enhancement breakpoints module in two bundles ([3ed1801](https://github.com/Millennium44/Toolasha/commit/3ed1801b565fc00e02cc88e76eca797271d9d8c7))
-
+- allow the stateless enhancement breakpoints module in two bundles ([3ed1801](https://github.com/Millennium44/Toolasha/commit/3ed1801b565fc00e02cc88e76eca797271d9d8c7))
 
 ### Miscellaneous Chores
 
-* gate-branch script, lowercase commit subjects and the new-dimension brief step ([d8201a6](https://github.com/Millennium44/Toolasha/commit/d8201a6580f035373aae637cc293ff58980df87c))
-* gates find vitest from the main checkout and retry a timeout-only failure once ([3c89a9d](https://github.com/Millennium44/Toolasha/commit/3c89a9d289fa398fc42f67cbd76612338e67596b))
+- gate-branch script, lowercase commit subjects and the new-dimension brief step ([d8201a6](https://github.com/Millennium44/Toolasha/commit/d8201a6580f035373aae637cc293ff58980df87c))
+- gates find vitest from the main checkout and retry a timeout-only failure once ([3c89a9d](https://github.com/Millennium44/Toolasha/commit/3c89a9d289fa398fc42f67cbd76612338e67596b))
 
 ## [3.89.0](https://github.com/Millennium44/Toolasha/compare/v3.88.0...v3.89.0) (2026-11-18)
 
