@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon chat run numbers recover on their own
+
+When the saved run history cannot be read at startup, Toolasha now tries again a few times in the background and numbers the waiting chat runs as soon as it loads, instead of waiting for the next chat message. The warning is logged once instead of on every pass.
+
 ### Labyrinth step buttons
 
 Shroud and Beacon buttons beside Path and Beacons carry out the plan one game action per press: press once to arm the supply, again to use it on the next planned room. They check the live map first and say why when a planned room cannot take it yet. Turn them on or off from the toolbar's ⚙ panel (Step buttons) or the Labyrinth settings.
