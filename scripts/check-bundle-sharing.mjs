@@ -814,7 +814,12 @@ export function walkBundle(entry, isExternal) {
     return inline;
 }
 
-async function main() {
+/**
+ * Run every sharing analysis against the real production rollup config.
+ * Exported so a vitest test can run the identical check without a build.
+ * @returns {Promise<{inlineIn: Map, violations: Array, foreignCopies: Array, unownedCopies: Array, routedMisuse: Array}>} Findings
+ */
+export async function analyze() {
     await initLexer;
 
     // The real build config, so the check can never drift from what rollup
@@ -824,8 +829,7 @@ async function main() {
     const configs = rollupConfig.default;
     const { singletonOwnership, singletonRouting } = rollupConfig;
     if (!Array.isArray(configs)) {
-        console.error('[check-bundle-sharing] Expected the production config array from rollup.config.js');
-        process.exit(2);
+        throw new Error('[check-bundle-sharing] Expected the production config array from rollup.config.js');
     }
 
     // module path -> Set of bundle names that carry it inline
@@ -889,6 +893,19 @@ async function main() {
             resolve: resolveSpecifier,
         })
     );
+
+    return { inlineIn, violations, foreignCopies, unownedCopies, routedMisuse };
+}
+
+async function main() {
+    let result;
+    try {
+        result = await analyze();
+    } catch (error) {
+        console.error(error.message);
+        process.exit(2);
+    }
+    const { inlineIn, violations, foreignCopies, unownedCopies, routedMisuse } = result;
 
     if (routedMisuse.length > 0) {
         console.error('');
