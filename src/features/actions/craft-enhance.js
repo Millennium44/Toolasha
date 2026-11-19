@@ -305,6 +305,8 @@ export function rankCraftEnhance({
                     profit = await profitCalculator.calculateProfit(recipe.itemHrid, {
                         actionHrid: recipe.actionHrid,
                         keepSellTax: true,
+                        // A crafted upgrade item's own inputs are billed whole per craft too
+                        upgradeCraftArtisanMode: worstCase ? ARTISAN_MATERIAL_MODE.WORST_CASE : null,
                     });
                 } catch (error) {
                     console.error(`[CraftEnhance] Costing ${recipe.actionHrid} failed:`, error);

@@ -116,3 +116,13 @@ describe('Artisan Tea stock and the production cost memo', () => {
         expect(cost()).toBe(300);
     });
 });
+
+describe('worst-case Artisan rounds the inputs of a crafted item per craft', () => {
+    test('3 ore x 0.9 is 2.7 averaged and 3 whole; the default stays averaged and neither poisons the memo', () => {
+        const wc = () => getProductionCostDetailed('/items/iron_bar', 'ask', 'profit', 'worst-case').cost;
+        expect(wc()).toBe(300);
+        expect(cost()).toBeCloseTo(270, 9);
+        expect(getProductionCostDetailed('/items/iron_bar', 'ask', 'profit', 'hybrid').cost).toBeCloseTo(270, 9);
+        expect(wc()).toBe(300);
+    });
+});
