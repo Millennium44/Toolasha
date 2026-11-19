@@ -700,3 +700,34 @@ describe('the enhancement route', () => {
         expect(state.panel.panel.querySelector('[data-ce-row$="/ring"] [data-ce-missing]')).not.toBeNull();
     });
 });
+
+describe('protection copies crafted at craft cost', () => {
+    const run = (over = {}) => ({ selfCopyCrafts: 2.5, extraCraftSeconds: 90, ...over });
+
+    test('the Enhance cell says how many copies are crafted, of the item or of the base', async () => {
+        state.rows = [
+            row('sword', { route: { route: 'craft', offered: false, enhance: run() } }),
+            row('ring', {
+                route: { route: 'refine-base', offered: true, baseHrid: '/items/sinister_ring', enhance: run() },
+            }),
+        ];
+        openBoard();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        const title = (name) => {
+            const cells = state.panel.panel.querySelectorAll(`[data-ce-row$="/${name}"] td`);
+            return cells[4].title;
+        };
+        expect(title('sword')).toContain('2.5 copies of sword crafted at craft cost');
+        expect(title('sword')).toContain('90 s more per item');
+        expect(title('ring')).toContain('2.5 copies of sinister ring crafted at craft cost');
+    });
+
+    test('a run that crafts none says nothing about it', async () => {
+        state.rows = [row('sword', { route: { route: 'craft', offered: false, enhance: run({ selfCopyCrafts: 0 }) } })];
+        openBoard();
+        await flush();
+        const cells = state.panel.panel.querySelectorAll('[data-ce-row$="/sword"] td');
+        expect(cells[4].title).not.toContain('crafted at craft cost');
+    });
+});

@@ -16,6 +16,8 @@ const game = vi.hoisted(() => ({
     /** `${hrid}:${level}` -> {price, estimated, source} */
     quotes: {},
     enhanceQuotes: {},
+    /** The same keys, answered instead when the call offers a craft price for the item's own copy */
+    craftedQuotes: {},
     enhanceCalls: [],
     profitCalls: [],
     /** actionHrid -> the answer for a costing with the upgrade item already held */
@@ -74,6 +76,10 @@ vi.mock('../market/profit-calculator.js', () => ({
 vi.mock('../combat-sim/direct-enhancement-cost.js', () => ({
     quoteDirectEnhancement: (itemHrid, from, to, data, options) => {
         game.enhanceCalls.push({ itemHrid, from, to, options });
+        if (options?.selfCopyCraftCost > 0) {
+            const crafted = game.craftedQuotes[`${itemHrid}:${from}`] ?? game.craftedQuotes[itemHrid];
+            if (crafted) return crafted;
+        }
         // A quote keyed `hrid:from` answers only a run from that level
         return game.enhanceQuotes[`${itemHrid}:${from}`] ?? game.enhanceQuotes[itemHrid] ?? null;
     },
@@ -213,6 +219,7 @@ beforeEach(() => {
     };
     game.enhanceQuotes = { '/items/sword': { cost: 1500, seconds: 60, xp: 400, xpKnown: true } };
     game.enhanceCalls = [];
+    game.craftedQuotes = {};
     game.profitCalls = [];
     game.heldProfits = {};
     game.tokenValue = {};
@@ -1361,5 +1368,164 @@ describe('held-base candidates and the stock the ordinary split already used', (
         game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 20, 3)];
         const row = await rank();
         expect(row.route.route).not.toBe('held-base');
+    });
+});
+
+describe('protecting with a copy of the item at its craft price', () => {
+    const SWORD_ACTION = '/actions/cheesesmithing/sword';
+    const rank = async () => (await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' }))[0];
+    const swordCall = () => game.enhanceCalls.find((call) => call.itemHrid === '/items/sword');
+
+    test('the own craft cost per item is offered to the quote, and its crafts add time and crafting XP', async () => {
+        game.craftedQuotes = { '/items/sword': { cost: 1000, seconds: 60, xp: 400, xpKnown: true, selfCopyCrafts: 2 } };
+        const row = await rank();
+        // 2 leather at 1000 x 0.96 + 10 cheese at 5 = 1970 a craft, offered as the copy's price
+        expect(swordCall().options.selfCopyCraftCost).toBeCloseTo(1970, 6);
+        expect(row.target.enhanceCost).toBe(1000);
+        // 36 s crafting + 60 s enhancing + 2 more crafts at 36 s
+        expect(row.target.unitsPerHour).toBeCloseTo(3600 / (36 + 60 + 72), 6);
+        // 1 + 2 crafts at 100 XP each; the enhancing XP is the run's alone
+        expect(row.target.craftXpPerHour).toBeCloseTo(300 * (3600 / 168), 6);
+        expect(row.target.enhanceXpPerHour).toBeCloseTo(400 * (3600 / 168), 6);
+        expect(row.route.enhance.selfCopyCrafts).toBe(2);
+        // +0 crafts one and nothing more
+        expect(row.base.craftXpPerHour).toBeCloseTo(100 * 100, 6);
+    });
+
+    test('a quote that spent no crafted copy adds no time and no XP', async () => {
+        game.craftedQuotes = { '/items/sword': { cost: 1500, seconds: 60, xp: 400, xpKnown: true, selfCopyCrafts: 0 } };
+        const row = await rank();
+        expect(row.target.unitsPerHour).toBeCloseTo(3600 / 96, 6);
+        expect(row.target.craftXpPerHour).toBeCloseTo(100 * (3600 / 96), 6);
+    });
+
+    test('an unpriced input leaves no craft price to offer: the copy stays at market', async () => {
+        game.profits[SWORD_ACTION].materialCosts[1].missingPrice = true;
+        game.craftedQuotes = { '/items/sword': { cost: 1, seconds: 60, xp: 400, xpKnown: true, selfCopyCrafts: 2 } };
+        const row = await rank();
+        expect(swordCall().options.selfCopyCraftCost).toBeNull();
+        expect(row.target.status).toBe('unpriced');
+    });
+
+    test('an unpriced tea is a partial craft cost: no craft price is offered', async () => {
+        game.profits[SWORD_ACTION].teaCosts = [{ itemHrid: '/items/tea', missingPrice: true }];
+        await rank();
+        expect(swordCall().options.selfCopyCraftCost).toBeNull();
+    });
+
+    test('a recipe with no rate has no craft price to offer', async () => {
+        game.profits[SWORD_ACTION].totalItemsPerHour = 0;
+        await rank();
+        expect(swordCall().options.selfCopyCraftCost).toBeNull();
+    });
+
+    test('crafted copies whose crafting XP cannot be read leave the craft XP unknown, never partial', async () => {
+        game.xp = { [SWORD_ACTION]: null };
+        game.craftedQuotes = { '/items/sword': { cost: 1000, seconds: 60, xp: 400, xpKnown: true, selfCopyCrafts: 2 } };
+        const row = await rank();
+        expect(row.target.craftXpPerHour).toBeNull();
+        // The profit does not depend on XP
+        expect(row.target.status).toBe('ok');
+    });
+
+    test('two recipes for one item are quoted at their own craft prices, not one shared quote', async () => {
+        game.recipes = [recipe('sword'), { ...recipe('sword'), actionHrid: '/actions/cheesesmithing/sword2' }];
+        game.profits['/actions/cheesesmithing/sword2'] = profit('sword', {
+            actionHrid: '/actions/cheesesmithing/sword2',
+            materialCosts: [{ itemHrid: '/items/cheese', amount: 10, askPrice: 5, totalCost: 50, missingPrice: false }],
+        });
+        await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        const prices = game.enhanceCalls
+            .filter((call) => call.itemHrid === '/items/sword')
+            .map((call) => call.options.selfCopyCraftCost);
+        expect(prices).toHaveLength(2);
+        expect(prices[0]).not.toBeCloseTo(prices[1], 3);
+    });
+
+    describe('on the base routes the copy is a copy of the base', () => {
+        const BASE_ACTION = '/actions/cheesesmithing/ring';
+        const withBaseRecipe = (extra = {}, profitExtra = {}) => {
+            const star = starFixture();
+            star.type = '/action_types/cheesesmithing';
+            game.gameData.actionDetailMap[BASE_ACTION] = {
+                hrid: BASE_ACTION,
+                type: '/action_types/cheesesmithing',
+                baseTimeCost: 1,
+                outputItems: [{ itemHrid: '/items/ring', count: 1 }],
+                ...extra,
+            };
+            game.profits[BASE_ACTION] = profit('ring', {
+                actionHrid: BASE_ACTION,
+                totalItemsPerHour: 200,
+                materialCostPerHour: 200 * 500,
+                totalTeaCostPerHour: 200 * 10,
+                ...profitExtra,
+            });
+            game.xp = { [BASE_ACTION]: { modifiedXP: 50 } };
+        };
+        const baseCall = () => game.enhanceCalls.find((call) => call.itemHrid === '/items/ring' && call.from === 0);
+
+        test("the base's own complete craft cost, time and XP are offered and counted, not the star item's", async () => {
+            withBaseRecipe();
+            game.craftedQuotes = {
+                '/items/ring': { cost: 3000, seconds: 80, xp: 600, xpKnown: true, selfCopyCrafts: 3 },
+            };
+            const row = await rank();
+            // (500 materials + 10 tea) a copy
+            expect(baseCall().options.selfCopyCraftCost).toBeCloseTo(510, 6);
+            expect(row.route.route).toBe('refine-base');
+            // 36 s crafting the star + 80 s enhancing + 3 base crafts at 18 s each
+            expect(row.target.unitsPerHour).toBeCloseTo(3600 / (36 + 80 + 54), 6);
+            // The base is crafted in the same skill: 3 x 50 XP on top of the star's 100
+            expect(row.target.craftXpPerHour).toBeCloseTo(250 * (3600 / 170), 6);
+            // The star item's own copy is priced on its own craft cost
+            const star = game.enhanceCalls.find((call) => call.itemHrid === '/items/ring_refined');
+            expect(star.options.selfCopyCraftCost).toBeCloseTo(2720, 6);
+        });
+
+        test('a base crafted in another skill adds its time but not crafting XP to this row', async () => {
+            withBaseRecipe({ type: '/action_types/crafting' });
+            game.craftedQuotes = {
+                '/items/ring': { cost: 3000, seconds: 80, xp: 600, xpKnown: true, selfCopyCrafts: 3 },
+            };
+            const row = await rank();
+            expect(row.target.unitsPerHour).toBeCloseTo(3600 / 170, 6);
+            expect(row.target.craftXpPerHour).toBeCloseTo(100 * (3600 / 170), 6);
+        });
+
+        test('a base with a missing price, or no recipe, stays at market', async () => {
+            withBaseRecipe({}, { hasMissingPrices: true });
+            await rank();
+            expect(baseCall().options.selfCopyCraftCost).toBeNull();
+            clearCraftEnhanceCache();
+            game.stamp += 1;
+            game.enhanceCalls = [];
+            withBaseRecipe({}, { teaCosts: [{ itemHrid: '/items/tea', missingPrice: true }] });
+            await rank();
+            expect(baseCall().options.selfCopyCraftCost).toBeNull();
+            clearCraftEnhanceCache();
+            game.stamp += 1;
+            game.enhanceCalls = [];
+            withBaseRecipe();
+            delete game.gameData.actionDetailMap[BASE_ACTION];
+            await rank();
+            expect(baseCall().options.selfCopyCraftCost).toBeNull();
+        });
+
+        test('a held base starts a run that also protects with base copies at the base craft price', async () => {
+            withBaseRecipe();
+            game.quotes['/items/ring:3'] = { price: 1000, source: 'book', estimated: false };
+            game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 1_000, 3)];
+            game.profits['/actions/cheesesmithing/ring_refined'].totalItemsPerHour = 1;
+            game.enhanceQuotes['/items/ring:3'] = { cost: 900, seconds: 40, xp: 300, xpKnown: true };
+            game.craftedQuotes = {
+                '/items/ring:3': { cost: 900, seconds: 40, xp: 300, xpKnown: true, selfCopyCrafts: 2 },
+            };
+            const row = await rank();
+            const held = game.enhanceCalls.find((call) => call.itemHrid === '/items/ring' && call.from === 3);
+            expect(held.options.selfCopyCraftCost).toBeCloseTo(510, 6);
+            expect(row.route.route).toBe('held-base');
+            expect(row.route.enhance.selfCopyCrafts).toBe(2);
+        });
     });
 });

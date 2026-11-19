@@ -1300,3 +1300,89 @@ describe('buildCraftEnhanceRow: a held base that covers part of the hour', () =>
         expect(built.target.craftXpPerHour).toBeNull();
     });
 });
+
+describe('crafted protection copies in the level and the blend', () => {
+    const copies = { cost: 40, seconds: 36, xp: 30, xpKnown: true, extraCraftSeconds: 72, extraCraftXp: 40 };
+    const level = (enhance) =>
+        evaluateLevel({
+            level: 5,
+            craftCostPerUnit: 60,
+            unpricedInputs: [],
+            secondsPerUnit: 36,
+            otherNetPerUnit: 0,
+            craftXpPerUnit: 20,
+            enhance,
+            saleAfterTax: 300,
+        });
+
+    test('the copies crafted add their seconds to the cycle and their XP to the craft XP, not the enhancing XP', () => {
+        const rated = level(copies);
+        // 36 craft + 36 enhance + 72 for the copies
+        expect(rated.unitsPerHour).toBeCloseTo(3600 / 144, 6);
+        expect(rated.craftXpPerHour).toBeCloseTo(60 * (3600 / 144), 6);
+        expect(rated.enhanceXpPerHour).toBeCloseTo(30 * (3600 / 144), 6);
+        // The cost is the run's; the copies' price is already inside it
+        expect(rated.profitPerUnit).toBe(300 - 60 - 40);
+    });
+
+    test('a quote with no such fields is rated as before', () => {
+        const rated = level({ cost: 40, seconds: 36, xp: 30 });
+        expect(rated.unitsPerHour).toBeCloseTo(50, 6);
+        expect(rated.craftXpPerHour).toBeCloseTo(1000, 6);
+    });
+
+    test('copies whose crafting XP is unknown leave the craft XP null, and the profit alone', () => {
+        const rated = level({ ...copies, extraCraftXp: null });
+        expect(rated.craftXpPerHour).toBeNull();
+        expect(rated.profitPerHour).toBeGreaterThan(0);
+    });
+
+    test('a held base blends the copies of its part and of the fresh part, and unknown XP stays unknown', () => {
+        const heldRun = {
+            cost: 100,
+            seconds: 10,
+            xp: 10,
+            xpKnown: true,
+            selfCopyCrafts: 1,
+            extraCraftSeconds: 10,
+            extraCraftXp: 4,
+        };
+        const candidate = (over = {}) => ({
+            level: 3,
+            count: 1,
+            coverage: 0.5,
+            unitValue: 50,
+            via: 'sale',
+            enhance: heldRun,
+            craftCostPerUnit: 40,
+            secondsPerUnit: 30,
+            otherNetPerUnit: 0,
+            craftXpPerUnit: 15,
+            ...over,
+        });
+        const fresh = {
+            cost: 500,
+            seconds: 20,
+            xp: 10,
+            xpKnown: true,
+            selfCopyCrafts: 3,
+            extraCraftSeconds: 30,
+            extraCraftXp: 12,
+        };
+        const build = (heldBase, freshRun = fresh) =>
+            row('ring', {
+                over: { enhance: freshRun, viaBase: freshRun, baseHrid: '/items/ring', heldBases: [heldBase] },
+            });
+        const built = build(candidate());
+        expect(built.route.route).toBe('held-base');
+        expect(built.route.enhance.selfCopyCrafts).toBeCloseTo(2, 9);
+        expect(built.route.enhance.extraCraftSeconds).toBeCloseTo(20, 9);
+        expect(built.route.enhance.extraCraftXp).toBeCloseTo(8, 9);
+        const unknownHeld = build(candidate({ enhance: { ...heldRun, extraCraftXp: null } }));
+        expect(unknownHeld.target.craftXpPerHour).toBeNull();
+        expect(build(candidate(), { ...fresh, extraCraftXp: null }).target.craftXpPerHour).toBeNull();
+        // Full coverage has no fresh part to be unknown
+        const whole = build(candidate({ coverage: 1 }), { ...fresh, extraCraftXp: null });
+        expect(whole.target.craftXpPerHour).not.toBeNull();
+    });
+});

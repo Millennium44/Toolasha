@@ -40,6 +40,7 @@ import {
     usesWorstCaseRounding,
 } from '../../utils/artisan-material-mode.js';
 import { findRefinementAction } from '../../utils/refined-item-cost.js';
+import { findProducingAction } from '../../utils/production-index.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
 import { productionRecipes, stateFingerprint } from './production-arbitrage.js';
@@ -240,6 +241,25 @@ export function enhanceWithDrinks(quote, drinks) {
 }
 
 /**
+ * The crafts a quote's protection copies add: each copy of the item spent at craft price is one more craft, so the
+ * time those crafts take and the crafting XP they teach (per finished item) ride beside the run as their own fields.
+ * They are not enhancing time (the drinks are billed on that) and not enhancing XP.
+ *
+ * @param {Object} quote - From {@link enhanceWithDrinks}, with `selfCopyCrafts` when the plan spent crafted copies
+ * @param {{seconds: number, xp: number|null}|null} selfCopy - The crafting of one copy
+ * @returns {Object} The quote with `extraCraftSeconds` and `extraCraftXp` (null when the crafting XP is unknown)
+ */
+export function withSelfCopyCrafts(quote, selfCopy) {
+    const crafts = selfCopy ? Number(quote.selfCopyCrafts) || 0 : 0;
+    return {
+        ...quote,
+        selfCopyCrafts: crafts,
+        extraCraftSeconds: crafts * (Number(selfCopy?.seconds) || 0),
+        extraCraftXp: crafts > 0 && !Number.isFinite(selfCopy?.xp) ? null : crafts * (Number(selfCopy?.xp) || 0),
+    };
+}
+
+/**
  * Whether a recipe is a refinement whose base can be enhanced first: the refined item's own refinement action,
  * which keeps every enhancement level of the base it upgrades. Anything else has no base route.
  *
@@ -373,18 +393,28 @@ export function rankCraftEnhance({
         const recipes = qualifyingRecipes(gameData, index);
 
         const drinkCost = enhancingDrinkCost(params);
-        // Enhancement runs by item AND starting level: a run from +3 is not a run from +0
+        // Enhancement runs by item, starting level and what a crafted protection copy costs (price, seconds, XP): a run
+        // from +3 is not a run from +0, and the same item can be crafted by two recipes at two prices
         const enhanceByItem = new Map();
-        const enhanceFrom = (itemHrid, startLevel) => {
-            const key = `${itemHrid}:${startLevel}`;
+        /**
+         * @param {string} itemHrid - The item to enhance
+         * @param {number} startLevel - Level it starts at
+         * @param {{cost: number, seconds: number, xp: number|null}|null} [selfCopy] - What one more copy
+         *   of the item costs to craft (a complete figure), the seconds that craft takes and the crafting XP it
+         *   gives; null prices a protection copy at market only
+         * @returns {Object|null}
+         */
+        const enhanceFrom = (itemHrid, startLevel, selfCopy = null) => {
+            const key = `${itemHrid}:${startLevel}:${selfCopy ? `${selfCopy.cost}|${selfCopy.seconds}|${selfCopy.xp}` : ''}`;
             if (!enhanceByItem.has(key)) {
-                enhanceByItem.set(
-                    key,
-                    enhanceWithDrinks(
-                        quoteDirectEnhancement(itemHrid, startLevel, targetLevel, gameData, { params }),
-                        drinkCost
-                    )
+                const quote = enhanceWithDrinks(
+                    quoteDirectEnhancement(itemHrid, startLevel, targetLevel, gameData, {
+                        params,
+                        selfCopyCraftCost: selfCopy?.cost ?? null,
+                    }),
+                    drinkCost
                 );
+                enhanceByItem.set(key, quote && withSelfCopyCrafts(quote, selfCopy));
             }
             return enhanceByItem.get(key);
         };
@@ -395,6 +425,7 @@ export function rankCraftEnhance({
         const artisanMode = getArtisanMaterialMode();
         const worstCase = usesWorstCaseRounding(artisanMode, Infinity);
         const rows = [];
+        const baseCopies = new Map();
 
         for (let start = 0; start < recipes.length; start += BATCH_SIZE) {
             for (const recipe of recipes.slice(start, start + BATCH_SIZE)) {
@@ -429,6 +460,72 @@ export function rankCraftEnhance({
 
         if (cache.pending === pending) cache = { fingerprint, rows, pending: null, isCurrent: null };
         return rows;
+
+        /**
+         * The crafting XP of one finished item. When the calculator charged the upgrade item's production chain time,
+         * the chain's actions are inside the same hour, so what they teach is counted too. One chain action whose XP
+         * cannot be read leaves the whole figure unknown, never a partial one.
+         * @param {Object} action - The recipe's action
+         * @param {string} actionHrid - Its hrid
+         * @param {Object} answer - The calculator's answer for it
+         * @returns {number|null}
+         */
+        function craftXpPerUnitOf(action, actionHrid, answer) {
+            const chainActions = answer.upgradeChainCrafted
+                ? getProductionChainActions(action.upgradeItemHrid, worstCase ? ARTISAN_MATERIAL_MODE.WORST_CASE : null)
+                : [];
+            const xpPerAction = [actionHrid, ...chainActions].map((hrid) => calculateExpPerHour(hrid)?.modifiedXP);
+            if (!xpPerAction.every((value) => Number.isFinite(value))) return null;
+            const perUnit = (Number(answer.outputAmount) || 1) * (1 + (Number(answer.gourmetBonus) || 0));
+            return xpPerAction.reduce((sum, value) => sum + value, 0) / perUnit;
+        }
+
+        /**
+         * What one copy of a refinement's base costs to craft, how long it takes and what it teaches, from the
+         * calculator's own answer for the base's recipe. Null when the base cannot be crafted, or its bill has a
+         * price missing: a partial figure is not a price, so the copy stays at market.
+         * @param {string} baseHrid - The base item
+         * @param {Object} recipe - The refinement recipe being rated
+         * @returns {Promise<{cost: number, seconds: number, xp: number|null}|null>}
+         */
+        async function baseCopyFor(baseHrid, recipe) {
+            if (!baseCopies.has(baseHrid)) {
+                baseCopies.set(baseHrid, await costBaseCopy(baseHrid, recipe));
+            }
+            return baseCopies.get(baseHrid);
+        }
+
+        async function costBaseCopy(baseHrid, recipe) {
+            const found = findProducingAction(baseHrid, {
+                primaryOnly: true,
+                actionDetailMap: gameData.actionDetailMap,
+            });
+            if (!found?.action) return null;
+            let answer = null;
+            try {
+                answer = await profitCalculator.calculateProfit(baseHrid, {
+                    actionHrid: found.actionHrid,
+                    keepSellTax: true,
+                    upgradeCraftArtisanMode: worstCase ? ARTISAN_MATERIAL_MODE.WORST_CASE : null,
+                });
+            } catch (error) {
+                console.error(`[CraftEnhance] Costing a copy of ${baseHrid} failed:`, error);
+            }
+            if (!answer || (answer.actionHrid && answer.actionHrid !== found.actionHrid)) return null;
+            if (answer.hasMissingPrices || (answer.teaCosts || []).some((tea) => tea.missingPrice)) return null;
+            const itemsPerHour = Number(answer.totalItemsPerHour) || 0;
+            if (!(itemsPerHour > 0)) return null;
+            const cost =
+                ((Number(answer.materialCostPerHour) || 0) + (Number(answer.totalTeaCostPerHour) || 0)) / itemsPerHour;
+            if (!(cost > 0)) return null;
+            const xp = craftXpPerUnitOf(found.action, found.actionHrid, answer);
+            return {
+                cost,
+                seconds: 3600 / itemsPerHour,
+                // The row's XP column is the recipe's skill: a base crafted in another skill teaches that one
+                xp: found.action.type === recipe.action.type ? xp : 0,
+            };
+        }
 
         /**
          * @param {Object} recipe - From productionRecipes
@@ -475,27 +572,26 @@ export function rankCraftEnhance({
                 if (tea.missingPrice) priced.unpriced.push({ itemHrid: tea.itemHrid, reason: 'tea' });
             }
 
-            const directRun = enhanceFrom(recipe.itemHrid, 0);
+            const craftXpPerUnit = craftXpPerUnitOf(recipe.action, recipe.actionHrid, profit);
+            const xpKnown = craftXpPerUnit !== null;
+            // One more copy of the item itself costs this to craft: a complete figure only, so an unpriced input or
+            // drink (counted above) or a recipe with no rate leaves the copy at market price
+            const selfCopy =
+                priced.unpriced.length === 0 && figures && figures.craftCostPerUnit > 0
+                    ? {
+                          cost: figures.craftCostPerUnit,
+                          seconds: figures.secondsPerUnit,
+                          xp: craftXpPerUnit,
+                      }
+                    : null;
+            const directRun = enhanceFrom(recipe.itemHrid, 0, selfCopy);
 
-            // Enhancing the cheaper base first, then refining it, reaches the same +N: refinement keeps every level
+            // Enhancing the cheaper base first, then refining it, reaches the same +N: refinement keeps every level.
+            // A copy of the base is what that run protects with, so it is crafted at the base's own cost.
             const baseHrid = refinementBaseOf(recipe);
-            const baseRun = baseHrid ? enhanceFrom(baseHrid, 0) : null;
-
-            // The crafting XP of one action. When the calculator charged the upgrade item's production chain time,
-            // the chain's actions are inside the same hour, so what they teach is counted too. One chain action
-            // whose XP cannot be read leaves the whole figure unknown, never a partial one.
-            const chainActions = profit.upgradeChainCrafted
-                ? getProductionChainActions(
-                      recipe.action.upgradeItemHrid,
-                      worstCase ? ARTISAN_MATERIAL_MODE.WORST_CASE : null
-                  )
-                : [];
-            const xpPerAction = [recipe.actionHrid, ...chainActions].map(
-                (actionHrid) => calculateExpPerHour(actionHrid)?.modifiedXP
-            );
-            const xpKnown = xpPerAction.every((value) => Number.isFinite(value));
-            const perUnit = (Number(profit.outputAmount) || 1) * (1 + (Number(profit.gourmetBonus) || 0));
-            const craftXpPerUnit = xpKnown ? xpPerAction.reduce((sum, value) => sum + value, 0) / perUnit : null;
+            const baseCopy = baseHrid ? await baseCopyFor(baseHrid, recipe) : null;
+            if (!isCurrent()) return null;
+            const baseRun = baseHrid ? enhanceFrom(baseHrid, 0, baseCopy) : null;
 
             const level =
                 dataManager.getSkills()?.find((skill) => skill.skillHrid === recipe.skill.skillHrid)?.level ?? 1;
@@ -615,7 +711,7 @@ export function rankCraftEnhance({
                         freshCraftCostPerUnit,
                         unitValue,
                         via,
-                        enhance: enhanceFrom(baseHrid, heldLevel),
+                        enhance: enhanceFrom(baseHrid, heldLevel, baseCopy),
                         craftCostPerUnit: figures.craftCostPerUnit,
                         secondsPerUnit: figures.secondsPerUnit,
                         otherNetPerUnit: figures.otherNetPerUnit,

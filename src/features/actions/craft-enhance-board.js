@@ -211,6 +211,25 @@ function routeTooltip(row, target) {
     return lines.filter(Boolean).join('\n');
 }
 
+/**
+ * The Enhance cell's note about protection copies crafted at craft price: they are extra crafts, so their time and
+ * XP are in the row's per-hour figures. Empty when the run spends none.
+ * @param {Object} row - A ranking row
+ * @returns {string}
+ */
+function selfCopyTooltip(row) {
+    const run = row.route?.enhance;
+    const crafts = Number(run?.selfCopyCrafts) || 0;
+    if (!(crafts > 0)) return '';
+    const base =
+        row.route.route === 'craft' ? row.itemName : (row.route.baseHrid || '').split('/').pop().replace(/_/g, ' ');
+    return (
+        `Protects with about ${Math.round(crafts * 100) / 100} copies of ${base} crafted at craft cost (cheaper ` +
+        `than buying one): that many extra crafts per item, ${Math.round(Number(run.extraCraftSeconds) || 0)} s more ` +
+        'per item in the hourly figures.'
+    );
+}
+
 class CraftEnhanceBoard {
     constructor() {
         this.initialized = false;
@@ -810,7 +829,7 @@ class CraftEnhanceBoard {
             via.style.cssText = `color: ${MUTED}; font-size: 10px;`;
             enhanceCell.appendChild(via);
         }
-        const routeNote = routeTooltip(row, target);
+        const routeNote = [routeTooltip(row, target), selfCopyTooltip(row)].filter(Boolean).join('\n');
         if (routeNote) enhanceCell.title = routeNote;
         tr.appendChild(enhanceCell);
         tr.appendChild(goldCell(t.saleAfterTax, `No real sell quote at +${target}`, false));

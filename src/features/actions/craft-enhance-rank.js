@@ -441,8 +441,10 @@ export function craftUnitFigures({ materialCostPerAction, profit, taxRate }) {
  * @param {number} args.secondsPerUnit - Craft seconds per unit
  * @param {number} args.otherNetPerUnit - From {@link craftUnitFigures}
  * @param {number|null} args.craftXpPerUnit - Crafting-skill XP per unit, null when unknown
- * @param {{cost: number, seconds: number, xp: number, xpKnown?: boolean}|null} args.enhance - The enhancement
- *   run, null when it cannot be quoted (ignored at level 0)
+ * @param {{cost: number, seconds: number, xp: number, xpKnown?: boolean, extraCraftSeconds?: number,
+ *   extraCraftXp?: number|null}|null} args.enhance - The enhancement run, null when it cannot be quoted (ignored at
+ *   level 0). `extraCraftSeconds` and `extraCraftXp` are the crafts of the protection copies the run spends at craft
+ *   price, per finished item: more time in the cycle and more crafting XP, apart from the enhancing time and XP
  * @param {number|null} args.saleAfterTax - The sale at this level after tax, null with no real quote
  * @returns {Object} The level's figures
  */
@@ -493,7 +495,10 @@ export function evaluateLevel({
         };
     }
 
-    const cycleSeconds = secondsPerUnit + enhanceSeconds;
+    // Protection copies crafted at craft price are crafts too: their seconds are in the cycle, their XP in the craft XP
+    const extraCraftSeconds = enhancing ? Number(enhance.extraCraftSeconds) || 0 : 0;
+    const extraCraftXp = enhancing ? (enhance.extraCraftXp === null ? null : Number(enhance.extraCraftXp) || 0) : 0;
+    const cycleSeconds = secondsPerUnit + enhanceSeconds + extraCraftSeconds;
     const unitsPerHour = SECONDS_PER_HOUR / cycleSeconds;
     const profitPerUnit = saleAfterTax + otherNetPerUnit - craftCostPerUnit - enhanceCost;
     // An XP figure that cannot be known is null, not 0: the tester shop skips the run and teaches nothing
@@ -505,7 +510,10 @@ export function evaluateLevel({
         profitPerUnit,
         unitsPerHour,
         profitPerHour: profitPerUnit * unitsPerHour,
-        craftXpPerHour: craftXpPerUnit === null || craftXpPerUnit === undefined ? null : craftXpPerUnit * unitsPerHour,
+        craftXpPerHour:
+            craftXpPerUnit === null || craftXpPerUnit === undefined || extraCraftXp === null
+                ? null
+                : (craftXpPerUnit + extraCraftXp) * unitsPerHour,
         enhanceXpPerHour: enhanceXp === null ? null : enhanceXp * unitsPerHour,
     };
 }
@@ -622,6 +630,11 @@ export function buildCraftEnhanceRow({
             : Number.isFinite(heldValue) && Number.isFinite(freshValue)
               ? share * heldValue + (1 - share) * freshValue
               : null;
+    // An unknown XP (null) in either part of a blend is unknown; a missing one is none
+    const mixExtraXp = (heldXp, freshXp, share) =>
+        heldXp === null || (share < 1 && freshXp === null)
+            ? null
+            : mix(Number(heldXp) || 0, Number(freshXp) || 0, share);
     for (const candidate of heldBases) {
         if (!candidate?.enhance || !Number.isFinite(candidate.craftCostPerUnit)) continue;
         const share = Math.min(1, Math.max(0, Number(candidate.coverage ?? 1)));
@@ -660,6 +673,18 @@ export function buildCraftEnhanceRow({
                 seconds: mix(Number(candidate.enhance.seconds), Number(fresh?.seconds), share),
                 xp: mix(Number(candidate.enhance.xp), Number(fresh?.xp), share),
                 xpKnown: enhanceXpKnown,
+                // The crafted protection copies of the blended hour (an unknown XP stays unknown)
+                selfCopyCrafts: mix(
+                    Number(candidate.enhance.selfCopyCrafts) || 0,
+                    Number(fresh?.selfCopyCrafts) || 0,
+                    share
+                ),
+                extraCraftSeconds: mix(
+                    Number(candidate.enhance.extraCraftSeconds) || 0,
+                    Number(fresh?.extraCraftSeconds) || 0,
+                    share
+                ),
+                extraCraftXp: mixExtraXp(candidate.enhance.extraCraftXp, fresh?.extraCraftXp, share),
             },
         };
     }

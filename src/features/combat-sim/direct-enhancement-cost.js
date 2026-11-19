@@ -13,7 +13,11 @@ import { enhancementParamsFor } from '../enhancement/enhancement-params-source.j
 // The one enhancement cost model: the shared protect-from sweep and the shared
 // pricing rules.
 import { cheapestProtectPlan } from '../../utils/enhancement-protect-sweep.js';
-import { getCheapestProtectionPrice, perAttemptMaterialCost } from '../../utils/enhancement-input-pricing.js';
+import {
+    getCheapestProtectionPrice,
+    perAttemptMaterialCost,
+    priceGuarded,
+} from '../../utils/enhancement-input-pricing.js';
 
 /**
  * Whose bench an enhancement sweep is quoting.
@@ -52,14 +56,34 @@ export function enhancementSweepParams(itemHrid) {
  * @param {Object} [options] - Options
  * @param {Object} [options.params] - Enhancing parameters to quote at (for example the player's detected
  *   bench). Omitted, the advisor's resolution applies: pro rates or the simulator's bench, as set.
+ * @param {number|null} [options.selfCopyCraftCost] - What one more copy of this very item costs to craft, a
+ *   COMPLETE figure (no unpriced input). Given, the item's own copy competes as a protection at the cheaper of that
+ *   and its market price, and the quote says how many copies were crafted. Omitted or not above 0, the copy is
+ *   priced at market only, as before.
  * @returns {{cost: number, seconds: number, xp: number, xpKnown: boolean, attempts: number, protectFrom: number,
- *   protectionItemHrid: string|null}|null} Null when it cannot be quoted (no recipe, a material with no price,
+ *   protectionItemHrid: string|null, selfCopyCrafts: number}|null} `selfCopyCrafts` is the expected number of copies
+ *   the plan spends that were priced at craft cost (0 when none); null when it cannot be quoted (no recipe, a material with no price,
  *   or nothing about the run priceable): unknown, never free
  */
-export function quoteDirectEnhancement(itemHrid, startLevel, targetLevel, gameData, { params } = {}) {
+export function quoteDirectEnhancement(
+    itemHrid,
+    startLevel,
+    targetLevel,
+    gameData,
+    { params, selfCopyCraftCost = null } = {}
+) {
     // Genuine no-op: nothing to enhance
     if (targetLevel <= startLevel) {
-        return { cost: 0, seconds: 0, xp: 0, xpKnown: true, attempts: 0, protectFrom: 0, protectionItemHrid: null };
+        return {
+            cost: 0,
+            seconds: 0,
+            xp: 0,
+            xpKnown: true,
+            attempts: 0,
+            protectFrom: 0,
+            protectionItemHrid: null,
+            selfCopyCrafts: 0,
+        };
     }
 
     // On the test server with the Tester shop priced in, nobody rolls the
@@ -75,6 +99,7 @@ export function quoteDirectEnhancement(itemHrid, startLevel, targetLevel, gameDa
                 attempts: 0,
                 protectFrom: 0,
                 protectionItemHrid: null,
+                selfCopyCrafts: 0,
             };
         }
     }
@@ -103,7 +128,27 @@ export function quoteDirectEnhancement(itemHrid, startLevel, targetLevel, gameDa
     // item has a price — which makes every protecting strategy unpriceable, not
     // free. Quoting protection at zero made the most-protected path the cheapest
     // by construction and put it top of the rankings.
-    const { price: protPrice, itemHrid: protHrid, partial: protPartial } = getCheapestProtectionPrice(itemHrid);
+    const craftCopy = Number(selfCopyCraftCost) > 0 ? Number(selfCopyCraftCost) : null;
+    let protectionOptions;
+    let protPartial;
+    if (craftCopy === null) {
+        const { price: protPrice, itemHrid: protHrid, partial } = getCheapestProtectionPrice(itemHrid);
+        protPartial = partial;
+        protectionOptions = protPrice > 0 ? [{ itemHrid: protHrid, price: protPrice }] : [];
+    } else {
+        // The item's own copy competes at the cheaper of its market price and what it costs to craft (a complete
+        // figure, so it is never a floor); the mirror and the item's listed protection items compete as ever
+        const others = getCheapestProtectionPrice(itemHrid, { includeSelf: false });
+        const market = priceGuarded(itemHrid);
+        // A market figure that is itself a craft-cost floor is no better than the complete craft cost: take that
+        const marketUsable = market.price > 0 && !market.partial;
+        const selfPrice = marketUsable ? Math.min(market.price, craftCopy) : craftCopy;
+        protectionOptions = [];
+        if (others.price > 0) protectionOptions.push({ itemHrid: others.itemHrid, price: others.price });
+        protectionOptions.push({ itemHrid, price: selfPrice, crafted: !marketUsable || craftCopy < market.price });
+        // Only the others can be a floor now: the self copy's price is a complete figure either way
+        protPartial = others.partial;
+    }
     // A protection price built on a partial bill is a floor: it only matters when the cheapest plan actually
     // spends it (checked after the sweep), because an unprotected cheapest plan is a complete quote
 
@@ -134,12 +179,14 @@ export function quoteDirectEnhancement(itemHrid, startLevel, targetLevel, gameDa
             // The XP formula keys on the item's own level, the same reading the enhancing panel takes
             xpBaseLevel: itemDetails.itemLevel || 0,
             wisdomDecimal: (enhancingParams.experienceBonus || 0) / 100,
-            protectionOptions: protPrice > 0 ? [{ itemHrid: protHrid, price: protPrice }] : [],
+            protectionOptions,
             hasMissingPrices: materials.hasMissingPrices || materials.hasPartialPrices,
         });
 
         // The cheapest plan spends a protection whose price is a floor: the quote is a partial bill, so unknown
-        if (plan && protPartial && plan.protectFrom > 0 && plan.protectionItemHrid) return null;
+        // (in the crafted-copy case only the non-self option can be a floor, so a plan spending the self copy stands)
+        const spendsSelf = craftCopy !== null && plan?.protectionItemHrid === itemHrid;
+        if (plan && protPartial && plan.protectFrom > 0 && plan.protectionItemHrid && !spendsSelf) return null;
 
         // Nothing about the run could be priced — unknown, not free
         if (!plan) return null;
@@ -151,6 +198,11 @@ export function quoteDirectEnhancement(itemHrid, startLevel, targetLevel, gameDa
             attempts: plan.attempts,
             protectFrom: plan.protectFrom,
             protectionItemHrid: plan.protectionItemHrid,
+            // Copies of the item itself bought at craft cost are crafts the player also makes
+            selfCopyCrafts:
+                spendsSelf && plan.protectFrom > 0 && protectionOptions.find((o) => o.itemHrid === itemHrid)?.crafted
+                    ? Number(plan.protections) || 0
+                    : 0,
         };
     } catch {
         return null;
