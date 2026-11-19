@@ -98,7 +98,8 @@ export function ladderSentence(ladder, total = null, detail = null) {
                 : '';
         return (
             `Refine ${where} +${ladder.fromLevel} (all levels transfer): ` +
-            `${(ladder.refine.lines || []).join(' + ')} = ${formatKMB(ladder.refine.materialCost)}${enhance}.`
+            `${(ladder.refine.lines || []).join(' + ')} = ${formatKMB(ladder.refine.materialCost)}${enhance}` +
+            `${resaleClause(detail)}.`
         );
     }
     // A spare another loadout wears is not a free one: using it takes it off that loadout, which gives up its resale
@@ -113,15 +114,16 @@ export function ladderSentence(ladder, total = null, detail = null) {
     const span =
         `Enhance from +${ladder.fromLevel} to +${ladder.toLevel}` +
         (Number.isFinite(total) ? ` for ${formatKMB(total)}` : '');
+    const credit = resaleClause(detail);
     if (ladder.fresh) {
         const stonesOnly = ladder.baseStonesOnly
             ? ' (the refinement stones alone: your Untradable capes setting counts the base cape as nothing)'
             : '';
-        return `${span}: you hold no spare copy, so this includes a fresh base at ${formatKMB(ladder.baseCost)}${stonesOnly}.`;
+        return `${span}: you hold no spare copy, so this includes a fresh base at ${formatKMB(ladder.baseCost)}${stonesOnly}${credit}.`;
     }
-    if (ladder.fromEquipped) return `${span}, on the copy you are wearing.`;
-    if (ladder.claimed) return `${span}, on a spare copy another loadout wears${forfeitNote}.`;
-    return `${span}, on the spare copy you hold.`;
+    if (ladder.fromEquipped) return `${span}, on the copy you are wearing${credit}.`;
+    if (ladder.claimed) return `${span}, on a spare copy another loadout wears${forfeitNote}${credit}.`;
+    return `${span}, on the spare copy you hold${credit}.`;
 }
 
 const money = (value) => formatKMB(Math.round(value));
