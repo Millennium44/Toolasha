@@ -60,6 +60,9 @@ push to `main` or merge.
   `chore:`, `build:`. release-please builds the public GreasyFork changelog from these prefixes and
   **silently drops any commit without one**. A descriptive prefix like `Lab sim:` is not a type and is
   dropped. Put the area in the subject text: `fix: lab sim opens monster abilities at half-cooldown`.
+  Start the text after the type in lowercase and keep the header within 100 characters: commitlint rejects
+  `fix: Craft & Enhance …` as sentence-case (write `fix: craft & enhance …`). Check a subject with
+  `echo "<subject>" | npx --no-install commitlint`.
 - **No attribution trailers** — no `Co-Authored-By` or session trailers. Commits that reach the
   `releases` branch are rendered publicly by GreasyFork as the version changelog.
 - Write commit messages to a file, as described above.
@@ -209,6 +212,11 @@ Every brief to a sub-agent carries these lines:
   open items. Put the full enumeration, consumer sweep and test list in the commit bodies, which the integrator
   can read when it needs them; do not write report files (Claude's harness refuses them for sub-agents). The
   integrating session re-reads every report on every later turn, so a 200-line report costs it many times over.
+- **A new dimension: list every reader first.** When a value gains a variant, a side or a source (a protection
+  choice, a held vs bought copy, a capped vs uncapped pick), list every place that reads it before building:
+  costs, savings, tooltips, each table cell, caps, sort and export. In the hand-back, show for each reader which
+  variant it now uses. #1051 and #1054 (2026-11-19) took five Codex rounds, each finding one reader still on the
+  old choice.
 - **Porting or extending a path: list the old path's rules first.** Before writing the new path (a Lab
   feature brought to the Combat Sim, a second search beside the first), list every rule the existing
   path enforces — how it scores each side, what it refuses (unpriced own items), what it warns (stopped
@@ -290,6 +298,11 @@ Before a push, run `bash scripts/gates.sh` and see `All gates passed.` It mirror
 with CI's globs (`CHANGELOG.md` included), the suite, both builds, the bundle-sharing check, the 2 MiB
 `@require` ceiling, and the `@require` classic-script check. A branch that passes it will not learn
 anything new from CI. Never report a gate result from a run you did not do.
+
+To gate a PR branch before opening it, run `bash scripts/gate-branch.sh <branch>`. It runs the gates in
+`../Toolasha-integ`, so the main checkout and its dev build are untouched, and it exits with the gates'
+own code. Never pipe `gates.sh` into `tail`: the pipe's exit code hides a failure. An agent worktree may
+also lack files `../Toolasha-integ` has (a `chart.js` UMD file once failed a test there only).
 
 **Which pushes need it** (maintainer, 2026-11-11): a push to `main`, and opening a PR, run the full gates.
 A review fix pushed to an already-open PR branch runs only the suites it reaches plus ESLint and Prettier on
