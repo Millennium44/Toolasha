@@ -4008,6 +4008,23 @@ function markTakenCopies(copies, itemHrid, candidate) {
 }
 
 /**
+ * How many real copies of an item at one level a row may use, for the budget plan's copy ledger. A stack's second
+ * entry stands for the rest of it (`weight`), so a worn +7 and a spare +7 count as two. A copy the row itself
+ * takes off (`taken`) is sold or spent by it, so it is no spare for another row and is not counted.
+ * @param {Array<Object>} copies - From {@link markTakenCopies}
+ * @param {number} level - Enhancement level
+ * @param {boolean} withWorn - Whether worn copies count (a forced gear row may wear any owned copy; a swap only a spare)
+ * @returns {number} Copies at that level
+ */
+function copiesAtLevel(copies, level, withWorn) {
+    return (copies || []).reduce(
+        (sum, copy) =>
+            sum + (copy.level === level && !copy.taken && (withWorn || !copy.equipped) ? copy.weight || 1 : 0),
+        0
+    );
+}
+
+/**
  * Mark the bag copies that another loadout wears (`claimed`).
  *
  * A loadout that is not equipped keeps its pieces in the bag, so they look like free spares. The Lab's
@@ -4386,6 +4403,7 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
                     toLevel: Math.max(0, Math.floor(Number(enhancementLevel) || 0)),
                     fresh: false,
                     alreadyHeld: true,
+                    copiesAtLevel: held.atLevel,
                     fromEquipped: false,
                     isSelf: Boolean(isSelf),
                     baseCost: 0,
@@ -4462,12 +4480,14 @@ function heldSwapCopy(itemHrid, targetLevel, isSelf, candidate = null) {
     // a copy owned at that level, worn or in the bag, is free, and another loadout wearing it costs nothing:
     // a copy forfeits its resale only when a route consumes it (an enhancement input), which this is not
     const owned = candidate?.labArmor === true;
-    const spares = markTakenCopies(copiesForPricing(itemHrid, { isSelf, candidate }), itemHrid, candidate)
+    const held = markTakenCopies(copiesForPricing(itemHrid, { isSelf, candidate }), itemHrid, candidate);
+    const spares = held
         .filter((copy) => (owned || !copy.equipped) && copy.level >= target)
         .map((copy) => ({
             ...copy,
             ...(owned ? { claimed: false, owned: true } : {}),
             forfeit: !owned && (copy.claimed || copy.taken) ? sellValue(itemHrid, copy.level) : 0,
+            atLevel: copiesAtLevel(held, copy.level, owned),
         }));
     // Cheapest first; among equals the lowest sufficient level, the best-fitting spare
     spares.sort((a, b) => a.forfeit - b.forfeit || a.level - b.level);
@@ -8489,14 +8509,23 @@ export function goldPerPercent(cost, deltaPct) {
  * up, turning it into a different level. The two cannot both be taken for one copy, or the plan counts the
  * enhance as cheap and also counts the free use of the copy it just changed.
  *
+ * Copies are filed by item and level. The enhance ladder always picks one particular copy, so two rows that enhance
+ * one key always clash. A row that equips says how many copies at its level it may use (`copies`, one when the
+ * ladder does not say) and whether a worn one is among them (`withWorn`); an enhance says whether its copy is the
+ * worn one (`fromEquipped`). A worn +7 and a spare +7 then let a forced gear row wear one while another row
+ * enhances the other.
+ *
  * @param {Object} result - A priced result row
- * @returns {{key: string, mode: 'relies'|'consumes'}|null} The copy and how the row uses it
+ * @returns {{key: string, mode: 'relies'|'consumes', copies?: number, withWorn?: boolean,
+ *   fromEquipped?: boolean}|null} The copy and how the row uses it
  */
 export function heldCopyUse(result) {
     const ladder = result?.costDetail?.ladder;
     if (!ladder?.itemHrid || ladder.isSelf === false || ladder.fresh) return null;
     const key = `${ladder.itemHrid}@${Math.max(0, Math.floor(Number(ladder.fromLevel) || 0))}`;
-    return { key, mode: ladder.alreadyHeld ? 'relies' : 'consumes' };
+    if (!ladder.alreadyHeld) return { key, mode: 'consumes', fromEquipped: Boolean(ladder.fromEquipped) };
+    const copies = Math.max(1, Math.floor(Number(ladder.copiesAtLevel) || 1));
+    return { key, mode: 'relies', copies, withWorn: ladder.owned === true };
 }
 
 /**
@@ -8746,7 +8775,19 @@ function planWithinBudgetOnce(
     // it or as well as it, and neither is a basket the confirm run can simulate
     const pinnedKeys = new Set();
     const copyUseOfPick = new WeakMap();
-    const copyUsesConflict = (a, b) => a.key === b.key && (a.mode === 'consumes' || b.mode === 'consumes');
+    /**
+     * Whether two rows' copy uses cannot both stand (see `heldCopyUse`). Rows that only equip share any copy. Two
+     * enhances of one key take the same copy. An equip and an enhance clash when the enhanced copy is one the equip
+     * row could use and it has no second copy to fall back on.
+     */
+    const copyUsesConflict = (a, b) => {
+        if (a.key !== b.key) return false;
+        if (a.mode === 'relies' && b.mode === 'relies') return false;
+        if (a.mode === 'consumes' && b.mode === 'consumes') return true;
+        const [enh, eq] = a.mode === 'consumes' ? [a, b] : [b, a];
+        const usable = !enh.fromEquipped || eq.withWorn === true;
+        return usable && (eq.copies || 1) < 2;
+    };
     const blockedByPin = (entry) => singleLoadout && entry.keys.some((key) => pinnedKeys.has(key));
 
     // The picks already in the basket that cannot be worn with `entry`: they hold a key it needs under another group
@@ -8858,10 +8899,14 @@ function planWithinBudgetOnce(
                 const a = pinnedEntries[i];
                 const b = pinnedEntries[j];
                 if (!a.copyUse || !b.copyUse || !copyUsesConflict(a.copyUse, b.copyUse)) continue;
+                const how =
+                    a.copyUse.mode === 'consumes' && b.copyUse.mode === 'consumes'
+                        ? 'both enhance the same copy you hold'
+                        : 'one uses the copy you hold and the other enhances it';
                 blocked.push({
                     kind: 'conflict',
                     ids: [a.id, b.id],
-                    reason: `Pinned "${a.result.candidate.description}" and "${b.result.candidate.description}" cannot be taken together \u2014 one uses the copy you hold and the other enhances it.`,
+                    reason: `Pinned "${a.result.candidate.description}" and "${b.result.candidate.description}" cannot be taken together — ${how}.`,
                 });
             }
         }
