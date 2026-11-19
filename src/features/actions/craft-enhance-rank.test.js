@@ -1690,3 +1690,22 @@ describe('bestLevelByVolume', () => {
         expect(bestLevelByVolume(sweep, null, volumes({})).entries).toHaveLength(5);
     });
 });
+
+describe('bonus drops of crafted protection copies in the level', () => {
+    const rated = (extraCraftNet) =>
+        evaluateLevel({
+            level: 5,
+            craftCostPerUnit: 60,
+            unpricedInputs: [],
+            secondsPerUnit: 36,
+            otherNetPerUnit: 3,
+            craftXpPerUnit: 20,
+            enhance: { cost: 40, seconds: 36, xp: 30, extraCraftNet },
+            saleAfterTax: 300,
+        });
+
+    test('are added to the profit per item, and absent means none', () => {
+        expect(rated(10).profitPerUnit).toBe(300 + 3 + 10 - 60 - 40);
+        expect(rated(undefined).profitPerUnit).toBe(300 + 3 - 60 - 40);
+    });
+});

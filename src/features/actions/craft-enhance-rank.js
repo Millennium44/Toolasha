@@ -501,7 +501,9 @@ export function evaluateLevel({
     const extraCraftXp = enhancing ? (enhance.extraCraftXp === null ? null : Number(enhance.extraCraftXp) || 0) : 0;
     const cycleSeconds = secondsPerUnit + enhanceSeconds + extraCraftSeconds;
     const unitsPerHour = SECONDS_PER_HOUR / cycleSeconds;
-    const profitPerUnit = saleAfterTax + otherNetPerUnit - craftCostPerUnit - enhanceCost;
+    // The bonus drops of the crafted protection copies count too: they are crafts the hour makes
+    const extraCraftNet = enhancing ? Number(enhance.extraCraftNet) || 0 : 0;
+    const profitPerUnit = saleAfterTax + otherNetPerUnit + extraCraftNet - craftCostPerUnit - enhanceCost;
     // An XP figure that cannot be known is null, not 0: the tester shop skips the run and teaches nothing
     const enhanceXp = !enhancing ? 0 : enhance.xpKnown === false ? null : enhance.xp;
 
@@ -741,6 +743,11 @@ export function buildCraftEnhanceRow({
                     selfCopyCrafts: mix(
                         Number(candidate.enhance.selfCopyCrafts) || 0,
                         Number(fresh?.selfCopyCrafts) || 0,
+                        share
+                    ),
+                    extraCraftNet: mix(
+                        Number(candidate.enhance.extraCraftNet) || 0,
+                        Number(fresh?.extraCraftNet) || 0,
                         share
                     ),
                     extraCraftSeconds: mix(

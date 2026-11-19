@@ -255,6 +255,8 @@ export function withSelfCopyCrafts(quote, selfCopy) {
         ...quote,
         selfCopyCrafts: crafts,
         extraCraftSeconds: crafts * (Number(selfCopy?.seconds) || 0),
+        // The bonus drops those crafts also yield, net of tax, per finished item
+        extraCraftNet: crafts * (Number(selfCopy?.otherNet) || 0),
         extraCraftXp: crafts > 0 && !Number.isFinite(selfCopy?.xp) ? null : crafts * (Number(selfCopy?.xp) || 0),
     };
 }
@@ -407,7 +409,7 @@ export function rankCraftEnhance({
          * @returns {Object|null}
          */
         const enhanceFrom = (itemHrid, startLevel, selfCopy = null, level = targetLevel) => {
-            const key = `${itemHrid}:${startLevel}:${level}:${selfCopy ? `${selfCopy.cost}|${selfCopy.seconds}|${selfCopy.xp}` : ''}`;
+            const key = `${itemHrid}:${startLevel}:${level}:${selfCopy ? `${selfCopy.cost}|${selfCopy.seconds}|${selfCopy.xp}|${selfCopy.otherNet ?? 0}` : ''}`;
             if (!enhanceByItem.has(key)) {
                 const quoteWith = (copy) =>
                     enhanceWithDrinks(
@@ -472,6 +474,38 @@ export function rankCraftEnhance({
         return rows;
 
         /**
+         * The pricing arguments for one recipe's inputs. The upgrade item is not reduced by Artisan; a regular input
+         * is, and rounds up per craft under the worst-case mode.
+         * @param {Object} answer - The calculator's answer for the recipe
+         * @param {Array<Object>} materials - Its `materialCosts`
+         * @param {Map<string, number>|null} pool - What is held
+         * @param {number|null} hourCrafts - Crafts in an hour
+         * @param {string} mode - The owned-drops mode
+         * @returns {Object}
+         */
+        function materialsPricing(answer, materials, pool, hourCrafts, mode) {
+            return {
+                materials,
+                index,
+                ownedMode: mode,
+                heldPool: pool,
+                craftsPerHour: hourCrafts,
+                valueDrop: (hrid) => saleAfterTaxAt(hrid, 0),
+                valueToken: (hrid) => tokenRouteDetail(index, hrid)?.value ?? null,
+                tokenEstimated: (hrid) => Boolean(tokenRouteDetail(index, hrid)?.estimated),
+                amountOf: (material) =>
+                    worstCase && !material.isUpgradeItem && Number(material.baseAmount) > 0
+                        ? artisanInputTotal(
+                              material.baseAmount,
+                              Number(answer.artisanBonus) || 0,
+                              1,
+                              ARTISAN_MATERIAL_MODE.WORST_CASE
+                          )
+                        : material.amount,
+            };
+        }
+
+        /**
          * The crafting XP of one finished item. When the calculator charged the upgrade item's production chain time,
          * the chain's actions are inside the same hour, so what they teach is counted too. One chain action whose XP
          * cannot be read leaves the whole figure unknown, never a partial one.
@@ -527,13 +561,22 @@ export function rankCraftEnhance({
             if (answer.hasMissingPrices || (answer.teaCosts || []).some((tea) => tea.missingPrice)) return null;
             const itemsPerHour = Number(answer.totalItemsPerHour) || 0;
             if (!(itemsPerHour > 0)) return null;
-            const cost =
-                ((Number(answer.materialCostPerHour) || 0) + (Number(answer.totalTeaCostPerHour) || 0)) / itemsPerHour;
-            if (!(cost > 0)) return null;
+            // Priced the way the main recipe is: every input bought, each craft's requirement rounded up under the
+            // worst-case Artisan mode (the calculator's hourly figure is the averaged consumption)
+            const perCraft = (Number(answer.outputAmount) || 1) * (1 + (Number(answer.gourmetBonus) || 0));
+            const bought = priceCraftMaterials(
+                materialsPricing(answer, answer.materialCosts, null, itemsPerHour / perCraft, OWNED_MODES.BUY)
+            );
+            if (bought.unpriced.length > 0) return null;
+            const figures = craftUnitFigures({ materialCostPerAction: bought.costPerAction, profit: answer, taxRate });
+            if (!(figures?.craftCostPerUnit > 0)) return null;
+            const cost = figures.craftCostPerUnit;
             const xp = craftXpPerUnitOf(found.action, found.actionHrid, answer);
             return {
                 cost,
                 seconds: 3600 / itemsPerHour,
+                // The bonus drops (essence, rare finds) a craft of the base also yields, net of tax
+                otherNet: figures.otherNetPerUnit,
                 // The row's XP column is the recipe's skill: a base crafted in another skill teaches that one
                 xp: found.action.type === recipe.action.type ? xp : 0,
             };
@@ -553,26 +596,8 @@ export function rankCraftEnhance({
                 return crafts > 0 && Number.isFinite(crafts) ? crafts : null;
             };
             const craftsPerHour = craftsPerHourOf(profit);
-            const pricingOf = (materials, pool, hourCrafts = craftsPerHour, mode = ownedMode) => ({
-                materials,
-                index,
-                ownedMode: mode,
-                heldPool: pool,
-                craftsPerHour: hourCrafts,
-                valueDrop: (hrid) => saleAfterTaxAt(hrid, 0),
-                valueToken: (hrid) => tokenRouteDetail(index, hrid)?.value ?? null,
-                tokenEstimated: (hrid) => Boolean(tokenRouteDetail(index, hrid)?.estimated),
-                // The upgrade item is not reduced by Artisan; a regular input is, and rounds up per craft
-                amountOf: (material) =>
-                    worstCase && !material.isUpgradeItem && Number(material.baseAmount) > 0
-                        ? artisanInputTotal(
-                              material.baseAmount,
-                              Number(profit.artisanBonus) || 0,
-                              1,
-                              ARTISAN_MATERIAL_MODE.WORST_CASE
-                          )
-                        : material.amount,
-            });
+            const pricingOf = (materials, pool, hourCrafts = craftsPerHour, mode = ownedMode) =>
+                materialsPricing(profit, materials, pool, hourCrafts, mode);
             const priced = priceCraftMaterials(pricingOf(profit.materialCosts, heldPool));
             const figures = craftUnitFigures({
                 materialCostPerAction: priced.costPerAction,
@@ -600,6 +625,7 @@ export function rankCraftEnhance({
                     ? {
                           cost: boughtFigures.craftCostPerUnit,
                           seconds: boughtFigures.secondsPerUnit,
+                          otherNet: boughtFigures.otherNetPerUnit,
                           xp: craftXpPerUnit,
                       }
                     : null;

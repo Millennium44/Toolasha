@@ -1518,7 +1518,7 @@ describe('protecting with a copy of the item at its craft price', () => {
             };
             const row = await rank();
             // (500 materials + 10 tea) a copy
-            expect(baseCall().options.selfCopyCraftCost).toBeCloseTo(510, 6);
+            expect(baseCall().options.selfCopyCraftCost).toBeCloseTo(2060, 6);
             expect(row.route.route).toBe('refine-base');
             // 36 s crafting the star + 10 s enhancing + 3 base crafts at 18 s each
             expect(row.target.unitsPerHour).toBeCloseTo(3600 / (36 + 10 + 54), 6);
@@ -1569,7 +1569,7 @@ describe('protecting with a copy of the item at its craft price', () => {
             };
             const row = await rank();
             const held = game.enhanceCalls.find((call) => call.itemHrid === '/items/ring' && call.from === 3);
-            expect(held.options.selfCopyCraftCost).toBeCloseTo(510, 6);
+            expect(held.options.selfCopyCraftCost).toBeCloseTo(2060, 6);
             expect(row.route.route).toBe('held-base');
             expect(row.route.enhance.selfCopyCrafts).toBe(2);
         });
@@ -1743,5 +1743,72 @@ describe('the levels Best considers, from the item', () => {
         game.gameData.itemDetailMap['/items/sword'].equipmentDetail = { type: '/equipment_types/main_hand' };
         const [sword] = await rankCraftEnhance({ targetLevel: 10, ownedMode: 'market' });
         expect(sword.candidateLevels).toEqual([0, 7, 10]);
+    });
+});
+
+describe('crafted protection copies: Artisan rounding and bonus drops', () => {
+    const rank = async () => (await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' }))[0];
+    const BASE_ACTION = '/actions/cheesesmithing/ring';
+    const baseCall = () => game.enhanceCalls.find((call) => call.itemHrid === '/items/ring' && call.from === 0);
+    const withBase = (answer) => {
+        const star = starFixture();
+        star.type = '/action_types/cheesesmithing';
+        game.gameData.actionDetailMap[BASE_ACTION] = {
+            hrid: BASE_ACTION,
+            type: '/action_types/cheesesmithing',
+            baseTimeCost: 1,
+            outputItems: [{ itemHrid: '/items/ring', count: 1 }],
+        };
+        game.profits[BASE_ACTION] = profit('ring', {
+            actionHrid: BASE_ACTION,
+            totalItemsPerHour: 200,
+            // 8 cheese a craft reduced by 15% Artisan: 6.8 on average
+            artisanBonus: 0.15,
+            materialCostPerHour: 200 * 6.8 * 5,
+            materialCosts: [
+                {
+                    itemHrid: '/items/cheese',
+                    baseAmount: 8,
+                    amount: 6.8,
+                    askPrice: 5,
+                    totalCost: 34,
+                    missingPrice: false,
+                },
+            ],
+            ...answer,
+        });
+    };
+
+    test('a crafted base copy rounds each input up under the Artisan worst case, as the main recipe does', async () => {
+        withBase({});
+        await rank();
+        // Average consumption: 6.8 cheese at 5
+        expect(baseCall().options.selfCopyCraftCost).toBeCloseTo(34, 6);
+        clearCraftEnhanceCache();
+        game.stamp += 1;
+        game.enhanceCalls = [];
+        game.settings.actions_artisanMaterialMode = 'worst-case';
+        await rank();
+        // 6.8 rounds up to 7 cheese a craft
+        expect(baseCall().options.selfCopyCraftCost).toBeCloseTo(35, 6);
+    });
+
+    test("a crafted copy's bonus drops count in the hour, and the pick compares with them", async () => {
+        // 100 crafts an hour with 500 coins of bonus drops an hour: 5 a craft, net of tax
+        game.profits['/actions/cheesesmithing/sword'].profitPerHour = -100 * 20 + 500;
+        game.craftedQuotes = { '/items/sword': { cost: 100, seconds: 10, xp: 400, xpKnown: true, selfCopyCrafts: 2 } };
+        const row = await rank();
+        expect(row.route.enhance.selfCopyCrafts).toBe(2);
+        // The item's own 5, plus 2 copies at 5 each
+        expect(row.target.profitPerUnit).toBeCloseTo(9000 * 0.96 + 5 + 10 - 1970 - 100, 6);
+    });
+
+    test("a base copy's bonus drops count too", async () => {
+        withBase({ profitPerHour: -200 * 34 + 200 * 7 });
+        game.craftedQuotes = { '/items/ring': { cost: 300, seconds: 10, xp: 600, xpKnown: true, selfCopyCrafts: 3 } };
+        const row = await rank();
+        expect(row.route.route).toBe('refine-base');
+        // 3 base copies at 7 net each, carried into the run
+        expect(row.route.enhance.extraCraftNet).toBeCloseTo(21, 6);
     });
 });
