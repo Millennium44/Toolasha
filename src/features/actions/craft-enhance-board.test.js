@@ -642,7 +642,8 @@ describe('the enhancement route', () => {
         await flush();
         const title = state.panel.panel.querySelector('[data-ce-route="held-base"]').parentElement.title;
         expect(title).toContain('counted at 0 (sunk)');
-        expect(title).toContain("It serves 100% of an hour's crafts");
+        expect(title).toContain("It covers a full hour's crafts.");
+        expect(title).not.toContain('the rest start from a bought base');
         expect(title).toContain('nothing was compared');
         expect(title).not.toContain('cheaper per item');
     });

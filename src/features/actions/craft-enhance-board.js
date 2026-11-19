@@ -182,10 +182,14 @@ function routeTooltip(row, target) {
                 : held.via === 'token'
                   ? `counted at ${money(held.unitValue)} (its value through the tokens it costs)`
                   : `counted at ${money(held.unitValue)} (what it would sell for)`;
+        const coverage = held.coverage ?? 1;
         lines.push(
             `Starts from your held +${held.level} ${name(route.baseHrid)} (you hold ${Math.floor(held.count)}), ${value}, ` +
-                `enhanced to +${target}, then refined. It serves ${Math.round((held.coverage ?? 1) * 100)}% of an hour's ` +
-                'crafts; the rest start from a bought base and the figures are blended.'
+                `enhanced to +${target}, then refined. ` +
+                (coverage >= 1
+                    ? "It covers a full hour's crafts."
+                    : `It serves ${Math.round(coverage * 100)}% of an hour's crafts; the rest start from a bought base ` +
+                      'and the figures are blended.')
         );
         lines.push(
             held.saved === null
