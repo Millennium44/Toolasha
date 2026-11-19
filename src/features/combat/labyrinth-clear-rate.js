@@ -296,7 +296,10 @@ class LabyrinthClearRate {
             }),
             // The stepper is built with the toolbar, which stays up while the setting flips
             config.onSettingChange('labyrinthGridScaleControl', () => this.syncGridSizeControl()),
-            config.onSettingChange('labyrinthPathStepper', () => this.syncStepButtons()),
+            config.onSettingChange('labyrinthPathStepper', () => {
+                this.syncStepButtons();
+                this.syncStepButtonsSwitch();
+            }),
             // The four beacon planner settings are also editable from the Settings
             // page, which does not go through the toolbar's handlers
             ...BEACON_PLANNER_SETTINGS.map((key) =>
@@ -3759,6 +3762,22 @@ class LabyrinthClearRate {
         settingsPanel.appendChild(beaconDotsButton);
         this.syncBeaconDotsButton(beaconDotsButton);
 
+        // The Shroud ▸ / Beacon ▸ step buttons beside Path and Beacons; the same setting as the Settings page
+        const stepButtonsButton = document.createElement('button');
+        stepButtonsButton.type = 'button';
+        stepButtonsButton.className = `${TILE_CONTROLS_CLASS}-step-buttons`;
+        stepButtonsButton.style.cssText = autoButton.style.cssText;
+        stepButtonsButton.title =
+            'The Shroud ▸ and Beacon ▸ buttons beside Path and Beacons, which carry out the plan one game action ' +
+            'per press. Never presses on its own';
+        stepButtonsButton.addEventListener('click', () => {
+            config.setSetting('labyrinthPathStepper', !config.getSetting('labyrinthPathStepper'));
+            this.syncStepButtons();
+            this.syncStepButtonsSwitch();
+        });
+        settingsPanel.appendChild(stepButtonsButton);
+        this.syncStepButtonsSwitch(stepButtonsButton);
+
         // How the beacon planner ranks placements; any change redraws a plan on the map
         const beaconGroup = document.createElement('div');
         beaconGroup.className = `${TILE_CONTROLS_CLASS}-beacon-settings`;
@@ -5818,6 +5837,15 @@ class LabyrinthClearRate {
             if (!on) dot?.remove();
             else if (!dot) overlay.appendChild(this.createBeaconDot(!!overlay.dataset.beaconLater));
         });
+    }
+
+    /** Label the settings panel's Step buttons switch to match `labyrinthPathStepper` */
+    syncStepButtonsSwitch(button = document.querySelector(`.${TILE_CONTROLS_CLASS}-step-buttons`)) {
+        if (!button) return;
+        const on = !!config.getSetting('labyrinthPathStepper');
+        button.textContent = on ? 'Step buttons: on' : 'Step buttons: off';
+        button.style.background = on ? 'rgba(60,180,120,0.85)' : 'rgba(120,134,160,0.85)';
+        button.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
 
     syncBeaconDotsButton(button = document.querySelector(`.${TILE_CONTROLS_CLASS}-beacon-dots`)) {

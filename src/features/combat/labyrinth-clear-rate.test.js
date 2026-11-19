@@ -8102,6 +8102,27 @@ describe('labyrinth toolbar layout', () => {
             expect(labyrinthClearRate._stepper).toBeNull();
         });
 
+        test('the settings panel switch turns them off and on, and follows a change made on the Settings page', () => {
+            flip(true);
+            labyrinthClearRate.injectTileControls();
+            const sw = q('step-buttons');
+            expect(sw.textContent).toBe('Step buttons: on');
+            configMock.setSetting.mockImplementation((key, value) => flip(value));
+            sw.click();
+            expect(configMock.setSetting).toHaveBeenCalledWith('labyrinthPathStepper', false);
+            expect(sw.textContent).toBe('Step buttons: off');
+            expect(sw.getAttribute('aria-pressed')).toBe('false');
+            expect(document.querySelector('.mwi-labyrinth-step-shroud')).toBeNull();
+            expect(document.querySelector('.mwi-labyrinth-step-beacon')).toBeNull();
+            sw.click();
+            expect(sw.textContent).toBe('Step buttons: on');
+            expect(document.querySelectorAll('.mwi-labyrinth-step-shroud')).toHaveLength(1);
+            // Turned off from the Settings page while the panel is up
+            flip(false);
+            expect(sw.textContent).toBe('Step buttons: off');
+            configMock.setSetting.mockReset();
+        });
+
         test('drawing or clearing a plan redraws the label without a click', () => {
             flip(true);
             labyrinthClearRate.injectTileControls();

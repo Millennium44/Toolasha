@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Labyrinth step buttons
 
-Shroud and Beacon buttons beside Path and Beacons carry out the plan one game action per press: press once to arm the supply, again to use it on the next planned room. They check the live map first and say why when a planned room cannot take it yet. They can be turned off in the Labyrinth settings.
+Shroud and Beacon buttons beside Path and Beacons carry out the plan one game action per press: press once to arm the supply, again to use it on the next planned room. They check the live map first and say why when a planned room cannot take it yet. Turn them on or off from the toolbar's ⚙ panel (Step buttons) or the Labyrinth settings.
 
 ### Sim rows show what refining would cost when buying wins
 
