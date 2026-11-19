@@ -818,9 +818,28 @@ export function planPurchases(picks) {
 
     for (const pick of picks || []) {
         const buy = combatSimUI.upgradeRowPurchase(pick);
+        if (!buy) continue;
+
+        // A pick priced as a refine buys the refinement materials, never the ★ item (which is not listed at that
+        // level). Checked before the self-enhance skip, since a refined cape is both. Two picks refining the same
+        // ★ item to the same level are one refine; different refines that share a material need both counts
+        if (buy.refineMaterials) {
+            const refineKey = `refine:${buy.itemHrid}+${buy.enhancementLevel}`;
+            if (seen.has(refineKey)) continue;
+            seen.add(refineKey);
+            for (const line of buy.refineMaterials) {
+                const level = line.enhancementLevel || 0;
+                const lineKey = `route:${line.itemHrid}+${level}`;
+                const same = items.find((item) => item.routeKey === lineKey);
+                if (same) same.count += line.count;
+                else items.push({ ...line, enhancementLevel: level, routeKey: lineKey });
+            }
+            continue;
+        }
+
         // A cape or quiver is enhanced at your own bench, never listed, so it
         // has no place on a marketplace trip; its row carries an Enhance button
-        if (!buy || buy.selfEnhance) continue;
+        if (buy.selfEnhance) continue;
 
         // A pick priced by a Craft or Mirror route buys that route's inputs, not the item: each line is
         // a purchase, and two picks needing the same input need both counts
