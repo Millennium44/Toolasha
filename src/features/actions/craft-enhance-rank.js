@@ -32,8 +32,8 @@
  *
  * In `market` and `sunk` the units NOT held are bought at the buy side of the pricing mode, like `buy` prices
  * them. One held stack is drawn down once across every line of a recipe that uses the item, so it is never
- * counted for two inputs. The split prices the next craft: a stack covers only as many crafts as it holds
- * whole copies of what one craft needs, and the row says how many (`heldInputs`).
+ * counted for two inputs. The stock is spread over one hour of crafts: what the hour needs beyond it is bought, and
+ * the cost per craft is the hour's bill divided by the crafts in the hour.
  *
  * Inputs that are not dungeon inputs are bought at the buy side of the pricing mode, untaxed, exactly
  * as the profit calculator priced them. Buying pays no market tax; only the sale does.
@@ -228,6 +228,10 @@ export function buildHeldPool(inventory) {
  * @param {{drops: Map, tokenShop: Map}} args.index - From {@link buildDungeonInputIndex}
  * @param {string} args.ownedMode - {@link OWNED_MODES}
  * @param {Map<string, number>|null} [args.heldPool] - From {@link buildHeldPool}
+ * @param {number|null} [args.craftsPerHour] - Crafts (actions that consume inputs) in an hour. The held stock is
+ *   spread over that hour: each input needs `amount x craftsPerHour`, the stock covers up to that and the rest is
+ *   bought, and the cost per craft is the hour's bill divided by `craftsPerHour`. Missing or 0 prices one craft and
+ *   sets `perCraftFallback`.
  * @param {(itemHrid: string) => number|null} args.valueDrop - After-tax sale value of one unit, or null
  *   when nothing real prices it
  * @param {(itemHrid: string) => number|null} args.valueToken - After-tax value of one unit bought with
@@ -240,14 +244,15 @@ export function buildHeldPool(inventory) {
  * @returns {{costPerAction: number, unpriced: Array<{itemHrid: string, reason: string}>,
  *   dungeonInputs: Array<Object>, estimated: string[], heldInputs: Array<Object>}} `costPerAction` is meaningful
  *   only when `unpriced` is empty. `dungeonInputs` has one entry per priced portion (`held` says which);
- *   `heldInputs` is per item: `{itemHrid, needed, held, bought, stock}` for the units one craft needs, the part
- *   covered from the stack, the shortfall, and the whole +0 stack.
+ *   `heldInputs` is per item: `{itemHrid, needed, held, bought, stock}` for the units the hour needs, the part
+ *   covered from the stack, the shortfall, and the whole +0 stack. `dungeonInputs` amounts are per craft.
  */
 export function priceCraftMaterials({
     materials,
     index,
     ownedMode,
     heldPool = null,
+    craftsPerHour = null,
     valueDrop,
     valueToken,
     tokenEstimated,
@@ -261,6 +266,9 @@ export function priceCraftMaterials({
     const heldSummary = new Map();
     // Drawn down as lines use it; a copy, so one row never spends another's stack
     const remaining = new Map(heldPool || []);
+    // Crafts in the hour the stock is spread over. Unknown or 0 falls back to one craft, which the result flags
+    const hourKnown = Number(craftsPerHour) > 0;
+    const crafts = hourKnown ? Number(craftsPerHour) : 1;
     let costPerAction = 0;
 
     /** What buying one unit costs: the buy side, or for a token-shop item the cheaper token route */
@@ -313,8 +321,10 @@ export function priceCraftMaterials({
         // Units of this line covered by the stack: none in `buy`, and none when nothing is known to be held
         const key = `${material.itemHrid}:0`;
         const stock = mode === OWNED_MODES.BUY ? 0 : remaining.get(key) || 0;
-        const heldUnits = Math.min(stock, amount);
-        const boughtUnits = amount - heldUnits > 1e-9 ? amount - heldUnits : 0;
+        // The stock is spread over the hour's crafts: it covers min(held, hour need) and the rest is bought
+        const hourNeed = amount * crafts;
+        const heldUnits = Math.min(stock, hourNeed);
+        const boughtUnits = hourNeed - heldUnits > 1e-9 ? hourNeed - heldUnits : 0;
 
         const own = heldUnits > 0 ? ownedPrice(material, kind) : null;
         const buy = boughtUnits > 0 ? boughtPrice(material, kind) : null;
@@ -333,17 +343,17 @@ export function priceCraftMaterials({
                 bought: 0,
                 stock: heldPool?.get(key) || 0,
             };
-            seen.needed += amount;
+            seen.needed += hourNeed;
             seen.held += heldUnits;
             seen.bought += boughtUnits;
             heldSummary.set(material.itemHrid, seen);
         }
         if (own) {
-            costPerAction += own.unitValue * heldUnits;
+            costPerAction += (own.unitValue * heldUnits) / crafts;
             noteEstimated(material, own);
             dungeonInputs.push({
                 itemHrid: material.itemHrid,
-                amount: heldUnits,
+                amount: heldUnits / crafts,
                 unitValue: own.unitValue,
                 sunk: mode === OWNED_MODES.SUNK,
                 via: own.via,
@@ -352,11 +362,11 @@ export function priceCraftMaterials({
             });
         }
         if (buy) {
-            costPerAction += buy.unitValue * boughtUnits;
+            costPerAction += (buy.unitValue * boughtUnits) / crafts;
             noteEstimated(material, buy);
             dungeonInputs.push({
                 itemHrid: material.itemHrid,
-                amount: boughtUnits,
+                amount: boughtUnits / crafts,
                 ...buy,
                 sunk: false,
                 kind,
@@ -365,7 +375,15 @@ export function priceCraftMaterials({
         }
     }
 
-    return { costPerAction, unpriced, dungeonInputs, estimated, heldInputs: [...heldSummary.values()] };
+    return {
+        costPerAction,
+        unpriced,
+        dungeonInputs,
+        estimated,
+        heldInputs: [...heldSummary.values()],
+        craftsPerHour: crafts,
+        perCraftFallback: !hourKnown,
+    };
 }
 
 /**
@@ -550,8 +568,9 @@ export function chooseEnhanceRoute({ level, direct, viaBase }) {
  *   recipe has no such route
  * @param {string|null} [args.baseHrid] - The base the refinement route enhances, for the tooltip
  * @param {Array<Object>} [args.heldBases] - Candidates that start from a base the character holds, one per held
- *   level at or below the target: `{level, count, unitValue, via, enhance, craftCostPerUnit, secondsPerUnit,
- *   otherNetPerUnit, craftXpPerUnit}`. The base's own price is already inside `craftCostPerUnit` (and the chain
+ *   level at or below the target: `{level, count, coverage, unitValue, via, enhance, craftCostPerUnit,
+ *   secondsPerUnit, otherNetPerUnit, craftXpPerUnit}`. `coverage` (0 to 1, default 1) is the share of the hour's
+ *   crafts the held stack can serve; the rest are rated on the fresh route and the figures are blended. The base's own price is already inside `craftCostPerUnit` (and the chain
  *   a bought base needs is already out of `secondsPerUnit` and the XP). A candidate with no `enhance` or no
  *   `craftCostPerUnit` is not priceable and is never chosen. They apply to the target level only: a held +3 base
  *   makes a +3 item, so it cannot lower the +0 figure.
@@ -594,11 +613,47 @@ export function buildCraftEnhanceRow({
     const freshTotal =
         chosen.enhance && craftCostPerUnit !== null ? craftCostPerUnit + Number(chosen.enhance.cost) : null;
     let held = null;
+    // The held base covers `coverage` of the hour's crafts (its stack over the crafts the hour needs, at most 1); the
+    // rest of the crafts take the fresh route, so every per-unit figure is the blend of the two. A candidate that
+    // leaves crafts uncovered when the fresh route cannot be priced has no figure for them and is not a candidate.
+    const mix = (heldValue, freshValue, share) =>
+        share >= 1
+            ? heldValue
+            : Number.isFinite(heldValue) && Number.isFinite(freshValue)
+              ? share * heldValue + (1 - share) * freshValue
+              : null;
     for (const candidate of heldBases) {
         if (!candidate?.enhance || !Number.isFinite(candidate.craftCostPerUnit)) continue;
-        const total = candidate.craftCostPerUnit + Number(candidate.enhance.cost);
-        if (!Number.isFinite(total)) continue;
-        if (total < (freshTotal ?? Infinity) && (!held || total < held.total)) held = { ...candidate, total };
+        const share = Math.min(1, Math.max(0, Number(candidate.coverage ?? 1)));
+        if (!(share > 0)) continue;
+        if (share < 1 && (freshTotal === null || !chosen.enhance)) continue;
+        const heldTotal = candidate.craftCostPerUnit + Number(candidate.enhance.cost);
+        if (!Number.isFinite(heldTotal)) continue;
+        // Strictly cheaper than the fresh route per craft it covers, else the fresh route stands
+        if (!(heldTotal < (freshTotal ?? Infinity))) continue;
+        const total = mix(heldTotal, freshTotal, share);
+        if (held && !(total < held.total)) continue;
+        const fresh = chosen.enhance;
+        const enhanceXpKnown = candidate.enhance.xpKnown !== false && (share >= 1 || fresh.xpKnown !== false);
+        held = {
+            ...candidate,
+            share,
+            total,
+            craftCostPerUnit: mix(candidate.craftCostPerUnit, craftCostPerUnit, share),
+            secondsPerUnit: mix(candidate.secondsPerUnit, common.secondsPerUnit, share),
+            otherNetPerUnit: mix(candidate.otherNetPerUnit, common.otherNetPerUnit, share),
+            craftXpPerUnit:
+                candidate.craftXpPerUnit === null || candidate.craftXpPerUnit === undefined
+                    ? null
+                    : mix(candidate.craftXpPerUnit, craftXpPerUnit, share),
+            enhance: {
+                ...candidate.enhance,
+                cost: mix(Number(candidate.enhance.cost), Number(fresh?.cost), share),
+                seconds: mix(Number(candidate.enhance.seconds), Number(fresh?.seconds), share),
+                xp: mix(Number(candidate.enhance.xp), Number(fresh?.xp), share),
+                xpKnown: enhanceXpKnown,
+            },
+        };
     }
 
     let route = { ...chosen, offered: Boolean(baseHrid), baseHrid: baseHrid || null, heldBase: null };
@@ -614,6 +669,8 @@ export function buildCraftEnhanceRow({
                 unitValue: held.unitValue,
                 via: held.via,
                 total: held.total,
+                // The share of the hour's crafts the held stack covers; the rest take the fresh route
+                coverage: held.share,
                 // Null when the fresh routes could not be priced, so nothing was compared
                 saved: freshTotal === null ? null : freshTotal - held.total,
             },
