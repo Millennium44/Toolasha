@@ -75,9 +75,9 @@ const WARN = '#ffb74d';
 
 /** What each owned-drops mode means, for the status line */
 const OWNED_NOTES = {
-    market: 'Dungeon inputs are valued at what they would sell for after tax (you own them).',
-    buy: 'Dungeon inputs are valued at their buy price, untaxed (you buy them); a token-shop item takes the cheaper of that and its token value.',
-    sunk: 'Dungeon inputs are counted at 0 (already owned, sunk).',
+    market: 'Dungeon inputs you hold are valued at what they would sell for after tax; the rest are bought at their buy price.',
+    buy: 'Dungeon inputs are valued at their buy price, untaxed (you buy them all; what you hold is ignored); a token-shop item takes the cheaper of that and its token value.',
+    sunk: 'Dungeon inputs you hold are counted at 0 (already owned, sunk); the rest are bought at their buy price.',
 };
 
 const REASON_LABELS = {
@@ -174,6 +174,22 @@ function routeTooltip(row, target) {
         `Enhance the star item itself to +${target}: ${money(route.directCost)}`,
         `Enhance ${name(route.baseHrid)} to +${target}, then refine it (refining keeps the level): ${money(route.baseCost)}`,
     ];
+    if (route.route === 'held-base' && route.heldBase) {
+        const held = route.heldBase;
+        const value =
+            held.via === null ? 'counted at 0 (sunk)' : `counted at ${money(held.unitValue)} (what it would sell for)`;
+        lines.push(
+            `Starts from your held +${held.level} ${name(route.baseHrid)} (you hold ${Math.floor(held.count)}), ${value}, ` +
+                `enhanced to +${target}, then refined. It covers ${Math.floor(held.count)} craft${Math.floor(held.count) === 1 ? '' : 's'}; ` +
+                'later ones start from a bought base.'
+        );
+        lines.push(
+            held.saved === null
+                ? 'The routes from a bought base could not be priced, so nothing was compared.'
+                : `Craft plus enhancement is ${money(held.saved)} cheaper per item than the best route from a bought base.`
+        );
+        return lines.join('\n');
+    }
     // A saving is claimed only when both routes were priced: with one side unpriced nothing was compared
     const compared = Number.isFinite(route.directCost) && Number.isFinite(route.baseCost);
     if (route.route === 'refine-base')
@@ -459,17 +475,17 @@ class CraftEnhanceBoard {
             [
                 OWNED_MODES.MARKET,
                 'Sale value',
-                'You own them: count each dungeon drop or token-shop input at what it would sell for after tax (the cost of using it)',
+                'Count the dungeon drops and token-shop inputs you hold at what they would sell for after tax (the cost of using them); any a recipe needs beyond what you hold are bought at the buy price',
             ],
             [
                 OWNED_MODES.BUY,
                 'Buy price',
-                'You buy them: count each at the buy side of your pricing mode, with no tax. A token-shop item takes the cheaper of that and its token value.',
+                'You buy them all: count each at the buy side of your pricing mode, with no tax, whatever you hold. A token-shop item takes the cheaper of that and its token value.',
             ],
             [
                 OWNED_MODES.SUNK,
                 'Sunk (0)',
-                'Already owned and not worth selling: count them at 0. Rows using them are badged "sunk".',
+                'Count the units you hold at 0 (already owned, not worth selling); any a recipe needs beyond what you hold are bought at the buy price. Rows using held units are badged "sunk".',
             ],
         ];
         for (const [mode, text, title] of modes) {
@@ -741,7 +757,7 @@ class CraftEnhanceBoard {
             badge.textContent = ' sunk';
             badge.setAttribute('data-ce-sunk', 'true');
             badge.style.cssText = `color: ${WARN}; font-size: 10px;`;
-            badge.title = `Counted at 0 because the Sunk switch is on: ${row.sunkInputs
+            badge.title = `The units you hold are counted at 0 because the Sunk switch is on: ${row.sunkInputs
                 .map((hrid) => hrid.split('/').pop().replace(/_/g, ' '))
                 .join(', ')}`;
             name.appendChild(badge);
@@ -760,16 +776,30 @@ class CraftEnhanceBoard {
         const inputNote = t.unpricedInputs.length
             ? `No price for: ${t.unpricedInputs.map((input) => input.itemHrid.split('/').pop().replace(/_/g, ' ')).join(', ')}`
             : '';
-        tr.appendChild(goldCell(t.craftCostPerUnit, inputNote, false));
+        const craftCell = goldCell(t.craftCostPerUnit, inputNote, false);
+        // What the stack covers, for a cost that rests on held units: the next craft, not every craft of the hour
+        const heldLines = (row.heldInputs || [])
+            .filter((input) => input.held > 0)
+            .map((input) => {
+                const crafts = input.needed > 0 ? Math.floor(input.stock / input.needed + 1e-9) : 0;
+                return (
+                    `${input.itemHrid.split('/').pop().replace(/_/g, ' ')}: holds ${Math.round(input.stock * 100) / 100}, ` +
+                    `one craft needs ${Math.round(input.needed * 100) / 100} (${Math.round(input.bought * 100) / 100} bought); ` +
+                    `the stock covers ${crafts} craft${crafts === 1 ? '' : 's'}`
+                );
+            });
+        if (heldLines.length > 0 && t.craftCostPerUnit !== null) craftCell.title = heldLines.join('\n');
+        tr.appendChild(craftCell);
         const enhanceCell = goldCell(
             t.enhanceCost,
             'The enhancement run could not be priced (a material or protection has no price)',
             false
         );
-        if (row.route?.route === 'refine-base' && t.enhanceCost !== null) {
+        if ((row.route?.route === 'refine-base' || row.route?.route === 'held-base') && t.enhanceCost !== null) {
             const via = document.createElement('span');
-            via.textContent = ' via base';
-            via.setAttribute('data-ce-route', 'refine-base');
+            via.textContent =
+                row.route.route === 'held-base' ? ` via held +${row.route.heldBase?.level} base` : ' via base';
+            via.setAttribute('data-ce-route', row.route.route);
             via.style.cssText = `color: ${MUTED}; font-size: 10px;`;
             enhanceCell.appendChild(via);
         }

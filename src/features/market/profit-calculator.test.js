@@ -512,6 +512,15 @@ describe('calculateProfit — upgrade-item crafting chain time', () => {
         expect(result.upgradeChainCrafted).toBe(true);
     });
 
+    test('an upgrade item the caller already holds adds no chain time, though it would be crafted otherwise', async () => {
+        upgradeRecipe();
+
+        const result = await profitCalculator.calculateProfit('/items/upgraded', { upgradeItemOwned: true });
+
+        expect(result.actionTime).toBeCloseTo(20, 6);
+        expect(result.upgradeChainCrafted).toBe(false);
+    });
+
     test('an upgrade item cheaper on the market than to craft is bought, so no chain time', async () => {
         upgradeRecipe();
         mocks.resolvedPrices['/items/rune'] = 100; // cheaper than the 400 craft cost

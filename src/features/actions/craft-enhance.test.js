@@ -17,6 +17,7 @@ const game = vi.hoisted(() => ({
     quotes: {},
     enhanceQuotes: {},
     enhanceCalls: [],
+    profitCalls: [],
     tokenValue: {},
     tokenEstimated: false,
     stamp: 1,
@@ -27,6 +28,8 @@ const game = vi.hoisted(() => ({
     xp: {},
     detected: { enhancingLevel: 100, experienceBonus: 10, toolBonus: 5, speedBonus: 0, guzzlingBonus: 1, teas: {} },
     settings: {},
+    /** The character's items, or null for an inventory not loaded */
+    inventory: [],
     /** refined item hrid -> its refinement action */
     refinements: {},
 }));
@@ -42,6 +45,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => game.gameData,
         getCurrentCharacterId: () => 7,
         getSkills: () => [{ skillHrid: '/skills/cheesesmithing', level: 60 }],
+        getInventory: () => game.inventory,
     },
 }));
 vi.mock('../../api/marketplace.js', () => ({
@@ -55,12 +59,18 @@ vi.mock('../../api/marketplace.js', () => ({
     },
 }));
 vi.mock('../market/profit-calculator.js', () => ({
-    default: { calculateProfit: async (itemHrid, { actionHrid }) => game.profits[actionHrid] ?? null },
+    default: {
+        calculateProfit: async (itemHrid, options) => {
+            game.profitCalls.push({ itemHrid, ...options });
+            return game.profits[options.actionHrid] ?? null;
+        },
+    },
 }));
 vi.mock('../combat-sim/direct-enhancement-cost.js', () => ({
     quoteDirectEnhancement: (itemHrid, from, to, data, options) => {
         game.enhanceCalls.push({ itemHrid, from, to, options });
-        return game.enhanceQuotes[itemHrid] ?? null;
+        // A quote keyed `hrid:from` answers only a run from that level
+        return game.enhanceQuotes[`${itemHrid}:${from}`] ?? game.enhanceQuotes[itemHrid] ?? null;
     },
 }));
 vi.mock('../../utils/enhancement-pricing.js', () => ({
@@ -160,6 +170,11 @@ function profit(name, extra = {}) {
     };
 }
 
+/** One inventory stack in the shape the game sends */
+function stack(itemHrid, count, enhancementLevel = 0, itemLocationHrid = '/item_locations/inventory') {
+    return { itemHrid, count, enhancementLevel, itemLocationHrid };
+}
+
 beforeEach(() => {
     clearCraftEnhanceCache();
     game.stamp += 1;
@@ -193,11 +208,14 @@ beforeEach(() => {
     };
     game.enhanceQuotes = { '/items/sword': { cost: 1500, seconds: 60, xp: 400, xpKnown: true } };
     game.enhanceCalls = [];
+    game.profitCalls = [];
     game.tokenValue = {};
     game.tokenEstimated = false;
     game.drinks = [];
     game.drinkPrices = {};
     game.fpExtra = '';
+    // Holds plenty of the drop, so the ordinary tests price it as owned in market mode
+    game.inventory = [stack('/items/griffin_leather', 100)];
     game.chain = [];
     game.xp = {};
     game.refinements = {};
@@ -931,5 +949,237 @@ describe('Artisan worst case', () => {
         expect(first.target.craftCostPerUnit).toBeCloseTo(34, 6);
         expect(second.target.craftCostPerUnit).toBeCloseTo(35, 6);
         expect(craftEnhanceStateKey()).toContain('worst-case');
+    });
+});
+
+describe('the inventory split', () => {
+    const rank = async (mode = 'market') => (await rankCraftEnhance({ targetLevel: 5, ownedMode: mode }))[0];
+    /** Cheese is 10 x 5 in every fixture recipe */
+    const CHEESE = 50;
+
+    test('2 leather needed, 1 held: one at the after-tax sale value, one at the buy price', async () => {
+        game.inventory = [stack('/items/griffin_leather', 1)];
+        const row = await rank();
+        expect(row.target.craftCostPerUnit).toBeCloseTo(960 + 1000 + CHEESE, 6);
+        expect(row.heldInputs).toEqual([
+            { itemHrid: '/items/griffin_leather', needed: 2, held: 1, bought: 1, stock: 1 },
+        ]);
+        const text = row.notes.join(' ');
+        expect(text).toContain('Holds 1 ');
+        expect(text).toContain('covers 0 crafts');
+    });
+
+    test('nothing held and an empty inventory price every unit at the buy price, with no note about the inventory', async () => {
+        game.inventory = [];
+        const row = await rank();
+        expect(row.target.craftCostPerUnit).toBeCloseTo(2000 + CHEESE, 6);
+        expect(row.notes.join(' ')).not.toContain('inventory is not loaded');
+        expect(row.notes.join(' ')).not.toContain('Holds');
+    });
+
+    test('an inventory that is not loaded prices like an empty one but says so', async () => {
+        game.inventory = null;
+        const row = await rank();
+        expect(row.target.craftCostPerUnit).toBeCloseTo(2000 + CHEESE, 6);
+        expect(row.notes.join(' ')).toContain('inventory is not loaded');
+    });
+
+    test('exactly enough and more than enough are wholly owned', async () => {
+        for (const count of [2, 40]) {
+            clearCraftEnhanceCache();
+            game.stamp += 1;
+            game.inventory = [stack('/items/griffin_leather', count)];
+            const row = await rank();
+            expect(row.target.craftCostPerUnit).toBeCloseTo(1920 + CHEESE, 6);
+            expect(row.heldInputs[0].bought).toBe(0);
+        }
+    });
+
+    test('stacks of the item in the inventory add up; equipped and enhanced ones are not +0 inputs', async () => {
+        game.inventory = [
+            stack('/items/griffin_leather', 1),
+            stack('/items/griffin_leather', 5, 2),
+            stack('/items/griffin_leather', 5, 0, '/item_locations/main_hand'),
+        ];
+        expect((await rank()).target.craftCostPerUnit).toBeCloseTo(960 + 1000 + CHEESE, 6);
+    });
+
+    test('sunk counts the held unit at 0 and buys the rest; buy mode ignores a full inventory', async () => {
+        game.inventory = [stack('/items/griffin_leather', 1)];
+        const sunk = await rank('sunk');
+        expect(sunk.target.craftCostPerUnit).toBeCloseTo(1000 + CHEESE, 6);
+        expect(sunk.sunkInputs).toEqual(['/items/griffin_leather']);
+        clearCraftEnhanceCache();
+        game.stamp += 1;
+        game.inventory = [stack('/items/griffin_leather', 99)];
+        const buy = await rank('buy');
+        expect(buy.target.craftCostPerUnit).toBeCloseTo(2000 + CHEESE, 6);
+        expect(buy.heldInputs).toEqual([]);
+    });
+
+    test('a partly held input with no buy price is unpriced, never the owned part alone', async () => {
+        game.inventory = [stack('/items/griffin_leather', 1)];
+        game.profits['/actions/cheesesmithing/sword'].materialCosts[0].missingPrice = true;
+        const row = await rank();
+        expect(row.target.status).toBe('unpriced');
+        expect(row.target.craftCostPerUnit).toBeNull();
+    });
+
+    test('the same item on two inputs of one recipe draws one stack down once', async () => {
+        game.profits['/actions/cheesesmithing/sword'].materialCosts.push({
+            itemHrid: '/items/griffin_leather',
+            baseAmount: 1,
+            amount: 1,
+            askPrice: 1000,
+            totalCost: 1000,
+            missingPrice: false,
+        });
+        game.inventory = [stack('/items/griffin_leather', 2)];
+        const row = await rank();
+        // 3 needed, 2 held
+        expect(row.target.craftCostPerUnit).toBeCloseTo(2 * 960 + 1000 + CHEESE, 6);
+    });
+
+    test('a change in what is held moves the state key and reranks; an unrelated stack does not', async () => {
+        game.inventory = [stack('/items/griffin_leather', 1)];
+        const key = craftEnhanceStateKey();
+        const first = await rank();
+        game.inventory = [stack('/items/griffin_leather', 1), stack('/items/cheese', 500)];
+        expect(craftEnhanceStateKey()).toBe(key);
+        game.inventory = [stack('/items/griffin_leather', 2)];
+        expect(craftEnhanceStateKey()).not.toBe(key);
+        const second = await rank();
+        expect(second).not.toBe(first);
+        expect(second.target.craftCostPerUnit).toBeCloseTo(1920 + CHEESE, 6);
+    });
+
+    test('no inventory and an empty inventory are different keys; buy mode has no inventory in its key', () => {
+        game.inventory = [];
+        const empty = craftEnhanceStateKey();
+        game.inventory = null;
+        expect(craftEnhanceStateKey()).not.toBe(empty);
+        game.settings.actions_craftEnhance_ownedDrops = 'buy';
+        const buyNone = craftEnhanceStateKey();
+        game.inventory = [stack('/items/griffin_leather', 9)];
+        expect(craftEnhanceStateKey()).toBe(buyNone);
+    });
+});
+
+describe('starting from a base the character holds', () => {
+    const run = async (mode = 'market') => (await rankCraftEnhance({ targetLevel: 5, ownedMode: mode }))[0];
+    const RING_AT_3 = { price: 1000, source: 'book', estimated: false };
+
+    test('a held +3 base is enhanced 3 to 5, priced at its own sale value, and replaces the bought base', async () => {
+        starFixture();
+        game.quotes['/items/ring:3'] = RING_AT_3;
+        game.enhanceQuotes['/items/ring:3'] = { cost: 900, seconds: 40, xp: 300, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 3)];
+        const row = await run();
+        // A run from +3 is its own quote, not the +0 one reused
+        expect(game.enhanceCalls.map((call) => [call.itemHrid, call.from, call.to])).toContainEqual([
+            '/items/ring',
+            3,
+            5,
+        ]);
+        expect(game.enhanceCalls.map((call) => [call.itemHrid, call.from])).toContainEqual(['/items/ring', 0]);
+        expect(row.route.route).toBe('held-base');
+        expect(row.route.heldBase).toEqual(
+            expect.objectContaining({ level: 3, count: 1, unitValue: 960, via: 'sale' })
+        );
+        // The base at 960 (its sale after tax) instead of the 800 ask, and the leather held
+        expect(row.target.craftCostPerUnit).toBeCloseTo(960 + 1920, 6);
+        expect(row.target.enhanceCost).toBe(900);
+        // No crafting chain for a base that is held: the chain actions are not in the XP
+        expect(game.profitCalls.some((call) => call.upgradeItemOwned === true)).toBe(true);
+        // +0 sells an unenhanced star, which a +3 base cannot make: untouched
+        expect(row.base.craftCostPerUnit).toBeCloseTo(800 + 1920, 6);
+    });
+
+    test('a held base that is dearer to use than the fresh route loses', async () => {
+        starFixture();
+        game.quotes['/items/ring:3'] = { price: 90000, source: 'book', estimated: false };
+        game.enhanceQuotes['/items/ring:3'] = { cost: 900, seconds: 40, xp: 300, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 3)];
+        const row = await run();
+        expect(row.route.route).toBe('refine-base');
+        expect(row.route.heldBase).toBeNull();
+    });
+
+    test('sunk counts a held non-dungeon base at its sale value, not 0', async () => {
+        starFixture();
+        game.quotes['/items/ring:3'] = RING_AT_3;
+        game.enhanceQuotes['/items/ring:3'] = { cost: 900, seconds: 40, xp: 300, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 3)];
+        const row = await run('sunk');
+        expect(row.route.heldBase.unitValue).toBe(960);
+        // The held leather is sunk
+        expect(row.target.craftCostPerUnit).toBeCloseTo(960, 6);
+    });
+
+    test('a held base above the target level is not a candidate', async () => {
+        starFixture();
+        game.quotes['/items/ring:7'] = RING_AT_3;
+        game.enhanceQuotes['/items/ring:7'] = { cost: 1, seconds: 1, xp: 1, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 7)];
+        const row = await run();
+        expect(row.route.route).toBe('refine-base');
+        expect(game.enhanceCalls.some((call) => call.from === 7)).toBe(false);
+    });
+
+    test('a held base with no real sale quote is not a candidate and is never counted as free', async () => {
+        starFixture();
+        game.enhanceQuotes['/items/ring:3'] = { cost: 1, seconds: 1, xp: 1, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 3)];
+        for (const mode of ['market', 'sunk']) {
+            clearCraftEnhanceCache();
+            game.stamp += 1;
+            expect((await run(mode)).route.route).toBe('refine-base');
+        }
+    });
+
+    test('buy mode and an unloaded inventory ignore a held base', async () => {
+        starFixture();
+        game.quotes['/items/ring:3'] = RING_AT_3;
+        game.enhanceQuotes['/items/ring:3'] = { cost: 1, seconds: 1, xp: 1, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 3)];
+        expect((await run('buy')).route.route).toBe('refine-base');
+        clearCraftEnhanceCache();
+        game.stamp += 1;
+        game.inventory = null;
+        expect((await run('market')).route.route).toBe('refine-base');
+        expect(game.profitCalls.every((call) => !call.upgradeItemOwned)).toBe(true);
+    });
+
+    test('a held +0 base is spent once: an input of the same item cannot use the same copy', async () => {
+        const action = starFixture();
+        action.inputItems.push({ itemHrid: '/items/ring', count: 1 });
+        game.gameData.actionDetailMap['/actions/combat/den'].combatZoneInfo.dungeonInfo.rewardDropTable.push({
+            itemHrid: '/items/ring',
+        });
+        game.profits[action.hrid].materialCosts.push({
+            itemHrid: '/items/ring',
+            baseAmount: 1,
+            amount: 1,
+            askPrice: 800,
+            totalCost: 800,
+            missingPrice: false,
+        });
+        game.quotes['/items/ring:0'] = { price: 1000, source: 'book', estimated: false };
+        game.enhanceQuotes['/items/ring:0'] = { cost: 100, seconds: 10, xp: 1, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1)];
+        const row = await run();
+        // Base 960 as the held copy, the ring INPUT bought at 800 (the copy is spent), leather 1920
+        expect(row.target.craftCostPerUnit).toBeCloseTo(960 + 800 + 1920, 6);
+    });
+
+    test('the held count of the base moves the state key', () => {
+        starFixture();
+        game.inventory = [stack('/items/griffin_leather', 100)];
+        const key = craftEnhanceStateKey();
+        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 3)];
+        expect(craftEnhanceStateKey()).not.toBe(key);
+        // A base above the target is never a candidate, so it is not in the key
+        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 7)];
+        expect(craftEnhanceStateKey()).toBe(key);
     });
 });

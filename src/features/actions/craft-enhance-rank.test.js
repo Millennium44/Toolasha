@@ -12,6 +12,7 @@ import {
     arrangeCraftEnhanceRows,
     buildCraftEnhanceRow,
     buildDungeonInputIndex,
+    buildHeldPool,
     chooseEnhanceRoute,
     craftUnitFigures,
     dungeonInputKind,
@@ -290,6 +291,11 @@ describe('priceCraftMaterials: buy mode and estimates', () => {
     });
 });
 
+/** A pool that holds far more of everything than any recipe uses: every dungeon input is owned */
+const plenty = new Map(
+    ['/items/griffin_leather', '/items/chimerical_essence', '/items/shop_cloth'].map((hrid) => [`${hrid}:0`, 1000])
+);
+
 describe('priceCraftMaterials', () => {
     const valueDrop = (hrid) => ({ '/items/griffin_leather': 960 })[hrid] ?? null;
     const valueToken = (hrid) => ({ '/items/shop_cloth': 480 })[hrid] ?? null;
@@ -299,6 +305,7 @@ describe('priceCraftMaterials', () => {
             materials: [mat('/items/cheese', 10, 5), mat('/items/griffin_leather', 2, 1000)],
             index,
             ownedMode: OWNED_MODES.MARKET,
+            heldPool: plenty,
             valueDrop,
             valueToken,
         });
@@ -315,6 +322,7 @@ describe('priceCraftMaterials', () => {
             materials: [mat('/items/shop_cloth', 3, 9999)],
             index,
             ownedMode: OWNED_MODES.MARKET,
+            heldPool: plenty,
             valueDrop,
             valueToken,
         });
@@ -327,6 +335,7 @@ describe('priceCraftMaterials', () => {
             materials: [mat('/items/chimerical_essence', 4, 3)],
             index,
             ownedMode: OWNED_MODES.MARKET,
+            heldPool: plenty,
             valueDrop: () => null,
             valueToken: () => null,
         });
@@ -341,6 +350,7 @@ describe('priceCraftMaterials', () => {
             materials: [mat('/items/cheese', 1, 0, { missingPrice: true })],
             index,
             ownedMode: OWNED_MODES.MARKET,
+            heldPool: plenty,
             valueDrop,
             valueToken,
         });
@@ -356,6 +366,7 @@ describe('priceCraftMaterials', () => {
             ],
             index,
             ownedMode: OWNED_MODES.SUNK,
+            heldPool: plenty,
             valueDrop,
             valueToken,
         });
@@ -369,6 +380,7 @@ describe('priceCraftMaterials', () => {
             materials: [mat('/items/cheese', 1, 0, { missingPrice: true }), mat('/items/griffin_leather', 2, 1)],
             index,
             ownedMode: OWNED_MODES.SUNK,
+            heldPool: plenty,
             valueDrop,
             valueToken,
         });
@@ -380,6 +392,7 @@ describe('priceCraftMaterials', () => {
             materials: [mat('/items/chimerical_essence', 4, 0, { missingPrice: true })],
             index,
             ownedMode: OWNED_MODES.SUNK,
+            heldPool: plenty,
             valueDrop: () => null,
             valueToken: () => null,
         });
@@ -392,6 +405,7 @@ describe('priceCraftMaterials', () => {
             materials: [mat('/items/griffin_leather', 1, 1), mat('/items/griffin_leather', 3, 1)],
             index,
             ownedMode: OWNED_MODES.MARKET,
+            heldPool: plenty,
             valueDrop,
             valueToken,
         });
@@ -404,6 +418,7 @@ describe('priceCraftMaterials', () => {
             materials: [mat('/items/griffin_leather', 0.888, 1000, { baseAmount: 1 })],
             index,
             ownedMode: OWNED_MODES.MARKET,
+            heldPool: plenty,
             valueDrop,
             valueToken,
         });
@@ -421,6 +436,7 @@ describe('priceCraftMaterials', () => {
             materials: [mat('/items/griffin_leather', 1, 1)],
             index: both,
             ownedMode: OWNED_MODES.MARKET,
+            heldPool: plenty,
             valueDrop: () => null,
             valueToken: () => 700,
         });
@@ -872,6 +888,7 @@ describe('priceCraftMaterials with amountOf (Artisan worst case)', () => {
             materials: [line('/items/cheese', 8, 6.8, 5)],
             index: { drops: new Map(), tokenShop: new Map() },
             ownedMode: OWNED_MODES.MARKET,
+            heldPool: plenty,
             amountOf: () => 7,
         });
         expect(priced.costPerAction).toBe(35);
@@ -882,6 +899,7 @@ describe('priceCraftMaterials with amountOf (Artisan worst case)', () => {
             materials: [line('/items/griffin_leather', 2, 1.7, 1000)],
             index: { drops: new Map([['/items/griffin_leather', { dungeons: ['Den'] }]]), tokenShop: new Map() },
             ownedMode: OWNED_MODES.MARKET,
+            heldPool: plenty,
             valueDrop: () => 960,
             amountOf: () => 2,
         });
@@ -894,6 +912,7 @@ describe('priceCraftMaterials with amountOf (Artisan worst case)', () => {
             materials: [line('/items/cheese', 8, 6.8, 5)],
             index: { drops: new Map(), tokenShop: new Map() },
             ownedMode: OWNED_MODES.MARKET,
+            heldPool: plenty,
         });
         expect(priced.costPerAction).toBeCloseTo(34, 9);
     });
@@ -903,8 +922,246 @@ describe('priceCraftMaterials with amountOf (Artisan worst case)', () => {
             materials: [{ ...line('/items/cheese', 8, 6.8, 0), missingPrice: true }],
             index: { drops: new Map(), tokenShop: new Map() },
             ownedMode: OWNED_MODES.MARKET,
+            heldPool: plenty,
             amountOf: () => 7,
         });
         expect(priced.unpriced).toEqual([{ itemHrid: '/items/cheese', reason: 'input' }]);
+    });
+});
+
+describe('buildHeldPool', () => {
+    const stack = (itemHrid, count, enhancementLevel = 0, itemLocationHrid = '/item_locations/inventory') => ({
+        itemHrid,
+        count,
+        enhancementLevel,
+        itemLocationHrid,
+    });
+
+    test('no inventory loaded is null, not an empty pool', () => {
+        expect(buildHeldPool(null)).toBeNull();
+        expect(buildHeldPool(undefined)).toBeNull();
+        expect(buildHeldPool([])).toEqual(new Map());
+    });
+
+    test('only inventory stacks count, summed per item and level; equipped and empty stacks do not', () => {
+        const pool = buildHeldPool([
+            stack('/items/griffin_leather', 2),
+            stack('/items/griffin_leather', 3),
+            stack('/items/griffin_leather', 4, 3),
+            stack('/items/griffin_leather', 9, 0, '/item_locations/main_hand'),
+            stack('/items/cheese', 0),
+        ]);
+        expect(pool.get('/items/griffin_leather:0')).toBe(5);
+        expect(pool.get('/items/griffin_leather:3')).toBe(4);
+        expect(pool.has('/items/cheese:0')).toBe(false);
+    });
+});
+
+describe('priceCraftMaterials: what is held versus bought within one recipe', () => {
+    const valueDrop = (hrid) => ({ '/items/griffin_leather': 960 })[hrid] ?? null;
+    const valueToken = (hrid) => ({ '/items/shop_cloth': 480 })[hrid] ?? null;
+    const held = (count, hrid = '/items/griffin_leather') => new Map([[`${hrid}:0`, count]]);
+    const price = (over) =>
+        priceCraftMaterials({
+            materials: [mat('/items/griffin_leather', 2, 1000)],
+            index,
+            ownedMode: OWNED_MODES.MARKET,
+            valueDrop,
+            valueToken,
+            ...over,
+        });
+
+    test('2 needed, 1 held: one unit at the owned price, one at the buy price', () => {
+        const priced = price({ heldPool: held(1) });
+        expect(priced.costPerAction).toBe(960 + 1000);
+        expect(priced.dungeonInputs).toEqual([
+            expect.objectContaining({ amount: 1, unitValue: 960, via: 'sale', held: true }),
+            expect.objectContaining({ amount: 1, unitValue: 1000, via: 'buy', held: false }),
+        ]);
+        expect(priced.heldInputs).toEqual([
+            { itemHrid: '/items/griffin_leather', needed: 2, held: 1, bought: 1, stock: 1 },
+        ]);
+    });
+
+    test('0 held, an empty inventory: everything is bought', () => {
+        const priced = price({ heldPool: new Map() });
+        expect(priced.costPerAction).toBe(2000);
+        expect(priced.dungeonInputs.every((input) => !input.held)).toBe(true);
+    });
+
+    test('exactly enough, and more than enough: all owned, nothing bought', () => {
+        for (const count of [2, 50]) {
+            const priced = price({ heldPool: held(count) });
+            expect(priced.costPerAction).toBe(1920);
+            expect(priced.dungeonInputs).toEqual([expect.objectContaining({ amount: 2, held: true })]);
+            expect(priced.heldInputs[0]).toEqual(expect.objectContaining({ held: 2, bought: 0, stock: count }));
+        }
+    });
+
+    test('no inventory loaded holds nothing (the safe direction), and the pool handed in is not drawn down', () => {
+        const pool = held(5);
+        expect(price({ heldPool: null }).costPerAction).toBe(2000);
+        expect(price({ heldPool: pool }).costPerAction).toBe(1920);
+        expect(pool.get('/items/griffin_leather:0')).toBe(5);
+    });
+
+    test('one stack serves two lines of one recipe once, never twice', () => {
+        const priced = price({
+            materials: [mat('/items/griffin_leather', 1, 1000), mat('/items/griffin_leather', 2, 1000)],
+            heldPool: held(2),
+        });
+        // 3 needed, 2 held: 2 owned and 1 bought, not 3 owned
+        expect(priced.costPerAction).toBe(2 * 960 + 1000);
+        expect(priced.heldInputs).toEqual([
+            { itemHrid: '/items/griffin_leather', needed: 3, held: 2, bought: 1, stock: 2 },
+        ]);
+    });
+
+    test('a fractional (Artisan) amount splits fractionally', () => {
+        const priced = price({ materials: [mat('/items/griffin_leather', 1.7, 1000)], heldPool: held(1) });
+        expect(priced.costPerAction).toBeCloseTo(960 + 0.7 * 1000, 9);
+    });
+
+    test('an enhanced stack is not a +0 input', () => {
+        const priced = price({ heldPool: new Map([['/items/griffin_leather:3', 9]]) });
+        expect(priced.costPerAction).toBe(2000);
+    });
+
+    test('sunk: the held units are 0 and the shortfall is bought', () => {
+        const priced = price({ ownedMode: OWNED_MODES.SUNK, heldPool: held(1) });
+        expect(priced.costPerAction).toBe(1000);
+        expect(priced.dungeonInputs).toEqual([
+            expect.objectContaining({ amount: 1, unitValue: 0, sunk: true, held: true }),
+            expect.objectContaining({ amount: 1, unitValue: 1000, sunk: false, held: false }),
+        ]);
+    });
+
+    test('buy mode ignores a full inventory', () => {
+        const priced = price({ ownedMode: OWNED_MODES.BUY, heldPool: held(99) });
+        expect(priced.costPerAction).toBe(2000);
+        expect(priced.dungeonInputs).toEqual([expect.objectContaining({ amount: 2, via: 'buy', held: false })]);
+        expect(priced.heldInputs).toEqual([]);
+    });
+
+    test('the shortfall of a token-shop item takes the cheaper token route', () => {
+        const priced = price({
+            materials: [mat('/items/shop_cloth', 3, 9999)],
+            heldPool: held(1, '/items/shop_cloth'),
+            valueDrop: () => null,
+        });
+        // 1 held at its token value, 2 bought through tokens (cheaper than the 9999 ask)
+        expect(priced.costPerAction).toBe(3 * 480);
+    });
+
+    test('an unpriced shortfall makes the whole line unpriced, never a partial sum', () => {
+        const priced = price({
+            materials: [mat('/items/griffin_leather', 2, 0, { missingPrice: true })],
+            heldPool: held(1),
+        });
+        expect(priced.unpriced).toEqual([{ itemHrid: '/items/griffin_leather', reason: 'dungeon-input' }]);
+        expect(priced.dungeonInputs).toEqual([]);
+    });
+
+    test('an unpriced held part makes the whole line unpriced even when the shortfall has a price', () => {
+        const priced = price({ valueDrop: () => null, heldPool: held(1) });
+        expect(priced.unpriced).toEqual([{ itemHrid: '/items/griffin_leather', reason: 'dungeon-input' }]);
+    });
+
+    test('a line wholly held needs no buy price, and a line wholly bought needs no sale value', () => {
+        const noAsk = [mat('/items/griffin_leather', 2, 0, { missingPrice: true })];
+        expect(price({ materials: noAsk, heldPool: held(2) }).unpriced).toEqual([]);
+        expect(price({ valueDrop: () => null, heldPool: new Map() }).unpriced).toEqual([]);
+    });
+});
+
+describe('buildCraftEnhanceRow with a held base', () => {
+    const run = (cost, seconds = 20) => ({ cost, seconds, xp: 10, xpKnown: true });
+    const held = (over = {}) => ({
+        level: 3,
+        count: 1,
+        unitValue: 50,
+        via: 'sale',
+        enhance: run(100),
+        craftCostPerUnit: 40,
+        secondsPerUnit: 30,
+        otherNetPerUnit: 0,
+        craftXpPerUnit: 15,
+        ...over,
+    });
+    const via = (heldBases, over = {}) =>
+        row('ring', { over: { enhance: run(500), viaBase: run(300), baseHrid: '/items/ring', heldBases, ...over } });
+
+    test('a held base that is cheaper in craft plus enhancement wins and rates the target with its own figures', () => {
+        const built = via([held()]);
+        expect(built.route.route).toBe('held-base');
+        // Fresh best is 60 + 300 = 360; the held base is 40 + 100 = 140
+        expect(built.route.heldBase).toEqual(expect.objectContaining({ level: 3, total: 140, saved: 220 }));
+        expect(built.target.craftCostPerUnit).toBe(40);
+        expect(built.target.enhanceCost).toBe(100);
+        expect(built.target.craftXpPerHour).toBeCloseTo((15 * 3600) / (30 + 20), 6);
+    });
+
+    test('a held base never lowers the +0 figure', () => {
+        expect(via([held({ level: 3 })]).base).toEqual(via([]).base);
+    });
+
+    test('compared on craft plus enhancement: a cheap enhancement does not win when the base costs more', () => {
+        const built = via([held({ unitValue: 900, craftCostPerUnit: 900, enhance: run(10) })]);
+        expect(built.route.route).toBe('refine-base');
+        expect(built.target.craftCostPerUnit).toBe(60);
+    });
+
+    test('the cheapest of several held levels wins; a tie keeps the fresh route', () => {
+        const built = via([
+            held({ level: 1, enhance: run(250), craftCostPerUnit: 40 }),
+            held({ level: 4, enhance: run(30), craftCostPerUnit: 45 }),
+        ]);
+        expect(built.route.heldBase.level).toBe(4);
+        const tie = via([held({ enhance: run(300), craftCostPerUnit: 60 })]);
+        expect(tie.route.route).toBe('refine-base');
+    });
+
+    test('an unpriceable candidate is never chosen and never counts as free', () => {
+        expect(via([held({ enhance: null })]).route.route).toBe('refine-base');
+        expect(via([held({ craftCostPerUnit: null })]).route.route).toBe('refine-base');
+    });
+
+    test('when the fresh routes cannot be priced, a priceable held base is the answer and nothing was compared', () => {
+        const built = via([held()], { enhance: null, viaBase: null });
+        expect(built.route.route).toBe('held-base');
+        expect(built.route.heldBase.saved).toBeNull();
+        expect(built.target.status).toBe('ok');
+    });
+
+    test('an unpriced bought input does not block a held base, which was priced without it', () => {
+        const built = via([held()], {
+            priced: { costPerAction: 0, unpriced: [{ itemHrid: '/items/ring', reason: 'input' }], dungeonInputs: [] },
+        });
+        expect(built.route.route).toBe('held-base');
+        expect(built.base.status).toBe('unpriced');
+        expect(built.target.status).toBe('ok');
+    });
+
+    test('with no held base the row is as before', () => {
+        const built = via([]);
+        expect(built.route.route).toBe('refine-base');
+        expect(built.route.heldBase).toBeNull();
+    });
+
+    test('sunk hrids are listed once, and only for units actually counted', () => {
+        const built = row('ring', {
+            over: {
+                priced: {
+                    costPerAction: 0,
+                    unpriced: [],
+                    dungeonInputs: [
+                        { itemHrid: '/items/a', amount: 1, unitValue: 0, sunk: true, held: true },
+                        { itemHrid: '/items/a', amount: 1, unitValue: 5, sunk: false, held: false },
+                        { itemHrid: '/items/b', amount: 0, unitValue: 0, sunk: true, held: true },
+                    ],
+                },
+            },
+        });
+        expect(built.sunkInputs).toEqual(['/items/a']);
     });
 });

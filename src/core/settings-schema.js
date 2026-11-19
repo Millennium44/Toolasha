@@ -754,12 +754,12 @@ export const settingsGroups = {
                 type: 'select',
                 default: 'market',
                 options: [
-                    { value: 'market', label: 'Sale value after tax (you own them)' },
-                    { value: 'buy', label: 'Buy price, untaxed (you buy them)' },
-                    { value: 'sunk', label: 'Nothing (already owned, sunk)' },
+                    { value: 'market', label: 'Sale value after tax (the ones you hold)' },
+                    { value: 'buy', label: 'Buy price, untaxed (you buy them all)' },
+                    { value: 'sunk', label: 'Nothing (the ones you hold, sunk)' },
                 ],
                 requires: 'actions_craftEnhance',
-                help: 'How the window values dungeon drops and token-shop items in a recipe. Sale value after tax is what using something you own costs you (you could have sold it). Buy price is what buying it costs on the buy side of your pricing mode, with no tax; a token-shop item takes the cheaper of that and its token value. Nothing counts it as free, and rows that use it are badged "sunk". An input with no price at all is shown as missing in every mode.',
+                help: 'How the window values dungeon drops and token-shop items in a recipe. Within one recipe, the units you hold are counted as owned and any it needs beyond that are bought at the buy side of your pricing mode, with no tax (a token-shop item takes the cheaper of that and its token value). Sale value after tax is what using something you own costs you (you could have sold it). Nothing counts what you hold as free, and rows that use it are badged "sunk". Buy price ignores what you hold and buys every unit. A base item you already hold (at any level up to the target) can also be the start of a refined recipe. What you hold covers only as many crafts as it has copies for, so the hourly figure is a best case. An input with no price at all is shown as missing in every mode.',
             },
             actionPanel_bestCraftingPlan: {
                 id: 'actionPanel_bestCraftingPlan',
