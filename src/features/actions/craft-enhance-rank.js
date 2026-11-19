@@ -897,7 +897,7 @@ export function buildCraftEnhanceRow({
         // Each priced variant with its own finished route, for the volume cap (see capBestVariant)
         const variants = fullRated.map((pick) => {
             const own = finishRoute(pick);
-            return { ...pick.result, route: own.route, routeInfo: own };
+            return { ...pick.result, route: own.route, routeInfo: own, winner: pick === best };
         });
         return { ...best, route, variants };
     };

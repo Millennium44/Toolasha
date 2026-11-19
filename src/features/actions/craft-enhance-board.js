@@ -918,10 +918,28 @@ class CraftEnhanceBoard {
             : `Requires ${row.requiredLevel}, you are ${row.level} — not craftable yet`;
         tr.appendChild(level);
 
-        const inputNote = t.unpricedInputs.length
-            ? `No price for: ${t.unpricedInputs.map((input) => input.itemHrid.split('/').pop().replace(/_/g, ' ')).join(', ')}`
+        // Held to a measured volume, +N reports the best variant after the cap, the same one the Best cell uses. When
+        // that is not the uncapped winner every +N cell of the row describes the chosen run, marked as capped.
+        const targetEntry = (row.sweep || []).find((entry) => entry.level === target) || null;
+        const targetVolume = this.volumes.get(`${row.itemHrid}:${target}`);
+        const targetChoice = targetEntry ? capBestVariant(targetEntry, targetVolume) : null;
+        const switched = Boolean(targetChoice?.entry.routeInfo) && targetChoice.entry.winner === false;
+        const uncappedT = t;
+        const shownT = switched ? { ...t, ...targetChoice.entry } : t;
+        const shownRow = switched ? { ...row, route: targetChoice.entry.routeInfo } : row;
+        const markSwitched = (td) => {
+            if (!switched) return td;
+            td.style.color = MUTED;
+            td.setAttribute('data-ce-capped', 'true');
+            td.title = [td.title, 'Shown for the route that earns most once the market volume is counted.']
+                .filter(Boolean)
+                .join('\n');
+            return td;
+        };
+        const inputNote = shownT.unpricedInputs.length
+            ? `No price for: ${shownT.unpricedInputs.map((input) => input.itemHrid.split('/').pop().replace(/_/g, ' ')).join(', ')}`
             : '';
-        const craftCell = goldCell(t.craftCostPerUnit, inputNote, false);
+        const craftCell = goldCell(shownT.craftCostPerUnit, inputNote, false);
         // What the stack covers, for a cost that rests on held units: the next craft, not every craft of the hour
         const heldLines = (row.heldInputs || [])
             .filter((input) => input.held > 0)
@@ -932,38 +950,38 @@ class CraftEnhanceBoard {
                     `(${Math.round(input.bought * 100) / 100} bought); the stock is spread over that hour`
                 );
             });
-        if (heldLines.length > 0 && t.craftCostPerUnit !== null) craftCell.title = heldLines.join('\n');
-        tr.appendChild(craftCell);
+        if (heldLines.length > 0 && shownT.craftCostPerUnit !== null) craftCell.title = heldLines.join('\n');
+        tr.appendChild(markSwitched(craftCell));
         const enhanceCell = goldCell(
-            t.enhanceCost,
+            shownT.enhanceCost,
             'The enhancement run could not be priced (a material or protection has no price)',
             false
         );
-        if ((row.route?.route === 'refine-base' || row.route?.route === 'held-base') && t.enhanceCost !== null) {
+        if (
+            (shownRow.route?.route === 'refine-base' || shownRow.route?.route === 'held-base') &&
+            shownT.enhanceCost !== null
+        ) {
             const via = document.createElement('span');
             via.textContent =
-                row.route.route === 'held-base' ? ` via held +${row.route.heldBase?.level} base` : ' via base';
-            via.setAttribute('data-ce-route', row.route.route);
+                shownRow.route.route === 'held-base'
+                    ? ` via held +${shownRow.route.heldBase?.level} base`
+                    : ' via base';
+            via.setAttribute('data-ce-route', shownRow.route.route);
             via.style.cssText = `color: ${MUTED}; font-size: 10px;`;
             enhanceCell.appendChild(via);
         }
-        // Held to a measured volume, +N reports the best variant after the cap, the same one the Best cell uses
-        const targetEntry = (row.sweep || []).find((entry) => entry.level === target) || null;
-        const targetVolume = this.volumes.get(`${row.itemHrid}:${target}`);
-        const targetChoice = targetEntry ? capBestVariant(targetEntry, targetVolume) : null;
-        const shownRow = targetChoice?.entry.routeInfo ? { ...row, route: targetChoice.entry.routeInfo } : row;
         const routeNote = [routeTooltip(shownRow, target), selfCopyTooltip(shownRow)].filter(Boolean).join('\n');
         if (routeNote) enhanceCell.title = routeNote;
-        tr.appendChild(enhanceCell);
-        tr.appendChild(goldCell(t.saleAfterTax, `No real sell quote at +${target}`, false));
-        tr.appendChild(goldCell(t.profitPerUnit, reasonText(t)));
-        tr.appendChild(profitPerHourCell(t, targetVolume, target, targetEntry));
+        tr.appendChild(markSwitched(enhanceCell));
+        tr.appendChild(markSwitched(goldCell(shownT.saleAfterTax, `No real sell quote at +${target}`, false)));
+        tr.appendChild(markSwitched(goldCell(shownT.profitPerUnit, reasonText(shownT))));
+        tr.appendChild(profitPerHourCell(uncappedT, targetVolume, target, targetEntry));
         tr.appendChild(goldCell(b.profitPerUnit, reasonText(b)));
         // +0 is one of Best's candidate levels, so its volume is looked up too; until it lands +0 stays uncapped
         tr.appendChild(profitPerHourCell(b, this.volumes.get(`${row.itemHrid}:0`), 0));
         tr.appendChild(bestLevelCell(row, (lvl) => this.volumes.get(`${row.itemHrid}:${lvl}`)));
-        tr.appendChild(goldCell(t.craftXpPerHour, 'Not known', false));
-        tr.appendChild(goldCell(t.enhanceXpPerHour, 'Not known', false));
+        tr.appendChild(markSwitched(goldCell(shownT.craftXpPerHour, 'Not known', false)));
+        tr.appendChild(markSwitched(goldCell(shownT.enhanceXpPerHour, 'Not known', false)));
 
         const volume = this.volumes.get(`${row.itemHrid}:${target}`);
         const volumeCell = !volume
