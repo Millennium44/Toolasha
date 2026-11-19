@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Craft & Enhance shows each row's best level
+
+A new "Best +L" column names the level from +0 to your target that earns the most per hour, with every level's figure on hover.
+
+### Craft & Enhance profit per hour follows what the market trades
+
+Once a row's daily volume loads, Profit/hr is held to about a day's trades spread over the hour, shown muted with the uncapped figure on hover. Rows keep their order.
+
+### Craft & Enhance can protect with a copy you craft
+
+Protecting with a copy of the item itself now costs the cheaper of buying one and crafting one (with the extra craft's time and XP), and a row only takes it when it earns more per hour. A custom price you set for the item still wins.
+
 ### Craft & Enhance counts only the dungeon drops you hold
 
 The sale-value and sunk modes now apply only to the drops in your inventory, spread over an hour of crafts; anything an hour needs beyond that is priced at the buy price. A ★ recipe can also start from a base you already hold at its level ("via held +N base").
