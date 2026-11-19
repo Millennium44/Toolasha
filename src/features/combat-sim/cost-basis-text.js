@@ -305,6 +305,12 @@ export function compactCostLines(
         main(`Cost ${money(detail.net)}.`);
     }
 
+    // A refine the advisor weighed and passed over, so the player sees what refining their base would cost
+    for (const buy of detail.buys || []) {
+        const text = refineQuoteSentence(buy, (detail.buys || []).length > 1);
+        if (text) lines.push({ text, tone: 'main', plainText: true });
+    }
+
     if (detail.kept?.length) {
         const names = detail.kept.map((k) => `${k.name} +${k.enhancementLevel}`).join(', ');
         let resale = '';
@@ -321,6 +327,37 @@ export function compactCostLines(
     else if (route) lines.push({ text: route, tone: 'warn', plainText: true });
     for (const note of detail.ownershipNotes || []) lines.push({ text: note, tone: 'warn' });
     return lines;
+}
+
+/**
+ * One line on the refine a row passed over for a purchase: the materials (Artisan already taken off, as the
+ * refine price counts them), any enhancing after, and how much dearer it came out, the resale of a worn base
+ * it would use up included.
+ * @param {Object} buy - A `costDetail.buys` entry
+ * @param {boolean} named - Whether to name the piece (a row buying several)
+ * @returns {string} Plain text, empty when the buy carries no refine quote
+ */
+export function refineQuoteSentence(buy, named = false) {
+    const quote = buy?.refineQuote;
+    if (!quote || !Number.isFinite(quote.price)) return '';
+    const piece = named ? ` for ${buy.name}` : '';
+    let how;
+    if (quote.mirror) {
+        how = `mirror-build a base and refine it = ${money(quote.price)}`;
+    } else {
+        const where = quote.fromEquipped ? 'the one you wear' : 'your spare';
+        const parts = [...quote.lines];
+        if (quote.enhanceCost > 0) parts.push(`+${quote.fromLevel} → +${quote.toLevel} ${money(quote.enhanceCost)}`);
+        // The total is spelled out when the parts are several, or do not add up to it alone (a base another loadout
+        // wears is refined at its resale, which no part names)
+        const listed = (Number(quote.materialCost) || 0) + (Number(quote.enhanceCost) || 0);
+        const sum = parts.length !== 1 || Math.abs(listed - quote.price) > 0.5 ? ` = ${money(quote.price)}` : '';
+        how = `${where} +${quote.fromLevel}, ${parts.join(' + ') || 'materials'}${sum}`;
+        if (quote.forfeited > 0) how += `, and that +${quote.fromLevel} is not sold`;
+    }
+    const verdict =
+        quote.extra > 0 ? `${money(quote.extra)} more than buying` : 'no cheaper than buying, so the buy stands';
+    return `Refine instead${piece}: ${how}. ${verdict[0].toUpperCase()}${verdict.slice(1)}.`;
 }
 
 /** Route ids as the row names them */

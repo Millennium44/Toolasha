@@ -4222,6 +4222,32 @@ function removedPieces(candidate) {
 }
 
 /**
+ * The refine route that lost to buying, for the breakdown: what it would have spent, the resale of a worn base
+ * it would give up, and how much dearer that is than the buy, compared the way the choice was made.
+ * @param {Object} refine - From {@link resolveRefineRoute}
+ * @param {number} forfeited - Resale of the worn base the refine would use up
+ * @param {number} buyPrice - Price of the buy, before any resale credit
+ * @returns {{price: number, forfeited: number, extra: number, fromLevel: number, toLevel: number,
+ *   fromEquipped: boolean, materialCost: number, enhanceCost: number, lines: string[], mirror: boolean}}
+ */
+function refineQuoteOf(refine, forfeited, buyPrice) {
+    const ladder = refine.ladder || {};
+    const detail = ladder.refine || {};
+    return {
+        price: refine.price,
+        forfeited,
+        extra: refine.price + forfeited - buyPrice,
+        fromLevel: ladder.fromLevel,
+        toLevel: ladder.toLevel,
+        fromEquipped: Boolean(ladder.fromEquipped),
+        materialCost: detail.materialCost,
+        enhanceCost: detail.enhanceCost || 0,
+        lines: Array.isArray(detail.lines) ? detail.lines : [],
+        mirror: Boolean(detail.mirror),
+    };
+}
+
+/**
  * Resolve the buy price of an item at a given enhancement level: the cheaper, after resale, of refining
  * a base copy ({@link resolveRefineRoute}) and the ordinary route.
  * See {@link resolveUpgradeBuyPriceDirect} for the ordinary route's rules.
@@ -4245,6 +4271,9 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
             0
         );
         if (direct.price == null || refine.price + forfeited < direct.price) chosen = refine;
+        // The refine that lost, so the row can show what refining would have cost beside what it buys
+        // A ★ already held at the level costs nothing to buy, and there is no refine worth naming beside it
+        else if (direct.price > 0) chosen = { ...direct, refineQuote: refineQuoteOf(refine, forfeited, direct.price) };
     }
     // A refined target already weighs the mirror inside its refine route (on the unrefined base)
     if (itemHrid?.endsWith('_refined')) return chosen;
@@ -5389,7 +5418,7 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
     };
     if (candidate.addedSlots) {
         for (const item of Object.values(candidate.addedSlots)) {
-            const { price, source, enhanceSource, ladder, consumed } = resolveUpgradeBuyPrice(
+            const { price, source, enhanceSource, ladder, consumed, refineQuote } = resolveUpgradeBuyPrice(
                 item.hrid,
                 item.enhancementLevel || 0,
                 gameData,
@@ -5405,10 +5434,11 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
                 source,
                 enhanceSource,
                 ...(ladder ? { ladder } : {}),
+                ...(refineQuote ? { refineQuote } : {}),
             });
         }
     } else if (candidate.upgradeHrid) {
-        const { price, source, enhanceSource, ladder, consumed } = resolveUpgradeBuyPrice(
+        const { price, source, enhanceSource, ladder, consumed, refineQuote } = resolveUpgradeBuyPrice(
             candidate.upgradeHrid,
             candidate.upgradeLevel || 0,
             gameData,
@@ -5424,6 +5454,7 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
             source,
             enhanceSource,
             ...(ladder ? { ladder } : {}),
+            ...(refineQuote ? { refineQuote } : {}),
         });
     }
 

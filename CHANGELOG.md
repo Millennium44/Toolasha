@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sim rows show what refining would cost when buying wins
+
+A row that buys a ★ item while you hold a base the sim could refine now adds a line with the refine price (shards after Artisan, any enhancing after) and how much more it comes to, so a buy over a refine is explained.
+
 ### Combat sim Echo no longer repeats auto attacks
 
 Measured in game, Echo never repeats an auto attack, only ability casts (all targets of an area cast). The sim now matches, so Echo talismans are no longer overvalued for auto-attack builds.
