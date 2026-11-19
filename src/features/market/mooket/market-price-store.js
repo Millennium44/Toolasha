@@ -17,12 +17,21 @@
  * a read that cannot be made leaves the cache in hand rather than starting an
  * empty one that the next flush would write over the stored one, and a flush
  * folds the stored cache under memory — the newer reading of each item
- * winning — so a second tab's browsing is kept rather than overwritten.
+ * winning, and the newer depth of the two carried over — so a second tab's browsing is kept rather than overwritten.
  */
 
 import dataManager from '../../../core/data-manager.js';
 import { createPersistedRecord } from '../../../utils/persisted-record.js';
-import { entryFromBook, foldPrice, priceKey, specialPrice, pruneStale, PRICE_MAX_AGE_MS } from './market-prices.js';
+import {
+    entryFromBook,
+    foldPrice,
+    priceKey,
+    specialPrice,
+    pruneStale,
+    hasDepth,
+    withNewerDepth,
+    PRICE_MAX_AGE_MS,
+} from './market-prices.js';
 
 const STORAGE_KEY = 'mooketPrices';
 const SAVE_INTERVAL_MS = 60 * 1000;
@@ -38,7 +47,14 @@ function mergePrices(stored, memory) {
     const merged = { ...(stored && typeof stored === 'object' ? stored : {}) };
     for (const [key, entry] of Object.entries(memory && typeof memory === 'object' ? memory : {})) {
         const theirs = merged[key];
-        if (!theirs || !(theirs.at > (entry?.at ?? -Infinity))) merged[key] = entry;
+        const isObject = !!entry && typeof entry === 'object';
+        if (!theirs || !(theirs.at > (entry?.at ?? -Infinity))) {
+            merged[key] = isObject ? withNewerDepth(entry, theirs) : entry;
+        } else if (isObject) {
+            // The stored reading is newer, but this tab may have seen a book
+            // since the price it was laid over
+            merged[key] = withNewerDepth(theirs, entry);
+        }
     }
     return pruneStale(merged, Date.now() - PRICE_MAX_AGE_MS);
 }
@@ -164,6 +180,10 @@ class MarketPriceStore {
      * zero size as "depth unknown" and falls back to buying, so a wiped size
      * fails safe rather than force-crafting on stale depth.
      *
+     * The multi-level depth (`askLevels` / `bidLevels` / `depthAt`) is the
+     * opposite: a snapshot keeps the depth it is laid over, with its older
+     * `depthAt`, and readers check the levels against the current best price.
+     *
      * @param {Object} marketData - itemHrid -> { level: { a, b } }
      * @param {number} timestamp - When the snapshot was taken (ms)
      */
@@ -209,6 +229,30 @@ class MarketPriceStore {
         const special = specialPrice(itemHrid, (key) => this.entries[key], Date.now());
         if (special) return special;
         return this.entries[priceKey(itemHrid, enhancementLevel)] || null;
+    }
+
+    /**
+     * The order-book depth of one item, when a book has been seen.
+     *
+     * `depthAt` is when the book was read; the price in the same entry may be
+     * newer (see {@link get}). A caller must check `asks[0].price` / `bids[0].price`
+     * against the current best ask / bid before trusting the levels: when they
+     * differ the price has moved since `depthAt`.
+     *
+     * @param {string} itemHrid - Item
+     * @param {number} [enhancementLevel=0] - Enhancement level
+     * @returns {{asks: Array<{price: number, quantity: number}>, bids: Array<{price: number, quantity: number}>, depthAt: number}|null}
+     *   Best first; null when depth is unknown (never seen as a book, or stored
+     *   before depth was kept). An empty array is a side seen empty.
+     */
+    depthFor(itemHrid, enhancementLevel = 0) {
+        const entry = this.entries[priceKey(itemHrid, enhancementLevel)];
+        if (!hasDepth(entry)) return null;
+        return {
+            asks: entry.askLevels.map((level) => ({ price: level.price, quantity: level.quantity })),
+            bids: entry.bidLevels.map((level) => ({ price: level.price, quantity: level.quantity })),
+            depthAt: entry.depthAt,
+        };
     }
 
     /** @param {Function} listener - Called with the keys that changed */

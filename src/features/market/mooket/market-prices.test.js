@@ -3,7 +3,15 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { priceKey, topOfSide, entryFromBook, foldPrice, specialPrice, pruneStale } from './market-prices.js';
+import {
+    priceKey,
+    topOfSide,
+    entryFromBook,
+    foldPrice,
+    specialPrice,
+    pruneStale,
+    levelsOfSide,
+} from './market-prices.js';
 
 describe('priceKey', () => {
     test('an enhanced item is its own market', () => {
@@ -32,7 +40,16 @@ describe('topOfSide', () => {
 describe('entryFromBook', () => {
     test('both sides and their sizes', () => {
         const book = { asks: [{ price: 120, quantity: 3 }], bids: [{ price: 100, quantity: 800 }] };
-        expect(entryFromBook(book, 5)).toEqual({ ask: 120, bid: 100, askQty: 3, bidQty: 800, at: 5 });
+        expect(entryFromBook(book, 5)).toEqual({
+            ask: 120,
+            bid: 100,
+            askQty: 3,
+            bidQty: 800,
+            at: 5,
+            askLevels: [{ price: 120, quantity: 3 }],
+            bidLevels: [{ price: 100, quantity: 800 }],
+            depthAt: 5,
+        });
     });
 });
 
@@ -131,5 +148,77 @@ describe('pruneStale', () => {
     test('drops what has not been seen since the cutoff', () => {
         const entries = { a: { at: 100 }, b: { at: 300 }, c: {} };
         expect(Object.keys(pruneStale(entries, 200))).toEqual(['b']);
+    });
+});
+
+describe('book depth', () => {
+    const book = {
+        asks: [
+            { listingId: 1, price: 100, quantity: 5 },
+            { listingId: 2, price: 100, quantity: 7 },
+            { listingId: 3, price: 110, quantity: 1 },
+            { listingId: 4, price: 120, quantity: 2 },
+            { listingId: 5, price: 130, quantity: 3 },
+            { listingId: 6, price: 140, quantity: 4 },
+            { listingId: 7, price: 150, quantity: 9 },
+        ],
+        bids: [],
+    };
+
+    test('a book keeps up to five price levels per side, one per price, with depthAt', () => {
+        const entry = entryFromBook(book, 500);
+        expect(entry.askLevels).toEqual([
+            { price: 100, quantity: 12 },
+            { price: 110, quantity: 1 },
+            { price: 120, quantity: 2 },
+            { price: 130, quantity: 3 },
+            { price: 140, quantity: 4 },
+        ]);
+        // seen and empty, which is not the same as unknown
+        expect(entry.bidLevels).toEqual([]);
+        expect(entry.depthAt).toBe(500);
+        expect(entry).toMatchObject({ ask: 100, askQty: 12, bid: -1, bidQty: 0, at: 500 });
+    });
+
+    test('a repeated price later in the book joins its level and does not take a slot', () => {
+        const orders = [
+            { price: 10, quantity: 1 },
+            { price: 20, quantity: 1 },
+            { price: 10, quantity: 2 },
+        ];
+        expect(levelsOfSide(orders, 2)).toEqual([
+            { price: 10, quantity: 3 },
+            { price: 20, quantity: 1 },
+        ]);
+    });
+
+    test('a newer reading with a book replaces the depth', () => {
+        const old = foldPrice(undefined, entryFromBook(book, 100));
+        const next = foldPrice(old, entryFromBook({ asks: [{ price: 90, quantity: 1 }], bids: [] }, 200));
+        expect(next.askLevels).toEqual([{ price: 90, quantity: 1 }]);
+        expect(next.depthAt).toBe(200);
+    });
+
+    test('a newer sizeless sighting keeps the older depth and its older depthAt', () => {
+        const old = foldPrice(undefined, entryFromBook(book, 100));
+        const next = foldPrice(old, { ask: 105, bid: 80, askQty: 0, bidQty: 0, at: 300 });
+        expect(next).toMatchObject({ ask: 105, bid: 80, askQty: 0, at: 300, depthAt: 100 });
+        expect(next.askLevels).toEqual(old.askLevels);
+        expect(next.bidLevels).toEqual([]);
+    });
+
+    test('a sizeless sighting over an entry with no depth leaves depth unknown, not empty', () => {
+        const before = { ask: 1, bid: 1, askQty: 0, bidQty: 0, at: 1 };
+        const next = foldPrice(before, { ask: 2, bid: 1, askQty: 0, bidQty: 0, at: 2 });
+        expect(next.askLevels).toBeUndefined();
+        expect(next.depthAt).toBeUndefined();
+    });
+
+    test('a cowbell quoted from the bag carries no depth', () => {
+        const bag = { ...entryFromBook({ asks: [{ price: 1000, quantity: 3 }], bids: [] }, 5), rise: 0 };
+        const quote = specialPrice('/items/cowbell', () => bag, 9);
+        expect(quote.ask).toBe(100);
+        expect(quote.askLevels).toBeUndefined();
+        expect(quote.depthAt).toBeUndefined();
     });
 });

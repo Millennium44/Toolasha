@@ -326,3 +326,79 @@ describe('a teardown landing inside the first read', () => {
         expect(vi.getTimerCount()).toBe(timersBefore);
     });
 });
+
+describe('depthFor', () => {
+    const send = (itemHrid, orderBooks) =>
+        dataManagerMock.handlers['market_item_order_books_updated']({ marketItemOrderBooks: { itemHrid, orderBooks } });
+
+    test('an enhanced level reads its own depth, capped at five, with duplicate prices joined', () => {
+        const asks = [100, 100, 101, 102, 103, 104, 105].map((price, i) => ({ listingId: i, price, quantity: 2 }));
+        send('/items/sword', [
+            { asks: [{ price: 5, quantity: 1 }], bids: [] },
+            { asks, bids: [] },
+        ]);
+
+        const depth = marketPriceStore.depthFor('/items/sword', 1);
+        expect(depth.asks).toHaveLength(5);
+        expect(depth.asks[0]).toEqual({ price: 100, quantity: 4 });
+        expect(depth.bids).toEqual([]);
+        expect(depth.depthAt).toBe(Date.now());
+        expect(marketPriceStore.depthFor('/items/sword', 0).asks).toEqual([{ price: 5, quantity: 1 }]);
+    });
+
+    test('an entry with no levels (written by an older build) reads as unknown, never empty', () => {
+        marketPriceStore.entries['/items/old:0'] = { ask: 5, bid: 4, askQty: 2, bidQty: 1, at: Date.now() };
+        expect(marketPriceStore.depthFor('/items/old', 0)).toBeNull();
+        expect(marketPriceStore.depthFor('/items/never-seen', 0)).toBeNull();
+        expect(marketPriceStore.get('/items/old', 0)).toMatchObject({ ask: 5, askQty: 2 });
+    });
+
+    test('a snapshot over a book keeps the depth and its older depthAt', () => {
+        send('/items/plank', [{ asks: [{ price: 60, quantity: 200 }], bids: [{ price: 50, quantity: 4 }] }]);
+        const seen = Date.now();
+        marketPriceStore.ingestSnapshot({ '/items/plank': { 0: { a: 61, b: 51 } } }, seen + 1000);
+
+        expect(marketPriceStore.get('/items/plank', 0)).toMatchObject({ ask: 61, askQty: 0, at: seen + 1000 });
+        const depth = marketPriceStore.depthFor('/items/plank', 0);
+        expect(depth.asks).toEqual([{ price: 60, quantity: 200 }]);
+        expect(depth.depthAt).toBe(seen);
+    });
+
+    test('a flush folding in another tab keeps the newer depth even when the price is older', async () => {
+        send('/items/cheese', [{ asks: [{ price: 100, quantity: 1 }], bids: [] }]);
+        const seen = Date.now();
+        // The other tab: a later sizeless price over the same item, no depth
+        storageMock.saved.mooketPrices = {
+            '/items/cheese:0': { ask: 120, bid: 0, askQty: 0, bidQty: 0, at: seen + 60_000 },
+        };
+        marketPriceStore.dirty = true;
+        await marketPriceStore.flush();
+
+        const saved = storageMock.saved.mooketPrices['/items/cheese:0'];
+        expect(saved).toMatchObject({ ask: 120, at: seen + 60_000, depthAt: seen });
+        expect(saved.askLevels).toEqual([{ price: 100, quantity: 1 }]);
+    });
+
+    test('a flush keeps the other tab newer book over this tab older one', async () => {
+        send('/items/cheese', [{ asks: [{ price: 100, quantity: 1 }], bids: [] }]);
+        const later = Date.now() + 60_000;
+        storageMock.saved.mooketPrices = {
+            '/items/cheese:0': {
+                ask: 90,
+                bid: 80,
+                askQty: 3,
+                bidQty: 1,
+                at: later,
+                askLevels: [{ price: 90, quantity: 3 }],
+                bidLevels: [{ price: 80, quantity: 1 }],
+                depthAt: later,
+            },
+        };
+        marketPriceStore.dirty = true;
+        await marketPriceStore.flush();
+
+        const saved = storageMock.saved.mooketPrices['/items/cheese:0'];
+        expect(saved.depthAt).toBe(later);
+        expect(saved.askLevels).toEqual([{ price: 90, quantity: 3 }]);
+    });
+});

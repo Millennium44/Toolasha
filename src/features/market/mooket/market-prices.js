@@ -17,6 +17,21 @@
  * lasts only until the next snapshot re-reads that item. Consumers that need
  * depth must treat a zero size as "unknown", not "none listed".
  *
+ * Depth. Beyond the top level, an entry from an order book also keeps up to
+ * {@link DEPTH_LEVELS} price levels per side (`askLevels` / `bidLevels`, best
+ * first, each `{price, quantity}` with the quantities of one price summed) and
+ * `depthAt`, the time of the book they came from. `at` is the age of the
+ * price; `depthAt` is the age of the depth, and the two differ whenever a
+ * sizeless sighting (a marketplace.json snapshot) has refreshed the price over
+ * an older book: the depth is kept, with its older `depthAt`.
+ *
+ * Absent `askLevels`/`bidLevels` means depth UNKNOWN (an entry written before
+ * this field existed, or never seen as a book); an empty array means the book
+ * was seen and that side was empty. Readers must also check that `levels[0].price`
+ * equals the entry's current best (`ask` / `bid`) before trusting the depth:
+ * when it does not, the price has moved since `depthAt` and the levels describe
+ * a book that is gone. Use `depthFor` on the store to read it.
+ *
  * Pure: entries in, entries out. Storage and sockets live in the feature module.
  */
 
@@ -50,16 +65,87 @@ export function topOfSide(orders) {
     return { price, quantity };
 }
 
+/** Price levels kept per side of a book */
+export const DEPTH_LEVELS = 5;
+
+/**
+ * The first levels of one side, in the order the game sends them (best
+ * first), with the quantities of orders at one price summed.
+ * @param {Array<Object>} orders - Orders, best first
+ * @param {number} [max=DEPTH_LEVELS] - Levels to keep
+ * @returns {Array<{price: number, quantity: number}>} Empty for an empty side
+ */
+export function levelsOfSide(orders, max = DEPTH_LEVELS) {
+    const levels = [];
+    const seen = new Map();
+    for (const order of Array.isArray(orders) ? orders : []) {
+        if (!order || !Number.isFinite(order.price)) continue;
+        const quantity = Math.max(0, Number(order.quantity) || 0);
+        const held = seen.get(order.price);
+        if (held) {
+            held.quantity += quantity;
+        } else if (levels.length < max) {
+            const level = { price: order.price, quantity };
+            seen.set(order.price, level);
+            levels.push(level);
+        }
+    }
+    return levels;
+}
+
+/**
+ * Whether a stored list of levels is one a reader can use.
+ * @param {*} levels - Candidate
+ * @returns {boolean}
+ */
+function validLevels(levels) {
+    return (
+        Array.isArray(levels) &&
+        levels.every((level) => level && Number.isFinite(level.price) && Number.isFinite(level.quantity))
+    );
+}
+
+/**
+ * Whether an entry carries depth: both sides present and a time for it.
+ * @param {Object|null|undefined} entry - A stored entry
+ * @returns {boolean}
+ */
+export function hasDepth(entry) {
+    return !!entry && validLevels(entry.askLevels) && validLevels(entry.bidLevels) && Number.isFinite(entry.depthAt);
+}
+
 /**
  * Fold one order book into an entry.
  * @param {Object|null} book - { asks, bids }
  * @param {number} at - Timestamp (ms)
- * @returns {Object} { ask, bid, askQty, bidQty, at }
+ * @returns {Object} { ask, bid, askQty, bidQty, at, askLevels, bidLevels, depthAt }
  */
 export function entryFromBook(book, at) {
     const ask = topOfSide(book?.asks);
     const bid = topOfSide(book?.bids);
-    return { ask: ask.price, bid: bid.price, askQty: ask.quantity, bidQty: bid.quantity, at };
+    return {
+        ask: ask.price,
+        bid: bid.price,
+        askQty: ask.quantity,
+        bidQty: bid.quantity,
+        at,
+        askLevels: levelsOfSide(book?.asks),
+        bidLevels: levelsOfSide(book?.bids),
+        depthAt: at,
+    };
+}
+
+/**
+ * Give a winning entry the depth of another when the other's is newer or the
+ * winner has none. Never invents depth, and never mutates.
+ * @param {Object} winner - The entry being kept
+ * @param {Object|undefined} other - The entry it replaces
+ * @returns {Object} winner, or a copy carrying other's depth
+ */
+export function withNewerDepth(winner, other) {
+    if (!hasDepth(other)) return winner;
+    if (hasDepth(winner) && winner.depthAt >= other.depthAt) return winner;
+    return { ...winner, askLevels: other.askLevels, bidLevels: other.bidLevels, depthAt: other.depthAt };
 }
 
 /**
@@ -114,7 +200,10 @@ export function foldPrice(existing, next) {
         }
     }
 
-    return { ...next, rise, riseSpanMs };
+    // A reading with a book replaces the depth. One without (a pooled sighting
+    // carries no sizes) keeps the depth it is laid over, with its older depthAt.
+    const folded = { ...next, rise, riseSpanMs };
+    return hasDepth(next) ? folded : withNewerDepth(folded, existing);
 }
 
 /**
@@ -135,7 +224,12 @@ export function specialPrice(itemHrid, lookup, at) {
     if (itemHrid === '/items/cowbell') {
         const bag = lookup(priceKey('/items/bag_of_10_cowbells'));
         if (!bag) return null;
-        return { ...bag, ask: bag.ask / 10, bid: bag.bid / 10 };
+        // Depth is the bag's book, in bags and at the bag's prices: not a cowbell's
+        const rest = { ...bag };
+        delete rest.askLevels;
+        delete rest.bidLevels;
+        delete rest.depthAt;
+        return { ...rest, ask: bag.ask / 10, bid: bag.bid / 10 };
     }
 
     return null;
