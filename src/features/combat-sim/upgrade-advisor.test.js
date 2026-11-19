@@ -8794,6 +8794,27 @@ describe('a forced gear row for a piece the character already owns', () => {
         expect(planWithinBudget(rows, 1e12, { singleLoadout: true }).picks).toHaveLength(1);
     });
 
+    test('an enhancement row met by the only worn copy clashes with one that enhances that copy', () => {
+        // Codex on #1045: a worn +4 alone; one loadout asks +3 (already met by it), another +5 (enhances it)
+        held.items = [copy(4, '/item_locations/back')];
+        const enh = (level) => ({
+            type: 'enhancement',
+            slot: BACK,
+            currentHrid: CAPE,
+            currentLevel: 4,
+            upgradeHrid: CAPE,
+            upgradeLevel: level,
+        });
+        const met = explainUpgradeCost(enh(3), buildGameData()).ladder;
+        expect(met).toMatchObject({ alreadyHeld: true, fromLevel: 4, fromEquipped: true });
+        expect(explainUpgradeCost(enh(5), buildGameData()).ladder).toMatchObject({ fromLevel: 4, fromEquipped: true });
+        const rows = [asRow('met', BACK, enh(3)), asRow('up', NECK, enh(5))];
+        expect(planWithinBudget(rows, 1e12, { singleLoadout: true }).picks).toHaveLength(1);
+        const pinned = planWithinBudget(rows, 1e12, { singleLoadout: true, required: rows.map(candidateKey) });
+        expect(pinned.picks).toEqual([]);
+        expect(pinned.blocked[0].kind).toBe('conflict');
+    });
+
     test('a copy the row itself takes off is not counted as a spare for another row', () => {
         held.items = [copy(7, '/item_locations/inventory'), copy(7, '/item_locations/inventory')];
         const selling = forced(7, { labArmor: false, removedItems: [{ hrid: CAPE, enhancementLevel: 7 }] });
