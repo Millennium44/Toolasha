@@ -23,6 +23,9 @@ import { chatStampToDate, dashStampDayFirst } from '../../utils/locale-date-orde
 import performanceMonitor from '../../utils/performance-monitor.js';
 import { runInBackground } from '../../utils/background-work.js';
 
+// Waits before each re-read of a run history storage would not give up (then it stops until the next chat pass)
+const HISTORY_RETRY_DELAYS_MS = [2000, 8000, 30000];
+
 class DungeonTrackerChatAnnotations {
     constructor() {
         this.enabled = true;
@@ -53,6 +56,9 @@ class DungeonTrackerChatAnnotations {
         this._loadChain = null; // Loads run one at a time, never two at once
         this._loadsInFlight = 0;
         this._startupLoad = null; // The load deferred behind feature startup, until it settles
+        this._retryTimer = null; // Timer for the next re-read of an unreadable history
+        this._retryAttempt = 0; // How many of HISTORY_RETRY_DELAYS_MS this failure streak has used
+        this._failureLogged = false; // The warning is written once per failure streak, not once per pass
         this.timerRegistry = createTimerRegistry();
         this.tabClickHandlers = new Map(); // Store tab click handlers for cleanup
         this._pendingAnnotateTimeout = null; // Debounce timer for annotateAllMessages
@@ -140,22 +146,23 @@ class DungeonTrackerChatAnnotations {
      * @returns {Promise<boolean>} True when the stored runs were really read and seeded; false when they could
      *   not be read, or the state was torn down while reading
      */
-    loadRunCountsFromStorage() {
+    loadRunCountsFromStorage(fromRetry = false) {
         this._loadsInFlight += 1;
-        const run = () => this._loadRunCounts().finally(() => (this._loadsInFlight -= 1));
+        const run = () => this._loadRunCounts(fromRetry).finally(() => (this._loadsInFlight -= 1));
         this._loadChain = (this._loadChain || Promise.resolve()).then(run, run);
         return this._loadChain;
     }
 
     /** @private */
-    async _loadRunCounts() {
+    async _loadRunCounts(fromRetry = false) {
         const generation = this._generation;
         try {
             // Mend the runs a mm/dd-vs-dd/mm chat-stamp misread mangled — once
             // ever, and before the scrub, so a run that can be put right is not
             // thrown away as an outlier first
             const repaired = await dungeonTrackerStorage.repairSwappedDateRuns();
-            if (generation !== this._generation || repaired === null) return false;
+            if (generation !== this._generation) return false;
+            if (repaired === null) return this._historyUnreadable(generation, fromRetry);
 
             // Scrub outlier runs before seeding averages
             await dungeonTrackerStorage.scrubOutlierRuns();
@@ -165,10 +172,7 @@ class DungeonTrackerChatAnnotations {
             // would number every chat run from #1 and mark the messages processed
             const allRuns = await dungeonTrackerStorage.getAllRunsOrNull();
             if (generation !== this._generation) return false;
-            if (!allRuns) {
-                console.warn('[Dungeon Tracker] Run history could not be read; chat runs are not numbered yet');
-                return false;
-            }
+            if (!allRuns) return this._historyUnreadable(generation, fromRetry);
 
             // Group runs by statsKey (teamKey::dungeonName), sorted oldest→newest
             const groupedRuns = {};
@@ -238,12 +242,69 @@ class DungeonTrackerChatAnnotations {
             this.forgetChatRunsClearedBefore(dungeonTrackerStorage.clearedAt?.() ?? 0);
 
             this.initComplete = true;
+            this._endFailureStreak();
             return true;
         } catch (error) {
             // Not complete: a pass must not number from a history it never read. The next pass retries.
             console.error('[Dungeon Tracker] Failed to load run counts from storage:', error);
-            return false;
+            return generation === this._generation ? this._scheduleHistoryRetry(generation, fromRetry) : false;
         }
+    }
+
+    /**
+     * The stored history could not be read. Warns once per failure streak and arms a bounded retry.
+     * @param {number} generation - The state the failed load belonged to
+     * @param {boolean} fromRetry - Whether the failed load was itself a timed retry
+     * @returns {boolean} Always false: the history is not loaded
+     * @private
+     */
+    _historyUnreadable(generation, fromRetry) {
+        if (!this._failureLogged) {
+            this._failureLogged = true;
+            console.warn('[Dungeon Tracker] Run history could not be read; chat runs are not numbered yet');
+        }
+        return this._scheduleHistoryRetry(generation, fromRetry);
+    }
+
+    /**
+     * Arm the next re-read (2 s, 8 s, 30 s), or stop once the ladder is spent. A load the next chat pass starts
+     * (not a timed retry) that fails again after the ladder is spent starts it over.
+     * @param {number} generation - The state the failed load belonged to
+     * @param {boolean} fromRetry - Whether the failed load was itself a timed retry
+     * @returns {boolean} Always false
+     * @private
+     */
+    _scheduleHistoryRetry(generation, fromRetry) {
+        if (generation !== this._generation || this._retryTimer !== null) return false;
+        if (this._retryAttempt >= HISTORY_RETRY_DELAYS_MS.length && !fromRetry) this._retryAttempt = 0;
+        const delay = HISTORY_RETRY_DELAYS_MS[this._retryAttempt];
+        if (delay === undefined) return false;
+        this._retryAttempt += 1;
+        const characterId = this.currentCharacterId();
+        this._retryTimer = this.timerRegistry.scheduleTimeout(() => {
+            this._retryTimer = null;
+            const retry = async () => {
+                if (generation !== this._generation || this.currentCharacterId() !== characterId) return;
+                if (this.initComplete || !this.enabled || !config.getSetting('dungeonTrackerChatAnnotations')) return;
+                if (!config.isFeatureEnabled('dungeonTracker')) return;
+                const loaded = await this.loadRunCountsFromStorage(true);
+                if (!loaded || generation !== this._generation || this.currentCharacterId() !== characterId) return;
+                // Nothing else prompts a pass now, so label the messages that were waiting on this history
+                await this.annotateAllMessages();
+            };
+            retry().catch((error) => console.error('[Dungeon Tracker] Run history retry failed:', error));
+        }, delay);
+        return false;
+    }
+
+    /** @private */
+    _endFailureStreak() {
+        if (this._retryTimer !== null) {
+            this.timerRegistry.cancelTimeout(this._retryTimer);
+            this._retryTimer = null;
+        }
+        this._retryAttempt = 0;
+        this._failureLogged = false;
     }
 
     /**
@@ -1490,6 +1551,9 @@ class DungeonTrackerChatAnnotations {
         // A load still reading belongs to the state being torn down
         this._generation += 1;
         this._startupLoad = null;
+        this._retryTimer = null; // clearAll() above already cancelled it
+        this._retryAttempt = 0;
+        this._failureLogged = false;
 
         // Clear cached state
         this.lastSeenDungeonName = null;
