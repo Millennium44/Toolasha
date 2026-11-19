@@ -6,6 +6,7 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
+import { createPathStepper, installPointerShield } from './labyrinth-path-stepper.js';
 import webSocketHook from '../../core/websocket.js';
 import marketAPI from '../../api/marketplace.js';
 import {
@@ -295,6 +296,7 @@ class LabyrinthClearRate {
             }),
             // The stepper is built with the toolbar, which stays up while the setting flips
             config.onSettingChange('labyrinthGridScaleControl', () => this.syncGridSizeControl()),
+            config.onSettingChange('labyrinthPathStepper', () => this.syncStepButtons()),
             // The four beacon planner settings are also editable from the Settings
             // page, which does not go through the toolbar's handlers
             ...BEACON_PLANNER_SETTINGS.map((key) =>
@@ -777,6 +779,7 @@ class LabyrinthClearRate {
             document.querySelectorAll(`.${LIVE_PROGRESS_CLASS}`).forEach((el) => el.remove());
             this.clearPathOverlays();
             this.clearBeaconOverlays();
+            this.disposeStepper();
             this.cancelAutoPath();
             this.pathCalcRunning = false;
             this._pathQueued = false;
@@ -983,6 +986,7 @@ class LabyrinthClearRate {
         // Kept whole, not just the grid: the run's supply stock rides this
         // message, and the readout has to be able to look for it
         this._labyrinth = data.labyrinth ?? null;
+        this._stepper?.notifyUpdated();
         this._pathData = data.labyrinth?.pathData ?? null;
         this.recordOutcomes(data.labyrinth);
         const previousFloor = this.currentFloor;
@@ -993,6 +997,7 @@ class LabyrinthClearRate {
             this.injectOverlays();
             this.pruneClearedPathOverlays();
             this.pruneUsedBeaconOverlays();
+            this.refreshStepButtons();
             // Not on a floor change: the overlays are about to be wiped with the old floor
             if (previousFloor === this.currentFloor) this.refreshRevealedPathOverlays();
             if (previousFloor !== this.currentFloor) {
@@ -3881,6 +3886,155 @@ class LabyrinthClearRate {
         // running path rather than an idle button whose press cancels the wait
         this.syncTileCalcButton();
         this.setPathButtonRunning(!!this.pathCalcRunning);
+        this.syncStepButtons();
+    }
+
+    /**
+     * Keep the rooms the Shroud step carries out. The one place the plan is written: the Path press (manual or
+     * auto) draws it, and a reveal that re-judges a guessed room amends it through here too.
+     * @param {number} cols - Grid width the indexes are in
+     * @param {number[]} indexes - Route rooms that cost a shroud
+     */
+    storeShroudStepPlan(cols, indexes, route = indexes) {
+        this._shroudStepPlan = {
+            order: new Map([...route].map((idx, n) => [idx, n])),
+            floor: this.currentFloor,
+            characterId: dataManager.getCurrentCharacterId() ?? null,
+            cols,
+            targets: indexes.map((idx) => ({ idx })),
+        };
+        this.refreshStepButtons();
+    }
+
+    /** The drawn beacon plan; setting it (or clearing it) redraws the step buttons */
+    get _beaconPlanCells() {
+        return this._beaconPlanCellsValue ?? null;
+    }
+
+    set _beaconPlanCells(value) {
+        this._beaconPlanCellsValue = value;
+        this.refreshStepButtons();
+    }
+
+    /** The stepper behind the Shroud and Beacon step buttons, made on first use */
+    getStepper() {
+        if (!this._stepper) {
+            this._stepper = createPathStepper({
+                getPlan: (kind) => (kind === 'shroud' ? this._shroudStepPlan || null : this.currentBeaconStepPlan()),
+                getCharacterId: () => dataManager.getCurrentCharacterId() ?? null,
+                setStatus: (text, warn) => this.setTileStatus(text, !!warn),
+                onChange: () => this.refreshStepButtons(),
+            });
+        }
+        return this._stepper;
+    }
+
+    /** Drop the stepper and its plans; run on teardown and when the setting goes off */
+    disposeStepper() {
+        this._stepper?.dispose();
+        this._stepper = null;
+        this._stepShieldOff?.();
+        this._stepShieldOff = null;
+        this._shroudStepPlan = null;
+        this._beaconStepPlan = null;
+        document
+            .querySelectorAll('.mwi-labyrinth-step-shroud, .mwi-labyrinth-step-beacon')
+            .forEach((el) => el.remove());
+    }
+
+    /**
+     * The beacon plan the Beacon step button carries out: the centers drawn on the map that are for now
+     * (not "later") and not yet revealed. One object per drawn plan, so beacons already pressed stay marked.
+     * @returns {Object|null}
+     */
+    currentBeaconStepPlan() {
+        const source = this._beaconPlanCells;
+        let plan = this._beaconStepPlan;
+        if (!source) {
+            if (!plan || plan.floor !== this.currentFloor) return null;
+            plan.targets = [];
+            plan.later = [];
+            return plan;
+        }
+        if (!plan || plan.source !== source) {
+            const cols = Array.isArray(this.roomData?.[0])
+                ? this.roomData[0].length
+                : labyrinthGridSize(this.currentFloor);
+            plan = this._beaconStepPlan = {
+                source,
+                floor: this.currentFloor,
+                characterId: dataManager.getCurrentCharacterId() ?? null,
+                cols,
+                targets: [],
+                later: [],
+                planned: source.centers.length,
+                placed: new Set(),
+            };
+        }
+        const named = source.centers.map((c, i) => ({
+            idx: c.idx,
+            label: c.label || `B${i + 1}`,
+            later: !!c.later,
+            watch: c.watch || [],
+        }));
+        plan.targets = named.filter((c) => !c.later);
+        plan.later = named.filter((c) => c.later);
+        return plan;
+    }
+
+    /** Add or remove the two step buttons to match `labyrinthPathStepper`; redraw their labels */
+    syncStepButtons() {
+        const on = config.getSetting('labyrinthPathStepper');
+        for (const [kind, anchorClass, color] of [
+            ['shroud', `${TILE_CONTROLS_CLASS}-path-button`, '#c0392b'],
+            ['beacon', `${TILE_CONTROLS_CLASS}-beacon-button`, '#16806a'],
+        ]) {
+            const cls = `mwi-labyrinth-step-${kind}`;
+            const existing = document.querySelector(`.${cls}`);
+            const anchor = document.querySelector(`.${anchorClass}`);
+            if (!on || !anchor) {
+                existing?.remove();
+                continue;
+            }
+            if (existing) continue;
+            const btn = document.createElement('button');
+            btn.className = cls;
+            btn.style.cssText =
+                `min-width:44px; min-height:20px; padding:0 8px; border:0; border-radius:5px; background:${color}; ` +
+                'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+            // The stepper presses the game on its own next task, after this handler has returned
+            btn.addEventListener('click', () => {
+                void this.getStepper().press(kind);
+            });
+            anchor.after(btn);
+        }
+        if (!on) {
+            this._stepper?.dispose();
+            this._stepper = null;
+            this._stepShieldOff?.();
+            this._stepShieldOff = null;
+            this._shroudStepPlan = null;
+            this._beaconStepPlan = null;
+        } else if (!this._stepShieldOff) {
+            this._stepShieldOff = installPointerShield();
+        }
+        this.refreshStepButtons();
+    }
+
+    /** Redraw the step buttons' labels from the live panel */
+    refreshStepButtons() {
+        if (!config.getSetting('labyrinthPathStepper')) return;
+        for (const kind of ['shroud', 'beacon']) {
+            const btn = document.querySelector(`.mwi-labyrinth-step-${kind}`);
+            if (!btn) continue;
+            const stepper = this.getStepper();
+            const step = stepper.describe(kind);
+            btn.textContent = step.label;
+            btn.title = step.reason;
+            btn.setAttribute('aria-label', step.reason);
+            btn.style.opacity = step.action === 'none' || stepper.isBusy() ? '0.6' : '1';
+            btn.dataset.stepAction = step.action;
+        }
     }
 
     /**
@@ -4975,6 +5129,15 @@ class LabyrinthClearRate {
                 });
             }
 
+            // The plan the Shroud step button carries out: exactly the rooms the planner counted as shrouds
+            this.storeShroudStepPlan(
+                cols,
+                [...path.route].filter(
+                    (idx) => tiles[idx]?.needsShroud && !tiles[idx].cleared && !tiles[idx].isEntrance
+                ),
+                [...path.route]
+            );
+
             const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
             const unknownText = unknownCount ? ` · ${plural(unknownCount, 'unrevealed room')}` : '';
 
@@ -5095,7 +5258,24 @@ class LabyrinthClearRate {
     }
 
     clearPathOverlays() {
+        this._shroudStepPlan = null;
+        this.refreshStepButtons();
         document.querySelectorAll(`.${PATH_OVERLAY_CLASS}`).forEach((el) => el.remove());
+    }
+
+    /** A room judged after being revealed joins the Shroud plan, or leaves it */
+    amendShroudStepPlan(idx, needsShroud) {
+        const plan = this._shroudStepPlan;
+        if (!plan || !Number.isInteger(idx)) return;
+        const has = plan.targets.some((t) => t.idx === idx);
+        if (needsShroud && !has) {
+            // In route order when the route is known
+            const pos = (i) => plan.order?.get(i) ?? Infinity;
+            const at = plan.targets.findIndex((t) => pos(t.idx) > pos(idx));
+            plan.targets.splice(at < 0 ? plan.targets.length : at, 0, { idx });
+        } else if (!needsShroud && has) plan.targets = plan.targets.filter((t) => t.idx !== idx);
+        else return;
+        this.refreshStepButtons();
     }
 
     /**
@@ -5137,6 +5317,7 @@ class LabyrinthClearRate {
             }
             if (chance === null || chance === undefined) return;
             const needsShroud = chance < threshold;
+            this.amendShroudStepPlan(Number(overlay.dataset.tileIndex), needsShroud);
             const color = needsShroud ? '#ff5252' : '#57d08a';
             overlay.style.border = `2px solid ${color}`;
             overlay.querySelector('div')?.remove();
@@ -5223,6 +5404,18 @@ class LabyrinthClearRate {
         // An exhausted count is reported before an unreachable exit: with every set beacon spent there
         // is nothing to plan, whatever the planner makes of the floor
         const markExhausted = () => {
+            // The step button reads "no beacons left" (or "not needed"), never "plan done"
+            this._beaconStepPlan = {
+                source: null,
+                floor: this.currentFloor,
+                characterId,
+                cols,
+                targets: [],
+                later: [],
+                planned: 0,
+                placed: new Set(),
+                exhausted: plan.feasible && plan.minNeeded === 0 ? 'not-needed' : 'spent',
+            };
             this._beaconPlanCells = null;
             this._stagedBeaconPlan = {
                 floor: this.currentFloor,
@@ -5654,6 +5847,7 @@ class LabyrinthClearRate {
 
     clearBeaconOverlays() {
         document.querySelectorAll(`.${BEACON_OVERLAY_CLASS}`).forEach((el) => el.remove());
+        this._beaconStepPlan = null;
         this._beaconPlanCells = null;
     }
 

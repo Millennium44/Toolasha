@@ -8059,6 +8059,98 @@ describe('labyrinth toolbar layout', () => {
         expect(settings.map.get('labyrinthSimCaps')).toBe('precision');
     });
 
+    describe('the step buttons follow labyrinthPathStepper', () => {
+        const watcher = () => settingWatchers.find((w) => w.key === 'labyrinthPathStepper');
+        const flip = (on) => {
+            configMock.getSetting.mockImplementation(
+                (key) => key === 'labyrinthRoomDistribution' || (key === 'labyrinthPathStepper' && on)
+            );
+            watcher().cb(on);
+        };
+
+        beforeEach(() => {
+            settingWatchers.length = 0;
+            labyrinthClearRate.watchHalfSettings();
+        });
+
+        afterEach(() => {
+            labyrinthClearRate._settingUnsubs?.forEach((unsub) => unsub());
+            labyrinthClearRate._settingUnsubs = null;
+            labyrinthClearRate.disposeStepper();
+        });
+
+        test('on, each planner button gets one step button beside it that says there is no plan yet', () => {
+            flip(true);
+            labyrinthClearRate.injectTileControls();
+            flip(true);
+            const shroud = document.querySelectorAll('.mwi-labyrinth-step-shroud');
+            const beacon = document.querySelectorAll('.mwi-labyrinth-step-beacon');
+            expect(shroud).toHaveLength(1);
+            expect(beacon).toHaveLength(1);
+            expect(shroud[0].previousElementSibling).toBe(q('path-button'));
+            expect(shroud[0].title).toContain('Press Path first');
+            expect(beacon[0].previousElementSibling).toBe(q('beacon-button'));
+        });
+
+        test('off, both are removed, and the plans with them', () => {
+            flip(true);
+            labyrinthClearRate.injectTileControls();
+            labyrinthClearRate._shroudStepPlan = { floor: 1, targets: [] };
+            flip(false);
+            expect(document.querySelector('.mwi-labyrinth-step-shroud')).toBeNull();
+            expect(document.querySelector('.mwi-labyrinth-step-beacon')).toBeNull();
+            expect(labyrinthClearRate._stepper).toBeNull();
+        });
+
+        test('drawing or clearing a plan redraws the label without a click', () => {
+            flip(true);
+            labyrinthClearRate.injectTileControls();
+            const label = () => document.querySelector('.mwi-labyrinth-step-beacon').title;
+            expect(label()).toContain('Press Beacons first');
+            labyrinthClearRate._beaconPlanCells = { fills: [], centers: [{ idx: 1, later: true, watch: [] }] };
+            expect(label()).not.toContain('Press Beacons first');
+            labyrinthClearRate.clearBeaconOverlays();
+            expect(label()).toContain('Press Beacons first');
+        });
+
+        test('one place stores the shroud plan; a revealed guess joins or leaves it', () => {
+            labyrinthClearRate.currentFloor = 4;
+            labyrinthClearRate.storeShroudStepPlan(8, [10, 20]);
+            expect(labyrinthClearRate._shroudStepPlan).toMatchObject({ cols: 8, floor: 4 });
+            expect(labyrinthClearRate._shroudStepPlan.targets.map((x) => x.idx)).toEqual([10, 20]);
+            labyrinthClearRate.amendShroudStepPlan(30, true);
+            labyrinthClearRate.amendShroudStepPlan(10, false);
+            labyrinthClearRate.amendShroudStepPlan(20, true);
+            expect(labyrinthClearRate._shroudStepPlan.targets.map((x) => x.idx)).toEqual([20, 30]);
+            labyrinthClearRate.clearPathOverlays();
+            expect(labyrinthClearRate._shroudStepPlan).toBeNull();
+        });
+
+        test('setting off drops both plans', () => {
+            flip(true);
+            labyrinthClearRate.injectTileControls();
+            labyrinthClearRate._shroudStepPlan = { floor: 1, targets: [] };
+            labyrinthClearRate._beaconStepPlan = { floor: 1, targets: [] };
+            flip(false);
+            expect(labyrinthClearRate._shroudStepPlan).toBeNull();
+            expect(labyrinthClearRate._beaconStepPlan).toBeNull();
+        });
+
+        test('a room that turns out to need a shroud joins the plan in route order', () => {
+            labyrinthClearRate.currentFloor = 4;
+            labyrinthClearRate.storeShroudStepPlan(8, [10, 30], [10, 20, 30, 40]);
+            labyrinthClearRate.amendShroudStepPlan(20, true);
+            labyrinthClearRate.amendShroudStepPlan(40, true);
+            expect(labyrinthClearRate._shroudStepPlan.targets.map((x) => x.idx)).toEqual([10, 20, 30, 40]);
+        });
+
+        test('a new Path press (overlays cleared) withdraws the old shroud plan', () => {
+            labyrinthClearRate._shroudStepPlan = { floor: 1, targets: [{ idx: 1 }] };
+            labyrinthClearRate.clearPathOverlays();
+            expect(labyrinthClearRate._shroudStepPlan).toBeNull();
+        });
+    });
+
     describe('the Size stepper follows its setting without waiting for the toolbar to be rebuilt', () => {
         const watcher = () => settingWatchers.find((w) => w.key === 'labyrinthGridScaleControl');
         const flip = (on) => {
