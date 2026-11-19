@@ -9242,6 +9242,47 @@ describe('a budget plan shops a route-priced pick by what its route buys', () =>
         }
     });
 
+    test('a refine-priced pick buys its refinement materials, not the ★ item, a refined cape included', async () => {
+        const { default: combatSimUI } = await import('./combat-sim-ui.js');
+        const shard = { itemHrid: '/items/shard', count: 20, name: 'Shard' };
+        const mirror = { itemHrid: '/items/mirror', count: 2, name: 'Mirror' };
+        const buys = {
+            a: { itemHrid: '/items/refined_spear', enhancementLevel: 10, refineMaterials: [shard] },
+            // The same refine named by a second pick (another loadout) is still one refine
+            b: { itemHrid: '/items/refined_spear', enhancementLevel: 10, refineMaterials: [shard] },
+            // A different refine sharing the shard needs its own count
+            c: { itemHrid: '/items/refined_bow', enhancementLevel: 10, refineMaterials: [shard, mirror] },
+            // A refined cape is self-enhanced and refine-priced: its shards still go on the list
+            d: {
+                itemHrid: '/items/sinister_cape_refined',
+                enhancementLevel: 7,
+                selfEnhance: { fromLevel: 7, toLevel: 7, isSelf: false },
+                refineMaterials: [{ itemHrid: '/items/cape_shard', count: 5, name: 'Cape Shard' }],
+            },
+            // A plain cape enhanced at the bench stays off the list
+            e: {
+                itemHrid: '/items/cape',
+                enhancementLevel: 9,
+                selfEnhance: { fromLevel: 7, toLevel: 9, isSelf: true },
+            },
+            f: { itemHrid: '/items/ring', enhancementLevel: 2, name: 'Ring +2' },
+        };
+        const spy = vi.spyOn(combatSimUI, 'upgradeRowPurchase').mockImplementation((pick) => buys[pick.key]);
+        try {
+            const items = planPurchases(['a', 'b', 'c', 'd', 'e', 'f'].map((key) => ({ key })));
+            expect(
+                items.map(({ itemHrid, enhancementLevel, count }) => ({ itemHrid, enhancementLevel, count }))
+            ).toEqual([
+                { itemHrid: '/items/shard', enhancementLevel: 0, count: 40 },
+                { itemHrid: '/items/mirror', enhancementLevel: 0, count: 2 },
+                { itemHrid: '/items/cape_shard', enhancementLevel: 0, count: 5 },
+                { itemHrid: '/items/ring', enhancementLevel: 2, count: 1 },
+            ]);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
     test('an ability pick asks for its whole book stack, the larger one when two picks share a book', async () => {
         const { default: combatSimUI } = await import('./combat-sim-ui.js');
         const buys = {

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab sim budget plan shops for refines, not the refined item
+
+A plan pick priced as a refine now fills the Buy box with the refinement materials instead of the ★ item, and a refined cape priced that way is no longer left off the list.
+
 ### Combat sim Echo no longer repeats auto attacks
 
 Measured in game, Echo never repeats an auto attack, only ability casts (all targets of an area cast). The sim now matches, so Echo talismans are no longer overvalued for auto-attack builds.
