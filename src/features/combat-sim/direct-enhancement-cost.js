@@ -142,10 +142,16 @@ export function quoteDirectEnhancement(
         const market = priceGuarded(itemHrid);
         // A market figure that is itself a craft-cost floor is no better than the complete craft cost: take that
         const marketUsable = market.price > 0 && !market.partial;
-        const selfPrice = marketUsable ? Math.min(market.price, craftCopy) : craftCopy;
         protectionOptions = [];
         if (others.price > 0) protectionOptions.push({ itemHrid: others.itemHrid, price: others.price });
-        protectionOptions.push({ itemHrid, price: selfPrice, crafted: !marketUsable || craftCopy < market.price });
+        if (market.custom) {
+            // The player's own price for the item is their answer, as priceGuarded keeps it: used as is, with no
+            // crafted copy competing, and a custom 0 or unpriced copy stays unpriced
+            if (market.price > 0) protectionOptions.push({ itemHrid, price: market.price });
+        } else {
+            const selfPrice = marketUsable ? Math.min(market.price, craftCopy) : craftCopy;
+            protectionOptions.push({ itemHrid, price: selfPrice, crafted: !marketUsable || craftCopy < market.price });
+        }
         // Only the others can be a floor now: the self copy's price is a complete figure either way
         protPartial = others.partial;
     }

@@ -199,3 +199,34 @@ describe('quoteDirectEnhancement with the own copy at craft price', () => {
         expect(quote.protectFrom).toBe(0);
     });
 });
+
+describe('a custom price on the own copy', () => {
+    beforeEach(() => {
+        state.materials = { cost: 100, hasCost: true, hasMissingPrices: false };
+        state.protection = { price: 0, itemHrid: null };
+        state.others = { price: 80_000, itemHrid: '/items/mirror_of_protection', partial: false };
+        state.market = { price: 0, partial: false };
+    });
+
+    test('is used as is: no crafted copy competes, even when crafting is cheaper', () => {
+        state.market = { price: 90_000, partial: false, custom: true };
+        const quote = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 100 });
+        const mirrorOnly = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 100_000_000 });
+        // The mirror at 80000 is cheaper than the custom 90000: the copy is not used, and nothing is crafted
+        expect(quote.selfCopyCrafts).toBe(0);
+        expect(quote.cost).toBe(mirrorOnly.cost);
+        state.others = { price: 0, itemHrid: null, partial: false };
+        state.market = { price: 5_000, partial: false, custom: true };
+        const own = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 1 });
+        expect(own.protectionItemHrid).toBe(SWORD);
+        expect(own.selfCopyCrafts).toBe(0);
+    });
+
+    test('a custom 0 or unpriced copy stays unpriced: it is not replaced by the craft price', () => {
+        state.others = { price: 0, itemHrid: null, partial: false };
+        state.market = { price: null, partial: false, custom: true };
+        const quote = quoteDirectEnhancement(SWORD, 0, 12, gameData, { selfCopyCraftCost: 1 });
+        expect(quote.protectionItemHrid).not.toBe(SWORD);
+        expect(quote.selfCopyCrafts).toBe(0);
+    });
+});
