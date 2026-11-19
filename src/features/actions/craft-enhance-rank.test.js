@@ -12,7 +12,9 @@ import {
     arrangeCraftEnhanceRows,
     buildCraftEnhanceRow,
     buildDungeonInputIndex,
+    bestLevelByVolume,
     bestLevelOf,
+    candidateLevelsFor,
     buildHeldPool,
     capProfitByVolume,
     chooseEnhanceRoute,
@@ -1611,5 +1613,80 @@ describe('a level keeps the better hour of crafted-copy and market-only protecti
         });
         expect(built.route.route).toBe('held-base');
         expect(built.target.enhanceCost).toBe(40);
+    });
+});
+
+describe('candidateLevelsFor', () => {
+    test('+0, the breakpoints at or below the target, and the target itself', () => {
+        expect(candidateLevelsFor('/items/sword', '/equipment_types/main_hand', 10)).toEqual([0, 7, 10]);
+        expect(candidateLevelsFor('/items/sword', '/equipment_types/main_hand', 5)).toEqual([0, 5]);
+        expect(candidateLevelsFor('/items/sword', '/equipment_types/main_hand', 13)).toEqual([0, 7, 10, 12, 13]);
+    });
+
+    test('jewelry, back-slot and refined items use their own lists', () => {
+        expect(candidateLevelsFor('/items/necklace_of_speed', '/equipment_types/neck', 10)).toEqual([0, 5, 7, 10]);
+        expect(candidateLevelsFor('/items/cape', '/equipment_types/back', 10)).toEqual([0, 3, 5, 7, 10]);
+        expect(candidateLevelsFor('/items/ring_refined', '/equipment_types/ring', 12)).toEqual([0, 10, 12]);
+    });
+
+    test('an unknown equipment type is the default list; the target is never listed twice', () => {
+        expect(candidateLevelsFor('/items/sword', null, 7)).toEqual([0, 7]);
+        expect(candidateLevelsFor('/items/sword', undefined, 3)).toEqual([0, 3]);
+    });
+});
+
+describe('bestLevelByVolume', () => {
+    const lvl = (level, profitPerHour, over = {}) => ({
+        level,
+        status: 'ok',
+        profitPerUnit: profitPerHour / 10,
+        unitsPerHour: 10,
+        profitPerHour,
+        ...over,
+    });
+    const sweep = [lvl(0, 100), lvl(1, 463), lvl(2, 50), lvl(7, 300), lvl(10, 628)];
+    const volumes = (map) => (level) => map[level];
+
+    test('a level the market does not trade is held to 0 and another candidate wins (the +10 that read 0)', () => {
+        const { best } = bestLevelByVolume(sweep, [0, 1, 7, 10], volumes({ 10: { known: true, unitsPerDay: 0 } }));
+        expect(best.level).toBe(1);
+        expect(best.profitPerHour).toBe(463);
+    });
+
+    test('non-candidate levels are not considered, however good', () => {
+        const { best, entries } = bestLevelByVolume(sweep, [0, 7, 10], volumes({}));
+        expect(entries.map((item) => item.level)).toEqual([0, 7, 10]);
+        expect(best.level).toBe(10);
+    });
+
+    test('pending and unknown volumes leave a level uncapped and say which', () => {
+        const { entries } = bestLevelByVolume(sweep, [0, 7, 10], volumes({ 7: { known: false, unitsPerDay: 0 } }));
+        expect(entries.map((item) => [item.level, item.volumeState])).toEqual([
+            [0, 'pending'],
+            [7, 'unknown'],
+            [10, 'pending'],
+        ]);
+        expect(entries[1].profitPerHour).toBe(300);
+    });
+
+    test('a measured volume holds a level to what is traded; a loss is not capped; a tie goes to the lower level', () => {
+        const losing = [lvl(0, -50, { profitPerUnit: -5 }), lvl(1, 100), lvl(2, 100)];
+        const { best, entries } = bestLevelByVolume(losing, [0, 1, 2], volumes({ 0: { known: true, unitsPerDay: 0 } }));
+        expect(entries[0].profitPerHour).toBe(-50);
+        expect(best.level).toBe(1);
+        const capped = bestLevelByVolume(sweep, [10], volumes({ 10: { known: true, unitsPerDay: 24 } }));
+        // 1 an hour at 62.8 each
+        expect(capped.best.profitPerHour).toBeCloseTo(62.8, 6);
+        expect(capped.best.cap.capped).toBe(true);
+    });
+
+    test('a level with no full figure is never chosen; nothing priced has no best', () => {
+        const unpriced = lvl(3, null, { status: 'unpriced', profitPerUnit: null, unitsPerHour: null });
+        expect(bestLevelByVolume([unpriced, lvl(0, 10)], [0, 3], volumes({})).best.level).toBe(0);
+        expect(bestLevelByVolume([unpriced], [3], volumes({})).best).toBeNull();
+    });
+
+    test('without candidate levels every swept level counts', () => {
+        expect(bestLevelByVolume(sweep, null, volumes({})).entries).toHaveLength(5);
     });
 });

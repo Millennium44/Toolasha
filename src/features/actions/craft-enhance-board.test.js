@@ -853,11 +853,11 @@ describe('the best level column', () => {
         expect(cell.getAttribute('data-ce-best')).toBe('1');
         expect(cell.textContent).toBe('+1 12.0K');
         expect(cell.title).toContain('+0: 5.0K an hour');
-        expect(cell.title).toContain('+1: 12.0K an hour  ← best');
+        expect(cell.title).toContain('+1: 12.0K an hour (volume not checked yet)  ← best');
         expect(cell.title).toContain('+2: no figure (no sale quote)');
         expect(cell.title).toContain('+3: no figure (enhance unpriced)');
-        expect(cell.title).toContain('+4: 9.0K an hour (via a held base)');
-        expect(cell.title).toContain('+5: 8.0K an hour (via base)');
+        expect(cell.title).toContain('+4: 9.0K an hour (via a held base) (volume not checked yet)');
+        expect(cell.title).toContain('+5: 8.0K an hour (via base) (volume unknown)');
     });
 
     test('a row with no priced level reads "—", never 0, and says why', async () => {
@@ -894,8 +894,10 @@ describe('the best level column', () => {
     test('the column is not a sort key, so the ranking and volumes leave the order alone', async () => {
         openBoard();
         await flush();
-        const header = [...state.panel.panel.querySelectorAll('th')].find((th) => th.textContent.startsWith('Best +0'));
-        expect(header.textContent).toBe('Best +0..+5');
+        const header = [...state.panel.panel.querySelectorAll('th')].find((th) =>
+            th.textContent.startsWith('Best level')
+        );
+        expect(header.textContent).toBe('Best level');
         expect(header.hasAttribute('data-ce-sort')).toBe(false);
     });
 });
@@ -923,8 +925,7 @@ describe('the best level column and the volume cap', () => {
         expect(best.getAttribute('data-ce-capped')).toBe('true');
         expect(best.textContent).toBe('+5 5.2K');
         expect(best.textContent.split(' ')[1]).toBe(hour.textContent);
-        expect(best.title).toContain(hour.title);
-        expect(best.title).toContain('only looked up at +5');
+        expect(best.title).toContain('+5: 5.2K an hour, held to about 24 traded a day (uncapped 193.9K)');
     });
 
     test('a best level below +N stays uncapped, and the hover says why', async () => {
@@ -936,7 +937,7 @@ describe('the best level column and the volume cap', () => {
         const best = cellOf('sword', 'data-ce-best');
         expect(best.hasAttribute('data-ce-capped')).toBe(false);
         expect(best.textContent).toBe('+1 193.9K');
-        expect(best.title).toContain('only looked up at +5');
+        expect(best.title).toContain('+5: 0 an hour, held to about 0 traded a day (uncapped 1.0K)');
     });
 
     test('an unknown or pending volume leaves a best +N uncapped', async () => {
@@ -946,5 +947,71 @@ describe('the best level column and the volume cap', () => {
         await flush();
         await flush();
         expect(cellOf('sword', 'data-ce-best').hasAttribute('data-ce-capped')).toBe(false);
+    });
+});
+
+describe('the best level looks at the usual sale levels and each one volume', () => {
+    const entry = (lvl, hour, over = {}) =>
+        level({ level: lvl, route: null, profitPerHour: hour, profitPerUnit: hour / 37.5, ...over });
+    const necklace = () =>
+        row('necklace', {
+            targetLevel: 5,
+            target: entry(5, 628_000),
+            candidateLevels: [0, 3, 5],
+            sweep: [entry(0, 1000), entry(1, 463_000), entry(3, 2000), entry(4, 9000), entry(5, 628_000)],
+            best: { level: 5, profitPerHour: 628_000, profitPerUnit: 1, route: null },
+        });
+    const bestCell = () => state.panel.panel.querySelector('[data-ce-row$="/necklace"] [data-ce-best]');
+
+    test('volume is looked up at +0, the breakpoints and the target, and nowhere else', async () => {
+        state.rows = [necklace()];
+        openBoard();
+        await flush();
+        await flush();
+        expect(state.volumeCalls.sort()).toEqual(['/items/necklace:0', '/items/necklace:3', '/items/necklace:5']);
+    });
+
+    test('a candidate nobody trades is held to 0 and the next best level is named instead of "+N 0"', async () => {
+        state.rows = [necklace()];
+        state.volume = { '/items/necklace': { unitsPerDay: 0, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        // Every candidate measured at 0: all held to 0, ties go to the lowest
+        expect(bestCell().textContent).toBe('+0 0');
+        // Only +5 untraded; the others unmeasured (uncapped): the best is the best of those, not +5 at 0
+        state.volume = {};
+        board.volumes.clear();
+        board.volumes.set('/items/necklace:5', { unitsPerDay: 0, known: true });
+        board.volumes.set('/items/necklace:0', { known: false, unitsPerDay: 0 });
+        board.volumes.set('/items/necklace:3', { known: false, unitsPerDay: 0 });
+        state.panel.render();
+        expect(bestCell().textContent).toBe('+3 2.0K');
+    });
+
+    test('an unchecked volume is uncapped and says so; the cell redraws as each volume lands', async () => {
+        state.rows = [necklace()];
+        openBoard();
+        expect(bestCell().getAttribute('data-ce-volume')).toBe('pending');
+        expect(bestCell().title).toContain('(volume not checked yet)');
+        state.volume = { '/items/necklace': { unitsPerDay: 24, known: true } };
+        await flush();
+        await flush();
+        expect(bestCell().getAttribute('data-ce-capped')).toBe('true');
+        expect(bestCell().title).toContain('held to about 24 traded a day');
+        expect(bestCell().title).not.toContain('+1:');
+    });
+
+    test('row order still uses the uncapped +N figure', async () => {
+        state.rows = [necklace(), row('sword')];
+        state.volume = { '/items/necklace': { unitsPerDay: 0, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        const names = [...state.panel.panel.querySelectorAll('[data-ce-row]')].map((tr) =>
+            tr.getAttribute('data-ce-row')
+        );
+        // Held to 0 in Best, the necklace still ranks on its uncapped +5 figure
+        expect(names[0]).toContain('necklace');
     });
 });

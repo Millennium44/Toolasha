@@ -1732,3 +1732,16 @@ describe('a base copy shared by recipes of two skills', () => {
         expect(byItem['/items/ring2_refined'].target.craftXpPerHour).toBeCloseTo(100 * (3600 / 100), 6);
     });
 });
+
+describe('the levels Best considers, from the item', () => {
+    test('a necklace takes the jewelry breakpoints; a sword the default ones', async () => {
+        game.gameData.itemDetailMap['/items/sword'].equipmentDetail = { type: '/equipment_types/neck' };
+        const [necklace] = await rankCraftEnhance({ targetLevel: 10, ownedMode: 'market' });
+        expect(necklace.candidateLevels).toEqual([0, 5, 7, 10]);
+        clearCraftEnhanceCache();
+        game.stamp += 1;
+        game.gameData.itemDetailMap['/items/sword'].equipmentDetail = { type: '/equipment_types/main_hand' };
+        const [sword] = await rankCraftEnhance({ targetLevel: 10, ownedMode: 'market' });
+        expect(sword.candidateLevels).toEqual([0, 7, 10]);
+    });
+});

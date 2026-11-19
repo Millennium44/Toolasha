@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Craft & Enhance shows each row's best level
 
-A new "Best +L" column names the level from +0 to your target that earns the most per hour, with every level's figure on hover.
+A new "Best level" column names the level that earns the most per hour among the usual sale levels (+0, the item's breakpoints and your target), holding each to what the market trades there. Every level's figure is on hover.
 
 ### Craft & Enhance profit per hour follows what the market trades
 

@@ -828,6 +828,7 @@ export function rankCraftEnhance({
                 viaBase: baseRun,
                 baseHrid,
                 heldBases: heldAt(targetLevel),
+                equipmentType: gameData.itemDetailMap?.[recipe.itemHrid]?.equipmentDetail?.type ?? null,
                 levels,
                 saleBase: saleAfterTaxAt(recipe.itemHrid, 0),
                 saleTarget: saleAfterTaxAt(recipe.itemHrid, targetLevel),

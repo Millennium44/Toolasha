@@ -44,6 +44,7 @@
 import { combatZones, openableDrops, zoneDrops } from '../../utils/drop-sources.js';
 import { DUNGEON_TOKEN_HRIDS, shopCosts } from '../../utils/token-valuation.js';
 import { isTesterShopEntry } from '../../utils/shop-index.js';
+import { breakpointsFor, JEWELRY_EQUIPMENT_TYPES } from '../../utils/enhancement-breakpoints.js';
 
 /**
  * The three ways a dungeon input is valued:
@@ -587,6 +588,25 @@ export function bestLevelOf(sweep) {
 }
 
 /**
+ * The levels "Best" considers: +0, the item's usual breakpoints at or below the target, and the target itself. Volume
+ * is looked up at these only, so the column stays cheap and names the levels people actually sell at.
+ *
+ * @param {string} itemHrid - The item
+ * @param {string|null} equipmentType - Its equipment type hrid, when known (jewelry and the back slot have their own list)
+ * @param {number} targetLevel - The target
+ * @returns {number[]} Ascending, no duplicates
+ */
+export function candidateLevelsFor(itemHrid, equipmentType, targetLevel) {
+    const levels = new Set([0, targetLevel]);
+    const breakpoints = breakpointsFor(itemHrid, {
+        isBack: equipmentType === '/equipment_types/back',
+        isJewelry: JEWELRY_EQUIPMENT_TYPES.has(equipmentType),
+    });
+    for (const breakpoint of breakpoints) if (breakpoint <= targetLevel) levels.add(breakpoint);
+    return [...levels].sort((a, b) => a - b);
+}
+
+/**
  * One window row.
  *
  * @param {Object} args - Inputs
@@ -628,6 +648,7 @@ export function buildCraftEnhanceRow({
     baseHrid = null,
     heldBases = [],
     levels = [],
+    equipmentType = null,
     saleBase,
     saleTarget,
     notes = [],
@@ -819,6 +840,8 @@ export function buildCraftEnhanceRow({
         // Every level 0..N rated on its own best route, and the one with the best profit per hour
         sweep,
         best,
+        // The levels Best looks at, and looks volume up for
+        candidateLevels: candidateLevelsFor(recipe.itemHrid, equipmentType, targetLevel),
         // Which way +N is reached; `offered` is whether the recipe has a base route at all
         route,
         dungeonInputs: priced.dungeonInputs,
@@ -860,6 +883,44 @@ export function capProfitByVolume(level, volume) {
         uncappedPerHour: uncapped,
         unitsPerHourCap,
     };
+}
+
+/**
+ * The best level among the candidates once each is held to what the market trades there.
+ *
+ * Every candidate is rated by {@link capProfitByVolume} on its own volume: a volume not looked up yet is `pending`
+ * and an unmeasurable one `unknown` (both leave the figure uncapped), a measured 0 caps to 0, a loss is not capped.
+ * A level with no full figure has none and is never chosen. A tie goes to the lower level. Row order does not use
+ * this: the ranking keeps the uncapped +N figure.
+ *
+ * @param {Array<Object>} sweep - A row's `sweep`
+ * @param {number[]|null|undefined} candidateLevels - From {@link candidateLevelsFor}; every swept level when absent
+ * @param {Function} volumeOf - `(level) => {known, unitsPerDay}|undefined`
+ * @returns {{best: Object|null, entries: Array<Object>}} `entries` hold `{level, entry, cap, volumeState,
+ *   profitPerHour}` for each candidate, `best` the chosen one
+ */
+export function bestLevelByVolume(sweep, candidateLevels, volumeOf) {
+    const levels = candidateLevels?.length ? candidateLevels : (sweep || []).map((entry) => entry.level);
+    const entries = [];
+    let best = null;
+    for (const level of [...levels].sort((a, b) => a - b)) {
+        const entry = (sweep || []).find((candidate) => candidate.level === level);
+        if (!entry) continue;
+        const volume = volumeOf(level);
+        const cap = capProfitByVolume(entry, volume);
+        const item = {
+            level,
+            entry,
+            cap,
+            volumeState: !volume ? 'pending' : volume.known === true ? 'known' : 'unknown',
+            profitPerHour: cap.profitPerHour,
+        };
+        entries.push(item);
+        if (Number.isFinite(item.profitPerHour) && (best === null || item.profitPerHour > best.profitPerHour)) {
+            best = item;
+        }
+    }
+    return { best, entries };
 }
 
 /** The sort keys the window offers, each reading the target level's figure; null sorts behind everything */
@@ -962,4 +1023,6 @@ export default {
     buildCraftEnhanceRow,
     arrangeCraftEnhanceRows,
     capProfitByVolume,
+    candidateLevelsFor,
+    bestLevelByVolume,
 };
