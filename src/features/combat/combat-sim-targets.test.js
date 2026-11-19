@@ -25,7 +25,7 @@ const read = (relativePath) => readFileSync(join(projectRoot, relativePath), 'ut
 
 describe('COMBAT_SIM_TARGETS', () => {
     test('lists every supported simulator', () => {
-        expect(COMBAT_SIM_TARGETS.map((target) => target.id)).toEqual(['shykai', 'szerra', 'metz']);
+        expect(COMBAT_SIM_TARGETS.map((target) => target.id)).toEqual(['shykai', 'shykai-test', 'szerra', 'metz']);
     });
 
     test('every target is fully specified with a unique id, label and url', () => {
@@ -64,6 +64,8 @@ describe('isCombatSimulatorPage', () => {
 
     test('recognises deep links inside a simulator', () => {
         expect(isCombatSimulatorPage('https://shykai.github.io/MWICombatSimulatorTest/dist/index.html#sim')).toBe(true);
+        expect(isCombatSimulatorPage('https://shykai.github.io/MWICombatSimulatorTest/Test/index.html#sim')).toBe(true);
+        expect(combatSimTargetForUrl('https://shykai.github.io/MWICombatSimulatorTest/Test/')?.id).toBe('shykai-test');
         expect(isCombatSimulatorPage('https://szerra.github.io/mwi-shrine-combat-simulator/index.html?p=1')).toBe(true);
         expect(isCombatSimulatorPage('https://metzlii.github.io/metz-combat-simulator/setup')).toBe(true);
     });
@@ -83,6 +85,8 @@ describe('isCombatSimulatorPage', () => {
             'an unrelated host that merely mentions a simulator in its path',
             'https://example.com/metzlii.github.io/metz-combat-simulator/',
         ],
+        ['the simulator repo root without a build folder', 'https://shykai.github.io/MWICombatSimulatorTest/'],
+        ['an unlisted build folder', 'https://shykai.github.io/MWICombatSimulatorTest/Other/'],
         ['an empty url', ''],
     ])('does not recognise %s', (_label, url) => {
         expect(isCombatSimulatorPage(url)).toBe(false);

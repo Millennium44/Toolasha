@@ -20,6 +20,9 @@ import { enhancementSteps } from './enhancement-steps.js';
 /** The item location a Talisman Belt is worn in */
 export const BELT_LOCATION = '/item_locations/belt';
 
+/** The talisman type whose lines the combat sims model */
+export const COMBAT_TALISMAN_TYPE = '/talisman_types/combat';
+
 /** The `talismanModifierDetailMap` target hrids */
 const TARGET_NONCOMBAT = '/talisman_modifier_targets/noncombat_stat';
 const TARGET_COMBAT = '/talisman_modifier_targets/combat_stat';
@@ -359,6 +362,37 @@ export function sharedSlottedTalismans(list) {
         ...t,
         modifiers: t.modifiers.filter((m) => typeof m.hrid === 'string' && Number.isFinite(m.grade)),
     }));
+}
+
+/**
+ * The slotted combat talismans of a character, in the shape the Shykai combat sim imports
+ * (`slottedTalismans`): `[{talismanTypeHrid, modifiers:[{hrid, grade}], slotIndex}]`, sorted by slot. Works on
+ * the owned list (`characterTalismans`) and on a shared profile's `slottedTalismans` alike. Unslotted
+ * talismans and every non-combat type (skilling) are left out; the sim only models combat lines.
+ * @param {*} list - The field as the wire sent it
+ * @returns {Array<{talismanTypeHrid: string, modifiers: Array<{hrid: string, grade: number}>, slotIndex: number}>|null}
+ *   Null when the field is absent or not a list (nothing was sent), an array (possibly empty) when it is one
+ */
+export function slottedCombatTalismansForSim(list) {
+    if (!Array.isArray(list)) return null;
+    return list
+        .filter(
+            (t) =>
+                t &&
+                typeof t === 'object' &&
+                t.talismanTypeHrid === COMBAT_TALISMAN_TYPE &&
+                Number.isInteger(t.slotIndex) &&
+                t.slotIndex >= 1 &&
+                Array.isArray(t.modifiers)
+        )
+        .sort((x, y) => x.slotIndex - y.slotIndex)
+        .map((t) => ({
+            talismanTypeHrid: t.talismanTypeHrid,
+            modifiers: t.modifiers
+                .filter((m) => m && typeof m.hrid === 'string' && Number.isFinite(m.grade))
+                .map((m) => ({ hrid: m.hrid, grade: m.grade })),
+            slotIndex: t.slotIndex,
+        }));
 }
 
 /**

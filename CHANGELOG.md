@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat sim import sends your talismans
+
+The Combat Sim's "Import from Toolasha" now carries your slotted combat talismans (yours and your party's), so the sim applies their lines. Works on the sim's Test page too.
+
 ### Craft & Enhance shows each row's best level
 
 A new "Best level" column names the level that earns the most per hour among the usual sale levels (+0, the item's breakpoints and your target), holding each to what the market trades there. Every level's figure is on hover.

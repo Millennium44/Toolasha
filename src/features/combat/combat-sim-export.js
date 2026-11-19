@@ -11,6 +11,7 @@ import { readLiveTokenLevels } from '../combat-sim/lab-token-buffs.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
 import { BATTLE_BRIDGE_KEY, battleBridgeKeyFor } from '../../utils/battle-bridge-keys.js';
 import { gmGetValue } from '../../utils/gm-traffic.js';
+import { slottedCombatTalismansForSim } from '../../utils/talisman-bonuses.js';
 import { sharedProfileStatus, sharedProfileWarning } from '../../utils/shared-profile-status.js';
 
 /**
@@ -552,6 +553,11 @@ export function constructSelfPlayer(characterObj, clientObj) {
         playerObj.houseRooms[house.houseRoomHrid] = house.level;
     }
 
+    // Slotted combat talismans, read from the character data passed in (on a simulator page that is the
+    // bridged snapshot; dataManager is empty there). Omitted when the list was never delivered.
+    const selfTalismans = slottedCombatTalismansForSim(characterObj.characterTalismans);
+    if (selfTalismans) playerObj.slottedTalismans = selfTalismans;
+
     // Extract completed achievements
     playerObj.achievements = {};
     if (characterObj.characterAchievements) {
@@ -736,6 +742,10 @@ export function constructPartyPlayer(profile, clientObj, battleObj) {
             playerObj.houseRooms[house.houseRoomHrid] = house.level;
         }
     }
+
+    // Slotted combat talismans the member shared; omitted when the profile carries none
+    const sharedTalismans = slottedCombatTalismansForSim(profile.profile?.slottedTalismans);
+    if (sharedTalismans) playerObj.slottedTalismans = sharedTalismans;
 
     // Extract completed achievements from profile
     playerObj.achievements = {};
