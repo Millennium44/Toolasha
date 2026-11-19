@@ -810,6 +810,8 @@ export function buildCraftEnhanceRow({
     };
     const full = (rated) => rated.result.status === 'ok' && Number.isFinite(rated.result.profitPerHour);
     const rateLevel = (level, inputs) => {
+        // Nothing is enhanced at +0 (or below): there is no route to choose
+        if (!(level > 0)) return rateWith(level, inputs);
         const candidates = inputs.candidates ?? [];
         const fresh = [
             ...variantsOf(inputs.enhance).map((run) => ({ enhance: run, viaBase: null })),
@@ -826,9 +828,19 @@ export function buildCraftEnhanceRow({
             ),
         ];
         let best = null;
+        // The best hour of each fresh route on its own: the variant a route uses in the comparison is the one whose
+        // cost it is reported at
+        const bestFresh = { direct: null, base: null };
         for (const scenario of scenarios) {
             const rated = rateWith(level, { ...inputs, ...scenario, gate: false });
-            if (full(rated) && (best === null || rated.result.profitPerHour > best.result.profitPerHour)) best = rated;
+            if (!full(rated)) continue;
+            if (best === null || rated.result.profitPerHour > best.result.profitPerHour) best = rated;
+            if (scenario.candidates.length === 0) {
+                const key = scenario.enhance ? 'direct' : 'base';
+                if (bestFresh[key] === null || rated.result.profitPerHour > bestFresh[key].result.profitPerHour) {
+                    bestFresh[key] = rated;
+                }
+            }
         }
         if (best === null) {
             // Nothing could be priced: the market-only rating says why (which price is missing)
@@ -841,11 +853,10 @@ export function buildCraftEnhanceRow({
         }
         // The route's comparison figures are the two routes' own costs; `saved` is what the chosen one saves over the
         // other and is negative when it was chosen for the better hour at a higher cost
-        const costs = chooseEnhanceRoute({
-            level,
-            direct: marketOf(inputs.enhance),
-            viaBase: marketOf(inputs.viaBase),
-        });
+        const costs = {
+            directCost: bestFresh.direct ? Number(bestFresh.direct.route.enhance.cost) : null,
+            baseCost: bestFresh.base ? Number(bestFresh.base.route.enhance.cost) : null,
+        };
         const winner = best.route.route;
         const other =
             winner === ENHANCE_ROUTES.BASE

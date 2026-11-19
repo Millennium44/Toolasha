@@ -1740,10 +1740,10 @@ describe('every route and variant is scored on its complete hour', () => {
         expect(built.route.route).toBe('refine-base');
         expect(built.target.profitPerHour).toBeCloseTo(18000, 6);
         expect(built.route.enhance.selfCopyCrafts).toBe(1);
-        // The two routes' own costs are still reported, and the saving is negative: chosen for the hour, not the cost
+        // Each route is reported at the variant it uses: the chosen crafted base at 60, direct at its best hour (150)
         expect(built.route.directCost).toBe(150);
-        expect(built.route.baseCost).toBe(160);
-        expect(built.route.saved).toBeLessThan(0);
+        expect(built.route.baseCost).toBe(60);
+        expect(built.route.saved).toBe(90);
     });
 
     test('the same choice is made at a swept level', () => {
@@ -1785,5 +1785,45 @@ describe('every route and variant is scored on its complete hour', () => {
         const same = { cost: 100, seconds: 10, xp: 10, xpKnown: true };
         const built = rate({ viaBase: same, enhance: same });
         expect(built.route.route).toBe('craft');
+    });
+});
+
+describe('route savings follow the variant each route uses', () => {
+    const plain = (cost, seconds = 10) => ({ cost, seconds, xp: 10, xpKnown: true });
+    const baseRun = { ...plain(20), selfCopyCrafts: 1, extraCraftSeconds: 0, extraCraftXp: 0, marketOnly: plain(100) };
+    const rate = (over = {}) =>
+        row('ring', {
+            sale0: 200,
+            saleN: 400,
+            cost: 60,
+            enhance: plain(80),
+            over: { viaBase: baseRun, baseHrid: '/items/b', ...over },
+        });
+
+    test('a base that costs 20 with crafted copies (100 market-only) against a direct 80 saves 60, not -20', () => {
+        const built = rate();
+        expect(built.route.route).toBe('refine-base');
+        expect(built.route.baseCost).toBe(20);
+        expect(built.route.directCost).toBe(80);
+        expect(built.route.saved).toBe(60);
+    });
+
+    test('a held base is measured against the cheapest fresh route at its used variant', () => {
+        const held = {
+            level: 3,
+            count: 100,
+            coverage: 1,
+            unitValue: 50,
+            via: 'sale',
+            enhance: plain(5),
+            craftCostPerUnit: 60,
+            secondsPerUnit: 36,
+            otherNetPerUnit: 0,
+            craftXpPerUnit: 20,
+        };
+        const built = rate({ heldBases: [held] });
+        expect(built.route.route).toBe('held-base');
+        // Fresh best is 60 + 20 (the crafted base run); the held base is 60 + 5
+        expect(built.route.heldBase.saved).toBe(15);
     });
 });
