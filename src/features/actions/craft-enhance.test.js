@@ -1285,6 +1285,20 @@ describe('the stock is spread over the hour of crafts', () => {
         expect(row.target.craftCostPerUnit).toBeCloseTo((10 / 15) * 960 + (5 / 15) * 800, 6);
     });
 
+    test('a blend that costs more than staying fresh is not taken, though its held crafts are cheaper', async () => {
+        const action = starFixture();
+        game.profits[action.hrid].totalItemsPerHour = 10;
+        game.heldProfits[action.hrid] = { ...game.profits[action.hrid], totalItemsPerHour: 20 };
+        game.quotes['/items/ring:3'] = { price: 1000, source: 'book', estimated: false };
+        game.enhanceQuotes['/items/ring:3'] = { cost: 2240, seconds: 40, xp: 300, xpKnown: true };
+        // 20 leather covers the fresh hour (10 crafts x 2); the mixed hour (15 crafts) buys 10 more
+        game.inventory = [stack('/items/griffin_leather', 20), stack('/items/ring', 10, 3)];
+        const row = (await rankCraftEnhance({ targetLevel: 5, ownedMode: 'sunk' }))[0];
+        // Fresh alone: 800 + 3000 = 3800. Blend: 2/3 x (960 + 2240 + 640) + 1/3 x (800 + 3000 + 640) = 4040
+        expect(row.route.route).not.toBe('held-base');
+        expect(row.route.heldBase).toBeNull();
+    });
+
     test('a held base stack at least as big as the hour covers all of it', async () => {
         const action = starFixture();
         game.profits[action.hrid].totalItemsPerHour = 10;
