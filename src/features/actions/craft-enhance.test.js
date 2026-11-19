@@ -1271,6 +1271,20 @@ describe('the stock is spread over the hour of crafts', () => {
         expect(row.route.heldBase.coverage).toBeCloseTo(10 / 15, 9);
     });
 
+    test('shared inputs are spread over the mixed hour, so a stock that covers it buys nothing', async () => {
+        const action = starFixture();
+        game.profits[action.hrid].totalItemsPerHour = 10;
+        game.heldProfits[action.hrid] = { ...game.profits[action.hrid], totalItemsPerHour: 20 };
+        game.quotes['/items/ring:3'] = { price: 1000, source: 'book', estimated: false };
+        game.enhanceQuotes['/items/ring:3'] = { cost: 900, seconds: 40, xp: 300, xpKnown: true };
+        // 10 held crafts and 5 fresh ones: 15 crafts at 2 leather each, all 30 held
+        game.inventory = [stack('/items/griffin_leather', 30), stack('/items/ring', 10, 3)];
+        const row = (await rankCraftEnhance({ targetLevel: 5, ownedMode: 'sunk' }))[0];
+        expect(row.route.heldBase.coverage).toBeCloseTo(10 / 15, 9);
+        // Sunk leather costs nothing on either route; only the base differs (held copy 960, fresh 800)
+        expect(row.target.craftCostPerUnit).toBeCloseTo((10 / 15) * 960 + (5 / 15) * 800, 6);
+    });
+
     test('a held base stack at least as big as the hour covers all of it', async () => {
         const action = starFixture();
         game.profits[action.hrid].totalItemsPerHour = 10;
