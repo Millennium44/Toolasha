@@ -3006,6 +3006,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Replaces the Consumables heading on a skill’s action panel with a button that opens the Consumables panel on its Skilling tab for that skill: how long your teas last, with a Buy all walk for whatever is short of your target. Nothing is bought until you confirm in the game',
             },
+            labyrinthPathStepper: {
+                id: 'labyrinthPathStepper',
+                label: 'Labyrinth: Show shroud and beacon step buttons',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a step button beside Path and beside Beacons that carries out the plan one game action per press: press once to arm the shroud (or beacon), press again to pick the next planned room. It checks the live map before every press and stops with a message if the plan no longer matches. Never presses on its own',
+            },
             labyrinthGridScaleControl: {
                 id: 'labyrinthGridScaleControl',
                 label: 'Labyrinth: Show grid size control',
