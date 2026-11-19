@@ -8,6 +8,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 let webSocketHandlers = new Map();
 const saveSnapshot = vi.hoisted(() => vi.fn(() => true));
+const lightSnapshot = vi.hoisted(() => vi.fn(() => true));
 
 vi.mock('./websocket.js', () => {
     webSocketHandlers = new Map();
@@ -21,6 +22,7 @@ vi.mock('./websocket.js', () => {
             onSocketEvent: vi.fn(),
             offSocketEvent: vi.fn(),
             saveCombatSimSnapshot: saveSnapshot,
+            writeCombatSimCharacterSnapshot: lightSnapshot,
         },
     };
 });
@@ -75,6 +77,7 @@ beforeEach(async () => {
     dataManager._simSnapshotCharacterId = null;
     dataManager._simSnapshotRefreshTimer = null;
     saveSnapshot.mockClear();
+    lightSnapshot.mockClear();
 });
 
 afterEach(() => {
@@ -82,78 +85,100 @@ afterEach(() => {
     vi.useRealTimers();
 });
 
+const writes = () => lightSnapshot.mock.calls.length + saveSnapshot.mock.calls.length;
+
+async function openedSimFor(id) {
+    await login(id);
+    expect(dataManager.saveSimulatorSnapshot()).toBe(true);
+    saveSnapshot.mockClear();
+    lightSnapshot.mockClear();
+}
+
 describe('simulator snapshot refresh', () => {
     test('no snapshot has been written this session, so a talismans_updated writes nothing', async () => {
         await login('char-1');
         vi.useFakeTimers();
         webSocketHandlers.get('talismans_updated')(talismanMessage());
-        await vi.advanceTimersByTimeAsync(5000);
-        expect(saveSnapshot).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(10000);
+        expect(writes()).toBe(0);
     });
 
-    test('after a snapshot, a burst of updates rewrites it once', async () => {
-        await login('char-1');
-        expect(dataManager.saveSimulatorSnapshot()).toBe(true);
-        saveSnapshot.mockClear();
+    test('a burst settles into one light write, after the last update, with the latest talismans', async () => {
+        await openedSimFor('char-1');
         vi.useFakeTimers();
 
-        webSocketHandlers.get('talismans_updated')(talismanMessage(1));
-        await vi.advanceTimersByTimeAsync(500);
-        webSocketHandlers.get('talismans_updated')(talismanMessage(2));
-        webSocketHandlers.get('talismans_updated')(talismanMessage(3));
+        // Updates every 2 s (a reroll session) keep restarting the wait: nothing is written mid-burst
+        for (let grade = 1; grade <= 4; grade++) {
+            webSocketHandlers.get('talismans_updated')(talismanMessage(grade));
+            await vi.advanceTimersByTimeAsync(2000);
+        }
+        expect(writes()).toBe(0);
+        await vi.advanceTimersByTimeAsync(3000);
+
+        expect(lightSnapshot).toHaveBeenCalledTimes(1);
+        expect(lightSnapshot.mock.calls[0][0].characterTalismans[0].modifiers[0].grade).toBe(4);
+        expect(lightSnapshot.mock.calls[0][1]).toMatchObject({ characterId: 'char-1' });
+        // Not the client-data or battle bridges: the full write is the sim-link path only
         expect(saveSnapshot).not.toHaveBeenCalled();
-        await vi.advanceTimersByTimeAsync(2500);
 
-        expect(saveSnapshot).toHaveBeenCalledTimes(1);
-        // The snapshot carries the latest talismans of the burst
-        expect(saveSnapshot.mock.calls[0][0].characterTalismans[0].modifiers[0].grade).toBe(3);
-
-        // A later burst writes again
-        webSocketHandlers.get('talismans_updated')(talismanMessage(4));
-        await vi.advanceTimersByTimeAsync(2500);
-        expect(saveSnapshot).toHaveBeenCalledTimes(2);
+        webSocketHandlers.get('talismans_updated')(talismanMessage(5));
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(lightSnapshot).toHaveBeenCalledTimes(2);
     });
 
     test('a belt change refreshes it too, and another equipment slot does not', async () => {
-        await login('char-1');
-        dataManager.saveSimulatorSnapshot();
-        saveSnapshot.mockClear();
+        await openedSimFor('char-1');
         vi.useFakeTimers();
 
         dataManager.updateEquipmentMap([
             { itemLocationHrid: '/item_locations/body', itemHrid: '/items/plate_body', count: 1 },
         ]);
-        await vi.advanceTimersByTimeAsync(3000);
-        expect(saveSnapshot).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(writes()).toBe(0);
 
         dataManager.updateEquipmentMap([
             { itemLocationHrid: '/item_locations/belt', itemHrid: '/items/large_talisman_belt', count: 1 },
         ]);
-        await vi.advanceTimersByTimeAsync(3000);
-        expect(saveSnapshot).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(lightSnapshot).toHaveBeenCalledTimes(1);
     });
 
     test('a character switch before the timer fires cancels the write', async () => {
-        await login('char-1');
-        dataManager.saveSimulatorSnapshot();
-        saveSnapshot.mockClear();
+        await openedSimFor('char-1');
         vi.useFakeTimers();
 
         webSocketHandlers.get('talismans_updated')(talismanMessage());
         dataManager.isCharacterSwitching = true;
-        await vi.advanceTimersByTimeAsync(3000);
-        expect(saveSnapshot).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(writes()).toBe(0);
     });
 
     test("another character's session never refreshes the previous character's snapshot", async () => {
-        await login('char-1');
-        dataManager.saveSimulatorSnapshot();
+        await openedSimFor('char-1');
         await login('char-2');
-        saveSnapshot.mockClear();
         vi.useFakeTimers();
 
         webSocketHandlers.get('talismans_updated')(talismanMessage());
-        await vi.advanceTimersByTimeAsync(3000);
-        expect(saveSnapshot).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(writes()).toBe(0);
+    });
+
+    test('switching A to B and back to A does not re-arm A until a snapshot is written again', async () => {
+        await openedSimFor('char-1');
+        await webSocketHandlers.get('init_character_data')(initPayload('char-2'));
+        await webSocketHandlers.get('init_character_data')(initPayload('char-1'));
+        expect(dataManager._simSnapshotCharacterId).toBeNull();
+        vi.useFakeTimers();
+
+        webSocketHandlers.get('talismans_updated')(talismanMessage());
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(writes()).toBe(0);
+
+        // Opening a simulator again for A arms it again
+        expect(dataManager.saveSimulatorSnapshot()).toBe(true);
+        lightSnapshot.mockClear();
+        webSocketHandlers.get('talismans_updated')(talismanMessage(2));
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(lightSnapshot).toHaveBeenCalledTimes(1);
     });
 });
