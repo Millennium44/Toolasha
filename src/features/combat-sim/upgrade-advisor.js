@@ -8494,7 +8494,8 @@ export function heldCopyUse(result) {
     const key = `${ladder.itemHrid}@${Math.max(0, Math.floor(Number(ladder.fromLevel) || 0))}`;
     if (!ladder.alreadyHeld) return { key, mode: 'consumes', fromEquipped: Boolean(ladder.fromEquipped) };
     const copies = Math.max(1, Math.floor(Number(ladder.copiesAtLevel) || 1));
-    return { key, mode: 'relies', copies, withWorn: ladder.owned === true };
+    // A row on the worn copy itself (an enhancement row already met by it) can use the worn copy, like a forced row
+    return { key, mode: 'relies', copies, withWorn: ladder.owned === true || ladder.fromEquipped === true };
 }
 
 /**
