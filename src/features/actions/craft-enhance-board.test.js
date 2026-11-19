@@ -731,3 +731,101 @@ describe('protection copies crafted at craft cost', () => {
         expect(cells[4].title).not.toContain('crafted at craft cost');
     });
 });
+
+describe('profit per hour held to what the market trades', () => {
+    const hourCell = (name) => state.panel.panel.querySelectorAll(`[data-ce-row$="/${name}"] td`)[7];
+    const zeroHourCell = (name) => state.panel.panel.querySelectorAll(`[data-ce-row$="/${name}"] td`)[9];
+    const names = () =>
+        [...state.panel.panel.querySelectorAll('[data-ce-row]')].map((tr) => tr.getAttribute('data-ce-row'));
+
+    test('a known volume below the hourly output caps the figure, muted, and the tooltip gives both', async () => {
+        // 24 a day is 1 an hour; 37.5 an hour could be made at 5170 each
+        state.volume = { '/items/sword': { unitsPerDay: 24, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        const capped = hourCell('sword');
+        expect(capped.getAttribute('data-ce-capped')).toBe('true');
+        expect(capped.textContent).toBe('5.2K');
+        expect(capped.title).toContain('about 24 traded a day at +5');
+        expect(capped.title).toContain('Uncapped: 193.9K an hour');
+    });
+
+    test('a measured zero caps to 0, and an unknown volume caps nothing', async () => {
+        state.volume = { '/items/sword': { unitsPerDay: 0, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(hourCell('sword').textContent).toBe('0');
+        expect(hourCell('sword').getAttribute('data-ce-capped')).toBe('true');
+        // The robe's volume was not measurable: its (unpriced) cell is unchanged, and a priced one would be too
+        expect(hourCell('robe').hasAttribute('data-ce-capped')).toBe(false);
+    });
+
+    test('an unknown volume leaves a priced figure uncapped', async () => {
+        state.rows = [row('sword')];
+        state.volume = { '/items/sword': { unitsPerDay: 0, days: 0, known: false } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(hourCell('sword').hasAttribute('data-ce-capped')).toBe(false);
+        expect(hourCell('sword').textContent).toBe('193.9K');
+    });
+
+    test('before the volume arrives the figure is uncapped', async () => {
+        state.rows = [row('sword')];
+        openBoard();
+        expect(hourCell('sword').textContent).toBe('193.9K');
+        expect(hourCell('sword').hasAttribute('data-ce-capped')).toBe(false);
+    });
+
+    test('a volume above the hourly output does not cap', async () => {
+        state.rows = [row('sword')];
+        state.volume = { '/items/sword': { unitsPerDay: 10_000, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(hourCell('sword').hasAttribute('data-ce-capped')).toBe(false);
+        expect(hourCell('sword').textContent).toBe('193.9K');
+    });
+
+    test('a level that loses on every unit keeps its uncapped figure', async () => {
+        state.rows = [row('sword', { target: level({ profitPerUnit: -100, profitPerHour: -3750 }) })];
+        state.volume = { '/items/sword': { unitsPerDay: 0, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(hourCell('sword').hasAttribute('data-ce-capped')).toBe(false);
+        expect(hourCell('sword').textContent).toBe('-3.8K');
+    });
+
+    test('rows keep their uncapped order when volumes arrive', async () => {
+        state.rows = [row('sword'), row('axe', { target: level({ profitPerUnit: 100, profitPerHour: 3750 }) })];
+        openBoard();
+        expect(names()).toEqual(['/actions/cheesesmithing/sword', '/actions/cheesesmithing/axe']);
+        // Capped, the sword would earn far less than the axe
+        state.volume = {
+            '/items/sword': { unitsPerDay: 24, known: true },
+            '/items/axe': { unitsPerDay: 1e9, known: true },
+        };
+        await flush();
+        await flush();
+        expect(names()).toEqual(['/actions/cheesesmithing/sword', '/actions/cheesesmithing/axe']);
+        expect(hourCell('sword').getAttribute('data-ce-capped')).toBe('true');
+    });
+
+    test('+0 is capped only when its own volume has been measured: none is looked up for it', async () => {
+        state.rows = [row('sword', { base: level({ level: 0, profitPerUnit: 400, profitPerHour: 15000 }) })];
+        state.volume = { '/items/sword': { unitsPerDay: 24, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(state.volumeCalls).toEqual(['/items/sword:5']);
+        expect(zeroHourCell('sword').hasAttribute('data-ce-capped')).toBe(false);
+        board.volumes.set('/items/sword:0', { unitsPerDay: 24, known: true });
+        state.panel.render();
+        expect(zeroHourCell('sword').getAttribute('data-ce-capped')).toBe('true');
+        expect(zeroHourCell('sword').textContent).toBe('400');
+    });
+});

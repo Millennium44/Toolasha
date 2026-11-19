@@ -741,6 +741,35 @@ export function buildCraftEnhanceRow({
     };
 }
 
+/**
+ * A level's profit per hour once the market's traded volume is taken into account: no more units an hour can be
+ * sold than the market takes (`unitsPerDay / 24`), so a faster maker is held to that.
+ *
+ * Only a measured volume caps (`known`): an unknown one is not 0, and 0 is only ever a measured 0. Only a positive
+ * profit per unit is capped: with a loss on every unit, making fewer of them is not a better hour to show, so a
+ * losing level keeps its uncapped figure. A level without a full figure has nothing to cap. The row is not changed;
+ * the ranking and the sort keep the uncapped figure, so rows do not reorder as volumes arrive.
+ *
+ * @param {Object} level - A row's `base` or `target`
+ * @param {{known?: boolean, unitsPerDay?: number}|null|undefined} volume - From the liquidity module, when asked
+ * @returns {{capped: boolean, profitPerHour: number|null, uncappedPerHour: number|null, unitsPerHourCap: number|null}}
+ */
+export function capProfitByVolume(level, volume) {
+    const uncapped = Number.isFinite(level?.profitPerHour) ? level.profitPerHour : null;
+    const none = { capped: false, profitPerHour: uncapped, uncappedPerHour: uncapped, unitsPerHourCap: null };
+    if (uncapped === null || level.status !== 'ok') return none;
+    if (!volume || volume.known !== true || !Number.isFinite(volume.unitsPerDay) || volume.unitsPerDay < 0) return none;
+    if (!(level.profitPerUnit > 0) || !(level.unitsPerHour > 0)) return none;
+    const unitsPerHourCap = volume.unitsPerDay / 24;
+    if (unitsPerHourCap >= level.unitsPerHour) return { ...none, unitsPerHourCap };
+    return {
+        capped: true,
+        profitPerHour: level.profitPerUnit * unitsPerHourCap,
+        uncappedPerHour: uncapped,
+        unitsPerHourCap,
+    };
+}
+
 /** The sort keys the window offers, each reading the target level's figure; null sorts behind everything */
 export const SORT_LEVELS = Object.freeze({
     hour: 'target',
@@ -840,4 +869,5 @@ export default {
     ENHANCE_ROUTES,
     buildCraftEnhanceRow,
     arrangeCraftEnhanceRows,
+    capProfitByVolume,
 };

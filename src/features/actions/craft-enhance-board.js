@@ -48,6 +48,7 @@ import {
     MAX_TARGET_LEVEL,
     OWNED_MODES,
     arrangeCraftEnhanceRows,
+    capProfitByVolume,
     normalizeOwnedMode,
     normalizeTargetLevel,
 } from './craft-enhance-rank.js';
@@ -147,6 +148,28 @@ function goldCell(value, missingNote = '', signed = true) {
         textAlign: 'right',
         color: !signed ? INK : rounded >= 0 ? GOOD : BAD,
     });
+}
+
+/**
+ * A profit/hr cell held to what the market trades: the capped figure, muted, with the uncapped one in the tooltip.
+ * Falls back to the ordinary cell when the volume does not cap it.
+ * @param {Object} level - A row's `base` or `target`
+ * @param {{known?: boolean, unitsPerDay?: number}|undefined} volume - The measured volume at that level, if asked
+ * @param {number} atLevel - The level the volume is for
+ * @returns {HTMLTableCellElement}
+ */
+function profitPerHourCell(level, volume, atLevel) {
+    const cap = capProfitByVolume(level, volume);
+    if (!cap.capped) return goldCell(level.profitPerHour, reasonText(level));
+    const td = cell(formatKMB(Math.round(cap.profitPerHour)), { textAlign: 'right', color: MUTED });
+    td.setAttribute('data-ce-capped', 'true');
+    td.title =
+        `Capped by the market: about ${Math.round(volume.unitsPerDay)} traded a day at +${atLevel} ` +
+        `(${Math.round(cap.unitsPerHourCap * 100) / 100} an hour), fewer than the ` +
+        `${Math.round(level.unitsPerHour * 100) / 100} an hour you could make.
+` +
+        `Uncapped: ${formatKMB(Math.round(cap.uncappedPerHour))} an hour. Sorting uses the uncapped figure.`;
+    return td;
 }
 
 /**
@@ -834,9 +857,11 @@ class CraftEnhanceBoard {
         tr.appendChild(enhanceCell);
         tr.appendChild(goldCell(t.saleAfterTax, `No real sell quote at +${target}`, false));
         tr.appendChild(goldCell(t.profitPerUnit, reasonText(t)));
-        tr.appendChild(goldCell(t.profitPerHour, reasonText(t)));
+        tr.appendChild(profitPerHourCell(t, this.volumes.get(`${row.itemHrid}:${target}`), target));
         tr.appendChild(goldCell(b.profitPerUnit, reasonText(b)));
-        tr.appendChild(goldCell(b.profitPerHour, reasonText(b)));
+        // +0 volume is not looked up (only the target level's is, for the visible rows): until something has
+        // measured it, +0 stays uncapped
+        tr.appendChild(profitPerHourCell(b, this.volumes.get(`${row.itemHrid}:0`), 0));
         tr.appendChild(goldCell(t.craftXpPerHour, 'Not known', false));
         tr.appendChild(goldCell(t.enhanceXpPerHour, 'Not known', false));
 

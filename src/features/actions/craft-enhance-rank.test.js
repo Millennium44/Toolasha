@@ -13,6 +13,7 @@ import {
     buildCraftEnhanceRow,
     buildDungeonInputIndex,
     buildHeldPool,
+    capProfitByVolume,
     chooseEnhanceRoute,
     craftUnitFigures,
     dungeonInputKind,
@@ -1384,5 +1385,48 @@ describe('crafted protection copies in the level and the blend', () => {
         // Full coverage has no fresh part to be unknown
         const whole = build(candidate({ coverage: 1 }), { ...fresh, extraCraftXp: null });
         expect(whole.target.craftXpPerHour).not.toBeNull();
+    });
+});
+
+describe('capProfitByVolume', () => {
+    const lvl = (over = {}) => ({
+        status: 'ok',
+        profitPerUnit: 200,
+        unitsPerHour: 50,
+        profitPerHour: 10000,
+        ...over,
+    });
+
+    test('a measured volume under the hourly output holds the hour to what the market takes', () => {
+        const capped = capProfitByVolume(lvl(), { known: true, unitsPerDay: 240 });
+        // 10 an hour at 200 each
+        expect(capped).toEqual({ capped: true, profitPerHour: 2000, uncappedPerHour: 10000, unitsPerHourCap: 10 });
+    });
+
+    test('a volume at or above the hourly output changes nothing', () => {
+        expect(capProfitByVolume(lvl(), { known: true, unitsPerDay: 1200 }).capped).toBe(false);
+        expect(capProfitByVolume(lvl(), { known: true, unitsPerDay: 5000 }).profitPerHour).toBe(10000);
+    });
+
+    test('a measured 0 caps to 0, but unknown, missing and malformed volumes are not 0', () => {
+        expect(capProfitByVolume(lvl(), { known: true, unitsPerDay: 0 }).profitPerHour).toBe(0);
+        for (const volume of [null, undefined, { known: false, unitsPerDay: 0 }, { unitsPerDay: 0 }, { known: true }]) {
+            const none = capProfitByVolume(lvl(), volume);
+            expect(none.capped).toBe(false);
+            expect(none.profitPerHour).toBe(10000);
+        }
+        expect(capProfitByVolume(lvl(), { known: true, unitsPerDay: -5 }).capped).toBe(false);
+    });
+
+    test('a losing level and a level without a full figure are not capped', () => {
+        const volume = { known: true, unitsPerDay: 0 };
+        const losing = capProfitByVolume(lvl({ profitPerUnit: -10, profitPerHour: -500 }), volume);
+        expect(losing).toEqual(expect.objectContaining({ capped: false, profitPerHour: -500 }));
+        const unpriced = capProfitByVolume(
+            lvl({ status: 'unpriced', profitPerUnit: null, profitPerHour: null }),
+            volume
+        );
+        expect(unpriced).toEqual(expect.objectContaining({ capped: false, profitPerHour: null }));
+        expect(capProfitByVolume(null, volume).profitPerHour).toBeNull();
     });
 });
