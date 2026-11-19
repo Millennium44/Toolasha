@@ -559,18 +559,20 @@ export function rankCraftEnhance({
                         }
                     }
                     if (unitValue === null) continue;
-                    // The hour needs one base per craft. The held stack serves the share of those crafts it can; the
-                    // rest are rated on the fresh route (blended in the row), so a stack smaller than the hour's
-                    // crafts never prices every craft as if it held a base
+                    // The hour needs one base per craft. The held stack serves the crafts it can, at the held route's
+                    // rate; the time left runs at the fresh route's rate (blended in the row), so a stack smaller than
+                    // the hour's crafts never prices every craft as if it held a base. Coverage is the held share of
+                    // that mixed hour's crafts: S / (S + (1 - S / heldRate) * freshRate)
                     const heldCrafts = craftsPerHourOf(heldProfit);
-                    const hourCrafts = Math.max(craftsPerHour || 0, heldCrafts || 0);
                     const stackCount = heldPool.get(`${baseHrid}:${heldLevel}`) || 0;
-                    const coverage = hourCrafts > 0 ? Math.min(1, stackCount / hourCrafts) : Math.min(1, stackCount);
+                    const heldUsed = Math.min(stackCount, heldCrafts);
+                    const freshCrafts = (1 - heldUsed / heldCrafts) * craftsPerHour;
+                    const coverage = heldUsed + freshCrafts > 0 ? heldUsed / (heldUsed + freshCrafts) : 0;
                     // A +0 base is the same stack an ordinary input of the same item would draw on: the copies this
                     // route spends in the hour come out of it first
                     const rest = new Map(heldPool);
                     if (heldLevel === 0) {
-                        rest.set(`${baseHrid}:0`, Math.max(0, stackCount - Math.min(stackCount, hourCrafts || 1)));
+                        rest.set(`${baseHrid}:0`, stackCount - heldUsed);
                     }
                     const restPriced = priceCraftMaterials(
                         pricingOf(

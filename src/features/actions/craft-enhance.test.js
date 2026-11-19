@@ -1258,6 +1258,19 @@ describe('the stock is spread over the hour of crafts', () => {
         expect(row.target.enhanceCost).toBeCloseTo(0.2 * 900 + 0.8 * 3000, 6);
     });
 
+    test('a held base on a faster route covers its share of the mixed hour, not stock over the faster rate', async () => {
+        const action = starFixture();
+        game.profits[action.hrid].totalItemsPerHour = 10;
+        // Owning the base skips its crafting chain: 20 crafts an hour on the held route
+        game.heldProfits[action.hrid] = { ...game.profits[action.hrid], totalItemsPerHour: 20 };
+        game.quotes['/items/ring:3'] = { price: 1000, source: 'book', estimated: false };
+        game.enhanceQuotes['/items/ring:3'] = { cost: 900, seconds: 40, xp: 300, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 10, 3)];
+        const row = await rank();
+        // 10 held crafts take half the hour; the other half runs 5 fresh crafts: 10 of 15
+        expect(row.route.heldBase.coverage).toBeCloseTo(10 / 15, 9);
+    });
+
     test('a held base stack at least as big as the hour covers all of it', async () => {
         const action = starFixture();
         game.profits[action.hrid].totalItemsPerHour = 10;
