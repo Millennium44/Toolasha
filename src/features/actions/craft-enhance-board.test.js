@@ -752,6 +752,52 @@ describe('profit per hour held to what the market trades', () => {
         expect(capped.title).toContain('Uncapped: 193.9K an hour');
     });
 
+    test('+N reports the variant that wins after the cap, in the cell and the route tooltip (#1053)', async () => {
+        const variant = (route, perUnit, perHour, unitsPerHour, copies) => ({
+            level: 5,
+            status: 'ok',
+            profitPerUnit: perUnit,
+            profitPerHour: perHour,
+            unitsPerHour,
+            route: 'craft',
+            routeInfo: {
+                route,
+                offered: true,
+                baseHrid: '/items/base',
+                directCost: 150,
+                baseCost: 160,
+                saved: 0,
+                enhance: { selfCopyCrafts: copies, extraCraftSeconds: 200 },
+            },
+        });
+        const market = variant('craft', 150, 27000, 180, 0);
+        const crafted = variant('craft', 230, 6900, 30, 1);
+        state.rows = [
+            row('sword', {
+                target: level({ profitPerUnit: 150, unitsPerHour: 180, profitPerHour: 27000 }),
+                route: market.routeInfo,
+                sweep: [level({ level: 0 }), { ...market, variants: [market, crafted] }],
+            }),
+        ];
+        state.volume = { '/items/sword': { unitsPerDay: 24, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        // 1 an hour: 150 for market-only against 230 for crafted copies
+        expect(hourCell('sword').textContent).toBe('230');
+        expect(hourCell('sword').title).toContain('Uncapped: 27.0K an hour');
+        const enhanceCell = state.panel.panel.querySelectorAll('[data-ce-row$="/sword"] td')[4];
+        expect(enhanceCell.title).toContain('crafted at craft cost');
+        // An unknown volume keeps the uncapped winner
+        state.volume = {};
+        board.volumes.clear();
+        board.volumes.set('/items/sword:5', { known: false, unitsPerDay: 0 });
+        state.panel.render();
+        expect(hourCell('sword').textContent).toBe('27.0K');
+        expect(hourCell('sword').hasAttribute('data-ce-capped')).toBe(false);
+    });
+
     test('a measured zero caps to 0, and an unknown volume caps nothing', async () => {
         state.volume = { '/items/sword': { unitsPerDay: 0, known: true } };
         openBoard();

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Craft & Enhance Best level holds every route to the market
+
+Best level and Profit/hr +N now apply the volume cap to each route and protection choice before picking one, so a route that earns more per item but makes fewer an hour can win once the market limits you.
+
 ### Craft & Enhance shows each row's best level
 
 A new "Best level" column names the level that earns the most per hour among the usual sale levels (+0, the item's breakpoints and your target), holding each to what the market trades there. Every level's figure is on hover.

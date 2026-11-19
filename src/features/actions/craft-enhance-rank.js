@@ -828,12 +828,15 @@ export function buildCraftEnhanceRow({
             ),
         ];
         let best = null;
+        // Every priced scenario, in the tie order above: the volume cap is applied to each, not only to the uncapped winner
+        const fullRated = [];
         // The best hour of each fresh route on its own: the variant a route uses in the comparison is the one whose
         // cost it is reported at
         const bestFresh = { direct: null, base: null };
         for (const scenario of scenarios) {
             const rated = rateWith(level, { ...inputs, ...scenario, gate: false });
             if (!full(rated)) continue;
+            fullRated.push(rated);
             if (best === null || rated.result.profitPerHour > best.result.profitPerHour) best = rated;
             if (scenario.candidates.length === 0) {
                 const key = scenario.enhance ? 'direct' : 'base';
@@ -857,28 +860,39 @@ export function buildCraftEnhanceRow({
             directCost: bestFresh.direct ? Number(bestFresh.direct.route.enhance.cost) : null,
             baseCost: bestFresh.base ? Number(bestFresh.base.route.enhance.cost) : null,
         };
-        const winner = best.route.route;
-        const other =
-            winner === ENHANCE_ROUTES.BASE
-                ? costs.directCost
-                : winner === ENHANCE_ROUTES.DIRECT
-                  ? costs.baseCost
-                  : null;
-        const own = winner === ENHANCE_ROUTES.BASE ? costs.baseCost : costs.directCost;
-        const saved = Number.isFinite(other) && Number.isFinite(own) ? other - own : 0;
-        const route = { ...best.route, directCost: costs.directCost, baseCost: costs.baseCost, saved };
-        if (route.heldBase) {
-            // What the held base saves is measured against the cheapest fresh route, whichever the hour preferred
-            const cheapest = Math.min(...[costs.directCost, costs.baseCost].filter((cost) => Number.isFinite(cost)));
-            route.heldBase = {
-                ...route.heldBase,
-                saved:
-                    Number.isFinite(cheapest) && craftCostPerUnit !== null
-                        ? craftCostPerUnit + cheapest - route.heldBase.total
-                        : null,
-            };
-        }
-        return { ...best, route };
+        const finishRoute = (pick) => {
+            const winner = pick.route.route;
+            const other =
+                winner === ENHANCE_ROUTES.BASE
+                    ? costs.directCost
+                    : winner === ENHANCE_ROUTES.DIRECT
+                      ? costs.baseCost
+                      : null;
+            const own = winner === ENHANCE_ROUTES.BASE ? costs.baseCost : costs.directCost;
+            const saved = Number.isFinite(other) && Number.isFinite(own) ? other - own : 0;
+            const finished = { ...pick.route, directCost: costs.directCost, baseCost: costs.baseCost, saved };
+            if (finished.heldBase) {
+                // What the held base saves is measured against the cheapest fresh route, whichever the hour preferred
+                const cheapest = Math.min(
+                    ...[costs.directCost, costs.baseCost].filter((cost) => Number.isFinite(cost))
+                );
+                finished.heldBase = {
+                    ...finished.heldBase,
+                    saved:
+                        Number.isFinite(cheapest) && craftCostPerUnit !== null
+                            ? craftCostPerUnit + cheapest - finished.heldBase.total
+                            : null,
+                };
+            }
+            return finished;
+        };
+        const route = finishRoute(best);
+        // Each priced variant with its own finished route, for the volume cap (see capBestVariant)
+        const variants = fullRated.map((pick) => {
+            const own = finishRoute(pick);
+            return { ...pick.result, route: own.route, routeInfo: own };
+        });
+        return { ...best, route, variants };
     };
 
     const rated = rateLevel(targetLevel, { enhance, viaBase, candidates: heldBases, saleAfterTax: saleTarget });
@@ -890,15 +904,19 @@ export function buildCraftEnhanceRow({
     const sweep = [{ ...base, route: null }];
     for (const spec of [...levels].sort((a, b) => a.level - b.level)) {
         if (!(spec.level > 0) || spec.level >= targetLevel) continue;
-        const { route: levelRoute, result } = rateLevel(spec.level, {
+        const {
+            route: levelRoute,
+            result,
+            variants: levelVariants,
+        } = rateLevel(spec.level, {
             enhance: spec.enhance ?? null,
             viaBase: spec.viaBase ?? null,
             candidates: spec.heldBases ?? [],
             saleAfterTax: spec.saleAfterTax,
         });
-        sweep.push({ ...result, route: levelRoute.route });
+        sweep.push({ ...result, route: levelRoute.route, variants: levelVariants });
     }
-    sweep.push({ ...target, route: route.route });
+    sweep.push({ ...target, route: route.route, variants: rated.variants });
     const best = bestLevelOf(sweep);
 
     return {
@@ -955,6 +973,28 @@ export function capProfitByVolume(level, volume) {
 }
 
 /**
+ * A level's best route-and-protection variant once each is held to the market's volume, not only the one that won
+ * uncapped: a variant that earns more per item but makes fewer of them an hour can win after the cap. Each variant of
+ * the level's `variants` goes through {@link capProfitByVolume}; the best capped hour is chosen and a tie keeps the
+ * earlier one (the order rateLevel rated them in: market-only, the item itself, the base, fresh before held). An unknown
+ * or pending volume caps none of them, so the uncapped winner is kept. A level without variants is its own variant.
+ *
+ * @param {Object} entry - A sweep entry (with `variants` when the level was rated over several)
+ * @param {{known?: boolean, unitsPerDay?: number}|null|undefined} volume - The level's volume, when asked
+ * @returns {{entry: Object, cap: Object}} The chosen variant's figures (`route` name, `routeInfo`) and its cap
+ */
+export function capBestVariant(entry, volume) {
+    const variants = Array.isArray(entry?.variants) ? entry.variants : [];
+    let chosen = null;
+    for (const variant of variants) {
+        const cap = capProfitByVolume(variant, volume);
+        if (!Number.isFinite(cap.profitPerHour)) continue;
+        if (chosen === null || cap.profitPerHour > chosen.cap.profitPerHour) chosen = { entry: variant, cap };
+    }
+    return chosen ?? { entry, cap: capProfitByVolume(entry, volume) };
+}
+
+/**
  * The best level among the candidates once each is held to what the market trades there.
  *
  * Every candidate is rated by {@link capProfitByVolume} on its own volume: a volume not looked up yet is `pending`
@@ -976,10 +1016,11 @@ export function bestLevelByVolume(sweep, candidateLevels, volumeOf) {
         const entry = (sweep || []).find((candidate) => candidate.level === level);
         if (!entry) continue;
         const volume = volumeOf(level);
-        const cap = capProfitByVolume(entry, volume);
+        const choice = capBestVariant(entry, volume);
+        const cap = choice.cap;
         const item = {
             level,
-            entry,
+            entry: choice.entry,
             cap,
             volumeState: !volume ? 'pending' : volume.known === true ? 'known' : 'unknown',
             profitPerHour: cap.profitPerHour,
@@ -1092,6 +1133,7 @@ export default {
     buildCraftEnhanceRow,
     arrangeCraftEnhanceRows,
     capProfitByVolume,
+    capBestVariant,
     candidateLevelsFor,
     bestLevelByVolume,
 };
