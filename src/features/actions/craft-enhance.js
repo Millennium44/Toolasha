@@ -436,11 +436,20 @@ export function rankCraftEnhance({
          * @returns {Object} A row
          */
         async function buildRow(recipe, profit) {
-            const pricingOf = (materials, pool) => ({
+            // Crafts in an hour (actions that consume inputs): the items an hour makes over the items one craft makes.
+            // The held stock is spread over this many crafts. Null when the recipe makes nothing per hour.
+            const craftsPerHourOf = (answer) => {
+                const perCraft = (Number(answer?.outputAmount) || 1) * (1 + (Number(answer?.gourmetBonus) || 0));
+                const crafts = (Number(answer?.totalItemsPerHour) || 0) / perCraft;
+                return crafts > 0 && Number.isFinite(crafts) ? crafts : null;
+            };
+            const craftsPerHour = craftsPerHourOf(profit);
+            const pricingOf = (materials, pool, hourCrafts = craftsPerHour) => ({
                 materials,
                 index,
                 ownedMode,
                 heldPool: pool,
+                craftsPerHour: hourCrafts,
                 valueDrop: (hrid) => saleAfterTaxAt(hrid, 0),
                 valueToken: (hrid) => tokenRouteDetail(index, hrid)?.value ?? null,
                 tokenEstimated: (hrid) => Boolean(tokenRouteDetail(index, hrid)?.estimated),
@@ -544,13 +553,24 @@ export function rankCraftEnhance({
                         }
                     }
                     if (unitValue === null) continue;
-                    // A +0 base is the same stack an ordinary input of the same item would draw on: one copy is spent here
+                    // The hour needs one base per craft. The held stack serves the share of those crafts it can; the
+                    // rest are rated on the fresh route (blended in the row), so a stack smaller than the hour's
+                    // crafts never prices every craft as if it held a base
+                    const heldCrafts = craftsPerHourOf(heldProfit);
+                    const hourCrafts = Math.max(craftsPerHour || 0, heldCrafts || 0);
+                    const stackCount = heldPool.get(`${baseHrid}:${heldLevel}`) || 0;
+                    const coverage = hourCrafts > 0 ? Math.min(1, stackCount / hourCrafts) : Math.min(1, stackCount);
+                    // A +0 base is the same stack an ordinary input of the same item would draw on: the copies this
+                    // route spends in the hour come out of it first
                     const rest = new Map(heldPool);
-                    if (heldLevel === 0) rest.set(`${baseHrid}:0`, (rest.get(`${baseHrid}:0`) || 0) - 1);
+                    if (heldLevel === 0) {
+                        rest.set(`${baseHrid}:0`, Math.max(0, stackCount - Math.min(stackCount, hourCrafts || 1)));
+                    }
                     const restPriced = priceCraftMaterials(
                         pricingOf(
                             profit.materialCosts.filter((material) => !material.isUpgradeItem),
-                            rest
+                            rest,
+                            heldCrafts
                         )
                     );
                     if (restPriced.unpriced.length > 0) continue;
@@ -562,7 +582,8 @@ export function rankCraftEnhance({
                     if (!figures) continue;
                     heldBases.push({
                         level: heldLevel,
-                        count: heldPool.get(`${baseHrid}:${heldLevel}`) || 0,
+                        count: stackCount,
+                        coverage,
                         unitValue,
                         via,
                         enhance: enhanceFrom(baseHrid, heldLevel),
@@ -580,18 +601,18 @@ export function rankCraftEnhance({
                     'The inventory is not loaded, so nothing is counted as held and dungeon inputs are priced as bought.'
                 );
             }
-            // What the stack covers: the split prices the next craft, and a stack that holds N whole crafts' worth of
-            // an input runs out after N, so the hourly figure is an upper bound beyond that
+            // The stock is spread over one hour of crafts; what the hour needs beyond it is bought
             for (const input of priced.heldInputs || []) {
                 if (!(input.held > 0)) continue;
-                const crafts = input.needed > 0 ? Math.floor(input.stock / input.needed + 1e-9) : 0;
                 notes.push(
-                    `Holds ${round2(input.stock)} ${itemName(input.itemHrid)}; one craft uses ${round2(input.needed)}: ` +
-                        `${round2(input.held)} from stock` +
+                    `Holds ${round2(input.stock)} ${itemName(input.itemHrid)}; an hour of crafts needs ` +
+                        `${round2(input.needed)}: ${round2(input.held)} from stock` +
                         (input.bought > 0 ? `, ${round2(input.bought)} bought` : '') +
-                        `. The stock covers ${crafts} craft${crafts === 1 ? '' : 's'}; later crafts buy these inputs, so ` +
-                        'the hourly figure is a best case.'
+                        '. The cost per item spreads the stock over that hour.'
                 );
+            }
+            if (priced.perCraftFallback && ownedMode !== OWNED_MODES.BUY && heldPool) {
+                notes.push('Crafts per hour are not known, so what you hold is priced against a single craft.');
             }
             if (!xpKnown)
                 notes.push('The crafting XP of the recipe or its upgrade chain is not known, so it is left out.');

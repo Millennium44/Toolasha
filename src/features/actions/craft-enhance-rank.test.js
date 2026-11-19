@@ -1165,3 +1165,138 @@ describe('buildCraftEnhanceRow with a held base', () => {
         expect(built.sunkInputs).toEqual(['/items/a']);
     });
 });
+
+describe('priceCraftMaterials: the stock is spread over one hour of crafts', () => {
+    const valueDrop = (hrid) => ({ '/items/griffin_leather': 960 })[hrid] ?? null;
+    const held = (count, hrid = '/items/griffin_leather') => new Map([[`${hrid}:0`, count]]);
+    const price = (over) =>
+        priceCraftMaterials({
+            materials: [mat('/items/griffin_leather', 2, 1000)],
+            index,
+            ownedMode: OWNED_MODES.MARKET,
+            valueDrop,
+            valueToken: () => null,
+            craftsPerHour: 10,
+            ...over,
+        });
+
+    test('stock below the hour need: 2 a craft, 1 held, 10 crafts is 1 owned and 19 bought, over 10 crafts', () => {
+        const priced = price({ heldPool: held(1) });
+        expect(priced.costPerAction).toBeCloseTo((960 + 19 * 1000) / 10, 9);
+        expect(priced.heldInputs).toEqual([
+            { itemHrid: '/items/griffin_leather', needed: 20, held: 1, bought: 19, stock: 1 },
+        ]);
+        // Never below what the hour costs: it is not the one-craft price of 960 + 1000 either
+        expect(priced.costPerAction).toBeGreaterThan((960 + 1000) / 2);
+        expect(priced.perCraftFallback).toBe(false);
+    });
+
+    test('stock equal to the hour need prices every unit as owned', () => {
+        const priced = price({ heldPool: held(20) });
+        expect(priced.costPerAction).toBeCloseTo((20 * 960) / 10, 9);
+        expect(priced.heldInputs[0]).toEqual(expect.objectContaining({ held: 20, bought: 0 }));
+    });
+
+    test('stock above the hour need is the same as equal: only the hour is priced', () => {
+        const priced = price({ heldPool: held(500) });
+        expect(priced.costPerAction).toBeCloseTo(1920, 9);
+        expect(priced.heldInputs[0]).toEqual(expect.objectContaining({ needed: 20, held: 20, bought: 0, stock: 500 }));
+    });
+
+    test('two lines of one item share one stock over the hour', () => {
+        const priced = price({
+            materials: [mat('/items/griffin_leather', 1, 1000), mat('/items/griffin_leather', 2, 1000)],
+            heldPool: held(15),
+        });
+        // 30 needed in the hour, 15 held: 15 owned and 15 bought
+        expect(priced.costPerAction).toBeCloseTo((15 * 960 + 15 * 1000) / 10, 9);
+        expect(priced.heldInputs).toEqual([
+            { itemHrid: '/items/griffin_leather', needed: 30, held: 15, bought: 15, stock: 15 },
+        ]);
+    });
+
+    test('sunk spreads the same way: held units are 0, the rest of the hour is bought', () => {
+        const priced = price({ ownedMode: OWNED_MODES.SUNK, heldPool: held(5) });
+        expect(priced.costPerAction).toBeCloseTo((15 * 1000) / 10, 9);
+    });
+
+    test('buy mode ignores the stock whatever the hour', () => {
+        expect(price({ ownedMode: OWNED_MODES.BUY, heldPool: held(500) }).costPerAction).toBe(2000);
+    });
+
+    test('crafts per hour missing or 0 falls back to one craft and says so', () => {
+        for (const craftsPerHour of [null, 0, undefined, Number.NaN]) {
+            const priced = price({ craftsPerHour, heldPool: held(1) });
+            expect(priced.costPerAction).toBe(960 + 1000);
+            expect(priced.perCraftFallback).toBe(true);
+        }
+    });
+
+    test('a fractional (Artisan) per-craft amount is spread over the hour too', () => {
+        const priced = price({ materials: [mat('/items/griffin_leather', 1.7, 1000)], heldPool: held(5) });
+        // 17 needed in the hour, 5 held
+        expect(priced.costPerAction).toBeCloseTo((5 * 960 + 12 * 1000) / 10, 9);
+    });
+
+    test('an unpriced bought part still makes the line unpriced when the hour needs more than is held', () => {
+        const priced = price({
+            materials: [mat('/items/griffin_leather', 2, 0, { missingPrice: true })],
+            heldPool: held(19),
+        });
+        expect(priced.unpriced).toHaveLength(1);
+    });
+});
+
+describe('buildCraftEnhanceRow: a held base that covers part of the hour', () => {
+    const run = (cost, seconds = 20) => ({ cost, seconds, xp: 10, xpKnown: true });
+    const candidate = (coverage, over = {}) => ({
+        level: 3,
+        count: 1,
+        coverage,
+        unitValue: 50,
+        via: 'sale',
+        enhance: run(100, 10),
+        craftCostPerUnit: 40,
+        secondsPerUnit: 30,
+        otherNetPerUnit: 0,
+        craftXpPerUnit: 15,
+        ...over,
+    });
+    const via = (heldBases, over = {}) =>
+        row('ring', { over: { enhance: run(500), viaBase: run(300), baseHrid: '/items/ring', heldBases, ...over } });
+
+    test('the held base serves its share and the rest takes the fresh route cost, blended per craft', () => {
+        const built = via([candidate(0.25)]);
+        // Fresh: craft 60, enhance 300 (36 s craft). Held: craft 40, enhance 100. A quarter held:
+        expect(built.route.route).toBe('held-base');
+        expect(built.route.heldBase.coverage).toBe(0.25);
+        expect(built.target.craftCostPerUnit).toBeCloseTo(0.25 * 40 + 0.75 * 60, 9);
+        expect(built.target.enhanceCost).toBeCloseTo(0.25 * 100 + 0.75 * 300, 9);
+        // Never below the fully held figure, never above the fresh one
+        expect(built.target.craftCostPerUnit + built.target.enhanceCost).toBeGreaterThan(140);
+        expect(built.target.craftCostPerUnit + built.target.enhanceCost).toBeLessThan(360);
+    });
+
+    test('full coverage is the held figure alone', () => {
+        const built = via([candidate(1)]);
+        expect(built.target.craftCostPerUnit).toBe(40);
+        expect(built.target.enhanceCost).toBe(100);
+    });
+
+    test('part coverage cannot be rated when the fresh routes cannot be priced: no figure for the uncovered crafts', () => {
+        const built = via([candidate(0.5)], { enhance: null, viaBase: null });
+        expect(built.route.route).not.toBe('held-base');
+        expect(built.target.status).toBe('unpriced');
+        // Full coverage has no uncovered crafts, so it still stands
+        expect(via([candidate(1)], { enhance: null, viaBase: null }).route.route).toBe('held-base');
+    });
+
+    test('a candidate that serves nothing is not a candidate', () => {
+        expect(via([candidate(0)]).route.route).toBe('refine-base');
+    });
+
+    test('unknown crafting XP on the fresh side leaves the blended XP unknown, not the held figure alone', () => {
+        const built = via([candidate(0.5)], { craftXpPerUnit: null });
+        expect(built.target.craftXpPerHour).toBeNull();
+    });
+});

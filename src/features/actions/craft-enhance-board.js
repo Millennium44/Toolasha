@@ -180,8 +180,8 @@ function routeTooltip(row, target) {
             held.via === null ? 'counted at 0 (sunk)' : `counted at ${money(held.unitValue)} (what it would sell for)`;
         lines.push(
             `Starts from your held +${held.level} ${name(route.baseHrid)} (you hold ${Math.floor(held.count)}), ${value}, ` +
-                `enhanced to +${target}, then refined. It covers ${Math.floor(held.count)} craft${Math.floor(held.count) === 1 ? '' : 's'}; ` +
-                'later ones start from a bought base.'
+                `enhanced to +${target}, then refined. It serves ${Math.round((held.coverage ?? 1) * 100)}% of an hour's ` +
+                'crafts; the rest start from a bought base and the figures are blended.'
         );
         lines.push(
             held.saved === null
@@ -781,11 +781,10 @@ class CraftEnhanceBoard {
         const heldLines = (row.heldInputs || [])
             .filter((input) => input.held > 0)
             .map((input) => {
-                const crafts = input.needed > 0 ? Math.floor(input.stock / input.needed + 1e-9) : 0;
                 return (
                     `${input.itemHrid.split('/').pop().replace(/_/g, ' ')}: holds ${Math.round(input.stock * 100) / 100}, ` +
-                    `one craft needs ${Math.round(input.needed * 100) / 100} (${Math.round(input.bought * 100) / 100} bought); ` +
-                    `the stock covers ${crafts} craft${crafts === 1 ? '' : 's'}`
+                    `an hour of crafts needs ${Math.round(input.needed * 100) / 100} ` +
+                    `(${Math.round(input.bought * 100) / 100} bought); the stock is spread over that hour`
                 );
             });
         if (heldLines.length > 0 && t.craftCostPerUnit !== null) craftCell.title = heldLines.join('\n');

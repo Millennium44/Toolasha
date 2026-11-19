@@ -214,8 +214,8 @@ beforeEach(() => {
     game.drinks = [];
     game.drinkPrices = {};
     game.fpExtra = '';
-    // Holds plenty of the drop, so the ordinary tests price it as owned in market mode
-    game.inventory = [stack('/items/griffin_leather', 100)];
+    // Holds far more than an hour of crafts needs, so the ordinary tests price the drop as owned in market mode
+    game.inventory = [stack('/items/griffin_leather', 1_000_000)];
     game.chain = [];
     game.xp = {};
     game.refinements = {};
@@ -953,6 +953,10 @@ describe('Artisan worst case', () => {
 });
 
 describe('the inventory split', () => {
+    // One craft an hour: the hour's need is one craft's, so the counts below read per craft
+    beforeEach(() => {
+        game.profits['/actions/cheesesmithing/sword'].totalItemsPerHour = 1;
+    });
     const rank = async (mode = 'market') => (await rankCraftEnhance({ targetLevel: 5, ownedMode: mode }))[0];
     /** Cheese is 10 x 5 in every fixture recipe */
     const CHEESE = 50;
@@ -966,7 +970,8 @@ describe('the inventory split', () => {
         ]);
         const text = row.notes.join(' ');
         expect(text).toContain('Holds 1 ');
-        expect(text).toContain('covers 0 crafts');
+        expect(text).toContain('an hour of crafts needs 2');
+        expect(text).toContain('spreads the stock over that hour');
     });
 
     test('nothing held and an empty inventory price every unit at the buy price, with no note about the inventory', async () => {
@@ -1066,14 +1071,20 @@ describe('the inventory split', () => {
 });
 
 describe('starting from a base the character holds', () => {
+    /** The star recipe at a given number of crafts an hour (1: the counts below read per craft) */
+    const star = (crafts = 1) => {
+        const action = starFixture();
+        game.profits[action.hrid].totalItemsPerHour = crafts;
+        return action;
+    };
     const run = async (mode = 'market') => (await rankCraftEnhance({ targetLevel: 5, ownedMode: mode }))[0];
     const RING_AT_3 = { price: 1000, source: 'book', estimated: false };
 
     test('a held +3 base is enhanced 3 to 5, priced at its own sale value, and replaces the bought base', async () => {
-        starFixture();
+        star();
         game.quotes['/items/ring:3'] = RING_AT_3;
         game.enhanceQuotes['/items/ring:3'] = { cost: 900, seconds: 40, xp: 300, xpKnown: true };
-        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 3)];
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 1, 3)];
         const row = await run();
         // A run from +3 is its own quote, not the +0 one reused
         expect(game.enhanceCalls.map((call) => [call.itemHrid, call.from, call.to])).toContainEqual([
@@ -1096,20 +1107,20 @@ describe('starting from a base the character holds', () => {
     });
 
     test('a held base that is dearer to use than the fresh route loses', async () => {
-        starFixture();
+        star();
         game.quotes['/items/ring:3'] = { price: 90000, source: 'book', estimated: false };
         game.enhanceQuotes['/items/ring:3'] = { cost: 900, seconds: 40, xp: 300, xpKnown: true };
-        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 3)];
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 1, 3)];
         const row = await run();
         expect(row.route.route).toBe('refine-base');
         expect(row.route.heldBase).toBeNull();
     });
 
     test('sunk counts a held non-dungeon base at its sale value, not 0', async () => {
-        starFixture();
+        star();
         game.quotes['/items/ring:3'] = RING_AT_3;
         game.enhanceQuotes['/items/ring:3'] = { cost: 900, seconds: 40, xp: 300, xpKnown: true };
-        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 3)];
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 1, 3)];
         const row = await run('sunk');
         expect(row.route.heldBase.unitValue).toBe(960);
         // The held leather is sunk
@@ -1117,19 +1128,19 @@ describe('starting from a base the character holds', () => {
     });
 
     test('a held base above the target level is not a candidate', async () => {
-        starFixture();
+        star();
         game.quotes['/items/ring:7'] = RING_AT_3;
         game.enhanceQuotes['/items/ring:7'] = { cost: 1, seconds: 1, xp: 1, xpKnown: true };
-        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 7)];
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 1, 7)];
         const row = await run();
         expect(row.route.route).toBe('refine-base');
         expect(game.enhanceCalls.some((call) => call.from === 7)).toBe(false);
     });
 
     test('a held base with no real sale quote is not a candidate and is never counted as free', async () => {
-        starFixture();
+        star();
         game.enhanceQuotes['/items/ring:3'] = { cost: 1, seconds: 1, xp: 1, xpKnown: true };
-        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 3)];
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 1, 3)];
         for (const mode of ['market', 'sunk']) {
             clearCraftEnhanceCache();
             game.stamp += 1;
@@ -1138,10 +1149,10 @@ describe('starting from a base the character holds', () => {
     });
 
     test('buy mode and an unloaded inventory ignore a held base', async () => {
-        starFixture();
+        star();
         game.quotes['/items/ring:3'] = RING_AT_3;
         game.enhanceQuotes['/items/ring:3'] = { cost: 1, seconds: 1, xp: 1, xpKnown: true };
-        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 3)];
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 1, 3)];
         expect((await run('buy')).route.route).toBe('refine-base');
         clearCraftEnhanceCache();
         game.stamp += 1;
@@ -1151,7 +1162,7 @@ describe('starting from a base the character holds', () => {
     });
 
     test('a held +0 base is spent once: an input of the same item cannot use the same copy', async () => {
-        const action = starFixture();
+        const action = star();
         action.inputItems.push({ itemHrid: '/items/ring', count: 1 });
         game.gameData.actionDetailMap['/actions/combat/den'].combatZoneInfo.dungeonInfo.rewardDropTable.push({
             itemHrid: '/items/ring',
@@ -1166,20 +1177,100 @@ describe('starting from a base the character holds', () => {
         });
         game.quotes['/items/ring:0'] = { price: 1000, source: 'book', estimated: false };
         game.enhanceQuotes['/items/ring:0'] = { cost: 100, seconds: 10, xp: 1, xpKnown: true };
-        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1)];
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 1)];
         const row = await run();
         // Base 960 as the held copy, the ring INPUT bought at 800 (the copy is spent), leather 1920
         expect(row.target.craftCostPerUnit).toBeCloseTo(960 + 800 + 1920, 6);
     });
 
     test('the held count of the base moves the state key', () => {
-        starFixture();
-        game.inventory = [stack('/items/griffin_leather', 100)];
+        star();
+        game.inventory = [stack('/items/griffin_leather', 1_000_000)];
         const key = craftEnhanceStateKey();
-        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 3)];
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 1, 3)];
         expect(craftEnhanceStateKey()).not.toBe(key);
         // A base above the target is never a candidate, so it is not in the key
-        game.inventory = [stack('/items/griffin_leather', 100), stack('/items/ring', 1, 7)];
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 1, 7)];
         expect(craftEnhanceStateKey()).toBe(key);
+    });
+});
+
+describe('the stock is spread over the hour of crafts', () => {
+    const rank = async (mode = 'market') => (await rankCraftEnhance({ targetLevel: 5, ownedMode: mode }))[0];
+    const CHEESE = 50;
+
+    test('10 crafts an hour, 2 leather each, 1 held: 1 owned and 19 bought, over 10 crafts', async () => {
+        game.profits['/actions/cheesesmithing/sword'].totalItemsPerHour = 10;
+        game.inventory = [stack('/items/griffin_leather', 1)];
+        const row = await rank();
+        expect(row.target.craftCostPerUnit).toBeCloseTo((960 + 19 * 1000) / 10 + CHEESE, 6);
+        expect(row.heldInputs[0]).toEqual(expect.objectContaining({ needed: 20, held: 1, bought: 19 }));
+        const text = row.notes.join(' ');
+        expect(text).toContain('an hour of crafts needs 20');
+        expect(text).not.toContain('best case');
+    });
+
+    test('stock equal to and above the hour need price every unit as owned', async () => {
+        game.profits['/actions/cheesesmithing/sword'].totalItemsPerHour = 10;
+        for (const count of [20, 400]) {
+            clearCraftEnhanceCache();
+            game.stamp += 1;
+            game.inventory = [stack('/items/griffin_leather', count)];
+            expect((await rank()).target.craftCostPerUnit).toBeCloseTo(1920 + CHEESE, 6);
+        }
+    });
+
+    test('gourmet copies come from the same crafts: the hour counts crafts, not items', async () => {
+        const profitData = game.profits['/actions/cheesesmithing/sword'];
+        profitData.totalItemsPerHour = 12;
+        profitData.gourmetBonus = 0.2;
+        // 12 items an hour from 10 crafts: 20 leather needed
+        game.inventory = [stack('/items/griffin_leather', 20)];
+        const row = await rank();
+        expect(row.heldInputs[0]).toEqual(expect.objectContaining({ needed: 20, held: 20, bought: 0 }));
+    });
+
+    test('crafts an hour unknown prices against one craft and says so', async () => {
+        game.profits['/actions/cheesesmithing/sword'].totalItemsPerHour = 0;
+        game.inventory = [stack('/items/griffin_leather', 1)];
+        const row = await rank();
+        expect(row.heldInputs[0]).toEqual(expect.objectContaining({ needed: 2, held: 1, bought: 1 }));
+        expect(row.notes.join(' ')).toContain('Crafts per hour are not known');
+    });
+
+    test('a held base smaller than the hour serves its share; the rest takes the fresh route', async () => {
+        const action = starFixture();
+        game.profits[action.hrid].totalItemsPerHour = 10;
+        game.quotes['/items/ring:3'] = { price: 1000, source: 'book', estimated: false };
+        game.enhanceQuotes['/items/ring:3'] = { cost: 900, seconds: 40, xp: 300, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 2, 3)];
+        const row = await rank();
+        expect(row.route.route).toBe('held-base');
+        expect(row.route.heldBase.coverage).toBeCloseTo(0.2, 9);
+        // Fresh: base 800 + leather 1920; held: base 960 + leather 1920. A fifth held:
+        expect(row.target.craftCostPerUnit).toBeCloseTo(0.2 * 2880 + 0.8 * 2720, 6);
+        expect(row.target.enhanceCost).toBeCloseTo(0.2 * 900 + 0.8 * 3000, 6);
+    });
+
+    test('a held base stack at least as big as the hour covers all of it', async () => {
+        const action = starFixture();
+        game.profits[action.hrid].totalItemsPerHour = 10;
+        game.quotes['/items/ring:3'] = { price: 1000, source: 'book', estimated: false };
+        game.enhanceQuotes['/items/ring:3'] = { cost: 900, seconds: 40, xp: 300, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 10, 3)];
+        const row = await rank();
+        expect(row.route.heldBase.coverage).toBe(1);
+        expect(row.target.enhanceCost).toBe(900);
+        expect(row.target.craftCostPerUnit).toBeCloseTo(960 + 1920, 6);
+    });
+
+    test('the key follows the held stacks; crafts an hour come from the same state the fingerprint already covers', () => {
+        game.inventory = [stack('/items/griffin_leather', 1)];
+        const key = craftEnhanceStateKey();
+        game.inventory = [stack('/items/griffin_leather', 2)];
+        expect(craftEnhanceStateKey()).not.toBe(key);
+        game.fpExtra = '|level61';
+        game.inventory = [stack('/items/griffin_leather', 1)];
+        expect(craftEnhanceStateKey()).not.toBe(key);
     });
 });
