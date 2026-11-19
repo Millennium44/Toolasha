@@ -33,6 +33,13 @@ import { getItemPriceInfo } from '../../utils/market-data.js';
 import { calculateDungeonTokenValueDetail } from '../../utils/token-valuation.js';
 import { canStartAction } from '../../utils/efficiency.js';
 import { calculateDrinksPerHour, calculatePriceAfterTax, outputTaxRate } from '../../utils/profit-helpers.js';
+import {
+    ARTISAN_MATERIAL_MODE,
+    artisanInputTotal,
+    getArtisanMaterialMode,
+    usesWorstCaseRounding,
+} from '../../utils/artisan-material-mode.js';
+import { findRefinementAction } from '../../utils/refined-item-cost.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
 import { productionRecipes, stateFingerprint } from './production-arbitrage.js';
@@ -158,6 +165,21 @@ export function enhanceWithDrinks(quote, drinks) {
 }
 
 /**
+ * Whether a recipe is a refinement whose base can be enhanced first: the refined item's own refinement action,
+ * which keeps every enhancement level of the base it upgrades. Anything else has no base route.
+ *
+ * @param {Object} recipe - From productionRecipes
+ * @returns {string|null} The base item, or null when there is no such route
+ */
+export function refinementBaseOf(recipe) {
+    const refinement = findRefinementAction(recipe.itemHrid);
+    if (!refinement?.upgradeItemHrid || refinement.retainAllEnhancement !== true) return null;
+    // The refined item's action found by output may be another recipe's; only this very recipe's counts
+    if (refinement !== recipe.action && refinement.hrid !== recipe.actionHrid) return null;
+    return refinement.upgradeItemHrid;
+}
+
+/**
  * The enhancing bench, as numbers that move the fingerprint.
  * @param {Object} params - From getAutoDetectedParams
  * @returns {string}
@@ -185,6 +207,8 @@ function benchDigest(params) {
  */
 export function craftEnhanceFingerprint({ targetLevel, ownedMode, params, priceStamp }) {
     return [
+        // Artisan rounding moves every craft cost, so a change of the setting is a different ranking
+        getArtisanMaterialMode(),
         stateFingerprint(priceStamp),
         dataManager.getCurrentCharacterId?.() ?? '',
         targetLevel,
@@ -268,6 +292,10 @@ export function rankCraftEnhance({
 
         const drinkCost = enhancingDrinkCost(params);
         const enhanceByItem = new Map();
+        // Artisan rounds per craft. The average is the calculator's own; the worst case bills each craft's
+        // requirement rounded up. Hybrid has no run length here (the rate is per hour), so it reads as expected.
+        const artisanMode = getArtisanMaterialMode();
+        const worstCase = usesWorstCaseRounding(artisanMode, Infinity);
         const rows = [];
 
         for (let start = 0; start < recipes.length; start += BATCH_SIZE) {
@@ -312,6 +340,16 @@ export function rankCraftEnhance({
                 valueDrop: (hrid) => saleAfterTaxAt(hrid, 0),
                 valueToken: (hrid) => tokenRouteDetail(index, hrid)?.value ?? null,
                 tokenEstimated: (hrid) => Boolean(tokenRouteDetail(index, hrid)?.estimated),
+                // The upgrade item is not reduced by Artisan; a regular input is, and rounds up per craft
+                amountOf: (material) =>
+                    worstCase && !material.isUpgradeItem && Number(material.baseAmount) > 0
+                        ? artisanInputTotal(
+                              material.baseAmount,
+                              Number(profit.artisanBonus) || 0,
+                              1,
+                              ARTISAN_MATERIAL_MODE.WORST_CASE
+                          )
+                        : material.amount,
             });
             const figures = craftUnitFigures({
                 materialCostPerAction: priced.costPerAction,
@@ -330,6 +368,15 @@ export function rankCraftEnhance({
                         quoteDirectEnhancement(recipe.itemHrid, 0, targetLevel, gameData, { params }),
                         drinkCost
                     )
+                );
+            }
+
+            // Enhancing the cheaper base first, then refining it, reaches the same +N: refinement keeps every level
+            const baseHrid = refinementBaseOf(recipe);
+            if (baseHrid && !enhanceByItem.has(baseHrid)) {
+                enhanceByItem.set(
+                    baseHrid,
+                    enhanceWithDrinks(quoteDirectEnhancement(baseHrid, 0, targetLevel, gameData, { params }), drinkCost)
                 );
             }
 
@@ -356,12 +403,22 @@ export function rankCraftEnhance({
             if (priced.estimated.length > 0) {
                 notes.push('An input is priced from the game value estimate, not a live order.');
             }
-            if (enhanceByItem.get(recipe.itemHrid) === null) {
+            const baseRun = baseHrid ? enhanceByItem.get(baseHrid) : null;
+            if (enhanceByItem.get(recipe.itemHrid) === null && !baseRun) {
                 notes.push(
                     drinkCost.unpriced.length > 0
                         ? 'An enhancing drink has no price, so the enhancement cost is unknown.'
                         : 'The enhancement run could not be priced.'
                 );
+            }
+            if (worstCase && (Number(profit.artisanBonus) || 0) > 0) {
+                notes.push('Artisan worst case: each craft is billed its requirement rounded up to whole units.');
+            }
+            if (baseHrid && !baseRun && enhanceByItem.get(recipe.itemHrid)) {
+                notes.push('Enhancing the base first could not be priced, so it was not considered.');
+            }
+            if (baseHrid && baseRun && !enhanceByItem.get(recipe.itemHrid)) {
+                notes.push('Enhancing the star item itself could not be priced; the base route is used.');
             }
             if (profit.bonusRevenue?.hasMissingPrices)
                 notes.push('A bonus drop has no price and is left out of the profit.');
@@ -390,6 +447,8 @@ export function rankCraftEnhance({
                 craftXpPerUnit,
                 targetLevel,
                 enhance: enhanceByItem.get(recipe.itemHrid),
+                viaBase: baseHrid ? enhanceByItem.get(baseHrid) : null,
+                baseHrid,
                 saleBase: saleAfterTaxAt(recipe.itemHrid, 0),
                 saleTarget: saleAfterTaxAt(recipe.itemHrid, targetLevel),
                 notes,

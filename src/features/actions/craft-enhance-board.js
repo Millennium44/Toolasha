@@ -157,6 +157,36 @@ function reasonText(level) {
     return level.reasons.map((reason) => REASON_LABELS[reason] || reason).join(', ');
 }
 
+/**
+ * The Enhance cell's tooltip: the route that won and the one that lost, so a figure from the base route is
+ * not an unexplained one. Empty for a row with no base route to compare.
+ * @param {Object} row - A ranking row
+ * @param {number} target - The target level
+ * @returns {string}
+ */
+function routeTooltip(row, target) {
+    const route = row.route;
+    if (!route?.offered) return '';
+    const name = (hrid) => (hrid || '').split('/').pop().replace(/_/g, ' ');
+    const money = (value) =>
+        value === null || value === undefined ? 'could not be priced' : formatKMB(Math.round(value));
+    const lines = [
+        `Enhance the star item itself to +${target}: ${money(route.directCost)}`,
+        `Enhance ${name(route.baseHrid)} to +${target}, then refine it (refining keeps the level): ${money(route.baseCost)}`,
+    ];
+    // A saving is claimed only when both routes were priced: with one side unpriced nothing was compared
+    const compared = Number.isFinite(route.directCost) && Number.isFinite(route.baseCost);
+    if (route.route === 'refine-base')
+        lines.push(
+            compared
+                ? `Cheaper by enhancing the base first: saves ${money(route.saved)}`
+                : 'Only the base route could be priced.'
+        );
+    else if (route.route === 'craft' && compared && route.saved > 0)
+        lines.push('Enhancing the star item itself is cheaper.');
+    return lines.filter(Boolean).join('\n');
+}
+
 class CraftEnhanceBoard {
     constructor() {
         this.initialized = false;
@@ -731,13 +761,21 @@ class CraftEnhanceBoard {
             ? `No price for: ${t.unpricedInputs.map((input) => input.itemHrid.split('/').pop().replace(/_/g, ' ')).join(', ')}`
             : '';
         tr.appendChild(goldCell(t.craftCostPerUnit, inputNote, false));
-        tr.appendChild(
-            goldCell(
-                t.enhanceCost,
-                'The enhancement run could not be priced (a material or protection has no price)',
-                false
-            )
+        const enhanceCell = goldCell(
+            t.enhanceCost,
+            'The enhancement run could not be priced (a material or protection has no price)',
+            false
         );
+        if (row.route?.route === 'refine-base' && t.enhanceCost !== null) {
+            const via = document.createElement('span');
+            via.textContent = ' via base';
+            via.setAttribute('data-ce-route', 'refine-base');
+            via.style.cssText = `color: ${MUTED}; font-size: 10px;`;
+            enhanceCell.appendChild(via);
+        }
+        const routeNote = routeTooltip(row, target);
+        if (routeNote) enhanceCell.title = routeNote;
+        tr.appendChild(enhanceCell);
         tr.appendChild(goldCell(t.saleAfterTax, `No real sell quote at +${target}`, false));
         tr.appendChild(goldCell(t.profitPerUnit, reasonText(t)));
         tr.appendChild(goldCell(t.profitPerHour, reasonText(t)));

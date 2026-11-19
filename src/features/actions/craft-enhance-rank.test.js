@@ -12,6 +12,7 @@ import {
     arrangeCraftEnhanceRows,
     buildCraftEnhanceRow,
     buildDungeonInputIndex,
+    chooseEnhanceRoute,
     craftUnitFigures,
     dungeonInputKind,
     evaluateLevel,
@@ -767,5 +768,143 @@ describe('arrangeCraftEnhanceRows', () => {
     test('zero units a day is not the same as unpriced: a measured zero volume does not touch the ranking', () => {
         const flagged = { ...better, volume: { known: true, unitsPerDay: 0 } };
         expect(arrangeCraftEnhanceRows([good, flagged])[0].itemName).toBe('better');
+    });
+});
+
+describe('chooseEnhanceRoute', () => {
+    const run = (cost, extra = {}) => ({ cost, seconds: 60, xp: 10, xpKnown: true, ...extra });
+
+    test('the cheaper priced route wins and says what it saves', () => {
+        expect(chooseEnhanceRoute({ level: 5, direct: run(500), viaBase: run(300) })).toEqual(
+            expect.objectContaining({ route: 'refine-base', directCost: 500, baseCost: 300, saved: 200 })
+        );
+        expect(chooseEnhanceRoute({ level: 5, direct: run(300), viaBase: run(500) })).toEqual(
+            expect.objectContaining({ route: 'craft', saved: 200 })
+        );
+    });
+
+    test('a tie keeps the direct route', () => {
+        const chosen = chooseEnhanceRoute({ level: 5, direct: run(400), viaBase: run(400) });
+        expect(chosen.route).toBe('craft');
+        expect(chosen.saved).toBe(0);
+    });
+
+    test('a route that cannot be priced is not a candidate, never a free one', () => {
+        expect(chooseEnhanceRoute({ level: 5, direct: run(500), viaBase: null }).enhance.cost).toBe(500);
+        const baseOnly = chooseEnhanceRoute({ level: 5, direct: null, viaBase: run(300) });
+        expect(baseOnly).toEqual(expect.objectContaining({ route: 'refine-base', directCost: null, saved: 0 }));
+        const none = chooseEnhanceRoute({ level: 5, direct: null, viaBase: null });
+        expect(none.route).toBeNull();
+        expect(none.enhance).toBeNull();
+    });
+
+    test('a cost of 0 is a priced route, not a missing one', () => {
+        expect(chooseEnhanceRoute({ level: 5, direct: run(500), viaBase: run(0) }).route).toBe('refine-base');
+    });
+
+    test('at +0 or below nothing is enhanced, so there is no route', () => {
+        for (const level of [0, -1]) {
+            const chosen = chooseEnhanceRoute({ level, direct: run(500), viaBase: run(300) });
+            expect(chosen.route).toBeNull();
+            expect(chosen.enhance).toBeNull();
+        }
+    });
+});
+
+describe('buildCraftEnhanceRow with a base route', () => {
+    const run = (cost, seconds) => ({ cost, seconds, xp: 10, xpKnown: true });
+
+    test('the base route replaces the direct run at +N, and +0 is untouched', () => {
+        const built = row('ring', { over: { enhance: run(500, 36), viaBase: run(300, 20), baseHrid: '/items/ring' } });
+        expect(built.route).toEqual(expect.objectContaining({ route: 'refine-base', offered: true }));
+        expect(built.target.enhanceCost).toBe(300);
+        expect(built.target.profitPerUnit).toBe(300 - 60 - 300);
+        expect(built.base.enhanceCost).toBe(0);
+        expect(built.base.profitPerUnit).toBe(200 - 60);
+    });
+
+    test('a row built the old way (no base) is unchanged and says no route was offered', () => {
+        const built = row('sword');
+        expect(built.route.offered).toBe(false);
+        expect(built.route.route).toBe('craft');
+        expect(built.target.enhanceCost).toBe(40);
+    });
+
+    test('target +0 has no route and rates the craft alone', () => {
+        const built = row('ring', {
+            over: { targetLevel: 0, enhance: run(500, 36), viaBase: run(300, 20), baseHrid: '/items/ring' },
+        });
+        expect(built.route.route).toBeNull();
+        expect(built.target.enhanceCost).toBe(0);
+        expect(built.target.status).toBe('ok');
+    });
+
+    test('a priced route does not rescue an unpriced input', () => {
+        const built = row('ring', {
+            over: {
+                enhance: null,
+                viaBase: run(300, 20),
+                baseHrid: '/items/ring',
+                priced: {
+                    costPerAction: 0,
+                    unpriced: [{ itemHrid: '/items/ring', reason: 'input' }],
+                    dungeonInputs: [],
+                },
+            },
+        });
+        expect(built.target.status).toBe('unpriced');
+        expect(built.target.craftCostPerUnit).toBeNull();
+    });
+});
+
+describe('priceCraftMaterials with amountOf (Artisan worst case)', () => {
+    const line = (itemHrid, baseAmount, amount, askPrice) => ({
+        itemHrid,
+        baseAmount,
+        amount,
+        askPrice,
+        totalCost: amount * askPrice,
+        missingPrice: false,
+    });
+
+    test('an ordinary input is billed at the supplied amount times its buy price', () => {
+        const priced = priceCraftMaterials({
+            materials: [line('/items/cheese', 8, 6.8, 5)],
+            index: { drops: new Map(), tokenShop: new Map() },
+            ownedMode: OWNED_MODES.MARKET,
+            amountOf: () => 7,
+        });
+        expect(priced.costPerAction).toBe(35);
+    });
+
+    test('a dungeon input is billed at the supplied amount at its own value', () => {
+        const priced = priceCraftMaterials({
+            materials: [line('/items/griffin_leather', 2, 1.7, 1000)],
+            index: { drops: new Map([['/items/griffin_leather', { dungeons: ['Den'] }]]), tokenShop: new Map() },
+            ownedMode: OWNED_MODES.MARKET,
+            valueDrop: () => 960,
+            amountOf: () => 2,
+        });
+        expect(priced.costPerAction).toBe(1920);
+        expect(priced.dungeonInputs[0].amount).toBe(2);
+    });
+
+    test('without amountOf the calculator figures stand', () => {
+        const priced = priceCraftMaterials({
+            materials: [line('/items/cheese', 8, 6.8, 5)],
+            index: { drops: new Map(), tokenShop: new Map() },
+            ownedMode: OWNED_MODES.MARKET,
+        });
+        expect(priced.costPerAction).toBeCloseTo(34, 9);
+    });
+
+    test('an unpriced input stays unpriced whatever the amount', () => {
+        const priced = priceCraftMaterials({
+            materials: [{ ...line('/items/cheese', 8, 6.8, 0), missingPrice: true }],
+            index: { drops: new Map(), tokenShop: new Map() },
+            ownedMode: OWNED_MODES.MARKET,
+            amountOf: () => 7,
+        });
+        expect(priced.unpriced).toEqual([{ itemHrid: '/items/cheese', reason: 'input' }]);
     });
 });

@@ -199,10 +199,13 @@ export function hasDungeonInput(action, index) {
  *   tokens, or null
  * @param {(itemHrid: string) => boolean} [args.tokenEstimated] - Whether `valueToken`'s figure rests on a
  *   value-map price (an estimate), so a row valued through tokens says so like a bought input does
+ * @param {(material: Object) => number} [args.amountOf] - Units one craft consumes of a line, when that is not
+ *   the calculator's own averaged `amount` (Artisan worst case rounds each craft up). A line priced at an
+ *   amount other than the calculator's is costed as its buy price times that amount.
  * @returns {{costPerAction: number, unpriced: Array<{itemHrid: string, reason: string}>,
  *   dungeonInputs: Array<Object>, estimated: string[]}} `costPerAction` is meaningful only when `unpriced` is empty
  */
-export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, valueToken, tokenEstimated }) {
+export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, valueToken, tokenEstimated, amountOf }) {
     const mode = normalizeOwnedMode(ownedMode);
     const unpriced = [];
     const dungeonInputs = [];
@@ -211,7 +214,8 @@ export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, va
     let costPerAction = 0;
 
     for (const material of materials || []) {
-        const amount = Number(material?.amount) || 0;
+        const calculatorAmount = Number(material?.amount) || 0;
+        const amount = amountOf ? Number(amountOf(material)) || 0 : calculatorAmount;
         const kind = dungeonInputKind(material?.itemHrid, index);
 
         if (!kind) {
@@ -219,7 +223,10 @@ export function priceCraftMaterials({ materials, index, ownedMode, valueDrop, va
                 unpriced.push({ itemHrid: material.itemHrid, reason: 'input' });
                 continue;
             }
-            costPerAction += Number(material?.totalCost) || 0;
+            costPerAction +=
+                amount === calculatorAmount
+                    ? Number(material?.totalCost) || 0
+                    : (Number(material?.askPrice) || 0) * amount;
             if (material?.estimatedPrice) estimated.push(material.itemHrid);
             continue;
         }
@@ -392,6 +399,44 @@ export function evaluateLevel({
     };
 }
 
+/** The two ways a refined (star) item reaches +N: enhance the star item itself, or enhance its cheaper base first */
+export const ENHANCE_ROUTES = Object.freeze({ DIRECT: 'craft', BASE: 'refine-base' });
+
+/**
+ * Pick the enhancement route for a level.
+ *
+ * A refined recipe keeps the enhancement of the base it upgrades, so +N can be reached by enhancing the star item
+ * after the refinement (`direct`) or by enhancing the cheaper base and then refining it (`viaBase`). Either quote
+ * is null when that run cannot be priced (a material, protection or drink with no price, no enhancement recipe,
+ * the tester shop's guaranteed copy), and a null route is never chosen and never counted as free: a route that
+ * cannot be priced is simply not a candidate. Both null leaves no enhancement run, which the level reads as
+ * unpriced. The cheaper cost wins; a tie keeps the direct route, which needs nothing extra to explain.
+ *
+ * Nothing is enhanced at +0 (or below), so there is no route to choose.
+ *
+ * @param {Object} args - Inputs
+ * @param {number} args.level - The level being rated
+ * @param {Object|null} args.direct - Quote for enhancing the item itself, from 0 to the level
+ * @param {Object|null} [args.viaBase] - Quote for enhancing the base from 0 to the level; omitted or null for a
+ *   recipe with no refinement route
+ * @returns {{route: string|null, enhance: Object|null, directCost: number|null, baseCost: number|null,
+ *   saved: number}} `saved` is what the winner saves over the other priced route, 0 when only one is priced
+ */
+export function chooseEnhanceRoute({ level, direct, viaBase }) {
+    if (!(level > 0)) return { route: null, enhance: null, directCost: null, baseCost: null, saved: 0 };
+    const directCost = direct ? direct.cost : null;
+    const baseCost = viaBase ? viaBase.cost : null;
+    const useBase = viaBase && (!direct || viaBase.cost < direct.cost);
+    const chosen = useBase ? viaBase : direct || null;
+    return {
+        route: chosen ? (useBase ? ENHANCE_ROUTES.BASE : ENHANCE_ROUTES.DIRECT) : null,
+        enhance: chosen,
+        directCost,
+        baseCost,
+        saved: direct && viaBase ? Math.abs(direct.cost - viaBase.cost) : 0,
+    };
+}
+
 /**
  * One window row.
  *
@@ -403,6 +448,11 @@ export function evaluateLevel({
  * @param {number|null} args.craftXpPerUnit - Crafting XP per unit, null when unknown
  * @param {number} args.targetLevel - The level the row is rated at, besides +0
  * @param {{cost: number, seconds: number, xp: number, xpKnown?: boolean}|null} args.enhance - Run to the target
+ *   on the item itself
+ * @param {{cost: number, seconds: number, xp: number, xpKnown?: boolean}|null} [args.viaBase] - Run to the target
+ *   on the base item of a refinement, which is then refined (see {@link chooseEnhanceRoute}); omit when the
+ *   recipe has no such route
+ * @param {string|null} [args.baseHrid] - The base the refinement route enhances, for the tooltip
  * @param {number|null} args.saleBase - Sale at +0 after tax
  * @param {number|null} args.saleTarget - Sale at the target after tax
  * @param {string[]} [args.notes] - Plain-language caveats for the row's tooltip
@@ -415,6 +465,8 @@ export function buildCraftEnhanceRow({
     craftXpPerUnit,
     targetLevel,
     enhance,
+    viaBase = null,
+    baseHrid = null,
     saleBase,
     saleTarget,
     notes = [],
@@ -431,13 +483,16 @@ export function buildCraftEnhanceRow({
     };
 
     const base = evaluateLevel({ ...common, level: 0, enhance: null, saleAfterTax: saleBase });
-    const target = evaluateLevel({ ...common, level: targetLevel, enhance, saleAfterTax: saleTarget });
+    const chosen = chooseEnhanceRoute({ level: targetLevel, direct: enhance, viaBase });
+    const target = evaluateLevel({ ...common, level: targetLevel, enhance: chosen.enhance, saleAfterTax: saleTarget });
 
     return {
         ...recipe,
         targetLevel,
         base,
         target,
+        // Which way +N is reached; `offered` is whether the recipe has a base route at all
+        route: { ...chosen, offered: Boolean(baseHrid), baseHrid: baseHrid || null },
         dungeonInputs: priced.dungeonInputs,
         estimatedInputs: priced.estimated || [],
         sunkInputs: priced.dungeonInputs.filter((input) => input.sunk).map((input) => input.itemHrid),
@@ -541,6 +596,8 @@ export default {
     priceCraftMaterials,
     craftUnitFigures,
     evaluateLevel,
+    chooseEnhanceRoute,
+    ENHANCE_ROUTES,
     buildCraftEnhanceRow,
     arrangeCraftEnhanceRows,
 };
