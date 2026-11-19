@@ -38,6 +38,7 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         getJSON: async () => [],
         getMany: async (keys) => new Map(keys.map((key) => [key, null])),
+        parseJSON: (raw, _key, fallback = null) => (raw === null ? fallback : raw),
         setJSON: async () => {},
         set: async () => {},
     },

@@ -72,6 +72,14 @@ vi.mock('../../core/storage.js', () => ({
             return fallback;
         },
         getJSON: async () => null,
+        // The batched read parks on the same record the per-key read would have
+        getMany: async (keys) => {
+            if (world.parkKey && keys.some((key) => key.startsWith(`${world.parkKey}_`))) {
+                world.arrived?.();
+                if (world.gate) await world.gate;
+            }
+            return new Map(keys.map((key) => [key, null]));
+        },
         tryGet: async () => ({ found: false, value: null }),
         set: async () => true,
         delete: async () => true,

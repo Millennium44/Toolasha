@@ -40,6 +40,13 @@ const db = vi.hoisted(() => ({ settings: {} }));
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: vi.fn(async (key, store, fallback = null) => db[store]?.[key] ?? fallback),
+        // The batched read, answered through the per-key `tryGet` below: all or nothing, as the real one is
+        tryGetMany: async function (keys, store) {
+            // Issued together, in order, as the one transaction would
+            const reads = await Promise.all(keys.map((key) => this.tryGet(key, store)));
+            if (reads.some((read) => read === null || read === undefined)) return null;
+            return new Map(keys.map((key, i) => [key, reads[i]]));
+        },
         tryGet: vi.fn(async (key, store) => {
             if (db.gate) await db.gate;
             const bucket = db[store] || {};

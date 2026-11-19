@@ -49,6 +49,13 @@ vi.mock('../../core/storage.js', () => ({
         }),
         // The read chat history goes through: `null` when the database could
         // not be read, `{found, value}` otherwise — the real `tryGet`'s shape.
+        // The batched read, answered through the per-key `tryGet` below: all or nothing, as the real one is
+        tryGetMany: async function (keys, store) {
+            // Issued together, in order, as the one transaction would
+            const reads = await Promise.all(keys.map((key) => this.tryGet(key, store)));
+            if (reads.some((read) => read === null || read === undefined)) return null;
+            return new Map(keys.map((key, i) => [key, reads[i]]));
+        },
         tryGet: vi.fn(async (key, store) => {
             const bucket = db[store] || {};
             return Object.prototype.hasOwnProperty.call(bucket, key)
@@ -1669,6 +1676,32 @@ describe('messages that were only ever live survive a server restart', () => {
         await settle();
         expect(storedTexts()).toEqual([OLD, JOINED]);
         expect(storedTexts(WHISPER_KEY)).toEqual([WHISPER_LINE]);
+    });
+
+    test('the first load reads the character and public records in one transaction, absent ones as empty', async () => {
+        seedWhisperHistory();
+        // The public record is absent from the fixture: found false, which is not unreadable
+        expect(db.settings[PUBLIC_RECORD_KEY]).toBeUndefined();
+        const batches = [];
+        const real = storage.tryGetMany;
+        storage.tryGetMany = async function (keys, store) {
+            batches.push([...keys]);
+            return real.call(this, keys, store);
+        };
+        try {
+            buildPartyChat();
+            chatHistoryExtender.initialize();
+            await settle();
+            expect(chatHistoryPersistence.loaded).toBe(true);
+            expect(batches.length).toBeGreaterThanOrEqual(1);
+            expect(batches[0]).toContain(PUBLIC_RECORD_KEY);
+            expect(batches[0].length).toBeGreaterThanOrEqual(2);
+            // The stored lines came back from the batch
+            expect(storedTexts()).toEqual([OLD]);
+            expect(storedTexts(WHISPER_KEY)).toEqual([WHISPER_LINE]);
+        } finally {
+            storage.tryGetMany = real;
+        }
     });
 
     test('a page close lands the waiting lines before the teardown closes storage', async () => {

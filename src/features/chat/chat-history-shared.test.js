@@ -28,6 +28,13 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
+        // The batched read, answered through the per-key `tryGet` below: all or nothing, as the real one is
+        tryGetMany: async function (keys, store) {
+            // Issued together, in order, as the one transaction would
+            const reads = await Promise.all(keys.map((key) => this.tryGet(key, store)));
+            if (reads.some((read) => read === null || read === undefined)) return null;
+            return new Map(keys.map((key, i) => [key, reads[i]]));
+        },
         tryGet: async (key) => {
             await tick();
             return key in shared.db ? { found: true, value: clone(shared.db[key]) } : { found: false, value: null };

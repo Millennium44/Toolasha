@@ -869,18 +869,24 @@ class DungeonTrackerStorage {
 
         const read = (async () => {
             try {
-                const probe = await storage.tryGet(RUNS_KEY, this.unifiedStoreName);
-                if (probe === null) {
+                // One readonly transaction for the four related records: at startup every separate
+                // transaction queued behind every other feature's. `tryGetMany` is all or nothing, so any
+                // unreadable key leaves the list unloaded, as the one-by-one reads did. Recovery must see
+                // removal evidence too; an unreadable set is not permission to restore a backup the user
+                // may have deleted.
+                const probes = await storage.tryGetMany(
+                    [RUNS_KEY, RUNS_CLEARED_KEY, RUNS_DELETED_KEY, RUNS_DATE_REPAIR_BACKUPS_KEY],
+                    this.unifiedStoreName
+                );
+                const probe = probes?.get(RUNS_KEY);
+                const clearedProbe = probes?.get(RUNS_CLEARED_KEY);
+                const deletedProbe = probes?.get(RUNS_DELETED_KEY);
+                const backupsProbe = probes?.get(RUNS_DATE_REPAIR_BACKUPS_KEY);
+                if (!probe || !clearedProbe || !deletedProbe || !backupsProbe) {
                     console.warn('[DungeonTrackerStorage] Run history could not be read');
                     return null;
                 }
-                const clearedProbe = await storage.tryGet(RUNS_CLEARED_KEY, this.unifiedStoreName);
-                const deletedProbe = await storage.tryGet(RUNS_DELETED_KEY, this.unifiedStoreName);
-                const backupsProbe = await storage.tryGet(RUNS_DATE_REPAIR_BACKUPS_KEY, this.unifiedStoreName);
                 if (this._loading !== read) return null;
-                // Recovery must see removal evidence too; an unreadable set is
-                // not permission to restore a backup the user may have deleted.
-                if (clearedProbe === null || deletedProbe === null || backupsProbe === null) return null;
                 const stored = {
                     [RUNS_KEY]: probe.value,
                     [RUNS_CLEARED_KEY]: clearedProbe.value,
