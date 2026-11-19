@@ -31,6 +31,9 @@ import { isTestServer } from '../utils/game-server.js';
 import { taskSpeedParts } from '../utils/enhancement-steps.js';
 import { SCROLL_BUFF_VALUES } from '../utils/scroll-buff-values.js';
 import { BELT_LOCATION, computeTalismanBonuses, attachTalismanBonuses } from '../utils/talisman-bonuses.js';
+
+/** How long a simulator snapshot refresh waits, so a burst of updates writes once */
+const SIM_SNAPSHOT_REFRESH_MS = 2000;
 import { compareActionQueueOrder, runningCombatAction } from '../utils/combat-actions.js';
 
 /**
@@ -1076,6 +1079,11 @@ class DataManager {
             clearTimeout(this._reconnectRecoveryTimeout);
             this._reconnectRecoveryTimeout = null;
         }
+
+        if (this._simSnapshotRefreshTimer) {
+            clearTimeout(this._simSnapshotRefreshTimer);
+            this._simSnapshotRefreshTimer = null;
+        }
     }
 
     /**
@@ -1652,6 +1660,7 @@ class DataManager {
             // mid-switch is dropped rather than applied to the departing character.
             if (!this.isFromInitializedCharacter(context) || !this.characterData) return;
             if (this.applyTalismanUpdates(data)) {
+                this.scheduleSimulatorSnapshotRefresh();
                 this.emit('talismans_updated', data);
             }
         });
@@ -2280,6 +2289,10 @@ class DataManager {
         // item here means a slot changed and equipment-dependent memos are stale
         if (equipmentChanged) {
             this.buffStateVersion++;
+            // The belt scales every slotted talisman, and a simulator imports it with them
+            if (items.some((item) => item.itemLocationHrid === BELT_LOCATION)) {
+                this.scheduleSimulatorSnapshotRefresh();
+            }
         }
     }
 
@@ -3105,12 +3118,36 @@ class DataManager {
                 },
             };
         }
-        return (
+        const written =
             this.webSocketHook.saveCombatSimSnapshot?.(snapshot, {
                 characterId,
                 characterName: this.currentCharacterName,
-            }) ?? false
-        );
+            }) ?? false;
+        // From now on this session keeps the snapshot current (see scheduleSimulatorSnapshotRefresh)
+        if (written) this._simSnapshotCharacterId = characterId;
+        return written;
+    }
+
+    /**
+     * Rewrite the simulator snapshot shortly after a change a simulator imports (talismans, the belt), but
+     * only when this session already wrote one for the character being played: a player who never opens a
+     * simulator pays nothing. Bursts (a talisman reroll sends many updates) coalesce into one write.
+     * Nothing is written for another character or during a character switch.
+     */
+    scheduleSimulatorSnapshotRefresh() {
+        if (this._simSnapshotCharacterId == null || this._simSnapshotRefreshTimer) return;
+        if (String(this._simSnapshotCharacterId) !== String(this.currentCharacterId)) return;
+        this._simSnapshotRefreshTimer = setTimeout(() => {
+            this._simSnapshotRefreshTimer = null;
+            // Re-checked when it runs: the player may have switched characters in the meantime
+            if (this.isCharacterSwitching) return;
+            if (String(this._simSnapshotCharacterId) !== String(this.currentCharacterId)) return;
+            try {
+                this.saveSimulatorSnapshot();
+            } catch (error) {
+                console.error('[DataManager] Simulator snapshot refresh failed:', error);
+            }
+        }, SIM_SNAPSHOT_REFRESH_MS);
     }
 
     /**

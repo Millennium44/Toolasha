@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Combat sim import sends your talismans
 
-The Combat Sim's "Import from Toolasha" now carries your slotted combat talismans (yours and your party's), so the sim applies their lines. Works on the sim's Test page too.
+The Combat Sim's "Import from Toolasha" now carries your slotted combat talismans (yours and your party's), so the sim applies their lines. The sim's Test page gets its own "Combat Sim (Test)" link in the game's sidebar, and the import stays current as you slot talismans or change belts.
 
 ### Craft & Enhance shows each row's best level
 

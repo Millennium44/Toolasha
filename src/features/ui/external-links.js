@@ -67,11 +67,7 @@ class ExternalLinks {
     addLinks(container) {
         const links = [
             // Every simulator "Import from Toolasha" supports, so a new target shows up here too
-            ...COMBAT_SIM_TARGETS.filter((target) => target.showInNav !== false).map((target) => ({
-                label: target.label,
-                url: target.url,
-                targetId: target.id,
-            })),
+            ...COMBAT_SIM_TARGETS.map((target) => ({ label: target.label, url: target.url, targetId: target.id })),
             {
                 label: 'Enhancelator',
                 url: 'https://doh-nuts.github.io/Enhancelator/',

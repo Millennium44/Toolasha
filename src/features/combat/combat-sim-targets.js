@@ -22,7 +22,6 @@
  * @property {string} url Landing page opened by the nav link
  * @property {string} urlFragment Substring that identifies the simulator page at runtime
  * @property {string} match Userscript `@match` pattern granting the script access to the page
- * @property {boolean} [showInNav] False to keep the target out of the game's sidebar links (default true)
  */
 
 /** @type {CombatSimTarget[]} */
@@ -35,14 +34,13 @@ export const COMBAT_SIM_TARGETS = [
         match: 'https://shykai.github.io/MWICombatSimulatorTest/dist/*',
     },
     {
-        // The same simulator's Test build: same source and import format, so the same export. No sidebar link
-        // of its own (`showInNav: false`); it is opened by hand.
+        // The same simulator's Test build: same source and import format, so the same export. It gets its own
+        // sidebar link so opening it refreshes the bridged snapshot like the main one.
         id: 'shykai-test',
         label: 'Combat Sim (Test)',
         url: 'https://shykai.github.io/MWICombatSimulatorTest/Test/',
         urlFragment: 'shykai.github.io/MWICombatSimulatorTest/Test/',
         match: 'https://shykai.github.io/MWICombatSimulatorTest/Test/*',
-        showInNav: false,
     },
     {
         id: 'szerra',
