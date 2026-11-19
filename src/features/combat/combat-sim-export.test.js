@@ -910,19 +910,21 @@ describe('slottedTalismans in the export', async () => {
         owned.push(SLOTTED_TALISMANS[1]);
         const player = constructSelfPlayer(selfCharacter({ characterTalismans: owned }), null);
 
-        expect(player.slottedTalismans.map((t) => t.slotIndex)).toEqual([1, 2, 3]);
-        expect(player.slottedTalismans).toEqual(slotted);
-        expect(JSON.stringify(player.slottedTalismans)).not.toContain('skilling');
+        expect(player.player.slottedTalismans.map((t) => t.slotIndex)).toEqual([1, 2, 3]);
+        expect(player.player.slottedTalismans).toEqual(slotted);
+        expect(JSON.stringify(player.player.slottedTalismans)).not.toContain('skilling');
     });
 
     test('a character with talismans loaded but none slotted exports an empty list', () => {
         const player = constructSelfPlayer(selfCharacter({ characterTalismans: UNSLOTTED_TALISMANS }), null);
-        expect(player.slottedTalismans).toEqual([]);
-        expect(constructSelfPlayer(selfCharacter({ characterTalismans: [] }), null).slottedTalismans).toEqual([]);
+        expect(player.player.slottedTalismans).toEqual([]);
+        expect(constructSelfPlayer(selfCharacter({ characterTalismans: [] }), null).player.slottedTalismans).toEqual(
+            []
+        );
     });
 
     test('talismans that were never delivered leave the field out', () => {
-        expect('slottedTalismans' in constructSelfPlayer(selfCharacter(), null)).toBe(false);
+        expect('slottedTalismans' in constructSelfPlayer(selfCharacter(), null).player).toBe(false);
     });
 
     test("a party member's shared talismans are exported the same way", () => {
@@ -937,8 +939,11 @@ describe('slottedTalismans in the export', async () => {
             { talismanTypeHrid: '/talisman_types/skilling', modifiers: [{ hrid: '/x', grade: 1 }], slotIndex: 2 },
             { talismanTypeHrid: '/talisman_types/combat', modifiers: [{ hrid: '/y', grade: 1 }], slotIndex: 0 },
         ];
-        expect(constructPartyPlayer(profile(shared), null, null).slottedTalismans).toEqual([slotted[0], slotted[2]]);
-        expect(constructPartyPlayer(profile([]), null, null).slottedTalismans).toEqual([]);
-        expect('slottedTalismans' in constructPartyPlayer(profile(undefined), null, null)).toBe(false);
+        expect(constructPartyPlayer(profile(shared), null, null).player.slottedTalismans).toEqual([
+            slotted[0],
+            slotted[2],
+        ]);
+        expect(constructPartyPlayer(profile([]), null, null).player.slottedTalismans).toEqual([]);
+        expect('slottedTalismans' in constructPartyPlayer(profile(undefined), null, null).player).toBe(false);
     });
 });

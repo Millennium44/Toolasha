@@ -556,7 +556,7 @@ export function constructSelfPlayer(characterObj, clientObj) {
     // Slotted combat talismans, read from the character data passed in (on a simulator page that is the
     // bridged snapshot; dataManager is empty there). Omitted when the list was never delivered.
     const selfTalismans = slottedCombatTalismansForSim(characterObj.characterTalismans);
-    if (selfTalismans) playerObj.slottedTalismans = selfTalismans;
+    if (selfTalismans) playerObj.player.slottedTalismans = selfTalismans;
 
     // Extract completed achievements
     playerObj.achievements = {};
@@ -745,7 +745,7 @@ export function constructPartyPlayer(profile, clientObj, battleObj) {
 
     // Slotted combat talismans the member shared; omitted when the profile carries none
     const sharedTalismans = slottedCombatTalismansForSim(profile.profile?.slottedTalismans);
-    if (sharedTalismans) playerObj.slottedTalismans = sharedTalismans;
+    if (sharedTalismans) playerObj.player.slottedTalismans = sharedTalismans;
 
     // Extract completed achievements from profile
     playerObj.achievements = {};

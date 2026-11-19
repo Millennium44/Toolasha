@@ -167,17 +167,21 @@ describe('Metz combat export', () => {
         });
     });
 
-    test('the Shykai-only slottedTalismans field is not carried into the Metz character', async () => {
+    test('the Shykai-only player.slottedTalismans is stripped from the Metz character', async () => {
         mocks.characterData = baseCharacter();
         const { constructSelfPlayer } = await import('./combat-sim-export.js');
-        constructSelfPlayer.mockReturnValueOnce({
-            ...playerShape([], []),
-            slottedTalismans: [{ talismanTypeHrid: '/talisman_types/combat', modifiers: [], slotIndex: 1 }],
-        });
+        const source = playerShape([], []);
+        source.player.slottedTalismans = [
+            { talismanTypeHrid: '/talisman_types/combat', modifiers: [{ hrid: '/a', grade: 1 }], slotIndex: 1 },
+        ];
+        constructSelfPlayer.mockReturnValueOnce(source);
 
         const character = await constructMetzCharacterExport();
 
+        expect(character.player.attackLevel).toBe(100);
         expect(JSON.stringify(character)).not.toContain('slottedTalismans');
+        // The source is not mutated: the Shykai export built from it still carries the field
+        expect(source.player.slottedTalismans).toHaveLength(1);
     });
 
     test('every other skilling-tool slot is dropped from player.equipment', async () => {
