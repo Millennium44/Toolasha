@@ -14,7 +14,7 @@ Measured in game, Echo never repeats an auto attack, only ability casts (all tar
 
 - A cape or other piece you are wearing now counts as owned, so its row is offered at your level (a refined +7, not +5).
 - A piece you already own at that level is free; only levels above it cost anything.
-- A budget plan never counts one owned copy twice, once free and once enhanced.
+- A budget plan never counts one owned copy twice, once free and once enhanced, but a worn copy and a spare at one level count as two.
 - A row that replaces different pieces in different fights names all of them.
 
 ### Lab sim skips gear a labyrinth fight cannot feel

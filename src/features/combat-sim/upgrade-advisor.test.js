@@ -8728,6 +8728,96 @@ describe('a forced gear row for a piece the character already owns', () => {
         expect(ladder.claimed).toBeUndefined();
     });
 
+    // #1041: two copies at one level are two copies, but only the ones a row may actually touch
+    const NECK = '/equipment_types/neck';
+    // The fixture has no enhancing data for the cape, so an enhance row is unpriced; its ladder is what the
+    // ledger reads, so it gets a stand-in cost
+    const asRow = (name, slot, candidate) => {
+        const cost = calculateUpgradeCost(candidate, buildGameData());
+        return {
+            candidate: { type: 'cross_slot', slot, upgradeHrid: `/items/${name}`, description: name },
+            cost: Number.isFinite(cost) ? cost : 10,
+            costDetail: explainUpgradeCost(candidate, buildGameData()),
+            attemptsDelta: -1,
+            significant: true,
+        };
+    };
+    // A plain swap to the cape: the same row without `labArmor`, so only a bag spare is free for it
+    const swap = (level) => forced(level, { labArmor: false });
+    const names = (plan) => plan.picks.map((pick) => pick.candidate.description).sort();
+
+    test('the ladder counts the copies a row may use at its level', () => {
+        held.items = [copy(7, '/item_locations/back'), copy(7, '/item_locations/inventory')];
+        expect(explainUpgradeCost(forced(7), buildGameData()).ladder).toMatchObject({
+            alreadyHeld: true,
+            fromLevel: 7,
+            copiesAtLevel: 2,
+        });
+        // A plain swap can only take a spare, so the worn copy does not count for it
+        expect(explainUpgradeCost(swap(7), buildGameData()).ladder).toMatchObject({
+            alreadyHeld: true,
+            copiesAtLevel: 1,
+        });
+        // The enhance above them starts from the spare
+        expect(explainUpgradeCost(forced(9), buildGameData()).ladder).toMatchObject({
+            alreadyHeld: false,
+            fromLevel: 7,
+            fromEquipped: false,
+        });
+        held.items = [copy(7, '/item_locations/back')];
+        expect(explainUpgradeCost(forced(7), buildGameData()).ladder.copiesAtLevel).toBe(1);
+    });
+
+    test('a worn +7 and a spare +7 let a forced row wear one while another row enhances the other', () => {
+        held.items = [copy(7, '/item_locations/back'), copy(7, '/item_locations/inventory')];
+        const rows = [asRow('wear', BACK, forced(7)), asRow('enh', NECK, forced(9))];
+        expect(names(planWithinBudget(rows, 1e12, { singleLoadout: true }))).toEqual(['enh', 'wear']);
+        const pinned = planWithinBudget(rows, 1e12, { singleLoadout: true, required: rows.map(candidateKey) });
+        expect(pinned.blocked ?? []).toEqual([]);
+        expect(names(pinned)).toEqual(['enh', 'wear']);
+    });
+
+    test('a swap that needs the spare still clashes with an enhance of that spare', () => {
+        held.items = [copy(7, '/item_locations/back'), copy(7, '/item_locations/inventory')];
+        const rows = [asRow('swap', BACK, swap(7)), asRow('enh', NECK, forced(9))];
+        expect(planWithinBudget(rows, 1e12, { singleLoadout: true }).picks).toHaveLength(1);
+    });
+
+    test('one copy still cannot be both worn and enhanced', () => {
+        held.items = [copy(7, '/item_locations/back'), copy(3, '/item_locations/inventory')];
+        // The best +7 is protected, so the enhance starts from the +3: a different key, both taken
+        const apart = [asRow('wear', BACK, forced(7)), asRow('enh', NECK, forced(9))];
+        expect(names(planWithinBudget(apart, 1e12, { singleLoadout: true }))).toEqual(['enh', 'wear']);
+        // One bag +3 only: the enhance takes it, and a row wearing that +3 has nothing else at +3
+        held.items = [copy(3, '/item_locations/inventory')];
+        const rows = [asRow('wear', BACK, forced(3)), asRow('enh', NECK, forced(9))];
+        expect(planWithinBudget(rows, 1e12, { singleLoadout: true }).picks).toHaveLength(1);
+    });
+
+    test('a copy the row itself takes off is not counted as a spare for another row', () => {
+        held.items = [copy(7, '/item_locations/inventory'), copy(7, '/item_locations/inventory')];
+        const selling = forced(7, { labArmor: false, removedItems: [{ hrid: CAPE, enhancementLevel: 7 }] });
+        expect(explainUpgradeCost(selling, buildGameData()).ladder.copiesAtLevel).toBe(1);
+        const rows = [asRow('swap', BACK, selling), asRow('enh', NECK, forced(9))];
+        expect(planWithinBudget(rows, 1e12, { singleLoadout: true }).picks).toHaveLength(1);
+    });
+
+    test('two enhances of the same copy clash however many copies are held', () => {
+        held.items = [copy(7, '/item_locations/back'), copy(7, '/item_locations/inventory')];
+        const rows = [asRow('enh9', BACK, forced(9)), asRow('enh10', NECK, forced(10))];
+        expect(planWithinBudget(rows, 1e12, { singleLoadout: true }).picks).toHaveLength(1);
+        const pinned = planWithinBudget(rows, 1e12, { singleLoadout: true, required: rows.map(candidateKey) });
+        expect(pinned.picks).toEqual([]);
+        expect(pinned.blocked[0].reason).toMatch(/both enhance the same copy you hold/);
+    });
+
+    test('a stack of three spares counts as three for a swap', () => {
+        held.items = [{ ...copy(7, '/item_locations/inventory'), count: 3 }];
+        expect(explainUpgradeCost(swap(7), buildGameData()).ladder.copiesAtLevel).toBe(3);
+        const rows = [asRow('swap', BACK, swap(7)), asRow('enh', NECK, forced(9))];
+        expect(names(planWithinBudget(rows, 1e12, { singleLoadout: true }))).toEqual(['enh', 'swap']);
+    });
+
     test('a row above the best owned copy still prices the steps', () => {
         held.items = [copy(7, '/item_locations/back')];
         const cost = calculateUpgradeCost(forced(9), buildGameData());
@@ -8837,6 +8927,66 @@ describe('one owned copy used by several rows of a budget plan', () => {
         expect(plan.picks).toEqual([]);
         expect(plan.blocked[0].kind).toBe('conflict');
         expect(plan.blocked[0].reason).toMatch(/copy you hold/);
+    });
+
+    // #1041: a worn +10 and a spare +10 are two copies, so one row can equip one while another enhances the other
+    const two = (r) => ({ ...r, costDetail: { ladder: { ...r.costDetail.ladder, copiesAtLevel: 2 } } });
+
+    test('two copies at one level let an equip row and an enhance row both be taken', () => {
+        const plan = planWithinBudget(
+            [two(free('forced', '/equipment_types/back')), two(enhance('enh', '/equipment_types/neck'))],
+            1000,
+            { singleLoadout: true }
+        );
+        expect(plan.picks.map((pick) => pick.candidate.description).sort()).toEqual(['enh', 'forced']);
+    });
+
+    test('two copies at one level let both such rows be pinned', () => {
+        const forced = two(free('forced', '/equipment_types/back'));
+        const enh = two(enhance('enh', '/equipment_types/neck'));
+        const plan = planWithinBudget([forced, enh], 1000, {
+            singleLoadout: true,
+            required: [candidateKey(forced), candidateKey(enh)],
+        });
+        expect(plan.blocked ?? []).toEqual([]);
+        expect(plan.picks).toHaveLength(2);
+    });
+
+    test('two copies still refuse a second enhance of the copy one already enhances', () => {
+        const rows = [
+            two(free('forced', '/equipment_types/back')),
+            two(enhance('enh', '/equipment_types/neck')),
+            two(enhance('enh2', '/equipment_types/ring')),
+        ];
+        expect(planWithinBudget(rows, 1000, { singleLoadout: true }).picks).toHaveLength(2);
+        const pinned = planWithinBudget(rows, 1000, { singleLoadout: true, required: rows.map(candidateKey) });
+        expect(pinned.picks).toEqual([]);
+        expect(pinned.blocked.map((entry) => entry.kind)).toEqual(['conflict']);
+        expect(pinned.blocked[0].reason).toMatch(/both enhance the same copy you hold/);
+    });
+
+    test('an enhance of the worn copy leaves a swap its spare, but a forced row with one copy still clashes', () => {
+        const worn = (r) => ({ ...r, costDetail: { ladder: { ...r.costDetail.ladder, fromEquipped: true } } });
+        const swapOnly = (r) => ({ ...r, costDetail: { ladder: { ...r.costDetail.ladder, owned: undefined } } });
+        const enhWorn = worn(enhance('enh', '/equipment_types/neck'));
+        const withSwap = planWithinBudget([swapOnly(free('swap', '/equipment_types/back')), enhWorn], 1000, {
+            singleLoadout: true,
+        });
+        expect(withSwap.picks).toHaveLength(2);
+        // A forced row may wear the worn copy itself, so with one copy it clashes with enhancing it
+        const withForced = planWithinBudget([free('forced', '/equipment_types/back'), enhWorn], 1000, {
+            singleLoadout: true,
+        });
+        expect(withForced.picks).toHaveLength(1);
+    });
+
+    test('the ledger reads copies from the ladder, one when it does not say', () => {
+        expect(heldCopyUse(two(free('a', '/equipment_types/back')))).toMatchObject({ mode: 'relies', copies: 2 });
+        expect(heldCopyUse(free('a', '/equipment_types/back'))).toMatchObject({ copies: 1, withWorn: true });
+        expect(heldCopyUse(enhance('enh', '/equipment_types/neck'))).toMatchObject({
+            mode: 'consumes',
+            fromEquipped: false,
+        });
     });
 
     test('rows on different copies, a fresh ladder and a party row are not tied together', () => {
