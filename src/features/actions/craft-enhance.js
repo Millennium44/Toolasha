@@ -574,14 +574,34 @@ export function rankCraftEnhance({
                     if (heldLevel === 0) {
                         rest.set(`${baseHrid}:0`, stackCount - heldUsed);
                     }
+                    // The other inputs are shared by both routes, so their stock is spread over the mixed hour's
+                    // crafts (held plus fresh), never over each route's standalone hour
+                    const mixedCrafts = heldUsed + freshCrafts;
                     const restPriced = priceCraftMaterials(
                         pricingOf(
                             profit.materialCosts.filter((material) => !material.isUpgradeItem),
                             rest,
-                            heldCrafts
+                            mixedCrafts
                         )
                     );
                     if (restPriced.unpriced.length > 0) continue;
+                    // The fresh crafts of that hour, priced against the same mixed hour; only needed when the held
+                    // stack leaves some crafts to the fresh route
+                    let freshCraftCostPerUnit = null;
+                    if (coverage < 1) {
+                        const freshMixed = priceCraftMaterials(pricingOf(profit.materialCosts, rest, mixedCrafts));
+                        const freshMixedFigures =
+                            freshMixed.unpriced.length === 0
+                                ? craftUnitFigures({
+                                      materialCostPerAction: freshMixed.costPerAction,
+                                      profit,
+                                      taxRate,
+                                  })
+                                : null;
+                        // No figure for the fresh crafts: the held stack cannot be blended, so it is no candidate
+                        if (!freshMixedFigures) continue;
+                        freshCraftCostPerUnit = freshMixedFigures.craftCostPerUnit;
+                    }
                     const figures = craftUnitFigures({
                         materialCostPerAction: restPriced.costPerAction + unitValue,
                         profit: heldProfit,
@@ -592,6 +612,7 @@ export function rankCraftEnhance({
                         level: heldLevel,
                         count: stackCount,
                         coverage,
+                        freshCraftCostPerUnit,
                         unitValue,
                         via,
                         enhance: enhanceFrom(baseHrid, heldLevel),

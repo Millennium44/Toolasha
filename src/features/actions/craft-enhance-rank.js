@@ -629,9 +629,16 @@ export function buildCraftEnhanceRow({
         if (share < 1 && (freshTotal === null || !chosen.enhance)) continue;
         const heldTotal = candidate.craftCostPerUnit + Number(candidate.enhance.cost);
         if (!Number.isFinite(heldTotal)) continue;
+        // A part-covering candidate prices the fresh crafts of its hour with the shared inputs spread over that
+        // mixed hour; the standalone fresh figure would spread them over a different hour
+        const freshCraft =
+            share < 1 && Number.isFinite(candidate.freshCraftCostPerUnit)
+                ? candidate.freshCraftCostPerUnit
+                : craftCostPerUnit;
+        const freshMixedTotal = freshTotal === null ? null : freshCraft + Number(chosen.enhance.cost);
         // Strictly cheaper than the fresh route per craft it covers, else the fresh route stands
-        if (!(heldTotal < (freshTotal ?? Infinity))) continue;
-        const total = mix(heldTotal, freshTotal, share);
+        if (!(heldTotal < (freshMixedTotal ?? Infinity))) continue;
+        const total = mix(heldTotal, freshMixedTotal, share);
         if (held && !(total < held.total)) continue;
         const fresh = chosen.enhance;
         const enhanceXpKnown = candidate.enhance.xpKnown !== false && (share >= 1 || fresh.xpKnown !== false);
@@ -639,7 +646,7 @@ export function buildCraftEnhanceRow({
             ...candidate,
             share,
             total,
-            craftCostPerUnit: mix(candidate.craftCostPerUnit, craftCostPerUnit, share),
+            craftCostPerUnit: mix(candidate.craftCostPerUnit, freshCraft, share),
             secondsPerUnit: mix(candidate.secondsPerUnit, common.secondsPerUnit, share),
             otherNetPerUnit: mix(candidate.otherNetPerUnit, common.otherNetPerUnit, share),
             craftXpPerUnit:
