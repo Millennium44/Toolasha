@@ -532,7 +532,13 @@ export function rankCraftEnhance({
                 const perHeldUnit =
                     (Number(heldProfit?.outputAmount) || 1) * (1 + (Number(heldProfit?.gourmetBonus) || 0));
                 const recipeXp = calculateExpPerHour(recipe.actionHrid)?.modifiedXP;
-                for (const heldLevel of sameRecipe && !teaGap ? heldBaseLevels : []) {
+                // Crafts per hour unknown on either route: the stack cannot be spread over an hour, and pricing it
+                // against one craft would call a whole stack a discount on every craft. No held-base candidate then.
+                const hoursKnown = Boolean(craftsPerHour) && Boolean(craftsPerHourOf(heldProfit));
+                for (const heldLevel of sameRecipe && !teaGap && hoursKnown ? heldBaseLevels : []) {
+                    // A +0 base that is itself a dungeon input is already drawn from the same stack by the fresh
+                    // route's ordinary split (its upgrade line), so blending a second use of it would count it twice
+                    if (heldLevel === 0 && baseKind) continue;
                     // The held base's own cost: a dungeon input counts as sunk (0) when the mode says so; anything else,
                     // and every sunk-less case, is the sale it would fetch at its level. No real quote is no candidate.
                     let unitValue = null;

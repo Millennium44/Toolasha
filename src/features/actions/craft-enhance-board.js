@@ -177,7 +177,11 @@ function routeTooltip(row, target) {
     if (route.route === 'held-base' && route.heldBase) {
         const held = route.heldBase;
         const value =
-            held.via === null ? 'counted at 0 (sunk)' : `counted at ${money(held.unitValue)} (what it would sell for)`;
+            held.via === null
+                ? 'counted at 0 (sunk)'
+                : held.via === 'token'
+                  ? `counted at ${money(held.unitValue)} (its value through the tokens it costs)`
+                  : `counted at ${money(held.unitValue)} (what it would sell for)`;
         lines.push(
             `Starts from your held +${held.level} ${name(route.baseHrid)} (you hold ${Math.floor(held.count)}), ${value}, ` +
                 `enhanced to +${target}, then refined. It serves ${Math.round((held.coverage ?? 1) * 100)}% of an hour's ` +

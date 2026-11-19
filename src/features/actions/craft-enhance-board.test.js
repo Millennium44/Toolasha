@@ -613,6 +613,22 @@ describe('the enhancement route', () => {
         expect(title).toContain('220 cheaper per item');
     });
 
+    test('a held base valued through tokens says so, not "sell for"', async () => {
+        state.rows = [
+            row('ring', {
+                route: route({
+                    route: 'held-base',
+                    heldBase: { level: 0, count: 1, unitValue: 480, via: 'token', total: 10, saved: 5, coverage: 1 },
+                }),
+            }),
+        ];
+        openBoard();
+        await flush();
+        const title = state.panel.panel.querySelector('[data-ce-route="held-base"]').parentElement.title;
+        expect(title).toContain('its value through the tokens it costs');
+        expect(title).not.toContain('what it would sell for');
+    });
+
     test('a held base chosen with nothing to compare against claims no saving', async () => {
         state.rows = [
             row('ring', {

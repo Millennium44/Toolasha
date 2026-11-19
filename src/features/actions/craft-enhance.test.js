@@ -18,6 +18,8 @@ const game = vi.hoisted(() => ({
     enhanceQuotes: {},
     enhanceCalls: [],
     profitCalls: [],
+    /** actionHrid -> the answer for a costing with the upgrade item already held */
+    heldProfits: {},
     tokenValue: {},
     tokenEstimated: false,
     stamp: 1,
@@ -62,6 +64,9 @@ vi.mock('../market/profit-calculator.js', () => ({
     default: {
         calculateProfit: async (itemHrid, options) => {
             game.profitCalls.push({ itemHrid, ...options });
+            if (options.upgradeItemOwned && game.heldProfits[options.actionHrid]) {
+                return game.heldProfits[options.actionHrid];
+            }
             return game.profits[options.actionHrid] ?? null;
         },
     },
@@ -209,6 +214,7 @@ beforeEach(() => {
     game.enhanceQuotes = { '/items/sword': { cost: 1500, seconds: 60, xp: 400, xpKnown: true } };
     game.enhanceCalls = [];
     game.profitCalls = [];
+    game.heldProfits = {};
     game.tokenValue = {};
     game.tokenEstimated = false;
     game.drinks = [];
@@ -1272,5 +1278,47 @@ describe('the stock is spread over the hour of crafts', () => {
         game.fpExtra = '|level61';
         game.inventory = [stack('/items/griffin_leather', 1)];
         expect(craftEnhanceStateKey()).not.toBe(key);
+    });
+});
+
+describe('held-base candidates and the stock the ordinary split already used', () => {
+    const rank = async () => (await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' }))[0];
+
+    test('a +0 base that is itself a dungeon input is counted once, by the ordinary split', async () => {
+        const action = starFixture();
+        game.gameData.actionDetailMap['/actions/combat/den'].combatZoneInfo.dungeonInfo.rewardDropTable.push({
+            itemHrid: '/items/ring',
+        });
+        game.profits[action.hrid].totalItemsPerHour = 10;
+        // Owned (480 after tax) is cheaper than bought (800)
+        game.quotes['/items/ring:0'] = { price: 500, source: 'book', estimated: false };
+        game.enhanceQuotes['/items/ring:0'] = { cost: 3000, seconds: 80, xp: 600, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 2)];
+        const row = await rank();
+        // 2 of the hour's 10 bases at 480, the other 8 at 800; not blended a second time
+        expect(row.target.craftCostPerUnit).toBeCloseTo(0.2 * 480 + 0.8 * 800 + 1920, 6);
+        expect(row.route.route).not.toBe('held-base');
+    });
+
+    test('crafts an hour unknown on the fresh route considers no held base', async () => {
+        const action = starFixture();
+        game.profits[action.hrid].totalItemsPerHour = 0;
+        game.heldProfits[action.hrid] = { ...game.profits[action.hrid], totalItemsPerHour: 10 };
+        game.quotes['/items/ring:3'] = { price: 1000, source: 'book', estimated: false };
+        game.enhanceQuotes['/items/ring:3'] = { cost: 1, seconds: 1, xp: 1, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 1, 3)];
+        const row = await rank();
+        expect(row.route.route).not.toBe('held-base');
+    });
+
+    test('crafts an hour unknown on the held route considers no held base', async () => {
+        const action = starFixture();
+        game.profits[action.hrid].totalItemsPerHour = 10;
+        game.heldProfits[action.hrid] = { ...game.profits[action.hrid], totalItemsPerHour: 0 };
+        game.quotes['/items/ring:3'] = { price: 1000, source: 'book', estimated: false };
+        game.enhanceQuotes['/items/ring:3'] = { cost: 1, seconds: 1, xp: 1, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 20, 3)];
+        const row = await rank();
+        expect(row.route.route).not.toBe('held-base');
     });
 });
