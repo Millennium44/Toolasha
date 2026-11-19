@@ -23,6 +23,14 @@ trap 'rm -f "$GATES_LOCK"' EXIT
 
 step() { printf '\n== %s ==\n' "$1"; }
 
+# An agent worktree under .claude/worktrees can hold an empty node_modules: npx and Node's module lookup walk up to
+# the main checkout's, but a direct node_modules/.bin path does not (2026-11-18, the suite died with exit 127).
+VITEST=node_modules/.bin/vitest
+if [ ! -x "$VITEST" ]; then
+    main_checkout=$(git worktree list --porcelain | sed -n '1s/^worktree //p')
+    VITEST="$main_checkout/node_modules/.bin/vitest"
+fi
+
 step 'ESLint'
 npx eslint src/
 
@@ -59,15 +67,28 @@ step 'Tests'
 # The filter's exit status is ignored and Vitest's own is kept, so a failure still stops the gates.
 tests_log=$(mktemp)
 set +e
-node_modules/.bin/vitest run >"$tests_log" 2>&1
+"$VITEST" run >"$tests_log" 2>&1
 tests_status=$?
 # Vitest itself can die with a segfault (exit 139) before running a test, under load on Windows
 # (2026-11-14, a landing run). That is no test result: run the suite once more rather than fail the gates.
 # A crash after results were printed, or any other failure, is reported as it is.
 if [ "$tests_status" -eq 139 ] && ! grep -qE '^ *(Test Files|Tests) ' "$tests_log"; then
     echo "Vitest crashed before reporting (exit 139); running the suite once more"
-    node_modules/.bin/vitest run >"$tests_log" 2>&1
+    "$VITEST" run >"$tests_log" 2>&1
     tests_status=$?
+fi
+# A test that only timed out under load passes on its own (2026-11-18, the talisman reroll solver at 5 s cost a whole
+# gates rerun). When every failure is a timeout, run just those files once more; any other failure stands.
+if [ "$tests_status" -ne 0 ]; then
+    failed=$(grep -oE '^ *Tests +[0-9]+ failed' "$tests_log" | grep -oE '[0-9]+' | head -1)
+    timeouts=$(grep -c 'Error: Test timed out in' "$tests_log" || true)
+    if [ -n "$failed" ] && [ "$failed" -gt 0 ] && [ "$timeouts" -eq "$failed" ]; then
+        timed_out_files=$(grep -E '^ *FAIL ' "$tests_log" | sed -E 's/^ *FAIL +(\|[^|]*\| +)?([^ >]+).*/\2/' | sort -u)
+        echo "Only timeouts failed ($failed); running those files once more: $timed_out_files"
+        # shellcheck disable=SC2086
+        "$VITEST" run $timed_out_files >"$tests_log" 2>&1
+        tests_status=$?
+    fi
 fi
 set -e
 grep -E '^ *(FAIL|×) |^ *(Test Files|Tests) ' "$tests_log" || true
