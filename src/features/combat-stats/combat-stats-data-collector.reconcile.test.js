@@ -23,6 +23,8 @@ const world = vi.hoisted(() => ({
     stored: new Map(),
     /** Called inside every storage.get, so a test can land a switch inside a read */
     onGet: null,
+    /** Key list of every batched read */
+    batches: [],
     /** Live websocket handlers by message type */
     handlers: {},
 }));
@@ -64,6 +66,15 @@ vi.mock('../../core/storage.js', () => {
         default: {
             get,
             getJSON: get,
+            // One transaction; the per-key hook still fires for each key, in order
+            getMany: async (keys) => {
+                world.batches.push([...keys]);
+                const read = (key) => {
+                    world.onGet?.(key);
+                    return world.stored.has(key) ? structuredClone(world.stored.get(key)) : null;
+                };
+                return new Map(keys.map((key) => [key, read(key)]));
+            },
             tryGet: async (key) =>
                 world.stored.has(key) ? { found: true, value: world.stored.get(key) } : { found: false, value: null },
             set: async (key, value) => {
@@ -159,6 +170,7 @@ beforeEach(() => {
     world.actionDetails = {};
     world.stored = new Map();
     world.onGet = null;
+    world.batches = [];
     collector.cleanup();
     world.handlers = {};
     _resetReadProbe();
@@ -409,6 +421,33 @@ describe('a character swap mid-gap', () => {
 
         expect(self().actualConsumed[GUMMY]).toBeUndefined();
         expect(self().inventoryAmount[GUMMY]).toBe(400);
+    });
+
+    test('the load reads the three records in one transaction: stored ones come back, absent ones stay empty', async () => {
+        world.stored.set('consumableTracker_char-self', {
+            actualConsumed: { [GUMMY]: 7 },
+            defaultConsumed: { [GUMMY]: 7 },
+            inventoryAmount: { [GUMMY]: 900 },
+            lastUpdate: null,
+        });
+        // The snapshots record is stored for another character only; this one has none
+        world.stored.set('partyConsumableSnapshots_char-alt', { Alt: { [GUMMY]: 1 } });
+        world.batches = [];
+
+        await collector.loadConsumableTracking();
+
+        expect(world.batches).toHaveLength(1);
+        expect(world.batches[0]).toEqual(
+            expect.arrayContaining([
+                'consumableTracker_char-self',
+                'partyConsumableTrackers_char-self',
+                'partyConsumableSnapshots_char-self',
+            ])
+        );
+        expect(self().actualConsumed[GUMMY]).toBe(7);
+        expect(self().inventoryAmount[GUMMY]).toBe(900);
+        expect(collector.partyConsumableTrackers).toEqual({});
+        expect(collector.partyConsumableSnapshots).toEqual({});
     });
 
     test('a load parked on a read when the switch lands does not pour the departing record back', async () => {

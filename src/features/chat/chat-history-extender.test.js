@@ -56,6 +56,13 @@ vi.mock('../../core/storage.js', () => ({
         }),
         // The read chat history goes through: `null` when the database could
         // not be read, `{found, value}` otherwise — the real `tryGet`'s shape.
+        // The batched read, answered through the per-key `tryGet` below: all or nothing, as the real one is
+        tryGetMany: async function (keys, store) {
+            // Issued together, in order, as the one transaction would
+            const reads = await Promise.all(keys.map((key) => this.tryGet(key, store)));
+            if (reads.some((read) => read === null || read === undefined)) return null;
+            return new Map(keys.map((key, i) => [key, reads[i]]));
+        },
         tryGet: vi.fn(async (key, store) => {
             if (db.failReads) return null;
             if (db.readGate) await db.readGate;

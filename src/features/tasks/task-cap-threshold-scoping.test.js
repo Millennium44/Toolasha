@@ -43,6 +43,7 @@ vi.mock('../../core/storage.js', () => ({
             return true;
         },
         getJSON: async (key, _store, fallback) => stored.values[key] ?? fallback,
+        parseJSON: (raw, _key, fallback = null) => (raw === null ? fallback : raw),
         setJSON: async () => {},
         updateMany: async (_store, keys, mutate) => {
             const values = {};
@@ -157,11 +158,12 @@ describe('cap thresholds are per character', () => {
         expect(stored.values.taskCapCoinThreshold).toBe(40000);
     });
 
-    test('the six cap records still come from one batched read', async () => {
+    test('the protected list and the six cap records come from one batched read', async () => {
         await taskRerollProtectionFeature.initialize();
 
         expect(batches.calls).toHaveLength(1);
         expect(batches.calls[0]).toEqual([
+            'taskProtectedHrids_alt99',
             'taskCapProtection_alt99',
             'taskCapProtection',
             'taskCapCoinThreshold_alt99',

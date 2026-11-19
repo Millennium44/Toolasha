@@ -11,6 +11,7 @@ import { runInBackground } from '../../utils/background-work.js';
 import { resolveLoadoutTalismans, toSimTalismans } from '../../utils/talisman-bonuses.js';
 import { upgradeRequirementHtml } from '../../utils/item-requirements.js';
 import { characterKey, readScoped, readScopedChecked, writeScoped } from '../../utils/character-key.js';
+import { createStartupReader, DIRECT_READS } from '../../utils/startup-batch.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { SKILLING_LOADOUTS_KEY } from './lab-skilling-loadouts.js';
 import { shortFigure, exactFiguresHtml, wireExactRows } from './lab-exact-figures.js';
@@ -2319,9 +2320,26 @@ class LabSimUI {
             },
             true
         );
-        void this._restoreUpgradeSelection();
-        void this._restoreTokenBuffLevels();
-        void this._loadViewChoices();
+        // What the panel remembers is asked for on one transaction (a second for the records that must tell
+        // an unreadable one from an absent one) instead of two dozen separate reads, each of which queued
+        // behind every other feature's at startup
+        const startupReads = createStartupReader({
+            plain: [RESULTS_VIEW_KEY],
+            scoped: [TOKEN_BUFF_LEVELS_KEY, TRIGGER_CHOICES_KEY, CHECKED_SWAPS_KEY, LEGACY_UPGRADE_MODE_KEY],
+            checked: [
+                UPGRADE_DIMENSIONS_KEY,
+                UPGRADE_SCOPE_KEY,
+                UPGRADE_LEVEL_SOURCE_KEY,
+                UPGRADE_SWAP_AURA_KEY,
+                SHRINE_CAP_GUILD_KEY,
+                UPGRADE_ROOM_LEVELS_KEY,
+                UPGRADE_TARGET_FLOOR_KEY,
+                UPGRADE_INPUTS_KEY,
+            ],
+        });
+        void this._restoreUpgradeSelection(startupReads);
+        void this._restoreTokenBuffLevels(startupReads);
+        void this._loadViewChoices(startupReads);
         this._watchNarrowWindow();
         // After feature startup rather than during the build: the saved results are a large record and the
         // panel is hidden until opened (the Combat Sim does the same). The restore already stands down when a
@@ -2336,9 +2354,9 @@ class LabSimUI {
         });
         this._wireSwapBars();
         this._wireLabSections();
-        void this._restoreCheckedSwaps();
+        void this._restoreCheckedSwaps({}, startupReads);
         this._wireTriggerBar();
-        void this._restoreTriggerChoices();
+        void this._restoreTriggerChoices(startupReads);
         this.panel.querySelector('#mwi-labsim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-labsim-ability-targets');
             const opening = grid.style.display === 'none';
@@ -3460,7 +3478,7 @@ class LabSimUI {
      * retired single-mode value.
      * @private
      */
-    async _restoreUpgradeSelection() {
+    async _restoreUpgradeSelection(reads = DIRECT_READS) {
         let selection;
         let savedLevelSource = null;
         let savedAuraOnly = false;
@@ -3516,7 +3534,7 @@ class LabSimUI {
                         UPGRADE_ROOM_LEVELS_KEY,
                         UPGRADE_TARGET_FLOOR_KEY,
                         UPGRADE_INPUTS_KEY,
-                    ].map((base) => readScopedChecked(base, 'settings'))
+                    ].map((base) => reads.checked(base, 'settings'))
                 )
             ).map((read, index) => {
                 // A read that failed is not a record that is absent: nothing is noted as stored, so nothing
@@ -3529,7 +3547,7 @@ class LabSimUI {
             savedShrineCapGuild = Boolean(savedShrineCapGuild);
             const legacyMode =
                 savedDimensions === null && savedScope === null
-                    ? await readScoped(LEGACY_UPGRADE_MODE_KEY, 'settings', null)
+                    ? await reads.scoped(LEGACY_UPGRADE_MODE_KEY, 'settings', null)
                     : null;
             selection = sanitizeLabUpgradeSelection(savedDimensions ?? legacyMode, savedScope);
             readOk = true;
@@ -3786,13 +3804,13 @@ class LabSimUI {
      * Read the remembered token levels back.
      * @private
      */
-    async _restoreTokenBuffLevels() {
+    async _restoreTokenBuffLevels(reads = DIRECT_READS) {
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
         const editsBefore = this._tokenBuffEdits;
         let levels;
         try {
-            levels = sanitizeTokenLevels(await readScoped(TOKEN_BUFF_LEVELS_KEY, 'settings', null));
+            levels = sanitizeTokenLevels(await reads.scoped(TOKEN_BUFF_LEVELS_KEY, 'settings', null));
         } catch (error) {
             console.error('[LabSimUI] Failed to restore labyrinth token levels:', error);
             levels = {};
@@ -4830,11 +4848,11 @@ class LabSimUI {
      * Read this character's choices back, on a build and when a sync pull brings them.
      * @private
      */
-    async _restoreTriggerChoices() {
+    async _restoreTriggerChoices(reads = DIRECT_READS) {
         const ownerId = dataManager.getCurrentCharacterId();
         let saved = null;
         try {
-            saved = await readScoped(TRIGGER_CHOICES_KEY, 'settings', null);
+            saved = await reads.scoped(TRIGGER_CHOICES_KEY, 'settings', null);
         } catch (error) {
             console.error('[LabSimUI] Failed to restore trigger tuning choices:', error);
             return;
@@ -5319,12 +5337,12 @@ class LabSimUI {
      *   sync pull that brought them (the queues on screen are then the pre-pull copy)
      * @private
      */
-    async _restoreCheckedSwaps({ replace = false } = {}) {
+    async _restoreCheckedSwaps({ replace = false } = {}, reads = DIRECT_READS) {
         const ownerId = dataManager.getCurrentCharacterId();
         const editsBefore = this._swapEdits;
         let saved = null;
         try {
-            saved = await readScoped(CHECKED_SWAPS_KEY, 'settings', null);
+            saved = await reads.scoped(CHECKED_SWAPS_KEY, 'settings', null);
         } catch (error) {
             console.error('[LabSimUI] Failed to restore checked swaps:', error);
             return;
@@ -8103,12 +8121,12 @@ class LabSimUI {
      * Read the remembered pick. A pick made while the read was out is newer than what it read and stands.
      * @private
      */
-    async _loadViewChoices() {
+    async _loadViewChoices(reads = DIRECT_READS) {
         const editsBefore = this._viewEdits || 0;
         // A pick still being written is newer than anything a read can return
         if (this._viewWritesOut > 0) return;
         try {
-            const saved = await storage.get(RESULTS_VIEW_KEY, 'settings', null);
+            const saved = await reads.get(RESULTS_VIEW_KEY, 'settings', null);
             if ((this._viewEdits || 0) !== editsBefore || this._viewWritesOut > 0) return;
             this._viewChoices = normalizeViewChoices(saved);
             this._redrawForViewChange();

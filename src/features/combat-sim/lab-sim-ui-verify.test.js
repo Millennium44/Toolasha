@@ -29,6 +29,8 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (_key, _store, fallback) => fallback,
+        getMany: async (keys) => new Map(keys.map((key) => [key, null])),
+        tryGetMany: async (keys) => new Map(keys.map((key) => [key, { found: false, value: null }])),
         set: async () => {},
         delete: async () => true,
         update: async () => ({ written: false, value: undefined }),

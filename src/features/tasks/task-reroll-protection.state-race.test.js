@@ -1,7 +1,14 @@
 /** @vitest-environment happy-dom */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-const world = vi.hoisted(() => ({ characterId: 'alice', disk: new Map(), gate: null, writeGate: null }));
+const world = vi.hoisted(() => ({
+    characterId: 'alice',
+    disk: new Map(),
+    gate: null,
+    writeGate: null,
+    batches: [],
+    singleReads: [],
+}));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -64,6 +71,7 @@ vi.mock('../../utils/character-key.js', async (importOriginal) => {
 vi.mock('../../core/storage.js', () => ({
     default: {
         getJSON: async (key, _store, fallback) => {
+            world.singleReads.push(key);
             const value = structuredClone(world.disk.get(key) ?? fallback);
             if (world.gate?.stage === 'batch') {
                 const gate = world.gate;
@@ -73,7 +81,19 @@ vi.mock('../../core/storage.js', () => ({
             }
             return value;
         },
-        getMany: async (keys) => new Map(keys.map((key) => [key, structuredClone(world.disk.get(key) ?? null)])),
+        // The protected list rides in the same batch as the cap records, so the startup read parks here
+        getMany: async (keys) => {
+            world.batches.push([...keys]);
+            const value = new Map(keys.map((key) => [key, structuredClone(world.disk.get(key) ?? null)]));
+            if (world.gate?.stage === 'batch') {
+                const gate = world.gate;
+                world.gate = null;
+                gate.entered();
+                await gate.promise;
+            }
+            return value;
+        },
+        parseJSON: (raw, _key, fallback = null) => (raw === null ? fallback : raw),
         set: vi.fn(async (key, value) => {
             world.disk.set(key, structuredClone(value));
             return true;
@@ -123,6 +143,8 @@ beforeEach(() => {
     world.disk = new Map();
     world.gate = null;
     world.writeGate = null;
+    world.batches = [];
+    world.singleReads = [];
     storage.setJSON.mockClear();
     storage.set.mockClear();
     document.body.innerHTML = '';
@@ -153,6 +175,25 @@ describe.each(['switch', 'same-character reconnect'])('%s during protection star
             if (change === 'switch') expect(world.disk.get('taskProtectedHrids_alice')).toEqual([MILKING]);
         }
     );
+});
+
+test('startup reads the protected list and the cap records in one batch, absent keys as their defaults', async () => {
+    // Only the list and one threshold are stored: the rest must read as the defaults, not as stored values
+    world.disk.set('taskProtectedHrids_alice', [MILKING]);
+    world.disk.set('taskCapCoinThreshold_alice', 40000);
+    await feature.initialize();
+    expect(world.batches).toHaveLength(1);
+    expect(world.batches[0]).toContain('taskProtectedHrids_alice');
+    expect(world.singleReads).toEqual([]);
+    expect(protection.getProtectedHrids()).toEqual(new Set([MILKING]));
+    expect(protection.capProtectionEnabled).toBe(false);
+    expect(protection.coinThreshold).toBe(40000);
+    expect(protection.cowbellThreshold).toBeGreaterThan(0);
+});
+
+test('startup with no stored list starts empty', async () => {
+    await feature.initialize();
+    expect(protection.getProtectedHrids()).toEqual(new Set());
 });
 
 test('uninterrupted startup still loads scoped protections and thresholds', async () => {

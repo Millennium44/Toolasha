@@ -191,6 +191,31 @@ export async function readScopedChecked(base, storeName = 'settings', options = 
 }
 
 /**
+ * `readScopedChecked` over reads a caller already made in one `storage.tryGetMany` transaction.
+ *
+ * The batch must hold both `characterKey(base)` and `base`. A batch that could not be made (`null`), or one
+ * missing either key, is "could not be read" (`ok: false`): never an absent record. When the scoped record is
+ * found the legacy key is not looked at, as in `readScopedChecked`.
+ * @param {string} base - The unscoped key
+ * @param {Map<string, {found: boolean, value: *}>|null} reads - As returned by `storage.tryGetMany`
+ * @param {string} [storeName] - Object store the batch came from (default: 'settings')
+ * @param {{migrate?: 'adopt'|'discard'}} [options] - Legacy migration mode (default: 'adopt')
+ * @returns {Promise<{ok: boolean, value: *}>} The read; value is null when absent or when not ok
+ */
+export async function readScopedCheckedFrom(base, reads, storeName = 'settings', options = {}) {
+    if (!reads) return { ok: false, value: null };
+    const scopedKey = characterKey(base);
+    const scoped = reads.get(scopedKey);
+    if (!scoped) return { ok: false, value: null };
+    if (scoped.found) return { ok: true, value: scoped.value };
+
+    const legacy = reads.get(base);
+    if (!legacy) return { ok: false, value: null };
+    if (!legacy.found) return { ok: true, value: null };
+    return { ok: true, value: await migrateLegacy(base, scopedKey, legacy.value, storeName, null, options) };
+}
+
+/**
  * `readScoped` over values a caller already read in one batched transaction.
  *
  * A feature that pulls several of its records at startup with

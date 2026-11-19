@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Faster start-up reads
+
+The Combat and Lab sim panels, dungeon runs, chat history and task protection now load their saved data in one read each instead of dozens, so the start-up queue clears about two seconds sooner on a large profile.
+
 ### Sim refine rows show the resale credit
 
 The Upgrade advisor's refine and enhance cost lines now name the resale credit for the piece they replace ("less 78.9M for your +0 sold = 166.1M"), so the ladder figure and the Cost cell add up.
