@@ -70,7 +70,8 @@ import { attachMinimize } from '../../utils/panel-minimize.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 import { saveUpgradeResults, loadUpgradeResults, clearUpgradeResults } from './upgrade-results-store.js';
 import { normalizeTaskDamageMode } from './engine/task-damage-mode.js';
-import { characterKey, readScoped, readScopedChecked, writeScoped } from '../../utils/character-key.js';
+import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+import { createStartupReader, DIRECT_READS } from '../../utils/startup-batch.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { COMBAT_SIM_KEYS, StoredValueMemo, pulledNames } from './sim-sync-keys.js';
 import { scriptVersion } from '../../utils/script-version.js';
@@ -4745,21 +4746,49 @@ class CombatSimUI {
         this._upgradePlayerPick = null;
         this._keepAbilityOnTick = false;
         this._keepCombatOnTick = false;
+        // Everything the panel remembers is asked for on one transaction (a second for the Upgrade inputs,
+        // which must tell an unreadable record from an absent one) instead of two dozen separate reads, each
+        // of which queued behind every other feature's at startup
+        const startupReads = createStartupReader({
+            plain: [
+                ALL_ZONES_SCORE_SCALE_KEY,
+                ALL_ZONES_MAX_FOOD_KEY,
+                RESULTS_COLLAPSED_KEY,
+                UPGRADE_COLUMNS_KEY,
+                BESTIARY_PLAN_HOURS_KEY,
+                BESTIARY_PLAN_MODE_KEY,
+                BESTIARY_PLAN_POINTS_KEY,
+                BESTIARY_PLAN_TOTAL_KEY,
+                BESTIARY_PLAN_TOLERANCE_KEY,
+                BESTIARY_PLAN_MIN_CLEAR_KEY,
+                ALL_ZONES_DUNGEONS_KEY,
+            ],
+            scoped: [
+                UPGRADE_MODES_KEY,
+                TRIGGER_CHOICES_KEY,
+                SWAP_AURA_ONLY_KEY,
+                RESIM_CLOSE_CALLS_KEY,
+                HOUSE_NON_COMBAT_BUNDLE_KEY,
+                SHRINE_CAP_GUILD_KEY,
+                BUDGET_CONSTRAINTS_KEY,
+            ],
+            checked: [UPGRADE_INPUTS_KEY],
+        });
         (async () => {
-            await Promise.all([this._restoreUpgradeModes(), this._restoreTriggerChoices()]);
+            await Promise.all([this._restoreUpgradeModes(startupReads), this._restoreTriggerChoices(startupReads)]);
             // After the sets: restoring them can put the Ability Lv and Combat Lv boxes back to their defaults,
             // and the remembered values go over that
-            await this._restoreUpgradeInputs();
+            await this._restoreUpgradeInputs(startupReads);
             await this._refreshCachedTriggerResult();
         })();
-        this._restoreSwapAuraOnly();
-        this._restoreBudgetConstraints();
-        this._restoreShrineCapToGuild();
-        this._loadUpgradeColumnPrefs();
-        this._loadResultsCollapsedPref();
-        this._loadMaxTierFoodPref();
-        this._loadZonesScorePref();
-        this._loadBestiaryPlanPrefs();
+        this._restoreSwapAuraOnly(startupReads);
+        this._restoreBudgetConstraints(startupReads);
+        this._restoreShrineCapToGuild(startupReads);
+        this._loadUpgradeColumnPrefs(startupReads);
+        this._loadResultsCollapsedPref(startupReads);
+        this._loadMaxTierFoodPref(startupReads);
+        this._loadZonesScorePref(startupReads);
+        this._loadBestiaryPlanPrefs(startupReads);
         // After feature startup rather than during the build: the saved results are a large record and the
         // panel is hidden until opened. The restore already stands down when a run or a pull has drawn a table
         // by the time it lands, and finding nothing saved leaves the table alone rather than clearing it. The
@@ -4807,8 +4836,8 @@ class CombatSimUI {
                 config.setSetting('combatSim_upgradeSkipSkillingRooms', Boolean(combatOnlyBox.checked));
             });
         }
-        this._restoreHouseNonCombatBundle();
-        this._restoreResimCloseCalls();
+        this._restoreHouseNonCombatBundle(startupReads);
+        this._restoreResimCloseCalls(startupReads);
         this.panel.querySelector('#mwi-csim-upgrade-resim')?.addEventListener('change', () => {
             this._saveResimCloseCalls();
         });
@@ -5412,12 +5441,12 @@ class CombatSimUI {
     }
 
     /** @private */
-    async _loadZonesScorePref() {
+    async _loadZonesScorePref(reads = DIRECT_READS) {
         // Bumped by every user change: a scale picked while this read was out is saved and on screen, and
         // the read holds the older value
         const editsBefore = this._zonesScoreEdits || 0;
         try {
-            const saved = await storage.get(ALL_ZONES_SCORE_SCALE_KEY, 'settings', null);
+            const saved = await reads.get(ALL_ZONES_SCORE_SCALE_KEY, 'settings', null);
             if ((this._zonesScoreEdits || 0) !== editsBefore) return;
             // A key from a build that offered other scales is ignored, not trusted
             if (isZonesScoreScale(saved)) this._allZonesScoreScale = saved;
@@ -5437,11 +5466,11 @@ class CombatSimUI {
     }
 
     /** @private */
-    async _loadMaxTierFoodPref() {
+    async _loadMaxTierFoodPref(reads = DIRECT_READS) {
         // Same guard as the Score scale: a toggle flipped while this read was out is not reverted by it
         const editsBefore = this._maxTierFoodEdits || 0;
         try {
-            const saved = await storage.get(ALL_ZONES_MAX_FOOD_KEY, 'settings', false);
+            const saved = await reads.get(ALL_ZONES_MAX_FOOD_KEY, 'settings', false);
             if ((this._maxTierFoodEdits || 0) !== editsBefore) return;
             this._maxTierFoodEnabled = Boolean(saved);
             const input = this.panel?.querySelector('#mwi-csim-maxfood');
@@ -6466,9 +6495,9 @@ class CombatSimUI {
      * whether dungeons join the run.
      * @private
      */
-    async _loadBestiaryPlanPrefs() {
+    async _loadBestiaryPlanPrefs(reads = DIRECT_READS) {
         try {
-            const read = (key) => storage.get(key, 'settings', null);
+            const read = (key) => reads.get(key, 'settings', null);
             const savedHours = Number(await read(BESTIARY_PLAN_HOURS_KEY));
             if (savedHours > 0) this._bestiaryPlanHours = savedHours;
             const savedMode = await read(BESTIARY_PLAN_MODE_KEY);
@@ -12360,9 +12389,9 @@ class CombatSimUI {
      * nothing has been saved yet.
      * @private
      */
-    async _restoreUpgradeModes() {
+    async _restoreUpgradeModes(reads = DIRECT_READS) {
         try {
-            const saved = await readScoped(UPGRADE_MODES_KEY, 'settings', null);
+            const saved = await reads.scoped(UPGRADE_MODES_KEY, 'settings', null);
             const present = new Set(
                 [...(this.panel?.querySelectorAll('[data-upgrade-mode]') || [])].map((box) =>
                     box.getAttribute('data-upgrade-mode')
@@ -12457,9 +12486,9 @@ class CombatSimUI {
      * Restore the remembered Tune triggers section choices. A missing or invalid value leaves the default.
      * @private
      */
-    async _restoreTriggerChoices() {
+    async _restoreTriggerChoices(reads = DIRECT_READS) {
         try {
-            const saved = await readScoped(TRIGGER_CHOICES_KEY, 'settings', null);
+            const saved = await reads.scoped(TRIGGER_CHOICES_KEY, 'settings', null);
             if (!this.panel) return;
             // No record, or one from before the section existed (no `open`): it starts closed. A header
             // click made before this first read finished is the player's latest word and stays; after that a
@@ -12506,9 +12535,9 @@ class CombatSimUI {
      * Restore the remembered "Aura only" sub-option.
      * @private
      */
-    async _restoreSwapAuraOnly() {
+    async _restoreSwapAuraOnly(reads = DIRECT_READS) {
         try {
-            const saved = await readScoped(SWAP_AURA_ONLY_KEY, 'settings', false);
+            const saved = await reads.scoped(SWAP_AURA_ONLY_KEY, 'settings', false);
             const box = this.panel?.querySelector('#mwi-csim-swap-aura-only');
             if (box) box.checked = Boolean(saved);
         } catch (error) {
@@ -12559,9 +12588,9 @@ class CombatSimUI {
      * Restore "Re-sim close calls", on until the player unticks it.
      * @private
      */
-    async _restoreResimCloseCalls() {
+    async _restoreResimCloseCalls(reads = DIRECT_READS) {
         try {
-            const saved = await readScoped(RESIM_CLOSE_CALLS_KEY, 'settings', true);
+            const saved = await reads.scoped(RESIM_CLOSE_CALLS_KEY, 'settings', true);
             const box = this.panel?.querySelector('#mwi-csim-upgrade-resim');
             if (box) box.checked = Boolean(saved);
         } catch (error) {
@@ -12653,13 +12682,13 @@ class CombatSimUI {
      * @returns {Promise<void>}
      * @private
      */
-    async _restoreUpgradeInputs() {
+    async _restoreUpgradeInputs(reads = DIRECT_READS) {
         const panel = this.panel;
         const characterId = dataManager.getCurrentCharacterId?.();
         try {
             // `ok: false` is a record that could not be read, which is not the same as one that is not there:
             // saves stay off for this panel rather than put the boxes' defaults over a record never seen
-            const { ok, value: saved } = await readScopedChecked(UPGRADE_INPUTS_KEY, 'settings');
+            const { ok, value: saved } = await reads.checked(UPGRADE_INPUTS_KEY, 'settings');
             if (!panel || this.panel !== panel) return;
             if (characterId !== dataManager.getCurrentCharacterId?.()) return;
             if (!ok) {
@@ -12755,9 +12784,9 @@ class CombatSimUI {
      * Restore the House "All non-combat rooms +1" option, off until the player ticks it.
      * @private
      */
-    async _restoreHouseNonCombatBundle() {
+    async _restoreHouseNonCombatBundle(reads = DIRECT_READS) {
         try {
-            const saved = await readScoped(HOUSE_NON_COMBAT_BUNDLE_KEY, 'settings', false);
+            const saved = await reads.scoped(HOUSE_NON_COMBAT_BUNDLE_KEY, 'settings', false);
             const box = this.panel?.querySelector('#mwi-csim-house-noncombat-bundle');
             if (box) box.checked = Boolean(saved);
         } catch (error) {
@@ -12770,9 +12799,9 @@ class CombatSimUI {
      * a shrine level the guild cannot sell is not an upgrade anyone can buy.
      * @private
      */
-    async _restoreShrineCapToGuild() {
+    async _restoreShrineCapToGuild(reads = DIRECT_READS) {
         try {
-            const saved = await readScoped(SHRINE_CAP_GUILD_KEY, 'settings', true);
+            const saved = await reads.scoped(SHRINE_CAP_GUILD_KEY, 'settings', true);
             const box = this.panel?.querySelector('#mwi-csim-shrine-cap-guild');
             if (box) box.checked = Boolean(saved);
         } catch (error) {
@@ -16726,11 +16755,11 @@ class CombatSimUI {
      * character changed, while the read was out.
      * @private
      */
-    async _restoreBudgetConstraints() {
+    async _restoreBudgetConstraints(reads = DIRECT_READS) {
         const epoch = this._budgetConstraintsEpoch || 0;
         const characterId = dataManager.getCurrentCharacterId?.();
         try {
-            const saved = await readScoped(BUDGET_CONSTRAINTS_KEY, 'settings', null);
+            const saved = await reads.scoped(BUDGET_CONSTRAINTS_KEY, 'settings', null);
             if (epoch !== (this._budgetConstraintsEpoch || 0)) return;
             if (characterId !== dataManager.getCurrentCharacterId?.()) return;
             const pairs = (list) =>
@@ -19115,11 +19144,11 @@ class CombatSimUI {
     }
 
     /** @private */
-    async _loadResultsCollapsedPref() {
+    async _loadResultsCollapsedPref(reads = DIRECT_READS) {
         // A toggle made while this read was out is on screen and saved; the read holds the older map
         const editsBefore = this._resultsCollapsedEdits || 0;
         try {
-            const saved = await storage.get(RESULTS_COLLAPSED_KEY, 'settings', null);
+            const saved = await reads.get(RESULTS_COLLAPSED_KEY, 'settings', null);
             if (!saved || (this._resultsCollapsedEdits || 0) !== editsBefore) return;
             // Replaced wholesale, so an expanded section stays expanded; no record at all keeps the default
             const collapsed = {};
@@ -19171,12 +19200,12 @@ class CombatSimUI {
     }
 
     /** @private */
-    async _loadUpgradeColumnPrefs() {
+    async _loadUpgradeColumnPrefs(reads = DIRECT_READS) {
         // Bumped by every persist: a preference changed while this read was out is saved and on screen, and
         // the read holds the older value
         const editsBefore = this._columnPrefEdits || 0;
         try {
-            const saved = await storage.get(UPGRADE_COLUMNS_KEY, 'settings', null);
+            const saved = await reads.get(UPGRADE_COLUMNS_KEY, 'settings', null);
             if (!saved) return;
             if ((this._columnPrefEdits || 0) !== editsBefore) return;
             // Every field is replaced, a missing one by its default (an unset value reads as the

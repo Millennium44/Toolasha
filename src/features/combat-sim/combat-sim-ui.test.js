@@ -265,6 +265,24 @@ vi.mock('../../core/storage.js', () => {
                 const value = mocks.store.get(keyOf(key, store));
                 return value == null ? { found: false, value: null } : { found: true, value };
             },
+            // One transaction, not through the per-key reads, so a spy on those sees only single reads. A
+            // wedged database answers null per key, and tryGetMany is all or nothing
+            getMany: async (keys, store) =>
+                new Map(
+                    keys.map((key) => {
+                        const value = mocks.unreadable ? undefined : mocks.store.get(keyOf(key, store));
+                        return [key, value === undefined ? null : value];
+                    })
+                ),
+            tryGetMany: async (keys, store) => {
+                if (mocks.unreadable) return null;
+                return new Map(
+                    keys.map((key) => {
+                        const value = mocks.store.get(keyOf(key, store));
+                        return [key, value == null ? { found: false, value: null } : { found: true, value }];
+                    })
+                );
+            },
             set: async (key, value, store) => {
                 mocks.setLog?.push(keyOf(key, store));
                 mocks.store.set(keyOf(key, store), value);
@@ -6168,8 +6186,8 @@ describe('the all-zones table', () => {
             ui._maxTierFoodEnabled = false;
             ui._allZonesMode = null;
             ui.buildPanel();
-            await Promise.resolve();
-            await Promise.resolve();
+            // The panel's remembered options arrive in one batched read: let it land
+            await new Promise((resolve) => setTimeout(resolve, 0));
 
             expect(ui._maxTierFoodEnabled).toBe(true);
             expect(ui.panel.querySelector('#mwi-csim-maxfood').checked).toBe(true);
@@ -11446,8 +11464,8 @@ describe('the Aura-only swap option', () => {
 
         ui.destroy();
         ui.buildPanel();
-        await Promise.resolve();
-        await Promise.resolve();
+        // The panel's remembered options arrive in one batched read: let it land
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(ui.panel.querySelector('#mwi-csim-swap-aura-only').checked).toBe(true);
     });
@@ -12305,6 +12323,8 @@ describe('planning to a points target from the panel', () => {
     });
 
     test('total mode persists its own mode and target separately from points mode', async () => {
+        // The planner's remembered preferences arrive in one batched read; a change made first would be read over
+        await new Promise((resolve) => setTimeout(resolve, 0));
         mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
         await ui._displayAllZonesResults([result('Farm', { '/monsters/fly': 10 })], 1, gameData);
 
@@ -21792,5 +21812,67 @@ describe('a row priced by a shared route shops for what that route buys', () => 
         expect(tag).toContain('Priced by Craft');
         expect(tag).not.toContain('No market listing');
         expect(costSourceTagHtml('craft')).toContain('No market listing');
+    });
+});
+
+describe('the panel reads what it remembers in one batch', () => {
+    const settleBatch = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    beforeEach(() => {
+        // Whatever an earlier describe left built would make the build below a no-op
+        ui.destroy();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        vi.restoreAllMocks();
+        mocks.store.clear();
+        mocks.unreadable = false;
+    });
+
+    test('stored options come back, absent ones keep their defaults, and no single read is made for them', async () => {
+        mocks.characterId = 'char1';
+        mocks.store.clear();
+        mocks.store.set('settings:combatSimSwapAuraOnly_char1', true);
+        mocks.store.set('settings:combatSimBestiaryPlanMode', 'points');
+        // Another character's record is never served to this one
+        mocks.store.set('settings:combatSimResimCloseCalls_char2', false);
+        const many = vi.spyOn(storage, 'getMany');
+        const tryMany = vi.spyOn(storage, 'tryGetMany');
+        const single = vi.spyOn(storage, 'get');
+
+        ui.buildPanel();
+        await settleBatch();
+
+        expect(many).toHaveBeenCalledTimes(1);
+        expect(tryMany).toHaveBeenCalledTimes(1);
+        const asked = many.mock.calls[0][0];
+        expect(asked).toEqual(
+            expect.arrayContaining([
+                'combatSimSwapAuraOnly_char1',
+                'combatSimSwapAuraOnly',
+                'combatSimBestiaryPlanMode',
+                'combatSimResimCloseCalls_char1',
+            ])
+        );
+        expect(tryMany.mock.calls[0][0]).toEqual(['combatSimUpgradeInputs_char1', 'combatSimUpgradeInputs']);
+        const startupKeys = new Set(asked);
+        expect(single.mock.calls.map((call) => call[0]).filter((key) => startupKeys.has(key))).toEqual([]);
+        // Stored values applied; the defaults kept where nothing is stored for this character
+        expect(ui.panel.querySelector('#mwi-csim-swap-aura-only').checked).toBe(true);
+        expect(ui._bestiaryPlanMode).toBe('points');
+        expect(ui.panel.querySelector('#mwi-csim-upgrade-resim').checked).toBe(true);
+    });
+
+    test('an unreadable store gives the defaults and leaves the Upgrade inputs unsaved', async () => {
+        mocks.characterId = 'char1';
+        mocks.store.set('settings:combatSimSwapAuraOnly_char1', true);
+        mocks.unreadable = true;
+
+        ui.buildPanel();
+        await settleBatch();
+
+        expect(ui.panel.querySelector('#mwi-csim-swap-aura-only').checked).toBe(false);
+        expect(ui._upgradeInputsRestored).toBe(false);
     });
 });
