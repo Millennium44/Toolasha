@@ -752,6 +752,113 @@ describe('profit per hour held to what the market trades', () => {
         expect(capped.title).toContain('Uncapped: 193.9K an hour');
     });
 
+    test('+N reports the variant that wins after the cap, in the cell and the route tooltip (#1053)', async () => {
+        const variant = (route, perUnit, perHour, unitsPerHour, copies) => ({
+            level: 5,
+            status: 'ok',
+            profitPerUnit: perUnit,
+            profitPerHour: perHour,
+            unitsPerHour,
+            route: 'craft',
+            routeInfo: {
+                route,
+                offered: true,
+                baseHrid: '/items/base',
+                directCost: 150,
+                baseCost: 160,
+                saved: 0,
+                enhance: { selfCopyCrafts: copies, extraCraftSeconds: 200 },
+            },
+        });
+        const market = { ...variant('craft', 150, 27000, 180, 0), winner: true };
+        const crafted = { ...variant('craft', 230, 6900, 30, 1), winner: false };
+        state.rows = [
+            row('sword', {
+                target: level({ profitPerUnit: 150, unitsPerHour: 180, profitPerHour: 27000 }),
+                route: market.routeInfo,
+                sweep: [level({ level: 0 }), { ...market, variants: [market, crafted] }],
+            }),
+        ];
+        state.volume = { '/items/sword': { unitsPerDay: 24, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        // 1 an hour: 150 for market-only against 230 for crafted copies
+        expect(hourCell('sword').textContent).toBe('230');
+        expect(hourCell('sword').title).toContain('Uncapped: 27.0K an hour');
+        const enhanceCell = state.panel.panel.querySelectorAll('[data-ce-row$="/sword"] td')[4];
+        expect(enhanceCell.title).toContain('crafted at craft cost');
+        // An unknown volume keeps the uncapped winner
+        state.volume = {};
+        board.volumes.clear();
+        board.volumes.set('/items/sword:5', { known: false, unitsPerDay: 0 });
+        state.panel.render();
+        expect(hourCell('sword').textContent).toBe('27.0K');
+        expect(hourCell('sword').hasAttribute('data-ce-capped')).toBe(false);
+    });
+
+    test('every +N cell describes the one capped run: Enhance value, badge, tooltip, craft cost (Codex round 2)', async () => {
+        // Uncapped winner: via the base at 100. Capped: the item itself with crafted copies at 50.
+        const variant = (route, enhanceCost, craftCost, perUnit, perHour, unitsPerHour, copies, winner) => ({
+            level: 5,
+            status: 'ok',
+            reasons: [],
+            unpricedInputs: [],
+            craftCostPerUnit: craftCost,
+            enhanceCost,
+            saleAfterTax: 8640,
+            profitPerUnit: perUnit,
+            profitPerHour: perHour,
+            unitsPerHour,
+            craftXpPerHour: 1,
+            enhanceXpPerHour: 1,
+            route: 'craft',
+            winner,
+            routeInfo: {
+                route,
+                offered: true,
+                baseHrid: '/items/base',
+                directCost: route === 'craft' ? enhanceCost : 150,
+                baseCost: route === 'refine-base' ? enhanceCost : 100,
+                saved: route === 'craft' ? 50 : 0,
+                enhance: { selfCopyCrafts: copies, extraCraftSeconds: 200 },
+            },
+        });
+        const viaBase = variant('refine-base', 100, 1970, 240, 20000, 180, 0, true);
+        const direct = variant('craft', 50, 2010, 290, 7000, 30, 1, false);
+        state.rows = [
+            row('sword', {
+                target: level({ enhanceCost: 100, craftCostPerUnit: 1970, profitPerUnit: 240, profitPerHour: 20000 }),
+                route: viaBase.routeInfo,
+                sweep: [level({ level: 0 }), { ...viaBase, variants: [viaBase, direct] }],
+            }),
+        ];
+        state.volume = { '/items/sword': { unitsPerDay: 24, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        const cells = state.panel.panel.querySelectorAll('[data-ce-row$="/sword"] td');
+        // Craft cost, Enhance (no "via base" badge), Profit/item and Profit/hr all come from the direct run
+        expect(cells[3].textContent).toBe('2.0K');
+        expect(cells[4].textContent).toBe('50');
+        expect(cells[4].querySelector('[data-ce-route]')).toBeNull();
+        expect(cells[4].title).toContain('crafted at craft cost');
+        expect(cells[4].getAttribute('data-ce-capped')).toBe('true');
+        expect(cells[6].textContent).toBe('290');
+        expect(cells[7].textContent).toBe('290');
+        // Unmeasured volume: the uncapped winner, via the base at 100, unmarked
+        state.volume = {};
+        board.volumes.clear();
+        board.volumes.set('/items/sword:5', { known: false, unitsPerDay: 0 });
+        state.panel.render();
+        const plain = state.panel.panel.querySelectorAll('[data-ce-row$="/sword"] td');
+        expect(plain[4].textContent).toContain('100');
+        expect(plain[4].querySelector('[data-ce-route]')?.getAttribute('data-ce-route')).toBe('refine-base');
+        expect(plain[4].hasAttribute('data-ce-capped')).toBe(false);
+    });
+
     test('a measured zero caps to 0, and an unknown volume caps nothing', async () => {
         state.volume = { '/items/sword': { unitsPerDay: 0, known: true } };
         openBoard();

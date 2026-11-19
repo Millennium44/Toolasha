@@ -16,6 +16,7 @@ import {
     bestLevelOf,
     candidateLevelsFor,
     buildHeldPool,
+    capBestVariant,
     capProfitByVolume,
     chooseEnhanceRoute,
     craftUnitFigures,
@@ -1688,6 +1689,128 @@ describe('bestLevelByVolume', () => {
 
     test('without candidate levels every swept level counts', () => {
         expect(bestLevelByVolume(sweep, null, volumes({})).entries).toHaveLength(5);
+    });
+});
+
+describe('Best holds every route variant to the volume before choosing (#1053)', () => {
+    const run = (cost, seconds, marketCost, extraCraftSeconds = 0) => ({
+        cost,
+        seconds,
+        xp: 10,
+        xpKnown: true,
+        selfCopyCrafts: extraCraftSeconds > 0 ? 1 : 0,
+        extraCraftSeconds,
+        extraCraftXp: 0,
+        marketOnly: { cost: marketCost, seconds, xp: 10, xpKnown: true },
+    });
+    // 60 coin craft in 36 s sold for 400. Market-only: 150 enhance, 10 s -> 190 an item in 46 s (78 an hour).
+    // Crafted copies: 50 enhance, +200 s -> 290 an item in 246 s (14.6 an hour).
+    const build = (over = {}) =>
+        row('ring', {
+            sale0: 200,
+            saleN: 400,
+            cost: 60,
+            enhance: run(50, 10, 150, 200),
+            over: { viaBase: null, baseHrid: null, ...over },
+        });
+    const known = (unitsPerDay) => ({ known: true, unitsPerDay });
+    const volumes = (map) => (level) => map[level];
+
+    test("Codex's case: the crafted variant wins once the market caps both, and it is the one reported", () => {
+        const built = build();
+        const targetEntry = built.sweep[built.sweep.length - 1];
+        expect(targetEntry.variants.length).toBe(2);
+        // Uncapped, market-only wins and the row says so
+        expect(built.target.profitPerUnit).toBe(190);
+        const choice = capBestVariant(targetEntry, known(24));
+        // 1 an hour: 190 market-only against 290 crafted
+        expect(choice.cap.profitPerHour).toBeCloseTo(290, 6);
+        expect(choice.entry.routeInfo.enhance.selfCopyCrafts).toBe(1);
+        const { best } = bestLevelByVolume(
+            built.sweep,
+            [built.targetLevel],
+            volumes({ [built.targetLevel]: known(24) })
+        );
+        expect(best.profitPerHour).toBeCloseTo(290, 6);
+        expect(best.entry.routeInfo.enhance.selfCopyCrafts).toBe(1);
+        // The row itself, and so the sort, keeps the uncapped winner
+        expect(built.target.profitPerHour).toBeGreaterThan(14000);
+    });
+
+    test('an unknown or pending volume keeps the uncapped winner; a measured 0 caps every variant to 0', () => {
+        const built = build();
+        const targetEntry = built.sweep[built.sweep.length - 1];
+        for (const volume of [undefined, null, { known: false, unitsPerDay: 0 }]) {
+            const choice = capBestVariant(targetEntry, volume);
+            expect(choice.cap.profitPerHour).toBeCloseTo(built.target.profitPerHour, 6);
+            expect(choice.entry.routeInfo.enhance.selfCopyCrafts ?? 0).toBe(0);
+        }
+        expect(capBestVariant(targetEntry, known(0)).cap.profitPerHour).toBe(0);
+    });
+
+    test('a roomy market leaves the uncapped winner, and a loss is not capped', () => {
+        const built = build();
+        const targetEntry = built.sweep[built.sweep.length - 1];
+        expect(capBestVariant(targetEntry, known(1_000_000)).cap.profitPerHour).toBeCloseTo(
+            built.target.profitPerHour,
+            6
+        );
+        const losing = {
+            level: 5,
+            status: 'ok',
+            profitPerUnit: -10,
+            profitPerHour: -50,
+            unitsPerHour: 5,
+            variants: [
+                { level: 5, status: 'ok', profitPerUnit: -10, profitPerHour: -50, unitsPerHour: 5, route: 'craft' },
+                { level: 5, status: 'ok', profitPerUnit: -4, profitPerHour: -60, unitsPerHour: 15, route: 'craft' },
+            ],
+        };
+        // Losses keep their uncapped figures, so the better uncapped hour is kept
+        expect(capBestVariant(losing, known(0)).cap.profitPerHour).toBe(-50);
+    });
+
+    test("a capped variant reports its own run's cost and the saving against the other route (Codex round 1)", () => {
+        // Direct costs 150 market-only or 50 with crafted copies; the base route costs 100 (240 an item, uncapped winner)
+        const built = build({
+            viaBase: { cost: 100, seconds: 10, xp: 10, xpKnown: true },
+            baseHrid: '/items/base',
+        });
+        expect(built.route.route).toBe('refine-base');
+        const targetEntry = built.sweep[built.sweep.length - 1];
+        const choice = capBestVariant(targetEntry, known(24));
+        const info = choice.entry.routeInfo;
+        expect(info.route).toBe('craft');
+        expect(info.enhance.selfCopyCrafts).toBe(1);
+        expect(info.directCost).toBe(50);
+        expect(info.baseCost).toBe(100);
+        expect(info.saved).toBe(50);
+    });
+
+    test('ties keep the earlier variant, and an entry without variants is its own', () => {
+        const mk = (route, perHour) => ({
+            level: 5,
+            status: 'ok',
+            profitPerUnit: 10,
+            profitPerHour: perHour,
+            unitsPerHour: 10,
+            route,
+        });
+        const tied = { ...mk('craft', 100), variants: [mk('craft', 100), mk('refine-base', 100)] };
+        expect(capBestVariant(tied, known(24)).entry.route).toBe('craft');
+        const alone = mk('craft', 100);
+        expect(capBestVariant(alone, known(24)).entry).toBe(alone);
+        expect(capBestVariant(alone, known(24)).cap.profitPerHour).toBeCloseTo(10, 6);
+    });
+
+    test('the swept levels carry their variants too, so a lower level is capped the same way', () => {
+        const built = build({
+            levels: [{ level: 2, saleAfterTax: 400, enhance: run(50, 10, 150, 200), viaBase: null }],
+        });
+        const lower = built.sweep.find((entry) => entry.level === 2);
+        expect(lower.variants.length).toBe(2);
+        const { entries } = bestLevelByVolume(built.sweep, [2], volumes({ 2: known(24) }));
+        expect(entries[0].profitPerHour).toBeCloseTo(290, 6);
     });
 });
 
