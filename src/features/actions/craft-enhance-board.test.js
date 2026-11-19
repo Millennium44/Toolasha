@@ -829,3 +829,73 @@ describe('profit per hour held to what the market trades', () => {
         expect(zeroHourCell('sword').textContent).toBe('400');
     });
 });
+
+describe('the best level column', () => {
+    const entry = (lvl, over = {}) => level({ level: lvl, route: null, ...over });
+    const bestCell = (name) => state.panel.panel.querySelector(`[data-ce-row$="/${name}"] [data-ce-best]`);
+
+    test('shows the level and its profit an hour, and the tooltip lists every level with the missing ones explained', async () => {
+        const sweep = [
+            entry(0, { profitPerHour: 5000 }),
+            entry(1, { profitPerHour: 12000, route: 'craft' }),
+            unpricedLevel(['sale'], { level: 2, route: null }),
+            unpricedLevel(['enhance'], { level: 3, route: null }),
+            entry(4, { profitPerHour: 9000, route: 'held-base' }),
+            entry(5, { profitPerHour: 8000, route: 'refine-base' }),
+        ];
+        state.rows = [
+            row('sword', { sweep, best: { level: 1, profitPerHour: 12000, profitPerUnit: 200, route: 'craft' } }),
+        ];
+        openBoard();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        const cell = bestCell('sword');
+        expect(cell.getAttribute('data-ce-best')).toBe('1');
+        expect(cell.textContent).toBe('+1 12.0K');
+        expect(cell.title).toContain('+0: 5.0K an hour');
+        expect(cell.title).toContain('+1: 12.0K an hour  ← best');
+        expect(cell.title).toContain('+2: no figure (no sale quote)');
+        expect(cell.title).toContain('+3: no figure (enhance unpriced)');
+        expect(cell.title).toContain('+4: 9.0K an hour (via a held base)');
+        expect(cell.title).toContain('+5: 8.0K an hour (via base)');
+    });
+
+    test('a row with no priced level reads "—", never 0, and says why', async () => {
+        const sweep = [unpricedLevel(['input'], { level: 0 }), unpricedLevel(['input'], { level: 5 })];
+        state.rows = [row('sword', { sweep, best: null })];
+        openBoard();
+        await flush();
+        const cell = bestCell('sword');
+        expect(cell.getAttribute('data-ce-best')).toBe('none');
+        expect(cell.textContent).toBe('—');
+        expect(cell.title).toContain('+0: no figure (input unpriced)');
+    });
+
+    test('a best level that loses money is shown as a loss, in red', async () => {
+        state.rows = [
+            row('sword', {
+                sweep: [entry(0, { profitPerHour: -4000 })],
+                best: { level: 0, profitPerHour: -4000, profitPerUnit: -40, route: null },
+            }),
+        ];
+        openBoard();
+        await flush();
+        expect(bestCell('sword').textContent).toBe('+0 -4.0K');
+    });
+
+    test('a row without a sweep draws a dash and does not break the table', async () => {
+        state.rows = [row('sword')];
+        openBoard();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        expect(bestCell('sword').textContent).toBe('—');
+    });
+
+    test('the column is not a sort key, so the ranking and volumes leave the order alone', async () => {
+        openBoard();
+        await flush();
+        const header = [...state.panel.panel.querySelectorAll('th')].find((th) => th.textContent.startsWith('Best +0'));
+        expect(header.textContent).toBe('Best +0..+5');
+        expect(header.hasAttribute('data-ce-sort')).toBe(false);
+    });
+});

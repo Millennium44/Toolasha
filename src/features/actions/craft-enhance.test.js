@@ -80,7 +80,8 @@ vi.mock('../combat-sim/direct-enhancement-cost.js', () => ({
             const crafted = game.craftedQuotes[`${itemHrid}:${from}`] ?? game.craftedQuotes[itemHrid];
             if (crafted) return crafted;
         }
-        // A quote keyed `hrid:from` answers only a run from that level
+        // A quote keyed `hrid:from:to` answers only that run; one keyed `hrid:from` any run from that level
+        if (`${itemHrid}:${from}:${to}` in game.enhanceQuotes) return game.enhanceQuotes[`${itemHrid}:${from}:${to}`];
         return game.enhanceQuotes[`${itemHrid}:${from}`] ?? game.enhanceQuotes[itemHrid] ?? null;
     },
 }));
@@ -180,6 +181,9 @@ function profit(name, extra = {}) {
         ...extra,
     };
 }
+
+/** The quotes asked for the target level (5 in these tests); the levels below it belong to the sweep */
+const toTarget = () => game.enhanceCalls.filter((call) => call.to === 5);
 
 /** One inventory stack in the shape the game sends */
 function stack(itemHrid, count, enhancementLevel = 0, itemLocationHrid = '/item_locations/inventory') {
@@ -289,9 +293,10 @@ describe('the figures', () => {
     test('the enhancement run is quoted on the DETECTED bench, whatever the Pro setting says', async () => {
         game.settings.itemTooltip_enhancementProRates = true;
         await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
-        expect(game.enhanceCalls).toHaveLength(1);
-        expect(game.enhanceCalls[0].options.params).toBe(game.detected);
-        expect(game.enhanceCalls[0]).toEqual(expect.objectContaining({ from: 0, to: 5 }));
+        // One run to the target; the levels below it are quoted too (the sweep), on the same bench
+        expect(toTarget()).toHaveLength(1);
+        expect(game.enhanceCalls.every((call) => call.options.params === game.detected)).toBe(true);
+        expect(toTarget()[0]).toEqual(expect.objectContaining({ from: 0, to: 5 }));
     });
 });
 
@@ -474,7 +479,8 @@ describe('the run itself', () => {
         });
         const rows = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
         expect(rows).toHaveLength(2);
-        expect(game.enhanceCalls).toHaveLength(1);
+        expect(game.enhanceCalls).toHaveLength(5);
+        expect(toTarget()).toHaveLength(1);
     });
 });
 
@@ -739,11 +745,11 @@ describe('enhancing the base before refining', () => {
     test('the cheaper base wins, and its run (cost, time, XP) is the one rated', async () => {
         starFixture();
         const row = await run();
-        expect(game.enhanceCalls.map((call) => [call.itemHrid, call.from, call.to])).toEqual([
+        expect(toTarget().map((call) => [call.itemHrid, call.from, call.to])).toEqual([
             ['/items/ring_refined', 0, 5],
             ['/items/ring', 0, 5],
         ]);
-        expect(game.enhanceCalls[1].options.params).toBe(game.detected);
+        expect(toTarget()[1].options.params).toBe(game.detected);
         expect(row.route).toEqual(
             expect.objectContaining({
                 route: 'refine-base',
@@ -777,7 +783,7 @@ describe('enhancing the base before refining', () => {
     test('a recipe with no refinement action has no base route and quotes only itself', async () => {
         starFixture({ refinementKnown: false });
         const row = await run();
-        expect(game.enhanceCalls.map((call) => call.itemHrid)).toEqual(['/items/ring_refined']);
+        expect(toTarget().map((call) => call.itemHrid)).toEqual(['/items/ring_refined']);
         expect(row.route.offered).toBe(false);
         expect(row.route.route).toBe('craft');
         expect(row.target.enhanceCost).toBe(5000);
@@ -787,7 +793,7 @@ describe('enhancing the base before refining', () => {
         starFixture({ retain: false });
         const row = await run();
         expect(row.route.offered).toBe(false);
-        expect(game.enhanceCalls.map((call) => call.itemHrid)).toEqual(['/items/ring_refined']);
+        expect(toTarget().map((call) => call.itemHrid)).toEqual(['/items/ring_refined']);
     });
 
     test('another recipe that makes the same star item is not this recipe', async () => {
@@ -862,7 +868,7 @@ describe('enhancing the base before refining', () => {
         starFixture();
         await run();
         const baseCalls = game.enhanceCalls.filter((call) => call.itemHrid === '/items/ring');
-        expect(baseCalls.map((call) => call.from)).toEqual([0]);
+        expect(baseCalls.map((call) => call.from)).toEqual([0, 0, 0, 0, 0]);
     });
 
     test('the profit is the sale minus the craft (base once) minus the base run', async () => {
@@ -1435,7 +1441,7 @@ describe('protecting with a copy of the item at its craft price', () => {
             materialCosts: [{ itemHrid: '/items/cheese', amount: 10, askPrice: 5, totalCost: 50, missingPrice: false }],
         });
         await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
-        const prices = game.enhanceCalls
+        const prices = toTarget()
             .filter((call) => call.itemHrid === '/items/sword')
             .map((call) => call.options.selfCopyCraftCost);
         expect(prices).toHaveLength(2);
@@ -1527,5 +1533,106 @@ describe('protecting with a copy of the item at its craft price', () => {
             expect(row.route.route).toBe('held-base');
             expect(row.route.enhance.selfCopyCrafts).toBe(2);
         });
+    });
+});
+
+describe('the sweep from +0 to the target', () => {
+    const rank = async (targetLevel = 5) => (await rankCraftEnhance({ targetLevel, ownedMode: 'market' }))[0];
+    const sale = (hrid, level, price) => {
+        game.quotes[`${hrid}:${level}`] = { price, source: 'book', estimated: false };
+    };
+
+    test('every level below the target is quoted from +0 to that level and sold at that level', async () => {
+        sale('/items/sword', 1, 3000);
+        sale('/items/sword', 2, 4000);
+        sale('/items/sword', 3, 5000);
+        sale('/items/sword', 4, 7000);
+        const row = await rank();
+        expect(game.enhanceCalls.map((call) => [call.itemHrid, call.from, call.to]).sort()).toEqual(
+            [1, 2, 3, 4, 5].map((to) => ['/items/sword', 0, to])
+        );
+        expect(row.sweep.map((entry) => entry.level)).toEqual([0, 1, 2, 3, 4, 5]);
+        expect(row.sweep[3].saleAfterTax).toBeCloseTo(5000 * 0.96, 6);
+        expect(row.sweep.every((entry) => entry.status === 'ok')).toBe(true);
+        // The target of the sweep is the row's own +N
+        expect(row.sweep[5].profitPerHour).toBe(row.target.profitPerHour);
+        expect(row.sweep[0].profitPerHour).toBe(row.base.profitPerHour);
+    });
+
+    test('each level uses its own run, so the best level follows the runs, not only the sales', async () => {
+        sale('/items/sword', 1, 3000);
+        sale('/items/sword', 2, 4000);
+        game.enhanceQuotes['/items/sword:0:1'] = { cost: 100, seconds: 10, xp: 1, xpKnown: true };
+        game.enhanceQuotes['/items/sword:0:2'] = { cost: 6000, seconds: 10, xp: 1, xpKnown: true };
+        const row = await rank();
+        // +1 sells 2880 for 1970 + 100; +2 sells 3840 but its run costs 6000: a loss
+        expect(row.sweep[1].profitPerUnit).toBeCloseTo(3000 * 0.96 - 1970 - 100, 6);
+        expect(row.sweep[2].profitPerUnit).toBeLessThan(0);
+        expect(row.best.level).toBe(row.sweep.reduce((a, b) => (b.profitPerHour > a.profitPerHour ? b : a)).level);
+    });
+
+    test('a level with no real sale quote, or an enhancement that cannot be quoted, is skipped and says why', async () => {
+        sale('/items/sword', 1, 90_000);
+        game.quotes['/items/sword:2'] = { price: 90_000, source: 'value', estimated: true };
+        sale('/items/sword', 3, 90_000);
+        game.enhanceQuotes['/items/sword:0:3'] = null;
+        sale('/items/sword', 4, 4000);
+        const row = await rank();
+        expect(row.sweep[2]).toEqual(expect.objectContaining({ status: 'unpriced', reasons: ['sale'] }));
+        expect(row.sweep[3]).toEqual(expect.objectContaining({ status: 'unpriced', reasons: ['enhance'] }));
+        // +1 sells for 90000: it wins, and the two skipped levels were not 0 and not chosen
+        expect(row.best.level).toBe(1);
+    });
+
+    test('an unpriced input leaves every level unpriced and no best level', async () => {
+        game.profits['/actions/cheesesmithing/sword'].materialCosts[1].missingPrice = true;
+        const row = await rank();
+        expect(row.sweep.every((entry) => entry.status === 'unpriced')).toBe(true);
+        expect(row.best).toBeNull();
+    });
+
+    test('a held base at a level between +0 and the target serves the levels from its own up', async () => {
+        const action = starFixture();
+        game.profits[action.hrid].totalItemsPerHour = 1;
+        sale('/items/ring_refined', 1, 9000);
+        sale('/items/ring_refined', 2, 9000);
+        sale('/items/ring_refined', 3, 9000);
+        sale('/items/ring_refined', 4, 9000);
+        sale('/items/ring', 3, 1000);
+        game.enhanceQuotes['/items/ring:3'] = { cost: 900, seconds: 40, xp: 300, xpKnown: true };
+        // A held +3 base needs nothing to be a +3
+        game.enhanceQuotes['/items/ring:3:3'] = { cost: 0, seconds: 0, xp: 0, xpKnown: true };
+        game.inventory = [stack('/items/griffin_leather', 1_000_000), stack('/items/ring', 1, 3)];
+        const row = await rank();
+        expect(row.sweep.map((entry) => entry.route)).toEqual([
+            null,
+            'refine-base',
+            'refine-base',
+            'held-base',
+            'held-base',
+            'held-base',
+        ]);
+        // Held at +3 and sold at +3: the base at its sale value plus the leather, nothing enhanced
+        expect(row.sweep[3].enhanceCost).toBe(0);
+        expect(game.enhanceCalls).toContainEqual(expect.objectContaining({ itemHrid: '/items/ring', from: 3, to: 3 }));
+        // A held base above a level is never asked about for it
+        expect(game.enhanceCalls.some((call) => call.from === 3 && call.to < 3)).toBe(false);
+    });
+
+    test('the sweep ends where the target does: another target is another ranking', async () => {
+        const five = await rank(5);
+        expect(five.sweep).toHaveLength(6);
+        const three = await rank(3);
+        expect(three.sweep.map((entry) => entry.level)).toEqual([0, 1, 2, 3]);
+        expect(three).not.toBe(five);
+    });
+
+    test('a run is quoted once per item, start, end and copy price, across rows and levels', async () => {
+        game.recipes = [recipe('sword'), { ...recipe('sword'), actionHrid: '/actions/cheesesmithing/sword2' }];
+        game.profits['/actions/cheesesmithing/sword2'] = profit('sword', {
+            actionHrid: '/actions/cheesesmithing/sword2',
+        });
+        await rank();
+        expect(game.enhanceCalls).toHaveLength(5);
     });
 });

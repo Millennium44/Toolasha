@@ -560,6 +560,33 @@ export function chooseEnhanceRoute({ level, direct, viaBase }) {
 }
 
 /**
+ * The level with the best profit per hour among a sweep's levels.
+ *
+ * Only a level with a full figure counts: a level with no sale quote, an enhancement run that cannot be priced or an
+ * unpriced input has no profit, so it is skipped, never read as 0. This is the uncapped figure (the market's volume is
+ * not asked for at every level). A tie goes to the lower level: the same hour for less enhancing.
+ *
+ * @param {Array<Object>} sweep - Levels in ascending order, each an `evaluateLevel` result
+ * @returns {{level: number, profitPerHour: number, profitPerUnit: number, route: string|null}|null} Null when no
+ *   level has a full figure
+ */
+export function bestLevelOf(sweep) {
+    let best = null;
+    for (const entry of sweep) {
+        if (entry.status !== 'ok' || !Number.isFinite(entry.profitPerHour)) continue;
+        if (best === null || entry.profitPerHour > best.profitPerHour) {
+            best = {
+                level: entry.level,
+                profitPerHour: entry.profitPerHour,
+                profitPerUnit: entry.profitPerUnit,
+                route: entry.route ?? null,
+            };
+        }
+    }
+    return best;
+}
+
+/**
  * One window row.
  *
  * @param {Object} args - Inputs
@@ -582,6 +609,9 @@ export function chooseEnhanceRoute({ level, direct, viaBase }) {
  *   a bought base needs is already out of `secondsPerUnit` and the XP). A candidate with no `enhance` or no
  *   `craftCostPerUnit` is not priceable and is never chosen. They apply to the target level only: a held +3 base
  *   makes a +3 item, so it cannot lower the +0 figure.
+ * @param {Array<{level: number, enhance: Object|null, viaBase?: Object|null, heldBases?: Array<Object>,
+ *   saleAfterTax: number|null}>} [args.levels] - The levels from +1 up to (not including) the target, each with the
+ *   runs to that level and its sale, for the sweep; omitted, the sweep holds +0 and the target only
  * @param {number|null} args.saleBase - Sale at +0 after tax
  * @param {number|null} args.saleTarget - Sale at the target after tax
  * @param {string[]} [args.notes] - Plain-language caveats for the row's tooltip
@@ -597,6 +627,7 @@ export function buildCraftEnhanceRow({
     viaBase = null,
     baseHrid = null,
     heldBases = [],
+    levels = [],
     saleBase,
     saleTarget,
     notes = [],
@@ -613,14 +644,7 @@ export function buildCraftEnhanceRow({
     };
 
     const base = evaluateLevel({ ...common, level: 0, enhance: null, saleAfterTax: saleBase });
-    const chosen = chooseEnhanceRoute({ level: targetLevel, direct: enhance, viaBase });
 
-    // The routes above share one craft cost, so the enhancement run alone told them apart. A held base changes the
-    // craft side too (its price, its missing chain), so it is compared on craft plus enhancement, and only against
-    // a fresh route that has both. A fresh route that cannot be priced leaves any priceable held base the winner.
-    const freshTotal =
-        chosen.enhance && craftCostPerUnit !== null ? craftCostPerUnit + Number(chosen.enhance.cost) : null;
-    let held = null;
     // The held base covers `coverage` of the hour's crafts (its stack over the crafts the hour needs, at most 1); the
     // rest of the crafts take the fresh route, so every per-unit figure is the blend of the two. A candidate that
     // leaves crafts uncovered when the fresh route cannot be priced has no figure for them and is not a candidate.
@@ -635,98 +659,141 @@ export function buildCraftEnhanceRow({
         heldXp === null || (share < 1 && freshXp === null)
             ? null
             : mix(Number(heldXp) || 0, Number(freshXp) || 0, share);
-    for (const candidate of heldBases) {
-        if (!candidate?.enhance || !Number.isFinite(candidate.craftCostPerUnit)) continue;
-        const share = Math.min(1, Math.max(0, Number(candidate.coverage ?? 1)));
-        if (!(share > 0)) continue;
-        if (share < 1 && (freshTotal === null || !chosen.enhance)) continue;
-        const heldTotal = candidate.craftCostPerUnit + Number(candidate.enhance.cost);
-        if (!Number.isFinite(heldTotal)) continue;
-        // A part-covering candidate prices the fresh crafts of its hour with the shared inputs spread over that
-        // mixed hour; the standalone fresh figure would spread them over a different hour
-        const freshCraft =
-            share < 1 && Number.isFinite(candidate.freshCraftCostPerUnit)
-                ? candidate.freshCraftCostPerUnit
-                : craftCostPerUnit;
-        const freshMixedTotal = freshTotal === null ? null : freshCraft + Number(chosen.enhance.cost);
-        // The whole blended hour must beat staying fresh: a mixed hour can run out of shared stock the fresh
-        // hour alone would not, so a cheaper held portion is not enough
-        const total = mix(heldTotal, freshMixedTotal, share);
-        if (!(total < (freshTotal ?? Infinity))) continue;
-        if (held && !(total < held.total)) continue;
-        const fresh = chosen.enhance;
-        const enhanceXpKnown = candidate.enhance.xpKnown !== false && (share >= 1 || fresh.xpKnown !== false);
-        held = {
-            ...candidate,
-            share,
-            total,
-            craftCostPerUnit: mix(candidate.craftCostPerUnit, freshCraft, share),
-            secondsPerUnit: mix(candidate.secondsPerUnit, common.secondsPerUnit, share),
-            otherNetPerUnit: mix(candidate.otherNetPerUnit, common.otherNetPerUnit, share),
-            craftXpPerUnit:
-                candidate.craftXpPerUnit === null || candidate.craftXpPerUnit === undefined
-                    ? null
-                    : mix(candidate.craftXpPerUnit, craftXpPerUnit, share),
-            enhance: {
-                ...candidate.enhance,
-                cost: mix(Number(candidate.enhance.cost), Number(fresh?.cost), share),
-                seconds: mix(Number(candidate.enhance.seconds), Number(fresh?.seconds), share),
-                xp: mix(Number(candidate.enhance.xp), Number(fresh?.xp), share),
-                xpKnown: enhanceXpKnown,
-                // The crafted protection copies of the blended hour (an unknown XP stays unknown)
-                selfCopyCrafts: mix(
-                    Number(candidate.enhance.selfCopyCrafts) || 0,
-                    Number(fresh?.selfCopyCrafts) || 0,
-                    share
-                ),
-                extraCraftSeconds: mix(
-                    Number(candidate.enhance.extraCraftSeconds) || 0,
-                    Number(fresh?.extraCraftSeconds) || 0,
-                    share
-                ),
-                extraCraftXp: mixExtraXp(candidate.enhance.extraCraftXp, fresh?.extraCraftXp, share),
-            },
-        };
-    }
+    /**
+     * One level of the row: the route to it chosen by the same rules at every level (the item itself, the base
+     * first then refined, a held base at or below the level), and that route's figures. The target and every level of
+     * the sweep go through here, so +N in the sweep is the row's own +N by construction.
+     * @param {number} level - The level (1 or more)
+     * @param {Object} inputs - `enhance` (item itself), `viaBase`, `candidates` (held bases at or below the level,
+     *   each with its `enhance` to this level) and `saleAfterTax`
+     * @returns {{route: Object, result: Object}}
+     */
+    const rateLevel = (level, { enhance, viaBase, candidates, saleAfterTax }) => {
+        const chosen = chooseEnhanceRoute({ level, direct: enhance, viaBase });
 
-    let route = { ...chosen, offered: Boolean(baseHrid), baseHrid: baseHrid || null, heldBase: null };
-    let target;
-    if (held) {
-        route = {
-            ...route,
-            route: ENHANCE_ROUTES.HELD_BASE,
-            enhance: held.enhance,
-            heldBase: {
-                level: held.level,
-                count: held.count,
-                unitValue: held.unitValue,
-                via: held.via,
-                total: held.total,
-                // The share of the hour's crafts the held stack covers; the rest take the fresh route
-                coverage: held.share,
-                // Null when the fresh routes could not be priced, so nothing was compared
-                saved: freshTotal === null ? null : freshTotal - held.total,
-            },
-        };
-        target = evaluateLevel({
-            level: targetLevel,
-            craftCostPerUnit: held.craftCostPerUnit,
-            unpricedInputs: [],
-            secondsPerUnit: held.secondsPerUnit,
-            otherNetPerUnit: held.otherNetPerUnit,
-            craftXpPerUnit: held.craftXpPerUnit,
-            enhance: held.enhance,
-            saleAfterTax: saleTarget,
+        // The routes above share one craft cost, so the enhancement run alone told them apart. A held base changes the
+        // craft side too (its price, its missing chain), so it is compared on craft plus enhancement, and only against
+        // a fresh route that has both. A fresh route that cannot be priced leaves any priceable held base the winner.
+        const freshTotal =
+            chosen.enhance && craftCostPerUnit !== null ? craftCostPerUnit + Number(chosen.enhance.cost) : null;
+        let held = null;
+        for (const candidate of candidates) {
+            if (!candidate?.enhance || !Number.isFinite(candidate.craftCostPerUnit)) continue;
+            const share = Math.min(1, Math.max(0, Number(candidate.coverage ?? 1)));
+            if (!(share > 0)) continue;
+            if (share < 1 && (freshTotal === null || !chosen.enhance)) continue;
+            const heldTotal = candidate.craftCostPerUnit + Number(candidate.enhance.cost);
+            if (!Number.isFinite(heldTotal)) continue;
+            // A part-covering candidate prices the fresh crafts of its hour with the shared inputs spread over that
+            // mixed hour; the standalone fresh figure would spread them over a different hour
+            const freshCraft =
+                share < 1 && Number.isFinite(candidate.freshCraftCostPerUnit)
+                    ? candidate.freshCraftCostPerUnit
+                    : craftCostPerUnit;
+            const freshMixedTotal = freshTotal === null ? null : freshCraft + Number(chosen.enhance.cost);
+            // The whole blended hour must beat staying fresh: a mixed hour can run out of shared stock the fresh
+            // hour alone would not, so a cheaper held portion is not enough
+            const total = mix(heldTotal, freshMixedTotal, share);
+            if (!(total < (freshTotal ?? Infinity))) continue;
+            if (held && !(total < held.total)) continue;
+            const fresh = chosen.enhance;
+            const enhanceXpKnown = candidate.enhance.xpKnown !== false && (share >= 1 || fresh.xpKnown !== false);
+            held = {
+                ...candidate,
+                share,
+                total,
+                craftCostPerUnit: mix(candidate.craftCostPerUnit, freshCraft, share),
+                secondsPerUnit: mix(candidate.secondsPerUnit, common.secondsPerUnit, share),
+                otherNetPerUnit: mix(candidate.otherNetPerUnit, common.otherNetPerUnit, share),
+                craftXpPerUnit:
+                    candidate.craftXpPerUnit === null || candidate.craftXpPerUnit === undefined
+                        ? null
+                        : mix(candidate.craftXpPerUnit, craftXpPerUnit, share),
+                enhance: {
+                    ...candidate.enhance,
+                    cost: mix(Number(candidate.enhance.cost), Number(fresh?.cost), share),
+                    seconds: mix(Number(candidate.enhance.seconds), Number(fresh?.seconds), share),
+                    xp: mix(Number(candidate.enhance.xp), Number(fresh?.xp), share),
+                    xpKnown: enhanceXpKnown,
+                    // The crafted protection copies of the blended hour (an unknown XP stays unknown)
+                    selfCopyCrafts: mix(
+                        Number(candidate.enhance.selfCopyCrafts) || 0,
+                        Number(fresh?.selfCopyCrafts) || 0,
+                        share
+                    ),
+                    extraCraftSeconds: mix(
+                        Number(candidate.enhance.extraCraftSeconds) || 0,
+                        Number(fresh?.extraCraftSeconds) || 0,
+                        share
+                    ),
+                    extraCraftXp: mixExtraXp(candidate.enhance.extraCraftXp, fresh?.extraCraftXp, share),
+                },
+            };
+        }
+
+        let route = { ...chosen, offered: Boolean(baseHrid), baseHrid: baseHrid || null, heldBase: null };
+        let result;
+        if (held) {
+            route = {
+                ...route,
+                route: ENHANCE_ROUTES.HELD_BASE,
+                enhance: held.enhance,
+                heldBase: {
+                    level: held.level,
+                    count: held.count,
+                    unitValue: held.unitValue,
+                    via: held.via,
+                    total: held.total,
+                    // The share of the hour's crafts the held stack covers; the rest take the fresh route
+                    coverage: held.share,
+                    // Null when the fresh routes could not be priced, so nothing was compared
+                    saved: freshTotal === null ? null : freshTotal - held.total,
+                },
+            };
+            result = evaluateLevel({
+                level,
+                craftCostPerUnit: held.craftCostPerUnit,
+                unpricedInputs: [],
+                secondsPerUnit: held.secondsPerUnit,
+                otherNetPerUnit: held.otherNetPerUnit,
+                craftXpPerUnit: held.craftXpPerUnit,
+                enhance: held.enhance,
+                saleAfterTax,
+            });
+        } else {
+            result = evaluateLevel({ ...common, level, enhance: chosen.enhance, saleAfterTax });
+        }
+        return { route, result };
+    };
+
+    const rated = rateLevel(targetLevel, { enhance, viaBase, candidates: heldBases, saleAfterTax: saleTarget });
+    const route = rated.route;
+    const target = rated.result;
+
+    // Every level from +0 to the target, each on its own best route. A level with no full figure is kept in the list
+    // with its reasons, so the tooltip can say why it is missing, and is never a candidate for the best level.
+    const sweep = [{ ...base, route: null }];
+    for (const spec of [...levels].sort((a, b) => a.level - b.level)) {
+        if (!(spec.level > 0) || spec.level >= targetLevel) continue;
+        const { route: levelRoute, result } = rateLevel(spec.level, {
+            enhance: spec.enhance ?? null,
+            viaBase: spec.viaBase ?? null,
+            candidates: spec.heldBases ?? [],
+            saleAfterTax: spec.saleAfterTax,
         });
-    } else {
-        target = evaluateLevel({ ...common, level: targetLevel, enhance: chosen.enhance, saleAfterTax: saleTarget });
+        sweep.push({ ...result, route: levelRoute.route });
     }
+    sweep.push({ ...target, route: route.route });
+    const best = bestLevelOf(sweep);
 
     return {
         ...recipe,
         targetLevel,
         base,
         target,
+        // Every level 0..N rated on its own best route, and the one with the best profit per hour
+        sweep,
+        best,
         // Which way +N is reached; `offered` is whether the recipe has a base route at all
         route,
         dungeonInputs: priced.dungeonInputs,

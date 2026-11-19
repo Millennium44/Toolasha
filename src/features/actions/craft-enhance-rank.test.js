@@ -12,6 +12,7 @@ import {
     arrangeCraftEnhanceRows,
     buildCraftEnhanceRow,
     buildDungeonInputIndex,
+    bestLevelOf,
     buildHeldPool,
     capProfitByVolume,
     chooseEnhanceRoute,
@@ -1428,5 +1429,119 @@ describe('capProfitByVolume', () => {
         );
         expect(unpriced).toEqual(expect.objectContaining({ capped: false, profitPerHour: null }));
         expect(capProfitByVolume(null, volume).profitPerHour).toBeNull();
+    });
+});
+
+describe('the sweep from +0 to the target and its best level', () => {
+    const run = (cost, seconds = 0) => ({ cost, seconds, xp: 10, xpKnown: true });
+    // 100 units an hour at +0: 36 s a craft, 60 coins each. A level's hour is (sale - 60 - run cost) x 3600 / (36 + seconds)
+    const spec = (level, saleAfterTax, enhance, over = {}) => ({
+        level,
+        saleAfterTax,
+        enhance,
+        viaBase: null,
+        ...over,
+    });
+    const swept = (levels, over = {}) => row('ring', { saleN: 400, enhance: run(100), over: { levels, ...over } });
+    const hours = (built) => built.sweep.map((entry) => [entry.level, entry.status, entry.profitPerHour]);
+
+    test('+0 and the target are the row own figures: one function rates every level', () => {
+        const built = swept([spec(1, 260, run(20)), spec(2, 300, run(50, 36))]);
+        expect(built.sweep.map((entry) => entry.level)).toEqual([0, 1, 2, 5]);
+        expect(built.sweep[0]).toEqual(expect.objectContaining({ ...built.base, route: null }));
+        expect(built.sweep[3]).toEqual(expect.objectContaining({ ...built.target, route: built.route.route }));
+        expect(built.sweep[1].profitPerHour).toBeCloseTo((260 - 60 - 20) * 100, 6);
+        expect(built.sweep[2].profitPerHour).toBeCloseTo((300 - 60 - 50) * 50, 6);
+    });
+
+    test('the best level is the highest profit per hour, target included', () => {
+        const built = swept([spec(1, 260, run(20)), spec(2, 300, run(50, 36))]);
+        // +1: 18000, +2: 9500, +5: 24000, +0: 14000
+        expect(built.best).toEqual(expect.objectContaining({ level: 5, profitPerHour: 24000 }));
+        const lowerTarget = row('ring', { saleN: 200, enhance: run(100), over: { levels: [spec(1, 260, run(20))] } });
+        expect(lowerTarget.best.level).toBe(1);
+    });
+
+    test('a level with no sale quote or an enhancement that cannot be priced is skipped, not counted as 0', () => {
+        const built = swept([spec(1, null, run(20)), spec(2, 900, null), spec(3, 260, run(20))]);
+        expect(built.sweep[1]).toEqual(expect.objectContaining({ status: 'unpriced', profitPerHour: null }));
+        expect(built.sweep[1].reasons).toEqual(['sale']);
+        expect(built.sweep[2].reasons).toEqual(['enhance']);
+        // The skipped levels would have won (900) or been 0: neither
+        expect(built.best.level).toBe(5);
+        expect(hours(built).filter(([, status]) => status === 'unpriced')).toHaveLength(2);
+    });
+
+    test('a negative best is still the best, and nothing priced at all has no best', () => {
+        const losing = row('ring', {
+            sale0: 10,
+            saleN: 20,
+            enhance: run(400),
+            over: { levels: [spec(1, 15, run(100))] },
+        });
+        expect(losing.best.level).toBe(0);
+        expect(losing.best.profitPerHour).toBeLessThan(0);
+        const none = row('ring', { sale0: null, saleN: null, over: { levels: [spec(1, null, run(20))] } });
+        expect(none.best).toBeNull();
+    });
+
+    test('a tie goes to the lower level', () => {
+        // +1 and +2 both 18000 an hour (90 units at 200, 100 units at 180)
+        const built = swept([spec(1, 260, run(20)), spec(2, 280, run(20, 4))], { enhance: run(100) });
+        expect(built.sweep[1].profitPerHour).toBeCloseTo(18000, 6);
+        expect(built.sweep[2].profitPerHour).toBeCloseTo(18000, 6);
+        const tied = row('ring', {
+            saleN: 9,
+            enhance: run(100),
+            over: { levels: [spec(1, 260, run(20)), spec(2, 280, run(20, 4))] },
+        });
+        expect(tied.best.level).toBe(1);
+        expect(
+            bestLevelOf([
+                { level: 0, status: 'ok', profitPerHour: 5 },
+                { level: 1, status: 'ok', profitPerHour: 5 },
+            ]).level
+        ).toBe(0);
+    });
+
+    test('a held base serves the levels at or above its own, on the same rules as the target', () => {
+        const held = {
+            level: 3,
+            count: 100,
+            coverage: 1,
+            unitValue: 50,
+            via: 'sale',
+            enhance: run(10),
+            craftCostPerUnit: 20,
+            secondsPerUnit: 36,
+            otherNetPerUnit: 0,
+            craftXpPerUnit: 20,
+        };
+        const built = row('ring', {
+            saleN: 400,
+            enhance: run(300),
+            over: {
+                viaBase: run(300),
+                baseHrid: '/items/base',
+                levels: [spec(1, 260, run(200)), spec(3, 260, run(200), { heldBases: [{ ...held, enhance: run(0) }] })],
+                heldBases: [{ ...held, enhance: run(10) }],
+            },
+        });
+        // Below the held level there is no held base; at and above it the cheaper held route is taken
+        expect(built.sweep[1].route).not.toBe('held-base');
+        expect(built.sweep[2].level).toBe(3);
+        expect(built.sweep[2].route).toBe('held-base');
+        expect(built.sweep[3].route).toBe('held-base');
+        expect(built.route.route).toBe('held-base');
+    });
+
+    test('a row with no levels given holds +0 and the target only', () => {
+        const built = row('ring', {});
+        expect(built.sweep.map((entry) => entry.level)).toEqual([0, 5]);
+    });
+
+    test('levels at or above the target, or below 1, are ignored: the target is rated once', () => {
+        const built = swept([spec(0, 999, run(1)), spec(5, 999, run(1)), spec(7, 999, run(1)), spec(2, 260, run(20))]);
+        expect(built.sweep.map((entry) => entry.level)).toEqual([0, 2, 5]);
     });
 });

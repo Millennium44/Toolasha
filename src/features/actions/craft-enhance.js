@@ -393,8 +393,9 @@ export function rankCraftEnhance({
         const recipes = qualifyingRecipes(gameData, index);
 
         const drinkCost = enhancingDrinkCost(params);
-        // Enhancement runs by item, starting level and what a crafted protection copy costs (price, seconds, XP): a run
-        // from +3 is not a run from +0, and the same item can be crafted by two recipes at two prices
+        // Enhancement runs by item, starting level, END level and what a crafted protection copy costs (price, seconds,
+        // XP): a run from +3 is not a run from +0, a run to +3 is not a run to +5, and the same item can be crafted by
+        // two recipes at two prices
         const enhanceByItem = new Map();
         /**
          * @param {string} itemHrid - The item to enhance
@@ -402,13 +403,14 @@ export function rankCraftEnhance({
          * @param {{cost: number, seconds: number, xp: number|null}|null} [selfCopy] - What one more copy
          *   of the item costs to craft (a complete figure), the seconds that craft takes and the crafting XP it
          *   gives; null prices a protection copy at market only
+         * @param {number} [level] - The level the run ends at; the target by default
          * @returns {Object|null}
          */
-        const enhanceFrom = (itemHrid, startLevel, selfCopy = null) => {
-            const key = `${itemHrid}:${startLevel}:${selfCopy ? `${selfCopy.cost}|${selfCopy.seconds}|${selfCopy.xp}` : ''}`;
+        const enhanceFrom = (itemHrid, startLevel, selfCopy = null, level = targetLevel) => {
+            const key = `${itemHrid}:${startLevel}:${level}:${selfCopy ? `${selfCopy.cost}|${selfCopy.seconds}|${selfCopy.xp}` : ''}`;
             if (!enhanceByItem.has(key)) {
                 const quote = enhanceWithDrinks(
-                    quoteDirectEnhancement(itemHrid, startLevel, targetLevel, gameData, {
+                    quoteDirectEnhancement(itemHrid, startLevel, level, gameData, {
                         params,
                         selfCopyCraftCost: selfCopy?.cost ?? null,
                     }),
@@ -599,7 +601,7 @@ export function rankCraftEnhance({
 
             // Starting the base-first route from a base the character already holds, one candidate per held level
             // at or below the target. Buy mode ignores what is held, and nothing is held when no inventory is loaded.
-            const heldBases = [];
+            const heldCandidates = [];
             const heldBaseLevels =
                 baseHrid && heldPool && ownedMode !== OWNED_MODES.BUY
                     ? Array.from({ length: targetLevel + 1 }, (_, held) => held).filter(
@@ -704,20 +706,39 @@ export function rankCraftEnhance({
                         taxRate,
                     });
                     if (!figures) continue;
-                    heldBases.push({
+                    heldCandidates.push({
                         level: heldLevel,
                         count: stackCount,
                         coverage,
                         freshCraftCostPerUnit,
                         unitValue,
                         via,
-                        enhance: enhanceFrom(baseHrid, heldLevel, baseCopy),
                         craftCostPerUnit: figures.craftCostPerUnit,
                         secondsPerUnit: figures.secondsPerUnit,
                         otherNetPerUnit: figures.otherNetPerUnit,
                         craftXpPerUnit: Number.isFinite(recipeXp) ? recipeXp / perHeldUnit : null,
                     });
                 }
+            }
+
+            // The runs of a held base to a level: only bases at or below that level can be used for it
+            const heldAt = (toLevel) =>
+                heldCandidates
+                    .filter((candidate) => candidate.level <= toLevel)
+                    .map((candidate) => ({
+                        ...candidate,
+                        enhance: enhanceFrom(baseHrid, candidate.level, baseCopy, toLevel),
+                    }));
+            // Every level below the target, rated by the same rules as the target itself (the sweep for "Best +L")
+            const levels = [];
+            for (let sweepLevel = 1; sweepLevel < targetLevel; sweepLevel++) {
+                levels.push({
+                    level: sweepLevel,
+                    enhance: enhanceFrom(recipe.itemHrid, 0, selfCopy, sweepLevel),
+                    viaBase: baseHrid ? enhanceFrom(baseHrid, 0, baseCopy, sweepLevel) : null,
+                    heldBases: heldAt(sweepLevel),
+                    saleAfterTax: saleAfterTaxAt(recipe.itemHrid, sweepLevel),
+                });
             }
 
             const notes = [];
@@ -789,7 +810,8 @@ export function rankCraftEnhance({
                 enhance: directRun,
                 viaBase: baseRun,
                 baseHrid,
-                heldBases,
+                heldBases: heldAt(targetLevel),
+                levels,
                 saleBase: saleAfterTaxAt(recipe.itemHrid, 0),
                 saleTarget: saleAfterTaxAt(recipe.itemHrid, targetLevel),
                 notes,
