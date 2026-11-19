@@ -23,7 +23,7 @@ vi.mock('../api/marketplace.js', () => ({ default: { on: () => {}, priceVersion:
 vi.mock('../features/settings/custom-price-overrides.js', () => ({ getCustomPriceVersion: () => 0 }));
 vi.mock('./market-data.js', () => ({
     getItemPrices: () => null,
-    getItemPrice: (hrid) => (hrid === '/items/iron_ore' ? 100 : 0),
+    getItemPrice: (hrid) => (hrid === '/items/iron_ore' ? 100 : hrid === '/items/iron_bar' ? 285 : 0),
 }));
 vi.mock('../features/combat/loadout-snapshot.js', () => ({
     default: { getSnapshotDrinksForSkill: () => null, getSnapshotForSkill: () => null },
@@ -34,6 +34,7 @@ const TEA = '/items/artisan_tea';
 const itemDetailMap = {
     '/items/iron_ore': { name: 'Iron Ore', categoryHrid: '/item_categories/resource' },
     '/items/iron_bar': { name: 'Iron Bar', categoryHrid: '/item_categories/resource' },
+    '/items/iron_blade': { name: 'Iron Blade', categoryHrid: '/item_categories/resource' },
     [TEA]: {
         name: 'Artisan Tea',
         categoryHrid: '/item_categories/drink',
@@ -43,13 +44,21 @@ const itemDetailMap = {
 const actionDetailMap = {
     '/actions/crafting/iron_bar': {
         type: '/action_types/crafting',
+        baseTimeCost: 6e9,
         inputItems: [{ itemHrid: '/items/iron_ore', count: 3 }],
         outputItems: [{ itemHrid: '/items/iron_bar', count: 1 }],
+    },
+    '/actions/crafting/iron_blade': {
+        type: '/action_types/crafting',
+        baseTimeCost: 4e9,
+        upgradeItemHrid: '/items/iron_bar',
+        outputItems: [{ itemHrid: '/items/iron_blade', count: 1 }],
     },
 };
 
 const { default: dataManager } = await import('../core/data-manager.js');
-const { getProductionCostDetailed, getProductionChainTime } = await import('./enhancement-pricing.js');
+const { getProductionCostDetailed, getProductionChainTime, getProductionChainActions } =
+    await import('./enhancement-pricing.js');
 
 function stock(id, itemHrid, count, itemLocationHrid = INV) {
     handlers.get('items_updated')({ endCharacterItems: [{ id, itemHrid, itemLocationHrid, count }] });
@@ -124,5 +133,24 @@ describe('worst-case Artisan rounds the inputs of a crafted item per craft', () 
         expect(cost()).toBeCloseTo(270, 9);
         expect(getProductionCostDetailed('/items/iron_bar', 'ask', 'profit', 'hybrid').cost).toBeCloseTo(270, 9);
         expect(wc()).toBe(300);
+    });
+});
+
+describe('one acquisition route for the cost, the chain time and the chain actions', () => {
+    const WC = 'worst-case';
+    // Upgrade bar: 270 crafted averaged, 300 crafted whole, 285 on the market
+    test('worst-case buys the bar everywhere; the default crafts it everywhere', () => {
+        expect(getProductionCostDetailed('/items/iron_blade', 'ask', 'profit', WC).cost).toBe(285);
+        expect(getProductionChainTime('/items/iron_blade', WC)).toBe(4);
+        expect(getProductionChainActions('/items/iron_blade', WC)).toEqual(['/actions/crafting/iron_blade']);
+
+        expect(getProductionCostDetailed('/items/iron_blade').cost).toBeCloseTo(270, 9);
+        expect(getProductionChainTime('/items/iron_blade')).toBe(10);
+        expect(getProductionChainActions('/items/iron_blade')).toEqual([
+            '/actions/crafting/iron_blade',
+            '/actions/crafting/iron_bar',
+        ]);
+        // the cache keeps the two modes apart
+        expect(getProductionChainTime('/items/iron_blade', WC)).toBe(4);
     });
 });

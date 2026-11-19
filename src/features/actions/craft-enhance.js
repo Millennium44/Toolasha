@@ -386,7 +386,10 @@ export function rankCraftEnhance({
             // the chain's actions are inside the same hour, so what they teach is counted too. One chain action
             // whose XP cannot be read leaves the whole figure unknown, never a partial one.
             const chainActions = profit.upgradeChainCrafted
-                ? getProductionChainActions(recipe.action.upgradeItemHrid)
+                ? getProductionChainActions(
+                      recipe.action.upgradeItemHrid,
+                      worstCase ? ARTISAN_MATERIAL_MODE.WORST_CASE : null
+                  )
                 : [];
             const xpPerAction = [recipe.actionHrid, ...chainActions].map(
                 (actionHrid) => calculateExpPerHour(actionHrid)?.modifiedXP
