@@ -899,3 +899,52 @@ describe('the best level column', () => {
         expect(header.hasAttribute('data-ce-sort')).toBe(false);
     });
 });
+
+describe('the best level column and the volume cap', () => {
+    const cellOf = (name, attr) => state.panel.panel.querySelector(`[data-ce-row$="/${name}"] [${attr}]`);
+    const sweepRow = (bestLevel) => {
+        const levels = [0, 1, 5].map((lvl) =>
+            level({ level: lvl, route: null, profitPerHour: lvl === bestLevel ? 193875 : 1000 })
+        );
+        return row('sword', {
+            sweep: levels,
+            best: { level: bestLevel, profitPerHour: 193875, profitPerUnit: 5170, route: null },
+        });
+    };
+
+    test('a best level of +N shows the same capped figure and note as Profit/hr +N', async () => {
+        state.rows = [sweepRow(5)];
+        state.volume = { '/items/sword': { unitsPerDay: 24, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        const best = cellOf('sword', 'data-ce-best');
+        const hour = state.panel.panel.querySelectorAll('[data-ce-row$="/sword"] td')[7];
+        expect(best.getAttribute('data-ce-capped')).toBe('true');
+        expect(best.textContent).toBe('+5 5.2K');
+        expect(best.textContent.split(' ')[1]).toBe(hour.textContent);
+        expect(best.title).toContain(hour.title);
+        expect(best.title).toContain('only looked up at +5');
+    });
+
+    test('a best level below +N stays uncapped, and the hover says why', async () => {
+        state.rows = [sweepRow(1)];
+        state.volume = { '/items/sword': { unitsPerDay: 0, known: true } };
+        openBoard();
+        await flush();
+        await flush();
+        const best = cellOf('sword', 'data-ce-best');
+        expect(best.hasAttribute('data-ce-capped')).toBe(false);
+        expect(best.textContent).toBe('+1 193.9K');
+        expect(best.title).toContain('only looked up at +5');
+    });
+
+    test('an unknown or pending volume leaves a best +N uncapped', async () => {
+        state.rows = [sweepRow(5)];
+        openBoard();
+        expect(cellOf('sword', 'data-ce-best').textContent).toBe('+5 193.9K');
+        await flush();
+        await flush();
+        expect(cellOf('sword', 'data-ce-best').hasAttribute('data-ce-capped')).toBe(false);
+    });
+});
