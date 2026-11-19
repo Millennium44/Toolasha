@@ -200,6 +200,12 @@ const ALLOWLIST = new Map([
         'stateless achievement tier buff catalog; no module state to share',
     ],
     [
+        'src/utils/enhancement-breakpoints.js',
+        // Frozen breakpoint lists, a constant set of jewelry slots and one pure picker, no imports and no
+        // module state. Craft & Enhance (actions bundle) and the upgrade advisor (sim bundle) read them.
+        'stateless enhancement breakpoint lists; no module state to share',
+    ],
+    [
         'src/utils/xp-series-sync.js',
         // One pure fold over two XP series maps, no imports and no module state.
         // The combat bundle (guild XP tracker) and the ui bundle (skill XP
