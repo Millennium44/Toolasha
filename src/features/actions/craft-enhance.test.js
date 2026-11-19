@@ -27,6 +27,8 @@ const game = vi.hoisted(() => ({
     xp: {},
     detected: { enhancingLevel: 100, experienceBonus: 10, toolBonus: 5, speedBonus: 0, guzzlingBonus: 1, teas: {} },
     settings: {},
+    /** refined item hrid -> its refinement action */
+    refinements: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -98,6 +100,9 @@ vi.mock('../../utils/profit-helpers.js', () => ({
     outputTaxRate: () => 0.04,
 }));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow === true }));
+vi.mock('../../utils/refined-item-cost.js', () => ({
+    findRefinementAction: (hrid) => game.refinements[hrid] ?? null,
+}));
 vi.mock('../../utils/background-work.js', () => ({ yieldToEventLoop: async () => {} }));
 vi.mock('./production-arbitrage.js', () => ({
     productionRecipes: () => game.recipes,
@@ -195,6 +200,7 @@ beforeEach(() => {
     game.fpExtra = '';
     game.chain = [];
     game.xp = {};
+    game.refinements = {};
 });
 
 describe('which recipes are walked', () => {
@@ -636,5 +642,294 @@ describe('crafting XP when the upgrade chain is crafted', () => {
         expect(row.target.craftXpPerHour).toBeNull();
         expect(row.notes.join(' ')).toContain('crafting XP');
         expect(row.base.status).toBe('ok');
+    });
+});
+
+/**
+ * A refined (star) ring made from a base ring: the shape of the game's refinement action
+ * (`upgradeItemHrid` is the base, `retainAllEnhancement` keeps the base's level).
+ */
+function starFixture({ retain = true, refinementKnown = true } = {}) {
+    const action = {
+        hrid: '/actions/cheesesmithing/ring_refined',
+        name: 'Ring Star',
+        levelRequirement: { level: 10 },
+        upgradeItemHrid: '/items/ring',
+        retainAllEnhancement: retain,
+        inputItems: [{ itemHrid: '/items/griffin_leather', count: 2 }],
+    };
+    game.gameData.itemDetailMap['/items/ring_refined'] = {
+        name: 'Ring Star',
+        isTradable: true,
+        enhancementCosts: [{ itemHrid: '/items/x', count: 1 }],
+    };
+    game.gameData.itemDetailMap['/items/ring'] = {
+        name: 'Ring',
+        isTradable: true,
+        enhancementCosts: [{ itemHrid: '/items/x', count: 1 }],
+    };
+    game.recipes = [{ actionHrid: action.hrid, itemHrid: '/items/ring_refined', skill, action }];
+    game.profits[action.hrid] = profit('ring_refined', {
+        actionHrid: action.hrid,
+        materialCosts: [
+            // The upgrade item is the base, bought at +0 and not reduced by Artisan
+            {
+                itemHrid: '/items/ring',
+                baseAmount: 1,
+                amount: 1,
+                askPrice: 800,
+                totalCost: 800,
+                missingPrice: false,
+                isUpgradeItem: true,
+            },
+            {
+                itemHrid: '/items/griffin_leather',
+                baseAmount: 2,
+                amount: 2,
+                askPrice: 1000,
+                totalCost: 2000,
+                missingPrice: false,
+            },
+        ],
+    });
+    game.quotes['/items/ring_refined:0'] = { price: 4000, source: 'book', estimated: false };
+    game.quotes['/items/ring_refined:5'] = { price: 20000, source: 'book', estimated: false };
+    if (refinementKnown) game.refinements['/items/ring_refined'] = action;
+    game.enhanceQuotes = {
+        '/items/ring_refined': { cost: 5000, seconds: 120, xp: 900, xpKnown: true },
+        '/items/ring': { cost: 3000, seconds: 80, xp: 600, xpKnown: true },
+    };
+    return action;
+}
+
+describe('enhancing the base before refining', () => {
+    const run = async () => (await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' }))[0];
+
+    test('the cheaper base wins, and its run (cost, time, XP) is the one rated', async () => {
+        starFixture();
+        const row = await run();
+        expect(game.enhanceCalls.map((call) => [call.itemHrid, call.from, call.to])).toEqual([
+            ['/items/ring_refined', 0, 5],
+            ['/items/ring', 0, 5],
+        ]);
+        expect(game.enhanceCalls[1].options.params).toBe(game.detected);
+        expect(row.route).toEqual(
+            expect.objectContaining({
+                route: 'refine-base',
+                directCost: 5000,
+                baseCost: 3000,
+                saved: 2000,
+                offered: true,
+                baseHrid: '/items/ring',
+            })
+        );
+        expect(row.target.enhanceCost).toBe(3000);
+        // 36 s crafting + the base run's 80 s, and the base run's XP
+        expect(row.target.unitsPerHour).toBeCloseTo(3600 / 116, 6);
+        expect(row.target.enhanceXpPerHour).toBeCloseTo(600 * (3600 / 116), 6);
+        // The base is bought once, in the craft cost, whichever route: 800 + 2 leather at 960
+        expect(row.target.craftCostPerUnit).toBeCloseTo(800 + 1920, 6);
+    });
+
+    test('the star item itself wins when it is cheaper, and a tie keeps it', async () => {
+        starFixture();
+        game.enhanceQuotes['/items/ring'] = { cost: 6000, seconds: 80, xp: 600, xpKnown: true };
+        expect((await run()).route.route).toBe('craft');
+        clearCraftEnhanceCache();
+        game.stamp += 1;
+        game.enhanceQuotes['/items/ring'] = { cost: 5000, seconds: 80, xp: 600, xpKnown: true };
+        const tie = await run();
+        expect(tie.route.route).toBe('craft');
+        expect(tie.target.enhanceCost).toBe(5000);
+    });
+
+    test('a recipe with no refinement action has no base route and quotes only itself', async () => {
+        starFixture({ refinementKnown: false });
+        const row = await run();
+        expect(game.enhanceCalls.map((call) => call.itemHrid)).toEqual(['/items/ring_refined']);
+        expect(row.route.offered).toBe(false);
+        expect(row.route.route).toBe('craft');
+        expect(row.target.enhanceCost).toBe(5000);
+    });
+
+    test('a refinement that does not keep the level has no base route', async () => {
+        starFixture({ retain: false });
+        const row = await run();
+        expect(row.route.offered).toBe(false);
+        expect(game.enhanceCalls.map((call) => call.itemHrid)).toEqual(['/items/ring_refined']);
+    });
+
+    test('another recipe that makes the same star item is not this recipe', async () => {
+        const action = starFixture();
+        game.refinements['/items/ring_refined'] = { ...action, hrid: '/actions/cheesesmithing/other_ring_refined' };
+        expect((await run()).route.offered).toBe(false);
+    });
+
+    test('a base that cannot be quoted is not a candidate and never counts as free', async () => {
+        starFixture();
+        delete game.enhanceQuotes['/items/ring'];
+        const row = await run();
+        expect(row.route.route).toBe('craft');
+        expect(row.route.baseCost).toBeNull();
+        expect(row.target.enhanceCost).toBe(5000);
+        expect(row.notes.join(' ')).toContain('Enhancing the base first could not be priced');
+    });
+
+    test('a star item that cannot be quoted is priced through the base', async () => {
+        starFixture();
+        delete game.enhanceQuotes['/items/ring_refined'];
+        const row = await run();
+        expect(row.target.status).toBe('ok');
+        expect(row.route.route).toBe('refine-base');
+        expect(row.route.directCost).toBeNull();
+        expect(row.target.enhanceCost).toBe(3000);
+        expect(row.notes.join(' ')).toContain('base route is used');
+    });
+
+    test('neither run quotable leaves +N unpriced, +0 still priced', async () => {
+        starFixture();
+        game.enhanceQuotes = {};
+        const row = await run();
+        expect(row.route.route).toBeNull();
+        expect(row.target.status).toBe('unpriced');
+        expect(row.target.reasons).toEqual(['enhance']);
+        expect(row.target.enhanceCost).toBeNull();
+        expect(row.base.status).toBe('ok');
+    });
+
+    test('an unpriced enhancing drink makes both runs unknown, so no route is chosen', async () => {
+        starFixture();
+        game.drinks = [{ itemHrid: '/items/tea' }];
+        const row = await run();
+        expect(row.route.route).toBeNull();
+        expect(row.target.status).toBe('unpriced');
+    });
+
+    test('an unpriced base makes the whole row unpriced, whichever route would win', async () => {
+        starFixture();
+        game.profits['/actions/cheesesmithing/ring_refined'].materialCosts[0].missingPrice = true;
+        const row = await run();
+        expect(row.route.route).toBe('refine-base');
+        expect(row.target.status).toBe('unpriced');
+        expect(row.base.status).toBe('unpriced');
+        expect(row.target.reasons).toContain('input');
+        expect(row.target.craftCostPerUnit).toBeNull();
+        expect(row.target.profitPerHour).toBeNull();
+    });
+
+    test('an unpriced star item leaves +N with no sale, whichever route', async () => {
+        starFixture();
+        delete game.quotes['/items/ring_refined:5'];
+        const row = await run();
+        expect(row.target.status).toBe('unpriced');
+        expect(row.target.reasons).toEqual(['sale']);
+        expect(row.target.profitPerHour).toBeNull();
+        expect(row.route.route).toBe('refine-base');
+    });
+
+    test('a copy of the base held at some level is not considered: the run starts from a fresh +0 base', async () => {
+        starFixture();
+        await run();
+        const baseCalls = game.enhanceCalls.filter((call) => call.itemHrid === '/items/ring');
+        expect(baseCalls.map((call) => call.from)).toEqual([0]);
+    });
+
+    test('the profit is the sale minus the craft (base once) minus the base run', async () => {
+        starFixture();
+        const row = await run();
+        expect(row.target.profitPerUnit).toBeCloseTo(20000 * 0.96 - (800 + 1920) - 3000, 6);
+    });
+});
+
+describe('Artisan worst case', () => {
+    /** 8 cheese and 2 leather a craft, reduced by Artisan: 8 x (1 - bonus) is 6.8 at 15% */
+    function artisan(bonus) {
+        const reduced = 8 * (1 - bonus);
+        game.profits['/actions/cheesesmithing/sword'] = profit('sword', {
+            artisanBonus: bonus,
+            materialCosts: [
+                {
+                    itemHrid: '/items/griffin_leather',
+                    baseAmount: 2,
+                    amount: 2 * (1 - bonus),
+                    askPrice: 1000,
+                    totalCost: 2 * (1 - bonus) * 1000,
+                    missingPrice: false,
+                },
+                {
+                    itemHrid: '/items/cheese',
+                    baseAmount: 8,
+                    amount: reduced,
+                    askPrice: 5,
+                    totalCost: reduced * 5,
+                    missingPrice: false,
+                },
+            ],
+        });
+    }
+    const rank = async (mode = 'sunk') => (await rankCraftEnhance({ targetLevel: 5, ownedMode: mode }))[0];
+
+    test("the average is the default and prices the calculator's fractional amounts", async () => {
+        artisan(0.15);
+        const row = await rank();
+        expect(row.target.craftCostPerUnit).toBeCloseTo(6.8 * 5, 6);
+        expect(row.notes.join(' ')).not.toContain('worst case');
+    });
+
+    test('worst case bills each craft rounded up, drink concentration included in the bonus', async () => {
+        game.settings.actions_artisanMaterialMode = 'worst-case';
+        // 10% Artisan with 50% drink concentration is 15%: 8 x 0.85 = 6.8 rounds to 7 a craft (7.2 -> 8 at 10%)
+        artisan(0.15);
+        const row = await rank();
+        expect(row.target.craftCostPerUnit).toBeCloseTo(7 * 5, 6);
+        expect(row.notes.join(' ')).toContain('Artisan worst case');
+        artisan(0.1);
+        clearCraftEnhanceCache();
+        game.stamp += 1;
+        expect((await rank()).target.craftCostPerUnit).toBeCloseTo(8 * 5, 6);
+    });
+
+    test('worst case also rounds a dungeon input up, at its own price', async () => {
+        game.settings.actions_artisanMaterialMode = 'worst-case';
+        artisan(0.15);
+        const row = await rank('market');
+        // 2 x 0.85 = 1.7 -> 2 leather at 1000 x 0.96, and 7 cheese at 5
+        expect(row.target.craftCostPerUnit).toBeCloseTo(2 * 960 + 35, 6);
+    });
+
+    test('Artisan 0 changes nothing in either mode', async () => {
+        artisan(0);
+        const expected = (await rank()).target.craftCostPerUnit;
+        clearCraftEnhanceCache();
+        game.stamp += 1;
+        game.settings.actions_artisanMaterialMode = 'worst-case';
+        const worst = await rank();
+        expect(worst.target.craftCostPerUnit).toBeCloseTo(expected, 6);
+        expect(worst.notes.join(' ')).not.toContain('worst case');
+    });
+
+    test('hybrid has no run length here, so it reads as the average', async () => {
+        game.settings.actions_artisanMaterialMode = 'hybrid';
+        artisan(0.15);
+        expect((await rank()).target.craftCostPerUnit).toBeCloseTo(6.8 * 5, 6);
+    });
+
+    test('the upgrade item is not reduced or rounded by Artisan', async () => {
+        game.settings.actions_artisanMaterialMode = 'worst-case';
+        starFixture();
+        game.profits['/actions/cheesesmithing/ring_refined'].artisanBonus = 0.15;
+        const row = (await rankCraftEnhance({ targetLevel: 5, ownedMode: 'sunk' }))[0];
+        // The base counts once at 800; the leather is sunk
+        expect(row.target.craftCostPerUnit).toBeCloseTo(800, 6);
+    });
+
+    test('changing the setting is a different ranking, not a cache hit', async () => {
+        artisan(0.15);
+        const first = await rank();
+        game.settings.actions_artisanMaterialMode = 'worst-case';
+        const second = await rank();
+        expect(first.target.craftCostPerUnit).toBeCloseTo(34, 6);
+        expect(second.target.craftCostPerUnit).toBeCloseTo(35, 6);
+        expect(craftEnhanceStateKey()).toContain('worst-case');
     });
 });

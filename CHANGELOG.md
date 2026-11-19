@@ -10,6 +10,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 A row that buys a ★ item while you hold a base the sim could refine now adds a line with the refine price (shards after Artisan, any enhancing after) and how much more it comes to, so a buy over a refine is explained.
 
+### Craft & Enhance enhances the cheaper base first
+
+Refined (★) recipes keep the base's enhancement level, so Craft & Enhance now also prices enhancing the cheaper base to +N and then refining it, and uses whichever costs less. Rows that win this way read "via base", and hovering the Enhance cost shows both routes.
+
+### Craft & Enhance follows the Artisan worst-case setting
+
+With "Missing materials: Artisan requirement mode" set to Worst-case, each craft's inputs are rounded up to whole units instead of averaged, so the craft cost matches what you actually have to buy.
+
 ### Lab sim budget plan shops for refines, not the refined item
 
 A plan pick priced as a refine now fills the Buy box with the refinement materials instead of the ★ item, and a refined cape priced that way is no longer left off the list.

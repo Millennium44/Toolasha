@@ -544,3 +544,81 @@ describe('rows held while the character changes', () => {
         expect(state.rankCalls.length).toBe(before + 1);
     });
 });
+
+describe('the enhancement route', () => {
+    const route = (over = {}) => ({
+        route: 'refine-base',
+        offered: true,
+        baseHrid: '/items/sinister_ring',
+        directCost: 5000,
+        baseCost: 3000,
+        saved: 2000,
+        ...over,
+    });
+
+    test('the base route is badged and the tooltip names both runs and the saving', async () => {
+        state.rows = [row('ring', { route: route(), target: level({ enhanceCost: 3000 }) })];
+        openBoard();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        const cells = state.panel.panel.querySelectorAll('[data-ce-row$="/ring"] td');
+        const badge = state.panel.panel.querySelector('[data-ce-route="refine-base"]');
+        expect(badge.textContent).toContain('via base');
+        const enhanceCell = badge.parentElement;
+        expect([...cells]).toContain(enhanceCell);
+        expect(enhanceCell.title).toContain('Enhance the star item itself to +5: 5.0K');
+        expect(enhanceCell.title).toContain('Enhance sinister ring to +5, then refine it');
+        expect(enhanceCell.title).toContain('saves 2.0K');
+    });
+
+    test('with only the base route priced, the tooltip claims no saving', async () => {
+        state.rows = [
+            row('ring', { route: route({ directCost: null, saved: 0 }), target: level({ enhanceCost: 3000 }) }),
+        ];
+        openBoard();
+        await flush();
+        const badge = state.panel.panel.querySelector('[data-ce-route="refine-base"]');
+        expect(badge.parentElement.title).toContain('Enhance the star item itself to +5: could not be priced');
+        expect(badge.parentElement.title).toContain('Only the base route could be priced.');
+        expect(badge.parentElement.title).not.toContain('saves');
+    });
+
+    test('the direct route has no badge but still explains the comparison', async () => {
+        state.rows = [row('ring', { route: route({ route: 'craft', directCost: 2000, baseCost: 3000, saved: 1000 }) })];
+        openBoard();
+        await flush();
+        expect(state.panel.panel.querySelector('[data-ce-route]')).toBeNull();
+        const cell = state.panel.panel.querySelector('[data-ce-row$="/ring"] td:nth-child(5)');
+        expect(cell.title).toContain('Enhancing the star item itself is cheaper');
+    });
+
+    test('a base run that could not be priced says so instead of showing a number', async () => {
+        state.rows = [row('ring', { route: route({ route: 'craft', baseCost: null, saved: 0 }) })];
+        openBoard();
+        await flush();
+        const cell = state.panel.panel.querySelector('[data-ce-row$="/ring"] td:nth-child(5)');
+        expect(cell.title).toContain('could not be priced');
+    });
+
+    test('a recipe with no base route, and a row from before routes, draw as they always did', async () => {
+        state.rows = [row('sword', { route: { route: 'craft', offered: false, baseHrid: null } }), row('robe')];
+        openBoard();
+        await flush();
+        expect(text()).not.toContain('could not be drawn');
+        expect(state.panel.panel.querySelector('[data-ce-route]')).toBeNull();
+        expect(state.panel.panel.querySelectorAll('[data-ce-row]')).toHaveLength(2);
+    });
+
+    test('an unpriced enhancement shows "—", not a route badge', async () => {
+        state.rows = [
+            row('ring', {
+                route: route({ route: null, directCost: null, baseCost: null, saved: 0 }),
+                target: unpricedLevel(['enhance'], { enhanceCost: null }),
+            }),
+        ];
+        openBoard();
+        await flush();
+        expect(state.panel.panel.querySelector('[data-ce-route]')).toBeNull();
+        expect(state.panel.panel.querySelector('[data-ce-row$="/ring"] [data-ce-missing]')).not.toBeNull();
+    });
+});
