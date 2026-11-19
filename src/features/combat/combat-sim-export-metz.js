@@ -222,9 +222,11 @@ function reconcileOwnedAbilities(character, equipped) {
 function toMetzCharacter(name, source, extra = {}) {
     const { hasMooPass, skills, speedGear, owned } = extra;
     const { equipment, skilling } = buildSkillingBlock({ skills, equipment: source.player.equipment, speedGear });
+    const { slottedTalismans: _slottedTalismans, ...playerWithoutTalismans } = source.player;
     const character = {
         name,
-        player: { ...source.player, equipment },
+        // slottedTalismans is a Shykai-sim field; the Metz format has no place for it
+        player: { ...playerWithoutTalismans, equipment },
         abilities: dropBlankSlots(source.abilities, 'abilityHrid'),
         triggerMap: source.triggerMap,
         houseRooms: source.houseRooms,

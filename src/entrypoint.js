@@ -333,6 +333,8 @@ function isCombatSimulatorPage() {
     }
     if (url.origin === 'https://shykai.github.io' && url.pathname.startsWith('/MWICombatSimulatorTest/dist/'))
         return 'shykai';
+    if (url.origin === 'https://shykai.github.io' && url.pathname.startsWith('/MWICombatSimulatorTest/Test/'))
+        return 'shykai';
     if (url.origin === 'https://szerra.github.io' && url.pathname.startsWith('/mwi-shrine-combat-simulator/'))
         return 'szerra';
     if (url.origin === 'https://metzlii.github.io' && url.pathname.startsWith('/metz-combat-simulator/')) return 'metz';

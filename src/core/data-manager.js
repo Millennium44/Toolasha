@@ -31,6 +31,9 @@ import { isTestServer } from '../utils/game-server.js';
 import { taskSpeedParts } from '../utils/enhancement-steps.js';
 import { SCROLL_BUFF_VALUES } from '../utils/scroll-buff-values.js';
 import { BELT_LOCATION, computeTalismanBonuses, attachTalismanBonuses } from '../utils/talisman-bonuses.js';
+
+/** Quiet time before a simulator snapshot refresh writes: a trailing debounce, restarted by every event */
+const SIM_SNAPSHOT_REFRESH_MS = 4000;
 import { compareActionQueueOrder, runningCombatAction } from '../utils/combat-actions.js';
 
 /**
@@ -1076,6 +1079,11 @@ class DataManager {
             clearTimeout(this._reconnectRecoveryTimeout);
             this._reconnectRecoveryTimeout = null;
         }
+
+        if (this._simSnapshotRefreshTimer) {
+            clearTimeout(this._simSnapshotRefreshTimer);
+            this._simSnapshotRefreshTimer = null;
+        }
     }
 
     /**
@@ -1197,6 +1205,13 @@ class DataManager {
             // landing in one of those suspension points must see that a switch
             // is in flight rather than write into the old character's state.
             this.isCharacterSwitching = true;
+            // A snapshot written for the departing character does not carry over: refreshes resume only after
+            // this session writes one for a character again (coming back to this one included)
+            this._simSnapshotCharacterId = null;
+            if (this._simSnapshotRefreshTimer) {
+                clearTimeout(this._simSnapshotRefreshTimer);
+                this._simSnapshotRefreshTimer = null;
+            }
             // Marks along the switch (names prefixed `switch:`, `to` says which
             // switch in a burst): the departing character's waits, split.
             performanceMonitor.mark('switch:requested', { to: newCharacterId, rapid: isRapidSwitch });
@@ -1652,6 +1667,7 @@ class DataManager {
             // mid-switch is dropped rather than applied to the departing character.
             if (!this.isFromInitializedCharacter(context) || !this.characterData) return;
             if (this.applyTalismanUpdates(data)) {
+                this.scheduleSimulatorSnapshotRefresh();
                 this.emit('talismans_updated', data);
             }
         });
@@ -2280,6 +2296,10 @@ class DataManager {
         // item here means a slot changed and equipment-dependent memos are stale
         if (equipmentChanged) {
             this.buffStateVersion++;
+            // The belt scales every slotted talisman, and a simulator imports it with them
+            if (items.some((item) => item.itemLocationHrid === BELT_LOCATION)) {
+                this.scheduleSimulatorSnapshotRefresh();
+            }
         }
     }
 
@@ -3068,9 +3088,12 @@ class DataManager {
      * owned abilities and the equipped kit; the inventory and drink slots are kept beside it,
      * so they are folded back in here. Stamped with the character this tab is playing, which
      * is the id the simulator link carries.
+     * @param {{light?: boolean}} [options] - `light` writes only the character snapshot and its stamp
+     *   (the background refresh); without it the client-data and battle bridges are refreshed too, as the
+     *   moment a simulator opens needs
      * @returns {boolean} True if a snapshot was written
      */
-    saveSimulatorSnapshot() {
+    saveSimulatorSnapshot(options = {}) {
         const characterId = this.currentCharacterId;
         if (!this.characterData || characterId == null || this.isCharacterSwitching) return false;
         const snapshot = { ...this.characterData };
@@ -3105,12 +3128,38 @@ class DataManager {
                 },
             };
         }
-        return (
-            this.webSocketHook.saveCombatSimSnapshot?.(snapshot, {
-                characterId,
-                characterName: this.currentCharacterName,
-            }) ?? false
-        );
+        const owner = { characterId, characterName: this.currentCharacterName };
+        if (options.light) {
+            return this.webSocketHook.writeCombatSimCharacterSnapshot?.(snapshot, owner) ?? false;
+        }
+        const written = this.webSocketHook.saveCombatSimSnapshot?.(snapshot, owner) ?? false;
+        // From now on this session keeps the snapshot current (see scheduleSimulatorSnapshotRefresh)
+        if (written) this._simSnapshotCharacterId = characterId;
+        return written;
+    }
+
+    /**
+     * Rewrite the simulator snapshot shortly after a change a simulator imports (talismans, the belt), but
+     * only when this session already wrote one for the character being played: a player who never opens a
+     * simulator pays nothing. A trailing debounce: every event restarts the wait, so a burst (a talisman
+     * reroll sends many updates) writes once, after it settles. Only the character snapshot is rewritten,
+     * not the client-data or battle bridges. Nothing is written for another character or during a switch.
+     */
+    scheduleSimulatorSnapshotRefresh() {
+        if (this._simSnapshotCharacterId == null) return;
+        if (String(this._simSnapshotCharacterId) !== String(this.currentCharacterId)) return;
+        if (this._simSnapshotRefreshTimer) clearTimeout(this._simSnapshotRefreshTimer);
+        this._simSnapshotRefreshTimer = setTimeout(() => {
+            this._simSnapshotRefreshTimer = null;
+            // Re-checked when it runs: the player may have switched characters in the meantime
+            if (this.isCharacterSwitching) return;
+            if (String(this._simSnapshotCharacterId) !== String(this.currentCharacterId)) return;
+            try {
+                this.saveSimulatorSnapshot({ light: true });
+            } catch (error) {
+                console.error('[DataManager] Simulator snapshot refresh failed:', error);
+            }
+        }, SIM_SNAPSHOT_REFRESH_MS);
     }
 
     /**

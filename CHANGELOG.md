@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat sim import sends your talismans
+
+The Combat Sim's "Import from Toolasha" now carries your slotted combat talismans (yours and your party's), so the sim applies their lines. The sim's Test page gets its own "Combat Sim (Test)" link in the game's sidebar, and the import stays current as you slot talismans or change belts.
+
 ### Craft & Enhance Best level holds every route to the market
 
 Best level and Profit/hr +N now apply the volume cap to each route and protection choice before picking one, so a route that earns more per item but makes fewer an hour can win once the market limits you.

@@ -32,6 +32,7 @@ import { buildPlayerDTOFromProfile } from '../combat-sim/combat-sim-adapter.js';
 import { terminateWorkerPool } from '../../utils/enhancement-worker-manager.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { formatProfileAge } from '../../utils/shared-profile-status.js';
+import { resolveLoadoutTalismans, slottedCombatTalismansForSim } from '../../utils/talisman-bonuses.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 /**
@@ -1560,6 +1561,18 @@ class CombatScore {
         // "highest owned" mode wears the best copy owned now, and the hash
         // holds whatever it was when the loadout was last saved — usually 0.
         playerObj.player.equipment = loadoutSnapshot.resolveEquipment(snapshot);
+
+        // The loadout's own talismans, to go with its own belt: never the ones slotted right now, which would pair
+        // this belt with a build that never existed. A loadout naming none wears none; a server without talismans
+        // gets no field.
+        if (dataManager.hasTalismansLoaded()) {
+            playerObj.player.slottedTalismans =
+                slottedCombatTalismansForSim(
+                    resolveLoadoutTalismans(snapshot.talismanIdMap, dataManager.getCharacterTalismans())
+                ) || [];
+        } else {
+            delete playerObj.player.slottedTalismans;
+        }
 
         // Override abilities from snapshot. Build ability level lookup from
         // all learned abilities (not just currently equipped).

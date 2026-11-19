@@ -24,6 +24,8 @@ const stub = vi.hoisted(() => ({
     metzExport: { source: 'metz' },
     shykaiExport: { exportObj: { player: {}, source: 'shykai' } },
     shykaiParty: null,
+    /** characterData.characterTalismans: null = never delivered */
+    ownedTalismans: null,
     snapshots: [],
     profileList: [],
     /** When an array, each profile-list read waits here until a test releases it */
@@ -47,6 +49,8 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => stub.currentCharacterId,
         getInitClientData: () => ({ abilityDetailMap: {} }),
+        hasTalismansLoaded: () => stub.ownedTalismans !== null,
+        getCharacterTalismans: () => stub.ownedTalismans || [],
         characterData: { character: { id: 7, name: 'Me' }, characterAbilities: [] },
     },
 }));
@@ -1033,5 +1037,59 @@ describe('sim export split button', () => {
         expect(removeSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
 
         removeSpy.mockRestore();
+    });
+});
+
+describe('loadout export talismans', async () => {
+    const { SLOTTED_TALISMANS } = await import('../../__fixtures__/talisman-3a-30404.js');
+    const liveSlotted = SLOTTED_TALISMANS.map(({ id: _id, ...row }) => row);
+    const loadout = (extra = {}) => ({
+        name: 'Raid',
+        actionTypeHrid: '/action_types/combat',
+        abilities: [],
+        food: [],
+        drinks: [],
+        abilityCombatTriggersMap: {},
+        consumableCombatTriggersMap: {},
+        ...extra,
+    });
+
+    beforeEach(() => {
+        stub.ownedTalismans = SLOTTED_TALISMANS;
+        stub.shykaiExport = { exportObj: { player: { slottedTalismans: liveSlotted }, source: 'shykai' } };
+    });
+
+    test('wearing a loadout exports its own talismans, not the ones slotted now', async () => {
+        // The loadout slots only the talisman that is in slot 2 right now, into its slot 1
+        const result = JSON.parse(
+            await combatScore.buildSnapshotExportString('shykai', loadout({ talismanIdMap: { 1: 2804, 2: 0, 3: 0 } }))
+        );
+        expect(result.player.slottedTalismans).toEqual([
+            { talismanTypeHrid: '/talisman_types/combat', modifiers: SLOTTED_TALISMANS[1].modifiers, slotIndex: 1 },
+        ]);
+    });
+
+    test('a loadout that names no talismans wears none', async () => {
+        const result = JSON.parse(await combatScore.buildSnapshotExportString('shykai', loadout()));
+        expect(result.player.slottedTalismans).toEqual([]);
+    });
+
+    test('a server that never sent talismans gets no field', async () => {
+        stub.ownedTalismans = null;
+        const result = JSON.parse(await combatScore.buildSnapshotExportString('shykai', loadout()));
+        expect('slottedTalismans' in result.player).toBe(false);
+    });
+
+    test('the full-party path swaps only your own slot', async () => {
+        const slot = (name) => JSON.stringify({ player: { slottedTalismans: liveSlotted }, name, triggerMap: {} });
+        stub.shykaiParty = {
+            exportObj: { 1: slot('Teammate'), 2: slot('Me') },
+            playerIDs: ['Teammate', 'Me', 'P3', 'P4', 'P5'],
+            importedPlayerPositions: [true, true, false, false, false],
+            yourSlotIndex: 2,
+        };
+        const map = await combatScore.buildShykaiPartyExport(loadout({ talismanIdMap: { 1: 2804 } }));
+        expect(JSON.parse(map[2]).player.slottedTalismans.map((t) => t.slotIndex)).toEqual([1]);
+        expect(JSON.parse(map[1]).player.slottedTalismans).toEqual(liveSlotted);
     });
 });

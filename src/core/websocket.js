@@ -971,6 +971,18 @@ class WebSocketHook {
         // being opened, even if it was already written, since another game tab may have replaced
         // the shared key since. A battle left from a character this tab has switched away from is not.
         this.flushBattleBridge({ forceFor: owner?.characterId ?? null });
+        return this.writeCombatSimCharacterSnapshot(characterData, owner);
+    }
+
+    /**
+     * Write only the bridged character snapshot and its owner stamp: the light half of
+     * {@link saveCombatSimSnapshot}, for refreshes that must not touch the client-data or battle bridges.
+     * @param {Object} characterData - init_character_data-shaped object with current fields
+     * @param {{characterId: string|number, characterName?: string|null}} owner - Character the snapshot belongs to
+     * @returns {boolean} True if the snapshot was written
+     */
+    writeCombatSimCharacterSnapshot(characterData, owner) {
+        if (typeof GM_setValue === 'undefined') return false;
         if (!characterData || owner?.characterId == null) return false;
         try {
             gmSetValue('toolasha_init_character_data', JSON.stringify(characterData));

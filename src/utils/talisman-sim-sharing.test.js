@@ -83,3 +83,37 @@ describe('malformed input never throws', () => {
         ]);
     });
 });
+
+describe('slottedCombatTalismansForSim', async () => {
+    const { slottedCombatTalismansForSim } = await import('./talisman-bonuses.js');
+    const { SLOTTED_TALISMANS, UNSLOTTED_TALISMANS } = await import('../__fixtures__/talisman-3a-30404.js');
+
+    test('absent is null, empty is empty, and only slotted combat rows come out, sorted, without ids', () => {
+        expect(slottedCombatTalismansForSim(undefined)).toBeNull();
+        expect(slottedCombatTalismansForSim({})).toBeNull();
+        expect(slottedCombatTalismansForSim([])).toEqual([]);
+        expect(slottedCombatTalismansForSim(UNSLOTTED_TALISMANS)).toEqual([]);
+        const out = slottedCombatTalismansForSim([...SLOTTED_TALISMANS].reverse().concat(UNSLOTTED_TALISMANS, [null]));
+        expect(out.map((t) => t.slotIndex)).toEqual([1, 2, 3]);
+        expect(out[0]).toEqual({
+            talismanTypeHrid: '/talisman_types/combat',
+            modifiers: SLOTTED_TALISMANS[0].modifiers,
+            slotIndex: 1,
+        });
+        expect(out.every((t) => !('id' in t))).toBe(true);
+    });
+
+    test('drops malformed modifier lines and non-combat types', () => {
+        const out = slottedCombatTalismansForSim([
+            {
+                talismanTypeHrid: '/talisman_types/combat',
+                slotIndex: 1,
+                modifiers: [{ hrid: '/a', grade: 2 }, { hrid: 5, grade: 1 }, { hrid: '/b' }, null],
+            },
+            { talismanTypeHrid: '/talisman_types/skilling', slotIndex: 2, modifiers: [{ hrid: '/c', grade: 1 }] },
+        ]);
+        expect(out).toEqual([
+            { talismanTypeHrid: '/talisman_types/combat', modifiers: [{ hrid: '/a', grade: 2 }], slotIndex: 1 },
+        ]);
+    });
+});

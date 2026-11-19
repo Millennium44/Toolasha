@@ -888,3 +888,62 @@ describe('constructPartyPlayer drink classification', () => {
         expect(player.food['/action_types/combat'][0]).toEqual({ itemHrid: '/items/donut' });
     });
 });
+
+describe('slottedTalismans in the export', async () => {
+    const { SLOTTED_TALISMANS, UNSLOTTED_TALISMANS } = await import('../../__fixtures__/talisman-3a-30404.js');
+    const { constructPartyPlayer } = await import('./combat-sim-export.js');
+    const selfCharacter = (extra = {}) => ({
+        character: { id: 'char-mine', name: 'Me' },
+        characterSkills: [],
+        ...extra,
+    });
+    const slotted = SLOTTED_TALISMANS.map(({ id: _id, ...row }) => row);
+
+    test('exports only the slotted combat talismans, sorted by slot, without ids', () => {
+        const skillingSlotted = {
+            id: 3001,
+            talismanTypeHrid: '/talisman_types/skilling',
+            modifiers: [{ hrid: '/talisman_modifiers/milking_speed', grade: 3 }],
+            slotIndex: 4,
+        };
+        const owned = [SLOTTED_TALISMANS[2], ...UNSLOTTED_TALISMANS, skillingSlotted, SLOTTED_TALISMANS[0]];
+        owned.push(SLOTTED_TALISMANS[1]);
+        const player = constructSelfPlayer(selfCharacter({ characterTalismans: owned }), null);
+
+        expect(player.player.slottedTalismans.map((t) => t.slotIndex)).toEqual([1, 2, 3]);
+        expect(player.player.slottedTalismans).toEqual(slotted);
+        expect(JSON.stringify(player.player.slottedTalismans)).not.toContain('skilling');
+    });
+
+    test('a character with talismans loaded but none slotted exports an empty list', () => {
+        const player = constructSelfPlayer(selfCharacter({ characterTalismans: UNSLOTTED_TALISMANS }), null);
+        expect(player.player.slottedTalismans).toEqual([]);
+        expect(constructSelfPlayer(selfCharacter({ characterTalismans: [] }), null).player.slottedTalismans).toEqual(
+            []
+        );
+    });
+
+    test('talismans that were never delivered leave the field out', () => {
+        expect('slottedTalismans' in constructSelfPlayer(selfCharacter(), null).player).toBe(false);
+    });
+
+    test("a party member's shared talismans are exported the same way", () => {
+        const profile = (slottedTalismans) => ({
+            characterID: 'char-a',
+            characterName: 'A',
+            profile: { characterSkills: [], wearableItemMap: {}, slottedTalismans },
+        });
+        const shared = [
+            slotted[2],
+            slotted[0],
+            { talismanTypeHrid: '/talisman_types/skilling', modifiers: [{ hrid: '/x', grade: 1 }], slotIndex: 2 },
+            { talismanTypeHrid: '/talisman_types/combat', modifiers: [{ hrid: '/y', grade: 1 }], slotIndex: 0 },
+        ];
+        expect(constructPartyPlayer(profile(shared), null, null).player.slottedTalismans).toEqual([
+            slotted[0],
+            slotted[2],
+        ]);
+        expect(constructPartyPlayer(profile([]), null, null).player.slottedTalismans).toEqual([]);
+        expect('slottedTalismans' in constructPartyPlayer(profile(undefined), null, null).player).toBe(false);
+    });
+});

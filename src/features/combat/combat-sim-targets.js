@@ -34,6 +34,15 @@ export const COMBAT_SIM_TARGETS = [
         match: 'https://shykai.github.io/MWICombatSimulatorTest/dist/*',
     },
     {
+        // The same simulator's Test build: same source and import format, so the same export. It gets its own
+        // sidebar link so opening it refreshes the bridged snapshot like the main one.
+        id: 'shykai-test',
+        label: 'Combat Sim (Test)',
+        url: 'https://shykai.github.io/MWICombatSimulatorTest/Test/',
+        urlFragment: 'shykai.github.io/MWICombatSimulatorTest/Test/',
+        match: 'https://shykai.github.io/MWICombatSimulatorTest/Test/*',
+    },
+    {
         id: 'szerra',
         label: 'Combat Sim (Shrine)',
         url: 'https://szerra.github.io/mwi-shrine-combat-simulator/',
