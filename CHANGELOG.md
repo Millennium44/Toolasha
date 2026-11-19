@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sim rows show what refining would cost when buying wins
+
+A row that buys a ★ item while you hold a base the sim could refine now adds a line with the refine price (shards after Artisan, any enhancing after) and how much more it comes to, so a buy over a refine is explained.
+
 ### Lab sim budget plan shops for refines, not the refined item
 
 A plan pick priced as a refine now fills the Buy box with the refinement materials instead of the ★ item, and a refined cape priced that way is no longer left off the list.

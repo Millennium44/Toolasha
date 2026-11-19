@@ -207,6 +207,7 @@ const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
 /** A row as the Lab's all-fights analysis prices it: carrying what its fights' loadouts wear */
 const claimedBy = (row, fights) => withLoadoutClaims(row, buildOtherLoadoutClaims(fights));
 const { cheapestWithMirror } = await import('../../utils/mirror-route.js');
+const { compactCostLines, refineQuoteSentence } = await import('./cost-basis-text.js');
 
 function stack(itemHrid, level, location = '/item_locations/inventory', count = 1) {
     return {
@@ -323,6 +324,103 @@ describe('refined target priced from a held base', () => {
         expect(detail.credit).toBe(0);
         expect(detail.ladder).toMatchObject({ fromLevel: 7, toLevel: 7, fromEquipped: true });
         expect(detail.source).toBe('refine');
+    });
+
+    describe('a refine that loses to buying is still shown', () => {
+        // The worn Sinister Ring +7 is replaced by a Sinister Ring ★ +7 listed at `ask`
+        const swap = () =>
+            tier(7, { upgradeHrid: RING, currentHrid: RING_BASE, currentLevel: 7, removedItems: undefined });
+        // The star item's buy price, which the direct route reads for every level here
+        const listStar = (price) => {
+            state.starPrice = price;
+        };
+
+        test('the buy keeps the refine quote: its price and how much dearer it came out', () => {
+            state.items = [stack(RING_BASE, 7, '/item_locations/ring')];
+            listStar(150_000_000);
+            const detail = explainUpgradeCost(swap(), gameData);
+            expect(detail.buys[0].source).not.toBe('refine');
+            const buy = detail.buys[0].price;
+            expect(buy).toBeLessThan(SHARDS);
+            const quote = detail.buys[0].refineQuote;
+            expect(quote).toMatchObject({ price: SHARDS, fromLevel: 7, fromEquipped: true, mirror: false });
+            expect(quote.extra).toBeCloseTo(SHARDS + quote.forfeited - buy);
+            expect(quote.extra).toBeGreaterThan(0);
+            expect(quote.lines).toEqual([expect.stringContaining('100 × sinister refinement shard')]);
+        });
+
+        test('the breakdown says what refining would cost and how much more', () => {
+            state.items = [stack(RING_BASE, 7, '/item_locations/ring')];
+            listStar(150_000_000);
+            const detail = explainUpgradeCost(swap(), gameData);
+            const text = compactCostLines(detail, {}).map((line) => line.text);
+            const refine = text.find((line) => line.startsWith('Refine instead'));
+            expect(refine).toContain('the one you wear +7');
+            expect(refine).toContain('100 × ');
+            expect(refine).toMatch(/more than buying\.$/);
+            expect(refineQuoteSentence(detail.buys[0])).toBe(refine);
+        });
+
+        test('a refine that wins carries no quote, and a row with no base to refine none either', () => {
+            state.items = [stack(RING_BASE, 7, '/item_locations/ring')];
+            listStar(900_000_000);
+            const won = explainUpgradeCost(swap(), gameData);
+            expect(won.buys[0].source).toBe('refine');
+            expect(won.buys[0].refineQuote).toBeUndefined();
+            expect(compactCostLines(won, {}).some((line) => line.text.startsWith('Refine instead'))).toBe(false);
+
+            state.items = [];
+            listStar(150_000_000);
+            expect(explainUpgradeCost(swap(), gameData).buys[0].refineQuote).toBeUndefined();
+        });
+
+        test('a ★ already held at the level carries no refine quote', () => {
+            state.items = [stack(RING_BASE, 7, '/item_locations/ring'), stack(RING, 7)];
+            listStar(150_000_000);
+            const buy = explainUpgradeCost(swap(), gameData).buys[0];
+            expect(buy.price).toBe(0);
+            expect(buy.refineQuote).toBeUndefined();
+        });
+
+        test('a refine price the parts do not add up to spells out its total', () => {
+            const text = refineQuoteSentence({
+                refineQuote: {
+                    // Materials 200M plus a 50M resale of a base another loadout wears
+                    price: 250_000_000,
+                    materialCost: 200_000_000,
+                    enhanceCost: 0,
+                    forfeited: 0,
+                    extra: 20_000_000,
+                    fromLevel: 7,
+                    toLevel: 7,
+                    fromEquipped: false,
+                    lines: ['100 × Shard @ 2.0M = 200.0M'],
+                    mirror: false,
+                },
+            });
+            expect(text).toContain('100 × Shard @ 2.0M = 200.0M = 250.0M');
+        });
+
+        test('a quote with enhancing after the refine and a spare base adds the steps', () => {
+            const text = refineQuoteSentence({
+                name: 'Sinister Ring ★',
+                refineQuote: {
+                    price: 210_000_000,
+                    forfeited: 0,
+                    extra: 10_000_000,
+                    fromLevel: 5,
+                    toLevel: 7,
+                    fromEquipped: false,
+                    enhanceCost: 10_000_000,
+                    lines: ['90.0 (100 less artisan) × Shard @ 2.0M = 180.0M'],
+                    mirror: false,
+                },
+            });
+            expect(text).toBe(
+                'Refine instead: your spare +5, 90.0 (100 less artisan) × Shard @ 2.0M = 180.0M + +5 → +7 10.0M = 210.0M. ' +
+                    '10.0M more than buying.'
+            );
+        });
     });
 
     test('a worn base the row does not replace is not consumed', () => {

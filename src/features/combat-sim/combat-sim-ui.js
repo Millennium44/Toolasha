@@ -117,7 +117,7 @@ import { capProfitRateCached, liquidityMarkerHtml } from '../../utils/liquidity-
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import { scrollTokenRate, priceScrollRow, scrollGoldPerStep } from './scroll-pricing.js';
 import { MIRROR_ITEM_HRID, mirrorsToBuy } from '../../utils/mirror-route.js';
-import { ladderSentence, sharedRouteText } from './cost-basis-text.js';
+import { ladderSentence, refineQuoteSentence, sharedRouteText } from './cost-basis-text.js';
 import {
     isSkillingGearItem,
     isAuraAbility,
@@ -15203,6 +15203,12 @@ class CombatSimUI {
             parts.push(
                 `<span style="color:#888;">Buys ${gross}, resale credit ${formatKMB(detail.credit || 0)} after tax.</span>`
             );
+        }
+
+        // A refine the advisor weighed and passed over for the purchase
+        for (const buy of detail?.buys || []) {
+            const text = refineQuoteSentence(buy, detail.buys.length > 1);
+            if (text) parts.push(`<span style="color:#888;">${escapeAttribute(text)}</span>`);
         }
 
         // A replaced or freed piece with no sale price adds nothing to the credit; "resale credit 0" alone would
