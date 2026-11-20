@@ -966,6 +966,8 @@ function measureEnhancingRates() {
                     (successRate * calculateSuccessXP(level, hrid, benchWisdom) +
                         (1 - successRate) * calculateFailureXP(level, hrid, benchWisdom));
             }
+            // Epiphany (talisman): a chance of double XP on an action
+            totalXP *= 1 + (params.epiphany || 0);
             if (!(totalXP > 0)) continue;
 
             let materialPerAttempt = 0;
@@ -1108,6 +1110,8 @@ function enhancementRun({ itemHrid, targetLevel, startLevel = 0 }) {
         blessedTea: params.teas?.blessed,
         guzzlingBonus: params.guzzlingBonus,
         blessedTeaBonus: params.blessedTeaBonus,
+        // The protection a partial run spends is a real item, never a Philosopher's Mirror: Conservation applies
+        conservation: params.conservation,
     });
 
     // The per-attempt bill the optimiser already priced, reused rather than

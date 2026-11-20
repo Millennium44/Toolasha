@@ -293,6 +293,9 @@ function benchDigest(params) {
         params.experienceBonus,
         params.guzzlingBonus,
         params.blessedTeaBonus,
+        // Conservation and Epiphany move the protection count and the XP of every row
+        params.conservation || 0,
+        params.epiphany || 0,
         params.teas?.blessed ? 'blessed' : '',
     ].join(',');
 }

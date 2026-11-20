@@ -70,9 +70,11 @@ export function protectFromLevels(targetLevel) {
  * @param {Object} xp - XP inputs
  * @param {number} [xp.xpBaseLevel=0] - The level the XP formula keys on
  * @param {number} [xp.wisdomDecimal=0] - Wisdom bonus as a decimal
+ * @param {number} [xp.epiphany=0] - Epiphany (talisman Special): chance of double XP on an action, so the run's XP
+ *   is (1 + epiphany) times in expectation. It scales the XP an action earns, after Wisdom and the floors
  * @returns {number} Expected XP for the run
  */
-export function expectedRunXp(calc, { xpBaseLevel = 0, wisdomDecimal = 0 } = {}) {
+export function expectedRunXp(calc, { xpBaseLevel = 0, wisdomDecimal = 0, epiphany = 0 } = {}) {
     if (!calc?.visitCounts || !calc?.successRates) return 0;
     let total = 0;
     for (let i = 0; i < calc.visitCounts.length; i++) {
@@ -83,7 +85,7 @@ export function expectedRunXp(calc, { xpBaseLevel = 0, wisdomDecimal = 0 } = {})
         const failXP = Math.floor(successXP * 0.1);
         total += visits * (successRate * successXP + (1 - successRate) * failXP);
     }
-    return total;
+    return total * (1 + (epiphany > 0 ? epiphany : 0));
 }
 
 /**
@@ -149,6 +151,9 @@ function invertSmall(matrix) {
  * @param {boolean} [args.blessedTea=false] - Whether Blessed Tea can double-jump
  * @param {number} [args.guzzlingBonus=1] - Drink concentration multiplier
  * @param {number} [args.blessedTeaBonus=0.01] - Blessed Tea double-jump chance as a decimal
+ * @param {number} [args.conservation=0] - Chance a protected failure keeps its protection item (Conservation). The
+ *   fall still happens, so a kept failure stays in the chain as an ordinary move and only the consuming share
+ *   (1 - conservation) feeds N
  * @param {number} args.stock - Copies on hand
  * @returns {number|null} E[min(stock, N)], or null when the chain is not described well enough
  *   to solve (the caller then falls back to min(stock, E[N]))
@@ -161,8 +166,10 @@ export function expectedProtectionsFromStock({
     blessedTea = false,
     guzzlingBonus = 1,
     blessedTeaBonus = 0.01,
+    conservation = 0,
     stock,
 }) {
+    const keep = Number(conservation) > 0 ? Math.min(1, Number(conservation)) : 0;
     const s = Math.max(0, Math.floor(Number(stock) || 0));
     if (s === 0 || !(protectFrom > 0)) return 0;
     const T = Math.floor(Number(targetLevel) || 0);
@@ -178,8 +185,11 @@ export function expectedProtectionsFromStock({
         // Landing on or past the target is absorbed, so those moves leave the transient block
         if (i + 1 < T) A[i][i + 1] -= p - skip;
         if (i + 2 < T) A[i][i + 2] -= skip;
-        if (i >= protectFrom) protectedFail[i] = 1 - p;
-        else A[i][0] -= 1 - p;
+        if (i >= protectFrom) {
+            protectedFail[i] = (1 - p) * (1 - keep);
+            // A failure whose protection item is kept still drops one level, as an ordinary move
+            if (i >= 1) A[i][i - 1] -= (1 - p) * keep;
+        } else A[i][0] -= 1 - p;
     }
     const inverse = invertSmall(A);
     if (!inverse) return null;
@@ -414,6 +424,9 @@ export function chooseProtectionOptions({
  * @param {number} [args.perActionTime] - Seconds per attempt; falls back to the calculator's
  * @param {number} [args.xpBaseLevel=0] - Level the XP formula keys on
  * @param {number} [args.wisdomDecimal=0] - Wisdom bonus as a decimal
+ * @param {number} [args.epiphany=0] - Epiphany chance (double XP), as a decimal
+ * @param {number} [args.chain.conservation] - Conservation chance (a kept protection item), as a decimal; every option
+ *   here is a real protection item (never a Philosopher's Mirror), so it applies to all of them
  * @param {Function} [args.calculate] - calculateEnhancement, injectable for tests
  * @returns {{rows: Array<Object>, cheapestIndex: number, bestGoldPerXpIndex: number}} Rows are the
  *   "no protection" row first, then for each protection option every protect-from level from 2
@@ -434,6 +447,7 @@ export function sweepProtectFrom({
     perActionTime,
     xpBaseLevel = 0,
     wisdomDecimal = 0,
+    epiphany = 0,
     calculate = calculateEnhancement,
 }) {
     const requested = Math.floor(Number(targetLevel) || 0);
@@ -443,7 +457,7 @@ export function sweepProtectFrom({
     const start = Math.max(0, Math.min(target - 1, Math.floor(Number(startLevel) || 0)));
     const materials = Math.max(0, Number(materialCostPerAttempt) || 0);
     const fixed = Math.max(0, Number(fixedCost) || 0);
-    const xpInputs = { xpBaseLevel, wisdomDecimal };
+    const xpInputs = { xpBaseLevel, wisdomDecimal, epiphany };
 
     // One solve per protect-from level; every protection option reads the same chain
     const solve = (protectFrom) =>
@@ -469,6 +483,7 @@ export function sweepProtectFrom({
                 blessedTea: Boolean(chain?.blessedTea),
                 guzzlingBonus: chain?.guzzlingBonus ?? 1,
                 blessedTeaBonus: chain?.blessedTeaBonus ?? 0.01,
+                conservation: chain?.conservation,
                 stock,
             });
             fromStockCache.set(key, exact);
@@ -653,6 +668,8 @@ function memoKey(args) {
         args.perActionTime,
         args.xpBaseLevel,
         args.wisdomDecimal,
+        args.epiphany,
+        chain.conservation,
         options,
     ]);
 }

@@ -13,6 +13,7 @@ import {
     calculateSuccessMultiplier,
     BASE_SUCCESS_RATES,
     blessedMirrorChance,
+    protectionKeepChance,
 } from '../../utils/enhancement-calculator.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { timeReadable, formatLargeNumber } from '../../utils/formatters.js';
@@ -342,6 +343,8 @@ function generateCostsByLevelTable(
             // The real double-jump chance, read from item data by getEnhancingParams. Leaving
             // it out silently pinned the chain to the 1% stand-in the calculator defaults to.
             blessedTeaBonus: params.blessedTeaBonus,
+            // Conservation keeps a protection item a failure would consume (never a Philosopher's Mirror)
+            conservation: protectionKeepChance(params.conservation, protectionItemHrid),
         };
         const calc = calculateEnhancement({ ...chainArgs, protectFrom: effectiveProtect });
 
@@ -426,6 +429,8 @@ function generateCostsByLevelTable(
                 const failXP = Math.floor(successXP * 0.1);
                 totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
             }
+            // Epiphany (talisman): a chance of double XP on an action
+            totalXP *= 1 + (params.epiphany || 0);
         }
         const xpPerHour = totalTime > 0 ? Math.round((totalXP / totalTime) * 3600) : 0;
 
@@ -1099,6 +1104,8 @@ export function protectSweepHTML({
                 guzzlingBonus: params.guzzlingBonus,
                 // Same live double-jump chance the costs table runs on
                 blessedTeaBonus: params.blessedTeaBonus,
+                // The sweep prices real protection items only (never a Philosopher's Mirror), so Conservation applies
+                conservation: protectionKeepChance(params.conservation, null),
             },
             targetLevel,
             materialCostPerAttempt,
@@ -1106,6 +1113,7 @@ export function protectSweepHTML({
             perActionTime,
             xpBaseLevel,
             wisdomDecimal: (params.experienceBonus || 0) / 100,
+            epiphany: params.epiphany || 0,
         });
 
         const selectedHrid = options.find((option) => option.selected)?.itemHrid || null;

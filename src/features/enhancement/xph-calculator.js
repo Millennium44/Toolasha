@@ -61,6 +61,8 @@ export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, p
             blessedTea: params.teas.blessed,
             guzzlingBonus: params.guzzlingBonus,
             blessedTeaBonus: params.blessedTeaBonus,
+            // Conservation keeps a protection item; the protection priced below is never a Philosopher's Mirror
+            conservation: params.conservation,
         });
     } catch {
         return null;
@@ -70,6 +72,7 @@ export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, p
 
     // The bench being ranked, Pro included, not whatever the character has on right now
     const benchWisdom = (params.experienceBonus || 0) / 100;
+    const epiphany = params.epiphany || 0;
     let totalXP = 0;
     for (let i = 0; i < maxLevel; i++) {
         const visits = calc.visitCounts[i];
@@ -79,6 +82,8 @@ export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, p
         const failXP = calculateFailureXP(i, itemHrid, benchWisdom);
         totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
     }
+    // Epiphany: a chance of double XP on an action
+    totalXP *= 1 + epiphany;
 
     if (totalXP <= 0) return null;
 

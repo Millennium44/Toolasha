@@ -85,6 +85,7 @@ const {
     describeParamsSource,
     resetDetectedSettingsCache,
 } = await import('./enhancement-config.js');
+const talismanModule = await import('./talisman-bonuses.js');
 
 beforeEach(() => {
     // Detection is memoised for a second in production; each test edits the character
@@ -454,5 +455,38 @@ describe('a Labyrinth Action Speed scroll', () => {
 
     test('is not part of the pro kit', () => {
         expect(getProRatesParams().personalSpeedBonus).toBe(0);
+    });
+});
+
+describe('the enhancing talisman Specials (Conservation and Epiphany)', () => {
+    const worn = (noncombat) => talismanModule.attachTalismanBonuses(new Map(), { noncombat, buffs: {}, combat: {} });
+
+    test('auto-detect carries both shares from the worn talisman lines, as decimals', () => {
+        character.equipment = worn({ conservation: 0.05, epiphany: 0.02 });
+        character.settings = { enhanceSim_autoDetect: true };
+        const params = getAutoDetectedParams();
+        expect(params.conservation).toBeCloseTo(0.05, 12);
+        expect(params.epiphany).toBeCloseTo(0.02, 12);
+    });
+
+    test('no talisman is 0, never undefined', () => {
+        character.equipment = new Map();
+        character.settings = { enhanceSim_autoDetect: true };
+        const params = getAutoDetectedParams();
+        expect(params.conservation).toBe(0);
+        expect(params.epiphany).toBe(0);
+    });
+
+    test('a manual bench takes the worn ones too, and the pro kit takes none', () => {
+        character.equipment = worn({ conservation: 0.08, epiphany: 0.04 });
+        character.settings = { enhanceSim_autoDetect: false, ...SHIPPED };
+        resetDetectedSettingsCache();
+        const manual = getEnhancingParams();
+        expect(manual.conservation).toBeCloseTo(0.08, 12);
+        expect(manual.epiphany).toBeCloseTo(0.04, 12);
+        const pro = getProRatesParams();
+        expect(pro.conservation).toBe(0);
+        expect(pro.epiphany).toBe(0);
+        character.equipment = new Map();
     });
 });
