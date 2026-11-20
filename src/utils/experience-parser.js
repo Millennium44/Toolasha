@@ -12,7 +12,9 @@ import dataManager from '../core/data-manager.js';
 import { getEnhancementMultiplier } from './enhancement-multipliers.js';
 import { getDrinkConcentration } from './tea-parser.js';
 import { resolveActionContext } from './action-context.js';
-import { talismanStat } from './talisman-bonuses.js';
+import { INVIGORATION_ACTION_TYPES, SKILLING_SPECIAL_STATS, talismanStat } from './talisman-bonuses.js';
+
+const COMBAT_ACTION_TYPE = '/action_types/combat';
 
 /**
  * Parse equipment wisdom bonus (skillingExperience stat)
@@ -230,7 +232,13 @@ export function calculateExperienceMultiplier(skillHrid, actionTypeHrid, actionC
     const equipmentWisdom = equipmentWisdomData.total;
     const houseWisdom = parseHouseRoomWisdom();
     const communityWisdom = parseCommunityBuffWisdom();
-    const consumableWisdom = parseConsumableWisdom(activeDrinks, itemDetailMap, drinkConcentration);
+    // Invigoration doubles the active drinks' effects on a cooking or brewing action with its chance: in expectation
+    // a drink's Wisdom is (1 + chance) times as strong
+    const invigoration = INVIGORATION_ACTION_TYPES.includes(actionTypeHrid)
+        ? talismanStat(equipment, SKILLING_SPECIAL_STATS.invigoration)
+        : 0;
+    const consumableWisdom =
+        parseConsumableWisdom(activeDrinks, itemDetailMap, drinkConcentration) * (1 + invigoration);
     const achievementWisdom = dataManager.getAchievementBuffFlatBoost(actionTypeHrid, '/buff_types/wisdom') * 100;
     const mooPassWisdom = parseMooPassWisdom();
     const personalWisdom = dataManager.getPersonalBuffFlatBoost(actionTypeHrid, '/buff_types/wisdom') * 100;
@@ -255,11 +263,17 @@ export function calculateExperienceMultiplier(skillHrid, actionTypeHrid, actionC
     const charmData = parseCharmExperience(equipment, skillHrid, itemDetailMap);
     const charmExperience = charmData.total;
 
-    // Total multiplier (additive)
-    const totalMultiplier = 1 + totalWisdom / 100 + charmExperience / 100;
+    // Epiphany (talisman Special line): a chance to double the XP of a skilling action, so (1 + chance) times the
+    // XP in expectation. It scales the final XP, not the additive Wisdom pool, and does nothing on combat
+    const epiphany =
+        actionTypeHrid === COMBAT_ACTION_TYPE ? 0 : talismanStat(equipment, SKILLING_SPECIAL_STATS.epiphany);
+
+    // Total multiplier (additive pool, then Epiphany on the result)
+    const totalMultiplier = (1 + totalWisdom / 100 + charmExperience / 100) * (1 + epiphany);
 
     return {
         totalMultiplier,
+        epiphany,
         totalWisdom,
         charmExperience,
         charmBreakdown: charmData.breakdown,

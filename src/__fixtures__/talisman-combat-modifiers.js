@@ -1,6 +1,10 @@
 /**
  * Every combat-stat talisman modifier of the test server talismanModifierDetailMap (survey 2026-11-12, 48 lines),
  * unchanged but for the fields the sim does not read.
+ *
+ * This is the 2026-11-12 table: the 2026-11-20 test patch removed Threat Reduction and changed four values
+ * (Auto Attack Damage, Cast Speed, Elemental Amplify, Overkill), and added the Consistency Special line. Tests of
+ * the current data must not lean on it; the rest are about how a line is read, which the patch did not change.
  */
 export const COMBAT_MODIFIER_DETAILS = {
     '/talisman_modifiers/ability_damage': {

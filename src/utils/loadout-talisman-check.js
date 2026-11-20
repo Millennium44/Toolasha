@@ -7,7 +7,7 @@
  *  - `slot`: the talisman sits in a slot its own belt does not have (a Small belt has one slot);
  *  - `type`: a combat loadout holds a skilling talisman, or a skilling loadout a combat one. The type decides
  *    which kind of action the talisman's lines apply to, so it does nothing for this loadout;
- *  - `duplicate`: a Special line (Echo, Fortify, Overkill, Shatter, Smite) that another slot of the loadout already
+ *  - `duplicate`: a Special line (any line of the game's Special group, combat or skilling) that another slot of the loadout already
  *    carries at an equal or higher grade. A second copy adds nothing (measured), so that line does nothing.
  *
  * The same talisman in several loadouts is normal and is not reported.

@@ -39,6 +39,7 @@ import {
 } from '../../utils/equipment-parser.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { resolveActionContext } from '../../utils/action-context.js';
+import { SKILLING_SPECIAL_STATS, talismanStat } from '../../utils/talisman-bonuses.js';
 import { calculateHouseRareFind } from '../../utils/house-efficiency.js';
 import expectedValueCalculator from './expected-value-calculator.js';
 import {
@@ -782,6 +783,7 @@ class AlchemyProfitCalculator {
         hasMissingTeaPrices = false,
         noTeaEconomics = null,
         noTeaLevelPenalty = null,
+        conservation = 0,
     }) {
         const liveTeaBonus = teaBonusOverride !== null ? teaBonusOverride : getAlchemySuccessBonus();
         const typeSpecificHrid = CATALYST_HRIDS[actionType];
@@ -840,8 +842,9 @@ class AlchemyProfitCalculator {
             );
             const successRate = successRateBreakdown.total;
 
-            // Catalyst cost: consumed once per successful action
-            const catalystCostPerAttempt = combo.catalystPrice * successRate;
+            // Catalyst cost: consumed once per successful action, less the share Conservation (talisman Special
+            // line) keeps
+            const catalystCostPerAttempt = combo.catalystPrice * successRate * (1 - conservation);
             const catalystCostPerHour = catalystCostPerAttempt * comboActionsPerHour;
 
             const netProfitPerAttempt = computeNetProfit(successRate) - catalystCostPerAttempt;
@@ -879,6 +882,7 @@ class AlchemyProfitCalculator {
         computeNetProfit,
         computeTeaCost,
         levelPenalty = 0,
+        conservation = 0,
     }) {
         const liveTeaBonus = getAlchemySuccessBonus();
 
@@ -917,7 +921,7 @@ class AlchemyProfitCalculator {
             levelPenalty
         );
         const successRate = successRateBreakdown.total;
-        const catalystCostPerAttempt = catalystPrice * successRate;
+        const catalystCostPerAttempt = catalystPrice * successRate * (1 - conservation);
         const catalystCostPerHour = catalystCostPerAttempt * actionsPerHour;
         const teaCostPerHour = computeTeaCost(liveTeaBonus);
         const netProfitPerAttempt = computeNetProfit(successRate) - catalystCostPerAttempt;
@@ -959,6 +963,7 @@ class AlchemyProfitCalculator {
         levelPenalty = 0,
         teaBonusOverride = null,
         catalystChoice = 'none',
+        conservation = 0,
     }) {
         const liveTeaBonus = teaBonusOverride !== null ? teaBonusOverride : getAlchemySuccessBonus();
 
@@ -985,7 +990,7 @@ class AlchemyProfitCalculator {
             levelPenalty
         );
         const successRate = successRateBreakdown.total;
-        const catalystCostPerAttempt = catalystPrice * successRate;
+        const catalystCostPerAttempt = catalystPrice * successRate * (1 - conservation);
         const catalystCostPerHour = catalystCostPerAttempt * actionsPerHour;
         const teaCostPerHour = computeTeaCost(liveTeaBonus);
         const netProfitPerAttempt = computeNetProfit(successRate) - catalystCostPerAttempt;
@@ -1169,6 +1174,7 @@ class AlchemyProfitCalculator {
                 fixedTeaSelection: actionContext?.fixedTeaSelection === true,
                 hasMissingTeaPrices: teaCostData.hasMissingPrices,
                 noTeaEconomics,
+                conservation: talismanStat(equipment, SKILLING_SPECIAL_STATS.conservation),
             });
             if (!combo) return null;
 
@@ -1585,6 +1591,7 @@ class AlchemyProfitCalculator {
                 fixedTeaSelection: actionContext?.fixedTeaSelection === true,
                 hasMissingTeaPrices: teaCostData.hasMissingPrices,
                 noTeaEconomics,
+                conservation: talismanStat(equipment, SKILLING_SPECIAL_STATS.conservation),
             });
             if (!combo) return null;
 
@@ -2015,6 +2022,7 @@ class AlchemyProfitCalculator {
                 fixedTeaSelection: actionContext?.fixedTeaSelection === true,
                 hasMissingTeaPrices: teaCostData.hasMissingPrices,
                 noTeaEconomics,
+                conservation: talismanStat(equipment, SKILLING_SPECIAL_STATS.conservation),
             });
             if (!combo) return null;
 

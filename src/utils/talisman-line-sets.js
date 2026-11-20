@@ -20,6 +20,9 @@
 import { isTestServer } from './game-server.js';
 import {
     BELT_LOCATION,
+    INVIGORATION_ACTION_TYPES,
+    PROSPERITY_ACTION_TYPES,
+    SKILLING_SPECIAL_STATS,
     attachTalismanBonuses,
     computeTalismanBonuses,
     getBeltSlotCount,
@@ -722,7 +725,9 @@ export const RANKABLE_SKILLING_TYPES = [...GATHERING_TYPES, ...PRODUCTION_TYPES]
 /**
  * The stat names (and buff types) the skilling math reads for an action type: the gear stats the speed, efficiency,
  * rare find, essence find and experience parsers read, gathering quantity for gathering, Processing for gathering
- * and Gourmet for production. A line feeding none of them does nothing for this action.
+ * and Gourmet for production, plus the skilling Special lines: Abundance (gathering), Epiphany (every action),
+ * Prosperity (Cheesesmithing, Crafting, Tailoring) and Invigoration (Cooking, Brewing). A line feeding none of them
+ * does nothing for this action. (Conservation is read by Alchemy and Enhancing, which are not ranked.)
  *
  * Kept by hand beside the parsers (equipment-parser.js, experience-parser.js, efficiency.js): a stat added there
  * must be added here too. `combat-sim/talisman-line-ranking.reads.test.js` checks every name listed here is read; it cannot
@@ -749,6 +754,12 @@ export function skillingStatsRead(actionTypeHrid) {
         read.add('/buff_types/processing');
     }
     if (PRODUCTION_TYPES.includes(actionTypeHrid)) read.add('/buff_types/gourmet');
+    if (GATHERING_TYPES.includes(actionTypeHrid)) read.add(SKILLING_SPECIAL_STATS.abundance);
+    if (PROSPERITY_ACTION_TYPES.includes(actionTypeHrid)) read.add(SKILLING_SPECIAL_STATS.prosperity);
+    if (INVIGORATION_ACTION_TYPES.includes(actionTypeHrid)) read.add(SKILLING_SPECIAL_STATS.invigoration);
+    if (GATHERING_TYPES.includes(actionTypeHrid) || PRODUCTION_TYPES.includes(actionTypeHrid)) {
+        read.add(SKILLING_SPECIAL_STATS.epiphany);
+    }
     return read;
 }
 
@@ -774,6 +785,32 @@ export function splitSkillingLines(lines, actionTypeHrid) {
     const other = [];
     for (const detail of lines) (lineFeeds(detail).some((n) => read.has(n)) ? applicable : other).push(detail);
     return { applicable, other };
+}
+
+/** Why a skilling Special line that matters in the game is left out of a ranking instead of valued */
+const NOT_RANKED_REASON = 'it saves catalysts and protection items in Alchemy and Enhancing, which are not ranked here';
+const NOT_MODELED_REASON = 'the math does not model this line yet';
+
+/**
+ * The skilling Special lines the ranking cannot value, with why, so they are listed as "not valued" instead of
+ * reading as a line that does nothing: Conservation (its savings are in Alchemy and Enhancing, which are not ranked)
+ * and any Special line whose stat no skilling math reads at all (a line a later game patch adds).
+ * @param {Array<Object>} other - The lines the action's math does not read
+ * @returns {{notValued: Array<{detail: Object, reason: string}>, other: Array<Object>}}
+ */
+export function splitUnvaluedSpecials(other) {
+    const known = new Set(Object.values(SKILLING_SPECIAL_STATS));
+    const notValued = [];
+    const rest = [];
+    for (const detail of other) {
+        const feeds = lineFeeds(detail);
+        if (!isSpecialLine(detail)) rest.push(detail);
+        else if (feeds.includes(SKILLING_SPECIAL_STATS.conservation))
+            notValued.push({ detail, reason: NOT_RANKED_REASON });
+        else if (!feeds.some((n) => known.has(n))) notValued.push({ detail, reason: NOT_MODELED_REASON });
+        else rest.push(detail);
+    }
+    return { notValued, other: rest };
 }
 
 /**
@@ -846,7 +883,9 @@ export async function runSkillingLineRanking(params, deps, options = {}) {
     const { maxGrade, linesPerTalisman } = talismanLimits(gameData.talismanInfo);
     const grade = Math.min(maxGrade, Math.max(1, Math.floor(requestedGrade) || maxGrade));
     const metric = rankingMetric(metricKey, SKILLING_RANKING_METRICS);
-    const { applicable, other } = splitSkillingLines(lines, action.type);
+    const split = splitSkillingLines(lines, action.type);
+    const { applicable } = split;
+    const { notValued, other } = splitUnvaluedSpecials(split.other);
     if (applicable.length === 0) {
         return { status: 'refused', reason: 'no_lines', message: 'No talisman line affects this action.' };
     }
@@ -861,6 +900,7 @@ export async function runSkillingLineRanking(params, deps, options = {}) {
         slots,
         belt,
         otherLines: other,
+        notValued,
         setMode: setOptions.mode,
         setGrade: setOptions.grade,
         budget,

@@ -120,6 +120,7 @@ export async function calculateGatheringProfit(actionHrid, { keepSellTax = false
         personalEfficiency,
         totalGathering,
         gatheringDetails,
+        abundance = 0,
         efficiencyBreakdown,
         efficiencyMultiplier,
     } = effCtx;
@@ -172,7 +173,9 @@ export async function calculateGatheringProfit(actionHrid, { keepSellTax = false
         const resolvedRawPrice = rawPriceMissing ? 0 : rawPrice;
         // Apply gathering quantity bonus to drop amounts
         const baseAvgAmount = (drop.minCount + drop.maxCount) / 2;
-        const avgAmountPerAction = baseAvgAmount * (1 + totalGathering);
+        // Abundance triples the gathered amount with its chance: (1 + 2 x chance) times in expectation. It scales the
+        // resources gathered (this drop table) only; essence and rare finds below are separate rolls and stay as is
+        const avgAmountPerAction = baseAvgAmount * (1 + totalGathering) * (1 + 2 * abundance);
 
         // Check if this item has a Processing Tea conversion (using cache for O(1) lookup)
         // Processing Tea only applies to: Milk→Cheese, Log→Lumber, Cotton/Flax/Bamboo/Cocoon/Radiant→Fabric
@@ -208,8 +211,15 @@ export async function calculateGatheringProfit(actionHrid, { keepSellTax = false
 
             // Processing rolls once on the whole completion, including efficiency repeats.
             // Average the floored conversion of each possible whole stack.
-            const processedPerCompletion =
-                processingBonus * expectedProcessedItems(drop, conversionRatio, totalGathering, efficiencyMultiplier);
+            // With Abundance the stack is tripled with its chance: the same count of whole conversions, worked out on
+            // the tripled stack, weighted by that chance
+            const stackConversions =
+                (1 - abundance) * expectedProcessedItems(drop, conversionRatio, totalGathering, efficiencyMultiplier) +
+                (abundance > 0
+                    ? abundance *
+                      expectedProcessedItems(drop, conversionRatio, 3 * (1 + totalGathering) - 1, efficiencyMultiplier)
+                    : 0);
+            const processedPerCompletion = processingBonus * stackConversions;
             processedPerAction = efficiencyMultiplier > 0 ? processedPerCompletion / efficiencyMultiplier : 0;
 
             const processedPrice = getCachedPrice(processedItemHrid, { context: 'profit', side: 'sell' });
@@ -306,6 +316,7 @@ export async function calculateGatheringProfit(actionHrid, { keepSellTax = false
         processingRevenueBonusPerAction, // Processing bonus per action
         gourmetRevenueBonus, // Gourmet bonus revenue per hour
         gourmetRevenueBonusPerAction, // Gourmet bonus revenue per action
+        abundance, // Talisman Abundance chance (triples the gathered amount), as a decimal
         gatheringQuantity: totalGathering, // Total gathering quantity bonus (as decimal) - renamed for display consistency
         hasMissingPrices,
         pricingMode: config.getSettingValue('profitCalc_pricingMode', 'hybrid'), // Pricing mode for display

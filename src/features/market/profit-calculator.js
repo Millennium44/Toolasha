@@ -12,6 +12,7 @@ import { getProductionChainTime } from '../enhancement/tooltip-enhancement.js';
 import { getProductionCostDetailed } from '../../utils/enhancement-pricing.js';
 import { getItemPrice, getItemPrices, getPricingMode } from '../../utils/market-data.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { PROSPERITY_ACTION_TYPES, SKILLING_SPECIAL_STATS, talismanStat } from '../../utils/talisman-bonuses.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import {
     calculateActionsPerHour,
@@ -321,8 +322,18 @@ class ProfitCalculator {
         // Total costs per hour (materials + teas + market tax)
         const totalCostPerHour = materialCostPerHour + totalTeaCostPerHour + marketTax;
 
-        // Profit per hour (revenue + bonus revenue - total costs)
-        const profitPerHour = revenuePerHour + efficiencyBoostedBonusRevenue - totalCostPerHour;
+        // Prosperity (talisman Special line, Cheesesmithing, Crafting and Tailoring): with its chance the action also
+        // pays coins equal to the vendor value of what it produced. Counted on the items the recipe makes (every
+        // efficiency repeat is an action; Gourmet copies are left out, the line's text says "produced by an action").
+        // Coins are not sold on the market, so no tax comes off, and they are not in revenuePerHour (which is taxed).
+        const prosperity = PROSPERITY_ACTION_TYPES.includes(actionDetails.type)
+            ? talismanStat(characterEquipment, SKILLING_SPECIAL_STATS.prosperity)
+            : 0;
+        const prosperityCoinsPerHour = prosperity * (Number(itemDetails.sellPrice) || 0) * itemsPerHour;
+
+        // Profit per hour (revenue + bonus revenue + Prosperity coins - total costs)
+        const profitPerHour =
+            revenuePerHour + efficiencyBoostedBonusRevenue + prosperityCoinsPerHour - totalCostPerHour;
 
         // Profit per item (for display)
         const profitPerItem = profitPerHour / totalItemsPerHour;
@@ -363,6 +374,8 @@ class ProfitCalculator {
             profitPerAction: calculateProfitPerAction(profitPerHour, actionsPerHour * efficiencyMultiplier), // Profit per action
             profitPerDay: calculateProfitPerDay(profitPerHour), // Profit per day
             bonusRevenue, // Bonus revenue from essences and rare finds
+            prosperity, // Talisman Prosperity chance (coins equal to the vendor value of the output)
+            prosperityCoinsPerHour, // Untaxed coins per hour from Prosperity (already inside profitPerHour)
             hasMissingPrices,
             totalEfficiency, // Total efficiency percentage
             levelEfficiency, // Level advantage efficiency

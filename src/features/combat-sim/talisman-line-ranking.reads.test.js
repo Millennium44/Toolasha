@@ -5,7 +5,19 @@
  */
 import { describe, test, expect, vi } from 'vitest';
 
-vi.mock('../../core/data-manager.js', () => ({ default: {} }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getSkills: () => [],
+        getInitClientData: () => ({ itemDetailMap: {} }),
+        getPersonalBuffFlatBoost: () => 0,
+        getAchievementBuffFlatBoost: () => 0,
+        getHouseRooms: () => new Map(),
+        getHouseRoomLevel: () => 0,
+        getCommunityBuffLevel: () => 0,
+        getMooPassBuffs: () => [],
+        characterData: {},
+    },
+}));
 vi.mock('../../utils/action-context.js', () => ({
     resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
 }));
@@ -14,6 +26,7 @@ const { skillingStatsRead } = await import('./talisman-line-ranking.js');
 const { attachTalismanBonuses } = await import('../../utils/talisman-bonuses.js');
 const parser = await import('../../utils/equipment-parser.js');
 const experience = await import('../../utils/experience-parser.js');
+const { getActionEfficiencyContext } = await import('../../utils/efficiency.js');
 
 const BELT = '/item_locations/belt';
 const ITEMS = { '/items/large_talisman_belt': { equipmentDetail: { type: '/equipment_types/belt' } } };
@@ -36,7 +49,18 @@ function readAll(type, name) {
         parser.parseEquipmentTalismanBuff(equipment, '/buff_types/gourmet') +
         parser.parseEquipmentTalismanBuff(equipment, '/buff_types/processing') +
         experience.parseEquipmentWisdom(equipment, ITEMS).total +
-        experience.parseCharmExperience(equipment, `/skills/${skill}`, ITEMS).total
+        experience.parseCharmExperience(equipment, `/skills/${skill}`, ITEMS).total +
+        // The skilling Special lines: Epiphany in the XP multiplier, Abundance and Invigoration in the efficiency
+        // context. Prosperity is read in the production profit calculator (profit-calculator.prosperity.test.js)
+        experience.calculateExperienceMultiplier(`/skills/${skill}`, type, { equipment, drinks: [] }).epiphany +
+        getActionEfficiencyContext(
+            { type, baseTimeCost: 6e9, levelRequirement: { skillHrid: `/skills/${skill}`, level: 1 } },
+            { actionContext: { equipment, drinks: [] } }
+        ).abundance +
+        getActionEfficiencyContext(
+            { type, baseTimeCost: 6e9, levelRequirement: { skillHrid: `/skills/${skill}`, level: 1 } },
+            { actionContext: { equipment, drinks: [] } }
+        ).invigoration
     );
 }
 
@@ -53,6 +77,7 @@ describe('skillingStatsRead names only stats the skilling math reads', () => {
     ]) {
         test(type, () => {
             for (const name of skillingStatsRead(type)) {
+                if (name === 'prosperity') continue;
                 expect(readAll(type, name), name).toBeGreaterThan(0);
             }
         });
