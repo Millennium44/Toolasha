@@ -19,7 +19,7 @@ import { calculateGatheringProfit } from './gathering-profit.js';
 import { calculateProductionProfit } from './production-profit.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
-import { getDrinkConcentration, parseArtisanBonus } from '../../utils/tea-parser.js';
+import { artisanBonusFor } from '../../utils/artisan-bonus.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { onActionTile, resolveActionTile } from '../../utils/action-panel-helper.js';
 import { affordableActions } from '../../utils/material-calculator.js';
@@ -403,8 +403,13 @@ class MaxProduceable {
         // buffed, matching the Missing Materials panel.
         const itemDetailMap = gameData?.itemDetailMap || dataManager.getInitClientData()?.itemDetailMap || {};
         const { equipment, drinks: activeDrinks } = resolveActionContext(actionDetails.type);
-        const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-        const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
+        // Invigoration (talisman): the reduction is the weighted mix of its two outcomes
+        const artisanBonus = artisanBonusFor({
+            equipment,
+            drinks: activeDrinks,
+            itemDetailMap,
+            actionType: actionDetails.type,
+        });
 
         // Calculate max crafts per input (using O(1) Map lookup instead of O(n) array find)
         let upgradeAccountedFor = false;

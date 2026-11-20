@@ -10,7 +10,12 @@ import { calculateEnhancement } from './enhancement-calculator.js';
 import { resolveActionContext } from './action-context.js';
 import { parseItemHash } from './item-hash.js';
 import { effectiveInventory, INVENTORY_LOCATION, reservedElsewhere, shortfallNote } from './inventory-reservations.js';
-import { artisanInputTotal as calculateTotalRequired, getArtisanMaterialMode } from './artisan-material-mode.js';
+import {
+    artisanInputTotal as calculateTotalRequired,
+    getArtisanMaterialMode,
+    usesWorstCaseRounding,
+} from './artisan-material-mode.js';
+import { artisanBonusFor } from './artisan-bonus.js';
 
 export { ARTISAN_MATERIAL_MODE } from './artisan-material-mode.js';
 
@@ -111,7 +116,9 @@ export function calculateQueuedMaterialsForAction(actionHrid = null) {
         }
 
         // Calculate artisan bonus for this action type
-        const artisanBonus = calculateArtisanBonus(actionDetails);
+        const artisanBonus = calculateArtisanBonus(actionDetails, {
+            worstCase: usesWorstCaseRounding(artisanMode, actionCount),
+        });
 
         // Process regular input items
         if (actionDetails.inputItems && actionDetails.inputItems.length > 0) {
@@ -322,7 +329,9 @@ export function calculateMaterialRequirements(
     const artisanMode = getArtisanMaterialMode();
 
     // Calculate artisan bonus (material reduction from Artisan Tea)
-    const artisanBonus = calculateArtisanBonus(actionDetails);
+    const artisanBonus = calculateArtisanBonus(actionDetails, {
+        worstCase: usesWorstCaseRounding(artisanMode, numActions),
+    });
 
     // Get queued materials if accounting for queue
     // Pass null to get materials for ALL queued actions (not just matching actionHrid)
@@ -431,10 +440,13 @@ export function calculateMaterialRequirements(
 
 /**
  * Calculate artisan bonus (material reduction) for an action
+ * With Invigoration (talisman, cooking and brewing) the reduction is the expected one over its two outcomes; a caller
+ * that bills every craft rounded up asks for `worstCase` and gets the outcome that saves least.
  * @param {Object} actionDetails - Action details from game data
+ * @param {{worstCase?: boolean}} [options]
  * @returns {number} Artisan bonus (0-1 decimal, e.g., 0.1129 for 11.29% reduction)
  */
-export function calculateArtisanBonus(actionDetails) {
+export function calculateArtisanBonus(actionDetails, { worstCase = false } = {}) {
     try {
         const gameData = dataManager.getInitClientData();
         if (!gameData) {
@@ -443,9 +455,14 @@ export function calculateArtisanBonus(actionDetails) {
 
         const { equipment, drinks: activeDrinks } = resolveActionContext(actionDetails.type);
         const itemDetailMap = gameData.itemDetailMap || {};
-        const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
 
-        return parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
+        return artisanBonusFor({
+            equipment,
+            drinks: activeDrinks,
+            itemDetailMap,
+            actionType: actionDetails.type,
+            outcome: worstCase ? 'normal' : undefined,
+        });
     } catch (error) {
         console.error('[Material Calculator] Error calculating artisan bonus:', error);
         return 0;
