@@ -28,6 +28,11 @@
 
 import { priceIncrement } from './market-values.js';
 
+/** Whether a row carries a volume reading at all (null, '' and missing are "no reading", not 0) */
+function hasVolumeReading(row) {
+    return row?.v !== null && row?.v !== undefined && row?.v !== '' && Number.isFinite(Number(row.v));
+}
+
 /**
  * Rows whose `time` falls within the last `days` days of `now`.
  * @param {Array<{time: number}>} rows - Rows, unix-seconds `time`
@@ -195,7 +200,8 @@ export function splitBuySellVolume(rows) {
  * @typedef {Object} MarketWindowStats
  * @property {boolean} hasData - Whether any row fell in this window at all
  * @property {boolean} hasTrades - Whether any of those rows carry a real trade price
- * @property {number} volume - Total traded volume (Σv over every row)
+ * @property {number|null} volume - Total traded volume (Σv over every row); null only for merged volume
+ *   with no reading in the window
  * @property {number} avgPrice - Volume-weighted average of priced rows, or the
  *   ask/bid midpoint when `hasTrades` is false and both sides are quoted
  * @property {number} medianPrice - Volume-weighted median of priced rows, or the
@@ -223,11 +229,16 @@ export function splitBuySellVolume(rows) {
  * @param {number} [enhancementLevel=0] - Enhancement level, for snapping min/max to its price tiers
  * @returns {MarketWindowStats}
  */
-export function computeMarketStats(rows, enhancementLevel = 0) {
+export function computeMarketStats(rows, enhancementLevel = 0, { volumeMerged = false } = {}) {
     const safeRows = Array.isArray(rows) ? rows : [];
     const hasData = safeRows.length > 0;
 
-    const volume = safeRows.reduce((sum, row) => sum + (Number(row.v) || 0), 0);
+    // Merged volume (mooket I's prices with mooket II's volume): a row's `v` is null where mooket II had no
+    // reading for that hour, which is "no reading", not zero trades. Only rows with a reading count, and a
+    // window with none has `volume: null` (shown as no reading), never 0.
+    const volumeRows = volumeMerged ? safeRows.filter((row) => hasVolumeReading(row)) : safeRows;
+    const volume =
+        volumeMerged && volumeRows.length === 0 ? null : volumeRows.reduce((sum, row) => sum + (Number(row.v) || 0), 0);
 
     // See the module doc comment: unlike the source, both the average and the
     // median exclude non-positive prices from numerator and denominator alike.
@@ -242,7 +253,9 @@ export function computeMarketStats(rows, enhancementLevel = 0) {
     // since `anyVolume` is true and those hours simply weigh 0.
     const pricedRows = safeRows.filter((row) => row.p > 0);
     const hasTrades = pricedRows.length > 0;
-    const anyVolume = pricedRows.some((row) => row.v > 0);
+    // Merged volume sits on one row per hour, so weighting prices by it would drop the rest of mooket I's
+    // rows: prices stay uniform, as for plain mooket I.
+    const anyVolume = !volumeMerged && pricedRows.some((row) => row.v > 0);
     const weightFn = (row) => (anyVolume ? Math.max(0, Number(row.v) || 0) : 1);
 
     const totalWeight = pricedRows.reduce((sum, row) => sum + weightFn(row), 0);
@@ -290,10 +303,10 @@ export const STAT_WINDOWS_DAYS = [1, 3, 5];
  * @param {number} [enhancementLevel=0] - Enhancement level of the item the rows are for
  * @returns {{days: number, stats: MarketWindowStats}[]}
  */
-export function computeAllWindows(rows, now = Date.now(), enhancementLevel = 0) {
+export function computeAllWindows(rows, now = Date.now(), enhancementLevel = 0, options = {}) {
     return STAT_WINDOWS_DAYS.map((days) => ({
         days,
-        stats: computeMarketStats(filterWindow(rows, days, now), enhancementLevel),
+        stats: computeMarketStats(filterWindow(rows, days, now), enhancementLevel, options),
     }));
 }
 

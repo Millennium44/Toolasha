@@ -290,3 +290,49 @@ describe('snapPriceTier with off-grid (pre-patch) prices', () => {
         expect(snapPriceTier(44700, 'up')).toBe(44800);
     });
 });
+
+describe('computeAllWindows with merged volume (mooket I prices, mooket II volume)', () => {
+    const NOW = 1_800_000_000_000;
+    const at = (hoursAgo) => Math.floor(NOW / 1000) - hoursAgo * 3600;
+    // Mooket I rows with different prices, volume attached to one row per hour: a reading only in an old hour
+    // (4 days back), and null rows (no reading) inside the 1d and 3d windows
+    const merged = [
+        { a: 110, b: 90, p: 100, v: null, time: at(2) },
+        { a: 310, b: 290, p: 300, v: null, time: at(3) },
+        { a: 210, b: 190, p: 200, v: null, time: at(40) },
+        { a: 120, b: 100, p: 110, v: 9, time: at(96) },
+    ];
+    const plain = merged.map((row) => ({ ...row, v: 0 }));
+    const options = { volumeMerged: true };
+
+    test('a window with no reading has null volume, never 0; one with a reading sums only readings', () => {
+        const [d1, d3, d5] = computeAllWindows(merged, NOW, 0, options).map((entry) => entry.stats);
+        expect(d1.volume).toBeNull();
+        expect(d3.volume).toBeNull();
+        expect(d5.volume).toBe(9);
+        expect(d1.hasData).toBe(true);
+    });
+
+    test('a null reading inside a window next to a real one is skipped, not counted as 0', () => {
+        const rows = [
+            { a: 2, b: 1, p: 2, v: 5, time: at(1) },
+            { a: 2, b: 1, p: 2, v: null, time: at(2) },
+            { a: 2, b: 1, p: 2, v: 0, time: at(3) },
+        ];
+        expect(computeAllWindows(rows, NOW, 0, options)[0].stats.volume).toBe(5);
+    });
+
+    test('Average and Median are the same as plain mooket I, over every priced row', () => {
+        const mergedStats = computeAllWindows(merged, NOW, 0, options).map((entry) => entry.stats);
+        const plainStats = computeAllWindows(plain, NOW, 0).map((entry) => entry.stats);
+        mergedStats.forEach((stats, index) => {
+            expect(stats.avgPrice).toBe(plainStats[index].avgPrice);
+            expect(stats.medianPrice).toBe(plainStats[index].medianPrice);
+        });
+        expect(mergedStats[0].avgPrice).toBe(200); // (100 + 300) / 2, not only the rows that carry volume
+    });
+
+    test('without the option nothing changes: a null v still sums as 0', () => {
+        expect(computeAllWindows(merged, NOW, 0)[0].stats.volume).toBe(0);
+    });
+});

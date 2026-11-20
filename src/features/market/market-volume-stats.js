@@ -471,7 +471,9 @@ class MarketVolumeStats {
                 return;
             }
 
-            const windows = computeAllWindows(rows, Date.now(), enhancementLevel);
+            const windows = computeAllWindows(rows, Date.now(), enhancementLevel, {
+                volumeMerged: Boolean(source.volumeFrom),
+            });
             // Cached so a column-visibility toggle can redraw without a refetch
             this.lastWindows = windows;
             // Merged volume that did not come back is "no volume", not a column of zeros
@@ -638,6 +640,7 @@ class MarketVolumeStats {
         const rowNote = ({ days, stats }) => {
             if (!stats.hasData || stats.hasTrades) return null;
             const span = days === 1 ? 'the last day' : `the last ${days} days`;
+            if (stats.volume === null) return `No volume reading in ${span} — prices are from the ask/bid.`;
             return stats.volume > 0
                 ? `Trade prices unavailable in ${span} — average from the ask/bid.`
                 : `No trades in ${span} — figures are from the ask/bid only.`;
