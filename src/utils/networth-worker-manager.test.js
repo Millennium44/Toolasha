@@ -149,6 +149,22 @@ describe('networth enhancement cost under Blessed Tea', () => {
     });
 });
 
+describe('networth enhancement cost with Conservation', () => {
+    const bench = { enhancingLevel: 60, toolBonus: 10, blessedTeaBonus: 0, guzzlingBonus: 1, teas: { blessed: false } };
+
+    test('a worn Conservation keeps protections out of the bill, so the piece costs less', async () => {
+        const plain = await valueWith(bench);
+        const none = await valueWith({ ...bench, conservation: 0 });
+        const kept = await valueWith({ ...bench, conservation: 0.2 });
+        const keptAll = await valueWith({ ...bench, conservation: 1 });
+
+        terminateItemValueWorkerPool();
+        expect(none).toBe(plain);
+        expect(kept).toBeLessThan(plain);
+        expect(keptAll).toBeLessThan(kept);
+    });
+});
+
 describe('networth enhancement materials with no market quote', () => {
     const MAT = '/items/rare_mat';
     const params = { enhancingLevel: 60, toolBonus: 10, blessedTeaBonus: 0, guzzlingBonus: 1 };

@@ -384,6 +384,10 @@ function calculateStrategyRealCost(
             const failureChance = markov.get([i, i - 1]);
             protections += timesAtLevel * failureChance;
         }
+        // Conservation (talisman Special) keeps a protection item a failure would consume; the options priced
+        // below are never a Philosopher's Mirror. Inline clamp: this script cannot import the main-thread helper
+        const keptChance = Number(enhancementParams.conservation) > 0 ? Math.min(1, Number(enhancementParams.conservation)) : 0;
+        protections *= 1 - keptChance;
     }
 
     // The cheapest protection that has a price: the item itself, Mirror of Protection and the item's

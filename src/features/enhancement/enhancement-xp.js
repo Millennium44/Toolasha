@@ -351,6 +351,8 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
             guzzlingBonus: params.guzzlingBonus,
             blessedTeaBonus: params.blessedTeaBonus,
             perActionTimeOverride: perActionTime,
+            // Conservation keeps a protection item. The session counts protections other than Mirrors, so it applies as is
+            conservation: params.conservation,
         };
 
         // Calculate predictions (Markov chain for attempts, protections, success rates)

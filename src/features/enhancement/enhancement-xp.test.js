@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
     personal: {},
     achievement: {},
     manualOverrides: [],
+    conservation: 0,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -38,6 +39,7 @@ vi.mock('../../utils/enhancement-config.js', () => ({
         guzzlingBonus: 1,
         teas: { blessed: false },
         manualOverrides: state.manualOverrides,
+        conservation: state.conservation,
     }),
     describeParamsSource: () => null,
 }));
@@ -47,6 +49,7 @@ import { calculateEnhancementPredictions, calculateSuccessXP, getEnhancingAction
 const enhancing = (buffs) => ({ '/action_types/enhancing': buffs });
 
 beforeEach(() => {
+    state.conservation = 0;
     state.manualOverrides = [];
     state.personal = {};
     state.achievement = {};
@@ -114,5 +117,19 @@ describe('XP for a hypothetical bench', () => {
         expect(calculateSuccessXP(2, '/items/test_sword', 0)).toBe(Math.floor(1.4 * 3 * 60));
         // Session tracking passes nothing and reads the character
         expect(calculateSuccessXP(2, '/items/test_sword')).toBe(Math.floor(1.4 * 1.27 * 3 * 60));
+    });
+});
+
+describe('calculateEnhancementPredictions with Conservation', () => {
+    test('predicted protections (total and per level) are net of the chance to keep one; attempts are not', () => {
+        const plain = calculateEnhancementPredictions('/items/test_sword', 0, 10, 4);
+        state.conservation = 0.1;
+        const kept = calculateEnhancementPredictions('/items/test_sword', 0, 10, 4);
+
+        expect(plain.expectedProtectionsExact).toBeGreaterThan(0);
+        expect(kept.expectedProtectionsExact).toBeCloseTo(plain.expectedProtectionsExact * 0.9, 9);
+        expect(kept.expectedAttemptsExact).toBe(plain.expectedAttemptsExact);
+        expect(kept.levelExpectations[8][1]).toBeCloseTo(plain.levelExpectations[8][1] * 0.9, 9);
+        expect(kept.levelExpectations[8][0]).toBe(plain.levelExpectations[8][0]);
     });
 });
