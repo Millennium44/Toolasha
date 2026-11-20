@@ -151,6 +151,35 @@ export function effectiveStates(n, m, highestMin, maxGrade) {
     return { G, states: countStates(n, m, G) };
 }
 
+/**
+ * The wanted slots (1-based labels) a Focus reroll can usefully boost from a state with this locked line. A focused
+ * reroll redraws the type of every unlocked line (grades kept), so a held unlocked line can be lost and never counts:
+ * only the locked line survives it. A slot is left out when it is the locked line's own, or when it is optional and the
+ * locked line is itself a satisfied optional line that already fills the optional part of K (K less the required
+ * lines is at most one): no optional type can then advance the goal.
+ * @param {Object} problem
+ * @param {number} lockLabel - Wanted slot of the locked line, 0 for a junk line, -1 for no lock
+ * @param {number} lockGrade
+ * @returns {Set<number>}
+ */
+export function focusLabels(problem, lockLabel, lockGrade) {
+    const { wanted } = problem;
+    const need = problem.need ?? wanted.length;
+    const requiredCount = wanted.filter((w) => w.required).length;
+    const optionalFilled =
+        lockLabel > 0 &&
+        !wanted[lockLabel - 1].required &&
+        lockGrade >= wanted[lockLabel - 1].minGrade &&
+        need - requiredCount <= 1;
+    const labels = new Set();
+    wanted.forEach((w, i) => {
+        if (!w.focusable || i + 1 === lockLabel) return;
+        if (optionalFilled && !w.required) return;
+        labels.add(i + 1);
+    });
+    return labels;
+}
+
 function choose(n, k) {
     if (k < 0 || k > n) return 0;
     let result = 1;
@@ -599,7 +628,7 @@ export function* solveSteps(problem, options = {}) {
         for (let j = 1; j <= m; j++) {
             if (mask & (1 << j)) continue;
             const w = wanted[j - 1];
-            const weight = w.weight * (focus && w.focusable ? focusMult : 1);
+            const weight = w.weight * (focus && w.focusable && focus.has(j) ? focusMult : 1);
             options.push([j, weight]);
             total += weight;
         }
@@ -722,8 +751,8 @@ export function* solveSteps(problem, options = {}) {
                 const u = stCodes[s].length;
                 if (u < orb.minUnlocked) continue;
                 const lock = stLock[s];
-                const open = wanted.some((w, i) => w.focusable && !(lockMask(lock) & (1 << (i + 1))));
-                if (!open) continue;
+                const boosted = focusLabels(problem, lock >= 0 ? labelOf(lock) : -1, lock >= 0 ? gradeOf(lock) : 0);
+                if (boosted.size === 0) continue;
                 const grades = stCodes[s].map(gradeOf).sort((a, b) => a - b);
                 const key = `${lock}|${grades.join(',')}`;
                 if (!groups.has(key)) groups.set(key, { lock, grades, members: [] });
@@ -732,7 +761,10 @@ export function* solveSteps(problem, options = {}) {
             let groupCount = 0;
             for (const { lock, grades, members } of groups.values()) {
                 if (++groupCount % 64 === 0) yield;
-                const draws = yield* drawLines(grades.length, lockMask(lock), lockJunk(lock), { grades, focus: true });
+                const draws = yield* drawLines(grades.length, lockMask(lock), lockJunk(lock), {
+                    grades,
+                    focus: focusLabels(problem, lock >= 0 ? labelOf(lock) : -1, lock >= 0 ? gradeOf(lock) : 0),
+                });
                 const id = yield* addNode(
                     0,
                     o,
@@ -1272,9 +1304,13 @@ export function advise(solution, talisman, targets, need) {
         const orb = orbs[solution.actOrb[index]];
         const move = { kind: 'orb', itemHrid: orb.hrid, mode: orb.mode };
         if (orb.mode === MODES.typesOnly) {
-            move.focusHrids = wanted
-                .filter((w) => w.focusable && !(lockIndex >= 0 && modifiers[lockIndex].hrid === w.hrid))
-                .map((w) => w.hrid);
+            const lockCode = lockIndex >= 0 ? lineCodes[lockIndex] : -1;
+            const boosted = focusLabels(
+                solution.problem,
+                lockCode >= 0 ? solution.labelOf(lockCode) : -1,
+                lockCode >= 0 ? solution.gradeOf(lockCode) : 0
+            );
+            move.focusHrids = wanted.filter((_, i) => boosted.has(i + 1)).map((w) => w.hrid);
         }
         // A line that meets its slot is rerolled unlocked only when locking it is shown to cost more
         // How often a roll is worth keeping; the line is named only when every keeper carries one the talisman lacks
