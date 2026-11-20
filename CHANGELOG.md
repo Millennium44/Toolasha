@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Talisman lists show the game icon and marker
+
+Improve mine, the core advisor and the loadout talisman check now show each talisman's icon and the marker you set in the game, so two talismans of the same type are easy to tell apart.
+
 ### Skilling talisman Specials valued
 
 The five new skilling Special lines (Abundance, Conservation, Epiphany, Invigoration, Prosperity) now count in the Skilling Optimizer's talisman ranking and in gathering, production and alchemy profit, XP/hr and action times where they apply; Conservation is counted for alchemy catalysts only so far.
