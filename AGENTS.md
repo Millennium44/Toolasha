@@ -212,6 +212,9 @@ Every brief to a sub-agent carries these lines:
   open items. Put the full enumeration, consumer sweep and test list in the commit bodies, which the integrator
   can read when it needs them; do not write report files (Claude's harness refuses them for sub-agents). The
   integrating session re-reads every report on every later turn, so a 200-line report costs it many times over.
+- **Hand back a clean tree.** End with `git status --short` printing nothing and the branch's head hash. A fix left
+  uncommitted is not in the hash the integrator lands: on 2026-11-19 an "amended" test sat in the working tree
+  and the landing run failed on the commit without it.
 - **A new dimension: list every reader first.** When a value gains a variant, a side or a source (a protection
   choice, a held vs bought copy, a capped vs uncapped pick), list every place that reads it before building:
   costs, savings, tooltips, each table cell, caps, sort and export. In the hand-back, show for each reader which
