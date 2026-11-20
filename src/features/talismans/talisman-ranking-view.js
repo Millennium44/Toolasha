@@ -1785,7 +1785,7 @@ export class TalismanRankingSectionBase {
                     'It is a lottery: the expected gain is an average over draws, and the Useful chance and Best outcome show the spread. ' +
                     'What the extra line does to the orbs the other lines need later is not included. ' +
                     (result.notValued
-                        ? `${result.notValued} lines were not valued and are left out (not counted as 0).`
+                        ? `${result.notValued} lines were not valued: the ranking leaves them out, but this core check counts a draw of one as 0.`
                         : '')
             )}</div>`
         );

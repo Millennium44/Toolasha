@@ -82,6 +82,25 @@ function findLabel(root, startsWith) {
 }
 
 describe('buildProductionPerActionBreakdown', () => {
+    test('Prosperity coins add to the net per action, untaxed, with their own line', () => {
+        const plain = buildProductionPerActionBreakdown(profitData());
+        const data = profitData();
+        data.prosperityCoinsPerAction = 12;
+        data.prosperityCoinsPerHour = 12 * 300 * 2.5;
+        const section = buildProductionPerActionBreakdown(data);
+        const net = (root) =>
+            perActionValue(
+                [...root.querySelectorAll('div')].find((el) => el.textContent.startsWith('Net Profit:')).textContent
+            );
+
+        expect(net(section) - net(plain)).toBeCloseTo(12, 1);
+        expect(perActionValue(findLabel(section, 'Market Tax:').textContent)).toBe(
+            perActionValue(findLabel(plain, 'Market Tax:').textContent)
+        );
+        expect(section.textContent).toContain('Prosperity coins (untaxed): 12.00/action');
+        expect(plain.textContent).not.toContain('Prosperity coins');
+    });
+
     test('already-net container bonuses reduce the shown production tax once', () => {
         const data = profitData();
         data.bonusRevenue.taxExemptBonusRevenue = 1500;

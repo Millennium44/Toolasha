@@ -1312,6 +1312,7 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
 
     // Assemble Detailed Breakdown (WITHOUT net profit - that goes in top level)
     detailsContent.appendChild(revenueDiv);
+    appendProsperityLine(detailsContent, profitData, `${formatLargeNumber(profitData.prosperityCoinsPerHour || 0)}/hr`);
     detailsContent.appendChild(costsDiv);
 
     if (modifierSubSections.length > 0) {
@@ -1452,6 +1453,7 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
                 totalTeaCostPerHour: profitData.totalTeaCostPerHour,
                 efficiencyMultiplier: profitData.efficiencyMultiplier || 1,
                 excludeSellTax: profitData.excludeSellTax,
+                prosperityCoinsPerAction: profitData.prosperityCoinsPerAction || 0,
             });
 
         if (inputField) {
@@ -1535,6 +1537,20 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
  * @param {number} value - The per-action value
  * @returns {string} Formatted value
  */
+/**
+ * Talisman Prosperity coins as their own line beside Revenue: untaxed coins, not market revenue. Nothing at 0.
+ * @param {HTMLElement} container
+ * @param {Object} profitData - Production profit data
+ * @param {string} amountText - The coins, formatted for the view's unit
+ */
+function appendProsperityLine(container, profitData, amountText) {
+    if (!(profitData.prosperityCoinsPerHour > 0)) return;
+    const line = document.createElement('div');
+    line.style.cssText = 'font-weight: 500; margin-bottom: 4px;';
+    line.textContent = `Prosperity coins (untaxed): ${amountText}`;
+    container.appendChild(line);
+}
+
 function formatPerAction(value) {
     const abs = Math.abs(value);
     if (abs >= 1000) return formatLargeNumber(Math.round(value));
@@ -1882,7 +1898,8 @@ export function buildProductionPerActionBreakdown(profitData) {
     const completedActionsPerHour = actionsPerHour * (profitData.efficiencyMultiplier ?? 1);
     const teaCostPerAction = profitData.totalTeaCostPerHour / completedActionsPerHour;
     const costsPerAction = materialCostPerAction + teaCostPerAction + marketTaxPerAction;
-    const profitPerAction = revenuePerAction - costsPerAction;
+    // Prosperity coins are paid, not sold: untaxed, and not part of the revenue the tax is charged on
+    const profitPerAction = revenuePerAction + (profitData.prosperityCoinsPerAction || 0) - costsPerAction;
 
     const detailsContent = document.createElement('div');
 
@@ -2107,6 +2124,11 @@ export function buildProductionPerActionBreakdown(profitData) {
 
     // Assemble
     detailsContent.appendChild(revenueDiv);
+    appendProsperityLine(
+        detailsContent,
+        profitData,
+        `${formatPerAction(profitData.prosperityCoinsPerAction || 0)}/action`
+    );
     detailsContent.appendChild(costsDiv);
 
     // Top-level content with net profit
@@ -2485,6 +2507,7 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
         totalTeaCostPerHour: profitData.totalTeaCostPerHour,
         efficiencyMultiplier,
         excludeSellTax: profitData.excludeSellTax,
+        prosperityCoinsPerAction: profitData.prosperityCoinsPerAction || 0,
     });
     const totalRevenue = Math.round(totals.totalRevenue);
     const totalMarketTax = Math.round(totals.totalMarketTax);
@@ -2725,6 +2748,7 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
 
     // Assemble breakdown
     detailsContent.appendChild(revenueDiv);
+    appendProsperityLine(detailsContent, profitData, formatLargeNumber(Math.round(totals.totalProsperityCoins)));
     detailsContent.appendChild(costsDiv);
 
     // Add Net Profit at top
