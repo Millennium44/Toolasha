@@ -80,7 +80,7 @@ describe('targets that cannot be solved', () => {
         expect(problemFor([{ hrid: M('armor'), minGrade: 2 }], 2, { weights: {} }).status).toBe('noOrbs');
     });
 
-    test('one type wanted twice (a talisman never holds a type twice)', () => {
+    test('one type wanted twice counts once (a talisman never holds a type twice)', () => {
         const result = problemFor(
             [
                 { hrid: M('armor'), minGrade: 2 },
@@ -88,7 +88,8 @@ describe('targets that cannot be solved', () => {
             ],
             4
         );
-        expect(result).toMatchObject({ status: 'impossible', reason: 'duplicate' });
+        expect(result.status).toBe('ok');
+        expect(result.problem).toMatchObject({ m: 1, need: 1 });
     });
 
     test('a type outside the pool, a grade above the cap, more lines than the talisman has', () => {
