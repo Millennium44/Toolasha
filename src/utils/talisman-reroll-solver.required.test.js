@@ -276,3 +276,45 @@ describe('the state ceiling', () => {
         expect(yields).toBe(150);
     });
 });
+
+describe('optional lines when the required ones fill K', () => {
+    const ones = Object.fromEntries(Object.keys(VALUE_WEIGHTS).map((hrid) => [hrid, 1]));
+    const withOnes = (targets, need, lineCount) =>
+        buildProblem({
+            talismanTypeHrid: COMBAT,
+            lineCount,
+            targets,
+            need,
+            info: TALISMAN_INFO,
+            modifierDetailMap: REROLL_MODIFIERS,
+            weights: ones,
+        });
+    const both = [want('armor', 6, true), want('melee_evasion', 6)];
+    const requiredOnly = [want('armor', 6, true)];
+    const held = talismanRow(1, [line('smite', 6)]);
+
+    test('one-line talisman, required Armor + optional Melee Evasion, K 1: the solve is the required-only solve', () => {
+        const built = withOnes(both, 1, 1);
+        expect(built.status).toBe('ok');
+        expect(built.problem.wanted.map((w) => w.hrid)).toEqual([M('armor')]);
+        const withOptional = advise(solve(built.problem), held, both, 1);
+        const alone = advise(solve(withOnes(requiredOnly, 1, 1).problem), held, requiredOnly, 1);
+        expect(withOptional.value).toBeCloseTo(alone.value, 9);
+        expect(withOptional.move).toEqual(alone.move);
+        expect(withOptional.move.focusHrids ?? []).not.toContain(M('melee_evasion'));
+        expect(withOptional.move.itemHrid).toBe('/items/focus_orb');
+        expect(withOptional.counts).toEqual(alone.counts);
+    });
+
+    test('K above the required count keeps the optional lines in the problem', () => {
+        const built = withOnes(both, 2, 2);
+        expect(built.problem.wanted.map((w) => w.hrid)).toEqual([M('armor'), M('melee_evasion')]);
+        expect(built.problem.need).toBe(2);
+        // No required lines: any-K keeps its whole pool
+        expect(withOnes([want('armor', 6), want('melee_evasion', 6)], 1, 2).problem.m).toBe(2);
+    });
+
+    test('the player-set target is not edited: normalizeTarget still returns every row', () => {
+        expect(normalizeTarget(both, 1).pool).toHaveLength(2);
+    });
+});

@@ -282,7 +282,15 @@ export function buildProblem({
     if (!info || !modifierDetailMap) return { status: 'noData' };
     const n = Math.floor(lineCount) || 0;
     if (n <= 0) return { status: 'empty' };
-    const { pool: wantedList, need } = normalizeTarget(targets, needInput);
+    const normalized = normalizeTarget(targets, needInput);
+    const { need } = normalized;
+    // When the required lines already fill K, an optional line can never help: leave it out of the solve (it would
+    // otherwise raise its draw weight, join the Focus picks and inflate the cost). The target the player set is
+    // untouched; only the problem is built from the required lines.
+    const wantedList =
+        need > 0 && need <= normalized.requiredCount
+            ? normalized.pool.filter((t) => t.required === true)
+            : normalized.pool;
     if (wantedList.length === 0) return { status: 'noTarget' };
     const maxGrade = Number(info.maxGrade) || 6;
 
