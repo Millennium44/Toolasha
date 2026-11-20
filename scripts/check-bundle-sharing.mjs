@@ -128,6 +128,10 @@ const ALLOWLIST = new Map([
         'Stateless orb weighing over prices read on each call; no module state to share.',
     ],
     [
+        'src/utils/talisman-orb-recipe-cost.js',
+        'Its only state is an index of actions by output, memoized on the actionDetailMap object it was built from; every copy rebuilds the same index from the same map, so copies cannot disagree.',
+    ],
+    [
         'src/utils/html-escape.js',
         // A tiny pure string transformation, with no imports, shared state, or DOM dependencies.
         'stateless HTML escaping; no runtime identity or state to share',
