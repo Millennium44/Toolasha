@@ -1,5 +1,9 @@
 import { describe, test, expect } from 'vitest';
-import { processingConversions } from './gathering-processing.js';
+import {
+    expectedProcessedItems,
+    expectedProcessedItemsWithAbundance,
+    processingConversions,
+} from './gathering-processing.js';
 
 describe('processingConversions', () => {
     test('maps each raw resource to its processed material and the raw count one takes', () => {
@@ -33,5 +37,26 @@ describe('processingConversions', () => {
 
     test('no game data is no conversions', () => {
         expect(processingConversions(null).size).toBe(0);
+    });
+});
+
+describe('expectedProcessedItemsWithAbundance', () => {
+    const drop = { itemHrid: '/items/milk', dropRate: 1, minCount: 2, maxCount: 6 };
+
+    test('no chance is exactly the plain expectation', () => {
+        expect(expectedProcessedItemsWithAbundance(drop, 2, 0.2, 1.3, 0)).toBe(
+            expectedProcessedItems(drop, 2, 0.2, 1.3)
+        );
+        expect(expectedProcessedItemsWithAbundance(drop, 2, 0.2, 1.3)).toBe(expectedProcessedItems(drop, 2, 0.2, 1.3));
+    });
+
+    test('weights the plain stack and the tripled one (after the gathering quantity) by the chance', () => {
+        const plain = expectedProcessedItems(drop, 2, 0.2, 1.3);
+        const tripled = expectedProcessedItems(drop, 2, 3 * 1.2 - 1, 1.3);
+        expect(expectedProcessedItemsWithAbundance(drop, 2, 0.2, 1.3, 0.04)).toBeCloseTo(
+            0.96 * plain + 0.04 * tripled,
+            12
+        );
+        expect(tripled).toBeGreaterThan(plain);
     });
 });

@@ -13,6 +13,7 @@ import { formatLargeNumber, formatPercentage, timeReadable } from '../../utils/f
 import { getEnhancementMultiplier } from '../../utils/enhancement-multipliers.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { resolveActionContext } from '../../utils/action-context.js';
+import { SKILLING_SPECIAL_STATS, talismanStat } from '../../utils/talisman-bonuses.js';
 import { SECONDS_PER_HOUR } from '../../utils/profit-constants.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import {
@@ -827,7 +828,7 @@ class PhiloCalculator {
             return this._actionStatsCache.get(level);
         }
 
-        let stats = { actionTime: FALLBACK_ACTION_TIME_SECONDS, efficiency: 0, estimated: true };
+        let stats = { actionTime: FALLBACK_ACTION_TIME_SECONDS, efficiency: 0, estimated: true, conservation: 0 };
         try {
             const gameData = dataManager.getInitClientData();
             const actionDetails = gameData?.actionDetailMap?.[TRANSMUTE_ACTION_HRID];
@@ -847,6 +848,11 @@ class PhiloCalculator {
                         actionTime: actionStats.actionTime,
                         efficiency: (actionStats.totalEfficiency || 0) / 100,
                         estimated: false,
+                        // Chance (talisman Conservation) a catalyst that would be used up is kept instead
+                        conservation: Math.min(
+                            1,
+                            Math.max(0, talismanStat(actionContext.equipment, SKILLING_SPECIAL_STATS.conservation))
+                        ),
                     };
                 }
             }
@@ -1219,7 +1225,7 @@ class PhiloCalculator {
         const coinCost = getAlchemyCoinCost(itemDetails, 'transmute');
 
         // Real action time and efficiency from game data
-        const { actionTime, efficiency, estimated } = this.getActionStats(itemLevel);
+        const { actionTime, efficiency, estimated, conservation = 0 } = this.getActionStats(itemLevel);
         const actionsPerHour = calculateActionsPerHour(actionTime) * (1 + efficiency);
 
         const bonusRevenuePerAction = this.getBonusRevenuePerAction(itemHrid);
@@ -1319,8 +1325,8 @@ class PhiloCalculator {
             const blank = needsPrice || unpriced.length > 0;
             const costDerived = (value) => (blank ? null : value);
 
-            // Catalyst cost per action (consumed only on success)
-            const catalystCostPerAction = successRate * (catalystUnitPrice ?? 0);
+            // Catalyst cost per action (consumed only on success, less the share Conservation keeps)
+            const catalystCostPerAction = successRate * (catalystUnitPrice ?? 0) * (1 - conservation);
             // Teas are drunk on a clock, so the hourly burn is spread over this row's actions per hour
             const teaCostPerAction = tea ? teaCost.perAction : 0;
 

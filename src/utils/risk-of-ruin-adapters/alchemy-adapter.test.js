@@ -162,6 +162,59 @@ describe('buildAlchemyTransmuteModel', () => {
         expect(meanSpend).toBe(600);
     });
 
+    describe('Conservation keeps the catalyst of a success', () => {
+        const withKeep = (conservation, extra = {}) =>
+            baseProfit({
+                successRate: 0.5,
+                catalystPrice: 300,
+                conservation,
+                catalystCost: { itemHrid: '/items/prime_catalyst' },
+                dropRevenues: [
+                    {
+                        itemHrid: '/items/output_a',
+                        dropRate: 1,
+                        revenuePerAttempt: 250,
+                        isEssence: false,
+                        isRare: false,
+                    },
+                ],
+                ...extra,
+            });
+
+        test('absent line: the distribution and expected cost are exactly what they were', () => {
+            mockProfit = withKeep(undefined);
+            const model = buildAlchemyTransmuteModel('/items/widget');
+            expect(model.outcomeDistribution).toHaveLength(2);
+            expect(model.expectedCost).toBe(1000 + 0.5 * 300);
+        });
+
+        test('a success splits into kept (no catalyst) and used up, summing to the success probability', () => {
+            mockProfit = withKeep(0.25);
+            const model = buildAlchemyTransmuteModel('/items/widget');
+            const byNet = sortByNet(model.outcomeDistribution);
+            expect(byNet.map((o) => [o.net, o.prob])).toEqual([
+                [-1000, 0.5],
+                [-1000 - 300 + 500, 0.5 * 0.75],
+                [-1000 + 500, 0.5 * 0.25],
+            ]);
+            expect(model.outcomeDistribution.reduce((sum, o) => sum + o.prob, 0)).toBeCloseTo(1, 12);
+            expect(model.expectedCost).toBeCloseTo(1000 + 0.5 * 300 * 0.75, 9);
+            expect(model.breakdown.conservation).toBe(0.25);
+            // the loss never exceeds the case where it is used up
+            expect(model.maxSinglePossibleLoss).toBe(1000);
+        });
+
+        test('no catalyst (price 0) or a line over 100% cannot invent or lose probability', () => {
+            mockProfit = withKeep(0.3, { catalystPrice: 0 });
+            expect(buildAlchemyTransmuteModel('/items/widget').outcomeDistribution).toHaveLength(2);
+            mockProfit = withKeep(7);
+            const model = buildAlchemyTransmuteModel('/items/widget');
+            expect(model.outcomeDistribution.every((o) => o.prob > 0)).toBe(true);
+            expect(model.outcomeDistribution.reduce((sum, o) => sum + o.prob, 0)).toBeCloseTo(1, 12);
+            expect(model.expectedCost).toBe(1000);
+        });
+    });
+
     test('expectedCost equals cost with no catalyst, and counts coin and tea in the unconditional part', () => {
         mockProfit = baseProfit({
             successRate: 0.25,

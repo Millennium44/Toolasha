@@ -56,7 +56,7 @@ function mainBranchPayout(drop, profit) {
  * layer, since that layer applies regardless of success/failure).
  * @returns {Array<{prob: number, net: number}>}
  */
-function buildOutcomeDistribution(profit, attemptCost, catalystCostOnSuccess) {
+function buildOutcomeDistribution(profit, attemptCost, catalystCostOnSuccess, conservation = 0) {
     const dropRevenues = profit.dropRevenues || [];
     const mainDrops = dropRevenues.filter((d) => !d.isEssence && !d.isRare);
     const bonusDrops = dropRevenues.filter((d) => d.isEssence || d.isRare);
@@ -97,11 +97,22 @@ function buildOutcomeDistribution(profit, attemptCost, catalystCostOnSuccess) {
 
     const outcomeDistribution = [];
     for (const main of mainBranches) {
-        const cost = attemptCost + (main.isSuccess ? catalystCostOnSuccess : 0);
-        for (const bonus of bonusOutcomes) {
-            const prob = main.prob * bonus.prob;
-            if (prob <= 0) continue;
-            outcomeDistribution.push({ prob, net: -cost + main.payout + bonus.payout });
+        // A success uses its catalyst up unless Conservation keeps it: two branches of the success, the kept
+        // one without the catalyst cost, so the spread of losses stays exact rather than averaged
+        const catalystCases =
+            main.isSuccess && catalystCostOnSuccess > 0 && conservation > 0
+                ? [
+                      { share: conservation, cost: 0 },
+                      { share: 1 - conservation, cost: catalystCostOnSuccess },
+                  ]
+                : [{ share: 1, cost: main.isSuccess ? catalystCostOnSuccess : 0 }];
+        for (const { share, cost: catalystCost } of catalystCases) {
+            if (!(share > 0)) continue;
+            for (const bonus of bonusOutcomes) {
+                const prob = main.prob * share * bonus.prob;
+                if (prob <= 0) continue;
+                outcomeDistribution.push({ prob, net: -(attemptCost + catalystCost) + main.payout + bonus.payout });
+            }
         }
     }
 
@@ -147,9 +158,12 @@ export function buildAlchemyTransmuteModel(itemHrid, { useLiveSetup = false, cat
             : 0;
     const attemptCost = profit.grossMaterialCost + coinCost + teaCostPerAttempt;
     const catalystCostOnSuccess = profit.catalystPrice || 0;
+    // The chance a success keeps its catalyst (talisman Conservation); the Mirror of Protection and every other
+    // item is not a catalyst and is never kept
+    const conservation = Math.min(1, Math.max(0, Number(profit.conservation) || 0));
     const netOnFail = -attemptCost;
 
-    const outcomeDistribution = buildOutcomeDistribution(profit, attemptCost, catalystCostOnSuccess);
+    const outcomeDistribution = buildOutcomeDistribution(profit, attemptCost, catalystCostOnSuccess, conservation);
     const maxSinglePossibleLoss = Math.max(0, ...outcomeDistribution.map((o) => -o.net));
 
     const dropRevenues = profit.dropRevenues || [];
@@ -176,7 +190,7 @@ export function buildAlchemyTransmuteModel(itemHrid, { useLiveSetup = false, cat
         // Everything one attempt is expected to spend: the unconditional cost plus the catalyst,
         // which is only consumed on a success. `cost` stays the unconditional part because the
         // outcome distribution charges the catalyst on its success branches itself.
-        expectedCost: attemptCost + profit.successRate * catalystCostOnSuccess,
+        expectedCost: attemptCost + profit.successRate * catalystCostOnSuccess * (1 - conservation),
         maxSinglePossibleLoss,
         outcomeDistribution,
         stepFn: (state, rng) => ({ balance: state.balance + drawFromDistribution(outcomeDistribution, rng).net }),
@@ -187,6 +201,7 @@ export function buildAlchemyTransmuteModel(itemHrid, { useLiveSetup = false, cat
             teaCostPerAttempt,
             catalystHrid: profit.catalystPrice ? profit.catalystCost?.itemHrid || null : null,
             catalystCostOnSuccess,
+            conservation,
             netOnFail,
             mainBranches,
             bonusDrops,

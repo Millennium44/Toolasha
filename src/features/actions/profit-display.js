@@ -584,6 +584,17 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
         modifierSubSections.push(makeModifierSection('Gathering Quantity', gatherTotal, gatherRows));
     }
 
+    // Abundance (talisman Special line): a chance to triple the gathered amount, already in the figures above
+    if (profitData.abundance > 0) {
+        const abundanceTotal = `${(profitData.abundance * 100).toFixed(2)}%`;
+        modifierSummaryParts.push(`+${abundanceTotal} abundance`);
+        modifierSubSections.push(
+            makeModifierSection('Abundance', abundanceTotal, [
+                `${abundanceTotal} chance to triple the gather (x${(1 + 2 * profitData.abundance).toFixed(2)} on average)`,
+            ])
+        );
+    }
+
     // Rare Find
     const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
     const rareFindBreakdown = profitData.bonusRevenue?.rareFindBreakdown || {};

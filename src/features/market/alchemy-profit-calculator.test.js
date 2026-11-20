@@ -1031,6 +1031,9 @@ describe('official alchemy rules', () => {
             expect(kept.catalystCost.costPerAttempt).toBeCloseTo(100 * bare.successRate * 0.75, 8);
             expect(kept.catalystCost.costPerAttempt).toBeCloseTo(bare.catalystCost.costPerAttempt * 0.75, 8);
             expect(kept.catalystCost.costPerSuccess).toBe(100);
+            // The keep chance rides on the result for readers that model the catalyst themselves
+            expect(bare.conservation).toBe(0);
+            expect(kept.conservation).toBe(0.25);
         }
     );
 

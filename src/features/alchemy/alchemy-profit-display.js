@@ -955,8 +955,10 @@ class AlchemyProfitDisplay {
             const itemDetails = dataManager.getItemDetails(profitData.catalystCost.itemHrid);
             const itemName = itemDetails?.name || profitData.catalystCost.itemHrid;
 
-            // Calculate catalysts per hour (only consumed on success)
-            const catalystsPerHour = profitData.actionsPerHour * profitData.successRate;
+            // Calculate catalysts per hour (only consumed on success, less the share Conservation keeps), the same
+            // count the cost per hour below is charged on
+            const kept = Math.min(1, Math.max(0, Number(profitData.conservation) || 0));
+            const catalystsPerHour = profitData.actionsPerHour * profitData.successRate * (1 - kept);
 
             // Format catalyst amount
             const formattedCatalystAmount =
@@ -966,7 +968,7 @@ class AlchemyProfitDisplay {
 
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
-            line.textContent = `• ${itemName}: ${formattedCatalystAmount}/hr (consumed only on success, ${formatPercentage(profitData.successRate, 2)}) @ ${formatWithSeparator(Math.round(profitData.catalystCost.price))} → ${formatLargeNumber(Math.round(profitData.catalystCost.costPerHour))}/hr`;
+            line.textContent = `• ${itemName}: ${formattedCatalystAmount}/hr (consumed only on success, ${formatPercentage(profitData.successRate, 2)}${kept > 0 ? `, ${formatPercentage(kept, 2)} kept` : ''}) @ ${formatWithSeparator(Math.round(profitData.catalystCost.price))} → ${formatLargeNumber(Math.round(profitData.catalystCost.costPerHour))}/hr`;
             catalystContent.appendChild(line);
 
             const catalystSection = this.createTrackedCollapsible(

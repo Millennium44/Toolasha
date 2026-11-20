@@ -11,7 +11,7 @@ const TARGET = '/items/gem';
 const CATALYST = '/items/catalyst_of_decomposition';
 const ALCHEMY_LEVEL = 50;
 
-const world = vi.hoisted(() => ({ prices: {}, listeners: [], calls: [], loadoutDrinks: [] }));
+const world = vi.hoisted(() => ({ prices: {}, listeners: [], calls: [], loadoutDrinks: [], equipment: null }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => 0 } }));
 vi.mock('../../core/data-manager.js', () => {
@@ -59,7 +59,7 @@ vi.mock('../../core/data-manager.js', () => {
 vi.mock('../../utils/action-context.js', () => {
     const mod = {
         resolveActionContext: () => ({
-            equipment: new Map(),
+            equipment: world.equipment ?? new Map(),
             drinks: world.loadoutDrinks.map((itemHrid) => ({ itemHrid })),
         }),
     };
@@ -137,6 +137,7 @@ beforeEach(() => {
     clearInsteadCache();
     world.calls = [];
     world.loadoutDrinks = [];
+    world.equipment = null;
     world.liveTea = 0;
     world.teaSpeed = 0;
     world.listeners = [];
@@ -227,6 +228,30 @@ describe('bonus-source ranking with the real success rate', () => {
         // 12 drinks an hour at 600 over 720 actions an hour
         for (const choice of teaChoices) expect(choice.teaPerAction).toBeCloseTo((12 * 600) / 720);
         expect(choices.some((choice) => choice.teaPerAction === 0)).toBe(true);
+    });
+
+    test('Conservation lowers what each catalyst costs per success, and only a catalyst', async () => {
+        const { attachTalismanBonuses } = await import('../../utils/talisman-bonuses.js');
+        world.prices[CATALYST] = { ask: 20, bid: 10 };
+        world.loadoutDrinks = [TEA];
+        world.prices[TEA] = { ask: 600, bid: 500 };
+        const bare = makeRateChoices()('decompose', { itemLevel: 10 }, 0.6);
+        world.equipment = attachTalismanBonuses(new Map(), {
+            noncombat: { conservation: 0.08 },
+            buffs: {},
+            combat: {},
+        });
+        const kept = makeRateChoices()('decompose', { itemLevel: 10 }, 0.6);
+
+        expect(kept).toHaveLength(bare.length);
+        expect(bare.some((choice) => choice.catalystPrice === 20)).toBe(true);
+        bare.forEach((choice, index) => {
+            expect(kept[index].catalystPrice).toBeCloseTo(choice.catalystPrice * 0.92, 10);
+            // rate and tea are not touched, and the no-catalyst choice stays free
+            expect(kept[index].rate).toBe(choice.rate);
+            expect(kept[index].teaPerAction).toBe(choice.teaPerAction);
+        });
+        expect(kept.some((choice) => choice.catalystPrice === 0)).toBe(true);
     });
 
     test('a speed tea spreads its hourly spend over the faster actions', () => {

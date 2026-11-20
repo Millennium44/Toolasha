@@ -1254,7 +1254,7 @@ class RiskOfRuinUI {
         }
         rows.push(
             catalystName
-                ? `<div>Catalyst (${catalystName}, paid only on success): ${fmtGold(breakdown.catalystCostOnSuccess)}</div>`
+                ? `<div>Catalyst (${catalystName}, paid only on success${breakdown.conservation > 0 ? `, kept ${(breakdown.conservation * 100).toFixed(1)}% of the time` : ''}): ${fmtGold(breakdown.catalystCostOnSuccess)}</div>`
                 : `<div>No catalyst used.</div>`
         );
         rows.push(

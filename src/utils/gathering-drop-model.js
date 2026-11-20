@@ -80,13 +80,23 @@ const UNLUCKY_PERCENTILE = 0.25;
  * @param {Function} input.priceOf - `(itemHrid) => number|null`
  * @param {number} [input.gatheringQuantity=0] - The character's gathering quantity, as a
  *   decimal (0.35 for +35%)
+ * @param {number} [input.abundance=0] - The character's talisman Abundance chance, as a decimal: with it a
+ *   whole gathered count is tripled. It belongs in the model (the expectation the recorded drops are measured
+ *   against), never added to the recorded counts, which already include every triple that happened
  * @param {Object<string, {rawHrid: string, ratio: number}>} [input.processedFrom] - Processing
  *   conversions, processed item hrid → the raw item and how many of it one takes
  * @returns {{drops: Array<Object>, actionCount: number, processedFrom: Object}|null} A session,
  *   or null when the run cannot be modelled — no drop table, no completed actions, or nothing
  *   in the table with a price
  */
-export function buildGatheringSession({ actionDetail, actionCount, priceOf, gatheringQuantity = 0, processedFrom }) {
+export function buildGatheringSession({
+    actionDetail,
+    actionCount,
+    priceOf,
+    gatheringQuantity = 0,
+    abundance = 0,
+    processedFrom,
+}) {
     const dropTable = actionDetail?.dropTable;
     if (!dropTable?.length) return null;
     if (!(actionCount > 0)) return null;
@@ -107,6 +117,7 @@ export function buildGatheringSession({ actionDetail, actionCount, priceOf, gath
             dropRate: Math.min(rate, 1),
             price,
             quantity: Math.max(0, Number(gatheringQuantity) || 0),
+            abundance: Math.min(1, Math.max(0, Number(abundance) || 0)),
         });
     }
     if (!drops.length) return null;
@@ -134,17 +145,29 @@ export function gatheringCountOutcomes(drop) {
     if (!Number.isInteger(minCount) || !Number.isInteger(maxCount) || maxCount < minCount) return null;
 
     const multiplier = 1 + (drop.quantity || 0);
+    const abundance = Math.min(1, Math.max(0, drop.abundance || 0));
     const each = dropRate / (maxCount - minCount + 1);
     const outcomes = new Map([[0, 1 - dropRate]]);
     const add = (count, probability) => {
         if (probability > 0) outcomes.set(count, (outcomes.get(count) || 0) + probability);
     };
-    for (let count = minCount; count <= maxCount; count++) {
-        const boosted = count * multiplier;
-        const whole = Math.floor(boosted);
-        const fraction = boosted - whole;
-        add(whole, each * (1 - fraction));
-        add(whole + 1, each * fraction);
+    // Abundance triples the count the gathering quantity gave, with its chance: a second set of outcomes at
+    // three times the multiplier, weighted by that chance
+    const variants =
+        abundance > 0
+            ? [
+                  [multiplier, 1 - abundance],
+                  [3 * multiplier, abundance],
+              ]
+            : [[multiplier, 1]];
+    for (const [variantMultiplier, weight] of variants) {
+        for (let count = minCount; count <= maxCount; count++) {
+            const boosted = count * variantMultiplier;
+            const whole = Math.floor(boosted);
+            const fraction = boosted - whole;
+            add(whole, each * weight * (1 - fraction));
+            add(whole + 1, each * weight * fraction);
+        }
     }
     return outcomes;
 }
@@ -158,7 +181,7 @@ export function gatheringCountOutcomes(drop) {
 function gatheringDropCF(drop) {
     const outcomes = gatheringCountOutcomes(drop);
     if (!outcomes) {
-        const multiplier = 1 + (drop.quantity || 0);
+        const multiplier = (1 + (drop.quantity || 0)) * (1 + 2 * Math.min(1, Math.max(0, drop.abundance || 0)));
         return dropCF({ ...drop, minCount: drop.minCount * multiplier, maxCount: drop.maxCount * multiplier });
     }
 
@@ -227,6 +250,7 @@ export function gatheringSessionMean({ drops, actionCount }) {
             drop.dropRate *
                 (((drop.minCount || 0) + (drop.maxCount || 0)) / 2) *
                 (1 + (drop.quantity || 0)) *
+                (1 + 2 * Math.min(1, Math.max(0, drop.abundance || 0))) *
                 drop.price,
         0
     );
