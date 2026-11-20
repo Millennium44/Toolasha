@@ -478,3 +478,28 @@ describe("aimAt only for this character's talismans", () => {
         expect(setRerollTarget('5', [{ hrid: M('armor'), minGrade: 2 }])).toBe(true);
     });
 });
+
+describe('crafting-cost orbs in the advice text', () => {
+    const names = { item: (hrid) => hrid.split('/').pop(), modifier: (hrid) => hrid, lineCount: 2 };
+    const result = (crafted) => ({
+        build: { status: 'ok' },
+        scale: 'market',
+        prices: { '/items/reshaping_orb': 100, '/items/binding_orb': 1000 },
+        crafted,
+        advice: {
+            status: 'move',
+            move: { kind: 'reroll', itemHrid: '/items/reshaping_orb' },
+            counts: { '/items/reshaping_orb': 2, '/items/binding_orb': 1 },
+        },
+    });
+
+    test('a coin line that names the orbs at crafting cost', () => {
+        const text = describeAdvice(result(['/items/reshaping_orb']), names).detail.join('\n');
+        expect(text).toMatch(/About .* coins \(reshaping_orb at crafting cost, the rest at market prices\)/);
+    });
+
+    test('a crafted orb the plan does not use is not named in the coin line', () => {
+        const text = describeAdvice(result(['/items/exchange_orb']), names).detail.join('\n');
+        expect(text).toMatch(/coins at market prices/);
+    });
+});

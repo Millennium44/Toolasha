@@ -417,9 +417,12 @@ export function orbScaleNote(orbs) {
     if (!orbs?.reference) return '';
     const name = dataManager.getInitClientData?.()?.itemDetailMap?.[orbs.reference.hrid]?.name || 'Reforging Orb';
     const scale = orbs.scale?.scale;
+    const itemMap = dataManager.getInitClientData?.()?.itemDetailMap;
+    const crafted = (orbs.scale?.crafted || []).map((hrid) => itemMap?.[hrid]?.name || hrid);
+    const craftedText = crafted.length > 0 ? `, ${crafted.join(', ')} at crafting cost` : '';
     const how =
         scale === 'market'
-            ? `every orb weighed by its market price (1 ${name} = ${formatKMB(orbs.reference.weight)} coins)`
+            ? `every orb weighed by its market price${craftedText} (1 ${name} = ${formatKMB(orbs.reference.weight)} coins)`
             : scale === 'itemValue'
               ? 'orbs weighed by their game item value, not a market price (not every orb has a listing): no coin cost is shown'
               : 'orbs counted one each (no prices or item values)';

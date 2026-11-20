@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Talisman orbs priced at crafting cost
+
+An orb with no market listing now counts at its crafting cost (inputs at your Buy pricing, artisan tea applied), so the reroll advisor can give a coin cost once every orb has a listing or a priced recipe. The coin line names the orbs priced this way.
+
 ### Merged market volume uses its own timestamps
 
 When mooket I prices are paired with mooket II volume, the 1d/3d/5d totals use the times from the volume feed. The open item's trade stats refresh when you change the history source or toggle merged volume for mooket I.

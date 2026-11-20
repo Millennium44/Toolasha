@@ -26,7 +26,10 @@ function tagOf(el) {
     return el.dataset.role || `lock:${row?.dataset.hrid}`;
 }
 
-vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.server }));
+vi.mock('../../utils/game-server.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    isTestServer: () => game.server,
+}));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => game.setting } }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {

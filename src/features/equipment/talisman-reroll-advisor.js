@@ -93,7 +93,7 @@ function formatCoins(value) {
 
 /**
  * The lines of text the panel shows for an advice (or a problem that could not be built).
- * @param {Object} result - {build, advice, scale, prices, mutationUsed}
+ * @param {Object} result - {build, advice, scale, prices, crafted, mutationUsed}
  * @param {Object} names - {item(hrid), modifier(hrid), lineCount}
  * @returns {{move: string, detail: string[]}}
  */
@@ -161,9 +161,17 @@ export function describeAdvice(result, names) {
     if (entries.length > 0 && advice.status !== 'met') {
         detail.push(`Expected from here: ${entries.map(([hrid, n]) => `${formatCount(n)} ${item(hrid)}`).join(', ')}`);
         const coins = coinCost(counts, result.prices);
-        if (coins !== null) detail.push(`About ${formatCoins(coins)} coins at market prices.`);
-        else detail.push('No coin cost: not every orb used has a market listing.');
-        if (result.scale !== 'market') {
+        // Orbs with no listing but a recipe are priced at crafting cost; name the ones this plan uses
+        const craftedUsed = (result.crafted || []).filter((hrid) => counts[hrid] > 0);
+        if (coins !== null && craftedUsed.length > 0) {
+            detail.push(
+                `About ${formatCoins(coins)} coins (${craftedUsed.map(item).join(', ')} at crafting cost, the rest at market prices).`
+            );
+        } else if (coins !== null) detail.push(`About ${formatCoins(coins)} coins at market prices.`);
+        else detail.push('No coin cost: not every orb used has a market listing or a priced recipe.');
+        if (result.scale === 'market' && (result.crafted || []).length > 0) {
+            detail.push(`Orbs without a listing weighed at crafting cost: ${result.crafted.map(item).join(', ')}.`);
+        } else if (result.scale !== 'market') {
             detail.push(
                 result.scale === 'itemValue'
                     ? 'Orbs weighed by the game item value.'
@@ -514,7 +522,7 @@ class TalismanRerollAdvisor {
     update(talisman, initData, window = {}) {
         const targets = this.getTargets(talisman);
         const info = initData.talismanInfo;
-        const { weights: exactWeights, prices, scale } = orbWeights(info, initData.itemDetailMap);
+        const { weights: exactWeights, prices, scale, crafted } = orbWeights(info, initData.itemDetailMap);
         // Two significant figures: a market tick does not start a new solve
         const weights = roundWeights(exactWeights);
         const build = buildProblem({
@@ -530,6 +538,7 @@ class TalismanRerollAdvisor {
             advice: null,
             scale,
             prices,
+            crafted,
             mutationUsed: true,
             gradeClamped: build.status === 'ok' ? build.problem.gradeClamped : false,
             clampGrade: build.status === 'ok' ? build.problem.G : 0,
