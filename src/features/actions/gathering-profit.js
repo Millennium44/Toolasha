@@ -15,7 +15,7 @@ import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { GATHERING_TYPES, MARKET_TAX } from '../../utils/profit-constants.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
-import { expectedProcessedItems } from '../../utils/gathering-processing.js';
+import { expectedProcessedItemsWithAbundance } from '../../utils/gathering-processing.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import {
     calculateProfitPerAction,
@@ -213,12 +213,13 @@ export async function calculateGatheringProfit(actionHrid, { keepSellTax = false
             // Average the floored conversion of each possible whole stack.
             // With Abundance the stack is tripled with its chance: the same count of whole conversions, worked out on
             // the tripled stack, weighted by that chance
-            const stackConversions =
-                (1 - abundance) * expectedProcessedItems(drop, conversionRatio, totalGathering, efficiencyMultiplier) +
-                (abundance > 0
-                    ? abundance *
-                      expectedProcessedItems(drop, conversionRatio, 3 * (1 + totalGathering) - 1, efficiencyMultiplier)
-                    : 0);
+            const stackConversions = expectedProcessedItemsWithAbundance(
+                drop,
+                conversionRatio,
+                totalGathering,
+                efficiencyMultiplier,
+                abundance
+            );
             const processedPerCompletion = processingBonus * stackConversions;
             processedPerAction = efficiencyMultiplier > 0 ? processedPerCompletion / efficiencyMultiplier : 0;
 

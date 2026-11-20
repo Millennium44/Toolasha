@@ -346,6 +346,23 @@ describe('action time', () => {
         expect(row.actionTimeEstimated).toBe(true);
         expect(row.actionTime).toBe(20);
     });
+
+    test('an estimated row still charges the catalyst, so it keeps the Conservation chance too', async () => {
+        const { attachTalismanBonuses } = await import('../../utils/talisman-bonuses.js');
+        mocks.equipment = attachTalismanBonuses(new Map(), {
+            noncombat: { conservation: 0.08 },
+            buffs: {},
+            combat: {},
+        });
+        mocks.actionStats = null;
+        calc._actionStatsCache.clear();
+        calc.useCatalyst = true;
+        calc.catalystPrice = 400;
+
+        const row = calc.calculateRow(WIDGET_HRID, widget());
+        expect(row.actionTimeEstimated).toBe(true);
+        expect(row.transmuteCost).toBeCloseTo(1000 + 50 + 0.625 * 400 * 0.92, 6);
+    });
 });
 
 describe('costs', () => {
