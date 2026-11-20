@@ -75,6 +75,7 @@ beforeEach(async () => {
     marketPriceStore.record.reset();
     marketPriceStore.depthRecord.reset();
     marketPriceStore.depthDirty = false;
+    marketPriceStore.depthWanted = false;
     marketPriceStore.dirty = false;
     marketPriceStore.loaded = false;
     marketPriceStore.listeners = new Set();
@@ -383,6 +384,7 @@ describe('depthFor', () => {
 
     test('depth is written to its own key and never into mooketPrices', async () => {
         send('/items/cheese', [{ asks: [{ price: 100, quantity: 1 }], bids: [] }]);
+        marketPriceStore.depthFor('/items/cheese', 0);
         await marketPriceStore.flush();
 
         expect(savedDepth('/items/cheese:0')).toMatchObject({
@@ -394,6 +396,38 @@ describe('depthFor', () => {
         expect(entry.depthAt).toBeUndefined();
     });
 
+    test('books are recorded but nothing is written until a reader has called depthFor', async () => {
+        send('/items/cheese', [{ asks: [{ price: 100, quantity: 1 }], bids: [] }]);
+        await marketPriceStore.flush();
+        expect(storageMock.saved.mooketDepth).toBeUndefined();
+        expect(marketPriceStore.depthDirty).toBe(true);
+        // prices are unaffected
+        expect(storageMock.saved.mooketPrices['/items/cheese:0']).toBeDefined();
+
+        // first call: the books seen before it go out on the next flush
+        send('/items/milk', [{ asks: [{ price: 7, quantity: 2 }], bids: [] }]);
+        marketPriceStore.depthFor('/items/other', 0);
+        await marketPriceStore.flush();
+        expect(savedDepth('/items/cheese:0')).toBeDefined();
+        expect(savedDepth('/items/milk:0')).toBeDefined();
+    });
+
+    test('teardown writes for a reader that asked, then the next session must ask again', async () => {
+        send('/items/cheese', [{ asks: [{ price: 100, quantity: 1 }], bids: [] }]);
+        marketPriceStore.depthFor('/items/cheese', 0);
+        marketPriceStore.cleanup();
+        await marketPriceStore.depthRecord.flushed();
+        expect(savedDepth('/items/cheese:0')).toBeDefined();
+        expect(marketPriceStore.depthWanted).toBe(false);
+    });
+
+    test('teardown writes no depth when no reader asked', async () => {
+        send('/items/cheese', [{ asks: [{ price: 100, quantity: 1 }], bids: [] }]);
+        marketPriceStore.cleanup();
+        await marketPriceStore.depthRecord.flushed();
+        expect(storageMock.saved.mooketDepth).toBeUndefined();
+    });
+
     test('a flush keeps the newer book of two tabs, whichever tab wrote it', async () => {
         send('/items/cheese', [{ asks: [{ price: 100, quantity: 1 }], bids: [] }]);
         const later = Date.now() + 60_000;
@@ -403,6 +437,7 @@ describe('depthFor', () => {
         };
         vi.setSystemTime(later + 1);
         marketPriceStore.depthDirty = true;
+        marketPriceStore.depthFor('/items/cheese', 0);
         await marketPriceStore.flush();
 
         expect(savedDepth('/items/cheese:0').depthAt).toBe(later);
@@ -416,6 +451,7 @@ describe('depthFor', () => {
         // a snapshot keeps the price entry fresh
         marketPriceStore.ingestSnapshot({ '/items/cheese': { 0: { a: 101, b: 90 } } }, Date.now());
         marketPriceStore.depthDirty = true;
+        marketPriceStore.depthFor('/items/cheese', 0);
         await marketPriceStore.flush();
 
         expect(storageMock.saved.mooketPrices['/items/cheese:0']).toBeDefined();

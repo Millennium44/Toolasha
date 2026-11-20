@@ -92,6 +92,12 @@ class MarketPriceStore {
             label: 'MooketDepth',
         });
         this.depthDirty = false;
+        /**
+         * Set by the first {@link MarketPriceStore#depthFor} of a session. Depth is always recorded in
+         * memory, but nothing is written until a reader has asked for it: a user with no reader would
+         * otherwise write a record nobody reads.
+         */
+        this.depthWanted = false;
         this.listeners = new Set();
         this.bookHandler = null;
         this.saveTimer = null;
@@ -167,7 +173,10 @@ class MarketPriceStore {
             clearInterval(this.saveTimer);
             this.saveTimer = null;
         }
+        // flush() reads the flag before its first await, so this still writes for a reader that asked
         this.flush();
+        // Session state like the rest: the next session's reader asks again
+        this.depthWanted = false;
         this.listeners.clear();
         this.lastSnapshot = null;
     }
@@ -285,6 +294,9 @@ class MarketPriceStore {
      *   side seen empty. Coin and cowbell have none.
      */
     depthFor(itemHrid, enhancementLevel = 0) {
+        // A reader exists: from the next flush on, the depth held so far (books seen before this call
+        // too) is written
+        this.depthWanted = true;
         const record = this.depth[priceKey(itemHrid, enhancementLevel)];
         if (!hasDepth(record, Date.now())) return null;
         return {
@@ -311,9 +323,13 @@ class MarketPriceStore {
         }
     }
 
-    /** Write the depth back, folding the stored one under it. Left dirty when it does not land. */
+    /**
+     * Write the depth back, folding the stored one under it. Left dirty when it does not land. Writes
+     * nothing until a reader has called {@link MarketPriceStore#depthFor}; the dirty flag is kept so
+     * the books recorded meanwhile go out on the first flush after.
+     */
     async flushDepth() {
-        if (!this.depthDirty) return;
+        if (!this.depthWanted || !this.depthDirty) return;
         this.depthDirty = false;
         try {
             this.depth = mergeDepths({}, this.depth);
