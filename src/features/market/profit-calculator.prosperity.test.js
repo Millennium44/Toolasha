@@ -25,6 +25,9 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null } }));
+vi.mock('../../utils/action-context.js', () => ({
+    resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
+}));
 vi.mock('../../utils/efficiency.js', () => ({ getActionEfficiencyContext: () => mocks.efficiencyContext }));
 vi.mock('../../utils/bonus-revenue-calculator.js', () => ({
     calculateBonusRevenue: () => ({ totalBonusRevenue: 0, taxExemptBonusRevenue: 0, hasMissingPrices: false }),

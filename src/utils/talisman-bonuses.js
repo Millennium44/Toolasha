@@ -67,18 +67,65 @@ export const PROSPERITY_ACTION_TYPES = Object.freeze([
 export const INVIGORATION_ACTION_TYPES = Object.freeze(['/action_types/cooking', '/action_types/brewing']);
 
 /**
- * The Drink Concentration to read a drink's effects with on this action: Invigoration (a chance to double the active
- * drinks' effects on a cooking or brewing action) makes them (1 + chance) times as strong in expectation, on top of
- * Drink Concentration (unmeasured whether the game adds or multiplies the two). Only the effects take it: what a drink
- * costs (drinks per hour, which Drink Concentration shortens) keeps the plain Drink Concentration.
+ * The Drink Concentration to read a drink's effects with on this action. Invigoration (a chance to double the active
+ * drinks' effects on a cooking or brewing action) is two outcomes, not an average: with chance p the effects are twice
+ * what they are (2 x (1 + Drink Concentration) - 1 as a concentration, on top of Drink Concentration), otherwise as
+ * they are. Efficiency clamps level efficiency at 0 and the profit multiplies efficiency by Gourmet, so a reader that
+ * is not linear evaluates each outcome and weights the results (see {@link drinkOutcomes}, {@link mixOutcomes}).
+ * Only the effects take it: what a drink costs (drinks per hour, which Drink Concentration shortens) keeps the plain
+ * Drink Concentration.
  * @param {Map|null|undefined} equipment - The equipment Map the talisman share rides on
  * @param {string} actionTypeHrid
  * @param {number} drinkConcentration - Plain Drink Concentration, as a decimal
+ * @param {'normal'|'doubled'} [outcome] - One outcome; left out, the expected concentration (1 + p) x (1 + DC) - 1,
+ *   right only for a reader that is linear in every drink effect (a Gourmet or Artisan figure on its own)
  * @returns {number} The concentration for effects, as a decimal
  */
-export function drinkEffectConcentration(equipment, actionTypeHrid, drinkConcentration) {
+export function drinkEffectConcentration(equipment, actionTypeHrid, drinkConcentration, outcome) {
     if (!INVIGORATION_ACTION_TYPES.includes(actionTypeHrid)) return drinkConcentration;
+    if (outcome === 'normal') return drinkConcentration;
+    if (outcome === 'doubled') return 2 * (1 + drinkConcentration) - 1;
     return (1 + drinkConcentration) * (1 + talismanStat(equipment, SKILLING_SPECIAL_STATS.invigoration)) - 1;
+}
+
+/**
+ * The outcomes of Invigoration for an action, with their chances: one outcome ('normal', weight 1) when it does not
+ * apply, else 'normal' (1 - p) and 'doubled' (p).
+ * @param {Map|null|undefined} equipment
+ * @param {string} actionTypeHrid
+ * @returns {Array<{outcome: 'normal'|'doubled', weight: number}>}
+ */
+export function drinkOutcomes(equipment, actionTypeHrid) {
+    const chance = INVIGORATION_ACTION_TYPES.includes(actionTypeHrid)
+        ? Math.min(1, Math.max(0, talismanStat(equipment, SKILLING_SPECIAL_STATS.invigoration)))
+        : 0;
+    if (!(chance > 0)) return [{ outcome: 'normal', weight: 1 }];
+    return [
+        { outcome: 'normal', weight: 1 - chance },
+        { outcome: 'doubled', weight: chance },
+    ];
+}
+
+/**
+ * Weight the results of several outcomes: numbers are averaged by weight, plain objects field by field, and anything
+ * else (arrays, Maps, strings, flags) is taken from the first outcome. The results must have the same shape.
+ * @param {Array<{weight: number, value: *}>} parts
+ * @returns {*}
+ */
+export function mixOutcomes(parts) {
+    if (parts.length === 1) return parts[0].value;
+    const first = parts[0].value;
+    if (typeof first === 'number') {
+        return parts.reduce((sum, part) => sum + part.weight * (Number.isFinite(part.value) ? part.value : 0), 0);
+    }
+    if (first && typeof first === 'object' && Object.getPrototypeOf(first) === Object.prototype) {
+        const out = {};
+        for (const key of Object.keys(first)) {
+            out[key] = mixOutcomes(parts.map((part) => ({ weight: part.weight, value: part.value?.[key] })));
+        }
+        return out;
+    }
+    return first;
 }
 
 /**

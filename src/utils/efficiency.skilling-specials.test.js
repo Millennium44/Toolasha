@@ -22,6 +22,10 @@ const ITEMS = {
         name: 'Gourmet Tea',
         consumableDetail: { buffs: [{ typeHrid: '/buff_types/gourmet', flatBoost: 0.12 }] },
     },
+    '/items/artisan_tea': {
+        name: 'Artisan Tea',
+        consumableDetail: { buffs: [{ typeHrid: '/buff_types/action_level', flatBoost: 5 }] },
+    },
     '/items/wisdom_tea': {
         name: 'Wisdom Tea',
         consumableDetail: { buffs: [{ typeHrid: '/buff_types/wisdom', flatBoost: 0.12 }] },
@@ -30,7 +34,7 @@ const ITEMS = {
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
-        getSkills: () => [],
+        getSkills: () => [{ skillHrid: '/skills/cooking', level: 56 }],
         getInitClientData: () => ({ itemDetailMap: ITEMS, houseRoomDetailMap: {} }),
         getPersonalBuffFlatBoost: () => 0,
         getAchievementBuffFlatBoost: () => 0,
@@ -77,6 +81,7 @@ const woodcutting = {
     baseTimeCost: 6e9,
     levelRequirement: { skillHrid: '/skills/woodcutting', level: 1 },
 };
+const attachNoncombat = (noncombat) => attachTalismanBonuses(new Map(), { noncombat, buffs: {}, combat: {} });
 const gameData = { itemDetailMap: ITEMS, houseRoomDetailMap: {} };
 const drinks = (...hrids) => hrids.map((h) => ({ itemHrid: `/items/${h}` }));
 
@@ -227,5 +232,48 @@ describe('Epiphany and the XP multiplier', () => {
             calculateExperienceMultiplier('/skills/cooking', '/action_types/cooking', { equipment: worn, drinks: [] })
                 .epiphany
         ).toBeCloseTo(0.01 * POWER, 12);
+    });
+});
+
+describe('Invigoration at the level-efficiency clamp', () => {
+    const cookingAt50 = { ...cooking, levelRequirement: { skillHrid: '/skills/cooking', level: 50 } };
+
+    test('skill 56, requirement 50, a +5 Action Level drink, chance 0.12: 0.88 level efficiency, not 0.4', () => {
+        const out = getActionEfficiencyContext(cookingAt50, {
+            isProduction: true,
+            actionContext: { equipment: attachNoncombat({ invigoration: 0.12 }), drinks: drinks('artisan_tea') },
+        });
+        // normal: 56 - 55 = 1; doubled: 56 - 60 clamps to 0
+        expect(out.efficiencyBreakdown.levelEfficiency).toBeCloseTo(0.88, 12);
+        expect(out.efficiencyBreakdown.totalEfficiency).toBeCloseTo(0.88, 12);
+    });
+
+    test('Gourmet and efficiency come from the same outcome: the weighted product, not the product of the means', () => {
+        const out = getActionEfficiencyContext(cookingAt50, {
+            isProduction: true,
+            actionContext: {
+                equipment: attachNoncombat({ invigoration: 0.5 }),
+                drinks: drinks('efficiency_tea', 'gourmet_tea'),
+            },
+        });
+        // normal: efficiency 10, Gourmet 0.12; doubled: 20 and 0.24. Means: 15 and 0.18
+        expect(out.teaEfficiency).toBeCloseTo(15, 10);
+        expect(out.gourmetBonus).toBeCloseTo(0.18, 12);
+    });
+});
+
+describe('Invigoration and Wisdom, outcome by outcome', () => {
+    test('a picked outcome reads that outcome: the doubled Wisdom tea is 24%, the normal one 12%', () => {
+        const equipment = attachNoncombat({ invigoration: 0.5 });
+        const at = (drinkOutcome) =>
+            calculateExperienceMultiplier('/skills/cooking', '/action_types/cooking', {
+                equipment,
+                drinks: drinks('wisdom_tea'),
+                drinkOutcome,
+            }).totalMultiplier;
+        expect(at('normal')).toBeCloseTo(1.12, 12);
+        expect(at('doubled')).toBeCloseTo(1.24, 12);
+        // with no outcome picked: weighted
+        expect(at(undefined)).toBeCloseTo(0.5 * 1.12 + 0.5 * 1.24, 12);
     });
 });

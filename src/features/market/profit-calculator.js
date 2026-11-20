@@ -12,7 +12,15 @@ import { getProductionChainTime } from '../enhancement/tooltip-enhancement.js';
 import { getProductionCostDetailed } from '../../utils/enhancement-pricing.js';
 import { getItemPrice, getItemPrices, getPricingMode } from '../../utils/market-data.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
-import { PROSPERITY_ACTION_TYPES, SKILLING_SPECIAL_STATS, talismanStat } from '../../utils/talisman-bonuses.js';
+import {
+    INVIGORATION_ACTION_TYPES,
+    PROSPERITY_ACTION_TYPES,
+    SKILLING_SPECIAL_STATS,
+    drinkOutcomes,
+    mixOutcomes,
+    talismanStat,
+} from '../../utils/talisman-bonuses.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import {
     calculateActionsPerHour,
@@ -97,7 +105,43 @@ class ProfitCalculator {
      *   that sets this prices the upgrade item itself.
      * @returns {Promise<Object|null>} Profit data or null if not craftable
      */
-    async calculateProfit(
+    async calculateProfit(itemHrid, options = {}) {
+        // Invigoration is two outcomes (the drinks as they are, or twice as strong). Efficiency clamps level
+        // efficiency and the profit multiplies efficiency by Gourmet, so each outcome is worked out whole and the
+        // results are weighted, rather than the drinks being averaged first.
+        if (!options.actionContext?.drinkOutcome) {
+            const action = this.findProductionAction(itemHrid, { actionHrid: options.actionHrid });
+            const type = action && dataManager.getActionDetails(action.actionHrid)?.type;
+            if (INVIGORATION_ACTION_TYPES.includes(type)) {
+                const resolved = options.actionContext ?? resolveActionContext(type);
+                const outcomes = drinkOutcomes(resolved.equipment, type);
+                if (outcomes.length > 1) {
+                    // No await here: the tiles arm the scroll simulation around the synchronous part of this call,
+                    // and each outcome's arithmetic finishes before its promise is returned
+                    const runs = outcomes.map(({ outcome }) =>
+                        this.calculateProfitOutcome(itemHrid, {
+                            ...options,
+                            actionContext: { ...resolved, drinkOutcome: outcome },
+                        })
+                    );
+                    return Promise.all(runs).then((values) =>
+                        values.some((value) => !value)
+                            ? null
+                            : mixOutcomes(values.map((value, index) => ({ weight: outcomes[index].weight, value })))
+                    );
+                }
+            }
+        }
+        return this.calculateProfitOutcome(itemHrid, options);
+    }
+
+    /**
+     * One Invigoration outcome of {@link calculateProfit} (the only outcome when the line is not worn).
+     * @param {string} itemHrid
+     * @param {Object} [options] - As calculateProfit
+     * @returns {Promise<Object|null>}
+     */
+    async calculateProfitOutcome(
         itemHrid,
         {
             actionHrid,

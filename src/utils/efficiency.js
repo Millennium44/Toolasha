@@ -29,6 +29,8 @@ import {
     INVIGORATION_ACTION_TYPES,
     SKILLING_SPECIAL_STATS,
     drinkEffectConcentration,
+    drinkOutcomes,
+    mixOutcomes,
     talismanStat,
 } from './talisman-bonuses.js';
 
@@ -182,6 +184,35 @@ export function canStartAction({ requiredLevel, skillLevel, teaSkillLevelBonus =
  * @returns {Object} Efficiency context with all computed values
  */
 export function getActionEfficiencyContext(actionDetails, options = {}) {
+    const given = options.actionContext ?? null;
+    // Invigoration is two outcomes (the drinks as they are, or twice as strong), not one average: the level-efficiency
+    // clamp and the product of efficiency and Gourmet are not linear. Each outcome is worked out whole, then weighted.
+    // A caller that already picked an outcome (`drinkOutcome` on the context) gets that one.
+    if (!given?.drinkOutcome && INVIGORATION_ACTION_TYPES.includes(actionDetails.type)) {
+        const resolved = given ?? resolveActionContext(actionDetails.type);
+        const outcomes = drinkOutcomes(resolved.equipment, actionDetails.type);
+        if (outcomes.length > 1) {
+            return mixOutcomes(
+                outcomes.map(({ outcome, weight }) => ({
+                    weight,
+                    value: buildActionEfficiencyContext(actionDetails, {
+                        ...options,
+                        actionContext: { ...resolved, drinkOutcome: outcome },
+                    }),
+                }))
+            );
+        }
+    }
+    return buildActionEfficiencyContext(actionDetails, options);
+}
+
+/**
+ * One outcome of {@link getActionEfficiencyContext} (see there).
+ * @param {Object} actionDetails
+ * @param {Object} options
+ * @returns {Object}
+ */
+function buildActionEfficiencyContext(actionDetails, options = {}) {
     const { isProduction = false, gameData = null, communityEfficiency = 0, actionContext = null } = options;
 
     const skills = dataManager.getSkills();
@@ -222,14 +253,18 @@ export function getActionEfficiencyContext(actionDetails, options = {}) {
         }
     }
 
-    // Invigoration (talisman Special line): a chance to double the active drinks' effects on a cooking or brewing
-    // action, so in expectation they act (1 + chance) times as strong. Only the effects of the drinks scale; what a
-    // drink costs (its drinks per hour, which Drink Concentration shortens) does not, so the cost keeps reading
-    // `drinkConcentration`. Applied on top of Drink Concentration (unmeasured whether the game adds or multiplies).
+    // Invigoration (talisman Special line): in the doubled outcome the active drinks' effects are twice what they are
+    // (on top of Drink Concentration). Only the effects of the drinks scale; what a drink costs (its drinks per hour,
+    // which Drink Concentration shortens) does not, so the cost keeps reading `drinkConcentration`.
     const invigoration = INVIGORATION_ACTION_TYPES.includes(actionDetails.type)
         ? talismanStat(equipment, SKILLING_SPECIAL_STATS.invigoration)
         : 0;
-    const effectConcentration = drinkEffectConcentration(equipment, actionDetails.type, drinkConcentration);
+    const effectConcentration = drinkEffectConcentration(
+        equipment,
+        actionDetails.type,
+        drinkConcentration,
+        actionContext?.drinkOutcome ?? 'normal'
+    );
 
     // Tea bonuses (shared by both paths)
     const teaSkillLevelBonus = parseTeaSkillLevelBonus(

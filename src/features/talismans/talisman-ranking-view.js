@@ -22,6 +22,7 @@ import { formatKMB } from '../../utils/formatters.js';
 import { escapeHtml } from '../../utils/html-escape.js';
 import { GAME_COLORS } from '../../utils/game-look.js';
 import { GATHERING_TYPES } from '../../utils/profit-constants.js';
+import { INVIGORATION_ACTION_TYPES, drinkOutcomes, mixOutcomes } from '../../utils/talisman-bonuses.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { getProductionChainActions } from '../../utils/enhancement-pricing.js';
 import { gatheringProfit, productionProfit } from '../../utils/bundle-bridge.js';
@@ -195,6 +196,31 @@ export function solverOrbReference(solver) {
  *   outputsUnpriced: boolean, unpricedCost: string[], unpricedCostRates: Object<string, number>}|null>}
  */
 export async function evaluateSkillingAction(actionHrid, actionContext) {
+    // Invigoration is two outcomes, and XP/hr multiplies efficiency by the XP of an action, so each outcome is
+    // worked out whole (profit, efficiency and Wisdom from the same drinks) and the figures are weighted
+    const type = dataManager.getInitClientData()?.actionDetailMap?.[actionHrid]?.type;
+    if (!actionContext?.drinkOutcome && INVIGORATION_ACTION_TYPES.includes(type)) {
+        const outcomes = drinkOutcomes(actionContext?.equipment, type);
+        if (outcomes.length > 1) {
+            const values = await Promise.all(
+                outcomes.map(({ outcome }) =>
+                    evaluateSkillingOutcome(actionHrid, { ...actionContext, drinkOutcome: outcome })
+                )
+            );
+            if (values.some((value) => !value)) return null;
+            return mixOutcomes(values.map((value, index) => ({ weight: outcomes[index].weight, value })));
+        }
+    }
+    return evaluateSkillingOutcome(actionHrid, actionContext);
+}
+
+/**
+ * One Invigoration outcome of {@link evaluateSkillingAction}.
+ * @param {string} actionHrid
+ * @param {{equipment: Map, drinks: Array, drinkOutcome?: string}} actionContext
+ * @returns {Promise<Object|null>}
+ */
+async function evaluateSkillingOutcome(actionHrid, actionContext) {
     const gameData = dataManager.getInitClientData();
     const action = gameData?.actionDetailMap?.[actionHrid];
     if (!action) return null;

@@ -12,7 +12,13 @@ import dataManager from '../core/data-manager.js';
 import { getEnhancementMultiplier } from './enhancement-multipliers.js';
 import { getDrinkConcentration } from './tea-parser.js';
 import { resolveActionContext } from './action-context.js';
-import { INVIGORATION_ACTION_TYPES, SKILLING_SPECIAL_STATS, talismanStat } from './talisman-bonuses.js';
+import {
+    INVIGORATION_ACTION_TYPES,
+    SKILLING_SPECIAL_STATS,
+    drinkOutcomes,
+    mixOutcomes,
+    talismanStat,
+} from './talisman-bonuses.js';
 
 const COMBAT_ACTION_TYPE = '/action_types/combat';
 
@@ -218,6 +224,24 @@ export function parseConsumableWisdom(drinkSlots, itemDetailMap, drinkConcentrat
  * @returns {Object} Experience data with breakdown
  */
 export function calculateExperienceMultiplier(skillHrid, actionTypeHrid, actionContext = null) {
+    // Invigoration is two outcomes (the Wisdom drinks as they are, or twice as strong), each worked out whole and
+    // weighted, so a caller that multiplies this by efficiency can pick one outcome for both
+    if (!actionContext?.drinkOutcome && INVIGORATION_ACTION_TYPES.includes(actionTypeHrid)) {
+        const equipment = actionContext?.equipment ?? resolveActionContext(actionTypeHrid).equipment;
+        const outcomes = drinkOutcomes(equipment, actionTypeHrid);
+        if (outcomes.length > 1) {
+            return mixOutcomes(
+                outcomes.map(({ outcome, weight }) => ({
+                    weight,
+                    value: calculateExperienceMultiplier(skillHrid, actionTypeHrid, {
+                        ...(actionContext ?? {}),
+                        equipment,
+                        drinkOutcome: outcome,
+                    }),
+                }))
+            );
+        }
+    }
     const activeContext = resolveActionContext(actionTypeHrid);
     const equipment = actionContext?.equipment ?? activeContext.equipment;
     const activeDrinks = actionContext?.drinks ?? activeContext.drinks;
@@ -232,13 +256,9 @@ export function calculateExperienceMultiplier(skillHrid, actionTypeHrid, actionC
     const equipmentWisdom = equipmentWisdomData.total;
     const houseWisdom = parseHouseRoomWisdom();
     const communityWisdom = parseCommunityBuffWisdom();
-    // Invigoration doubles the active drinks' effects on a cooking or brewing action with its chance: in expectation
-    // a drink's Wisdom is (1 + chance) times as strong
-    const invigoration = INVIGORATION_ACTION_TYPES.includes(actionTypeHrid)
-        ? talismanStat(equipment, SKILLING_SPECIAL_STATS.invigoration)
-        : 0;
-    const consumableWisdom =
-        parseConsumableWisdom(activeDrinks, itemDetailMap, drinkConcentration) * (1 + invigoration);
+    // Invigoration, doubled outcome: the Wisdom drinks are twice as strong (their Wisdom is linear in the concentration)
+    const doubled = actionContext?.drinkOutcome === 'doubled' && INVIGORATION_ACTION_TYPES.includes(actionTypeHrid);
+    const consumableWisdom = parseConsumableWisdom(activeDrinks, itemDetailMap, drinkConcentration) * (doubled ? 2 : 1);
     const achievementWisdom = dataManager.getAchievementBuffFlatBoost(actionTypeHrid, '/buff_types/wisdom') * 100;
     const mooPassWisdom = parseMooPassWisdom();
     const personalWisdom = dataManager.getPersonalBuffFlatBoost(actionTypeHrid, '/buff_types/wisdom') * 100;
