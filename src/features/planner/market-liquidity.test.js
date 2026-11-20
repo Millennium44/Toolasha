@@ -31,6 +31,8 @@ const history = vi.hoisted(() => ({
     failFor: null,
     // How long the pool has left of a cool-down; a function lets a test make the read itself fail
     cooldownMs: 0,
+    // Mooket I with mooket II's volume merged in is key 'mooket1' with a variant
+    variant: undefined,
 }));
 
 // The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
@@ -56,7 +58,11 @@ vi.mock('../market/mooket/market-history-api.js', () => ({
             }
             return history.rows[itemHrid] ?? null;
         },
-        currentSource: () => ({ key: history.hasVolume ? 'mooket2' : 'mooket1', hasVolume: history.hasVolume }),
+        currentSource: () => ({
+            key: history.hasVolume ? 'mooket2' : 'mooket1',
+            hasVolume: history.hasVolume,
+            variant: history.variant,
+        }),
         cooldownRemainingMs: () =>
             typeof history.cooldownMs === 'function' ? history.cooldownMs() : history.cooldownMs,
         get enabled() {
@@ -105,6 +111,7 @@ beforeEach(() => {
     history.hang = false;
     history.pending = [];
     history.failFor = null;
+    history.variant = undefined;
 });
 
 describe('measuring how fast an item sells', () => {
@@ -807,5 +814,63 @@ describe('a source change while a measurement is in flight', () => {
         history.calls = [];
         expect((await dailyVolume('/items/log')).known).toBe(true);
         expect(history.calls).toHaveLength(0);
+    });
+});
+
+describe("mooket I with mooket II's volume merged in", () => {
+    /** Merged rows: volume on some days only (the volume source had nothing for the rest) */
+    function mergedRows(perDay, withVolumeDays) {
+        const day = 86_400;
+        const start = Math.floor(Date.now() / 1000) - 30 * day;
+        return Array.from({ length: 30 }, (_, index) => ({
+            time: start + index * day,
+            a: 1000,
+            b: 900,
+            p: 950,
+            v: index < withVolumeDays ? perDay : null,
+        }));
+    }
+
+    test('rows with no volume reading are unknown, never a measured zero, and are not cached', async () => {
+        history.variant = '+vol';
+        history.rows['/items/log'] = mergedRows(0, 0);
+
+        const answer = await dailyVolume('/items/log');
+        expect(answer.known).toBe(false);
+
+        history.rows['/items/log'] = mergedRows(100, 30);
+        expect((await dailyVolume('/items/log')).known).toBe(true);
+    });
+
+    test('the rate divides by the stretch that has volume readings, not the whole 30 days', async () => {
+        history.variant = '+vol';
+        history.rows['/items/log'] = mergedRows(100, 10);
+
+        const answer = await dailyVolume('/items/log');
+
+        expect(answer.known).toBe(true);
+        expect(answer.unitsPerDay).toBeCloseTo(100, 6);
+    });
+
+    test('a measurement is filed per variant: toggling the merge does not reuse the other one', async () => {
+        history.rows['/items/log'] = tradedAt(240);
+        history.variant = '+vol';
+        await dailyVolume('/items/log');
+        history.variant = undefined;
+        await dailyVolume('/items/log');
+
+        expect(history.calls).toHaveLength(2);
+    });
+
+    test('the merge turned off while a lookup is in flight leaves no measurement behind', async () => {
+        history.hang = true;
+        history.variant = '+vol';
+        history.rows['/items/log'] = tradedAt(240);
+        const started = dailyVolume('/items/log');
+        await Promise.resolve();
+
+        history.variant = undefined;
+        history.pending.forEach((request) => request.resolve());
+        expect((await started).known).toBe(false);
     });
 });

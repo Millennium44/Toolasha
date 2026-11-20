@@ -5,7 +5,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const source = vi.hoisted(() => ({ hasVolume: true }));
+const source = vi.hoisted(() => ({ hasVolume: true, merged: false }));
 
 vi.mock('../../../core/storage.js', () => ({
     default: {
@@ -44,7 +44,18 @@ vi.mock('./market-history-api.js', () => ({
         disconnect: () => {},
         fetchHistory: async () => [],
         cooldownRemainingMs: () => 0,
-        currentSource: () => ({ key: 'mooket2', hasVolume: source.hasVolume, avgLabel: 'Avg' }),
+        currentSource: () =>
+            source.merged
+                ? {
+                      key: 'mooket1',
+                      hasVolume: true,
+                      avgLabel: 'Mid',
+                      volumeFrom: 'mooket2',
+                      volumeLabel: 'mooket II',
+                      hasTradeSplit: false,
+                      variant: '+vol',
+                  }
+                : { key: 'mooket2', hasVolume: source.hasVolume, avgLabel: 'Avg' },
     },
 }));
 
@@ -78,6 +89,7 @@ beforeEach(() => {
     globalThis.Chart = FakeChart;
     FakeChart.last = null;
     source.hasVolume = true;
+    source.merged = false;
     panel.chart = null;
     panel.canvas = {};
     panel.savePrefs = vi.fn();
@@ -200,5 +212,15 @@ describe('drawChart', () => {
         panel.prefs.showAvg = true;
         panel.drawChart(series(72));
         expect(chart.data.datasets[2].hidden).toBe(false);
+    });
+
+    test("mooket I with mooket II's volume names the volume's source and claims no bought/sold split", () => {
+        source.merged = true;
+        panel.drawChart(series(72));
+        const chart = FakeChart.last;
+        expect(chart.data.datasets[3].label).toBe('Volume (mooket II)');
+        const footer = chart.options.plugins.tooltip.callbacks.footer([{ dataIndex: 0 }]);
+        expect(footer).not.toContain('Est. bought');
+        expect(footer).not.toContain('Est. sold');
     });
 });

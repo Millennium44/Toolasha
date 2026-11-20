@@ -28,6 +28,7 @@
 
 import config from '../../../core/config.js';
 import { isTestServer, isPooledDatasetSite } from '../../../utils/game-server.js';
+import { hasVolumeReading, rowTime, sourceId } from './market-history-data.js';
 
 /**
  * The mooket II server (Q7). This is also the pool this client *contributes* to —
@@ -69,6 +70,81 @@ export const SOURCES = {
         avgLabel: 'Mid',
     },
 };
+
+/**
+ * Mooket I with Mooket II's volume attached, which is what the read source is while
+ * `market_historyVolumeFromMooket2` is on and mooket I is picked.
+ *
+ * Still `key: 'mooket1'` (a companion script reads `currentSource().key`, and the prices, the pool the
+ * order books are contributed to and the back-off all stay mooket I's). What differs is `hasVolume`,
+ * `volumeFrom` (where the volume came from, so the UI can say so), `variant` (part of every cache and
+ * lookup key, so a plain mooket I answer is never read as a merged one or the reverse) and
+ * `hasTradeSplit: false` (mooket I's third line is a midpoint of the quotes, not a traded price, so the
+ * bought/sold estimate that reads where the traded price sat in the spread would be made up).
+ */
+export const MOOKET1_WITH_VOLUME = Object.freeze({
+    ...SOURCES.mooket1,
+    hasVolume: true,
+    volumeFrom: 'mooket2',
+    volumeLabel: 'mooket II',
+    variant: '+vol',
+    hasTradeSplit: false,
+});
+
+/** The setting that turns the merge on; off by default because it calls a second host */
+export const VOLUME_MERGE_SETTING = 'market_historyVolumeFromMooket2';
+
+/**
+ * Attach mooket II's volume to mooket I's rows.
+ *
+ * Join rule: both series are bucketed by UTC hour (`floor(seconds / 3600)`, the bucket the trade-stats
+ * math already uses). Mooket II's volume for an hour is the sum of its rows' `v` in that hour (duplicate
+ * timestamps add, as they do for a mooket II chart). That total goes on exactly one mooket I row of the
+ * hour, the latest, so a day or 3-hour grouping that sums `v` counts it once; the hour's other rows get
+ * `v: null` ("no reading"). An hour mooket II has volume for and mooket I has no row in becomes a
+ * volume-only row (`a`, `b`, `p` all -1, so it draws no price). An hour only mooket I has stays `v: null`:
+ * "no reading" is not "no trades". Prices are never taken from mooket II.
+ *
+ * Pure: two row lists in, rows out (oldest first).
+ *
+ * @param {Array<Object>} priceRows - Normalised mooket I rows
+ * @param {Array<Object>|null} volumeRows - Mooket II rows for the same item, level and range, or null
+ * @returns {Array<Object>} Rows with `v` a number where mooket II had that hour, else null
+ */
+export function mergeMooket1Volume(priceRows, volumeRows) {
+    const base = priceRows.map((row) => ({ ...row, v: null }));
+    if (!Array.isArray(volumeRows)) return base;
+
+    const hours = new Map();
+    for (const row of volumeRows) {
+        if (!hasVolumeReading(row)) continue;
+        const time = rowTime(row);
+        if (!(time > 0)) continue;
+        const hour = Math.floor(time / 3600);
+        const held = hours.get(hour) || { sum: 0, time: 0 };
+        held.sum += Math.max(0, Number(row.v));
+        held.time = Math.max(held.time, time);
+        hours.set(hour, held);
+    }
+    if (!hours.size) return base;
+
+    const latestInHour = new Map();
+    base.forEach((row, index) => {
+        const time = rowTime(row);
+        if (!(time > 0)) return;
+        const hour = Math.floor(time / 3600);
+        const at = latestInHour.get(hour);
+        if (at === undefined || time >= rowTime(base[at])) latestInHour.set(hour, index);
+    });
+
+    const extra = [];
+    for (const [hour, held] of hours) {
+        const index = latestInHour.get(hour);
+        if (index !== undefined) base[index].v = held.sum;
+        else extra.push({ a: -1, b: -1, p: -1, v: held.sum, time: held.time });
+    }
+    return [...base, ...extra].sort((x, y) => rowTime(x) - rowTime(y));
+}
 
 /** The source assumed when the setting is unset or unrecognised */
 export const DEFAULT_SOURCE_KEY = 'mooket2';
@@ -260,6 +336,10 @@ class MarketHistoryAPI {
         this.paceWaiters = new Set();
         /** Requests queued on the cross-tab Web Lock, so a cool-down can end their wait too */
         this.turnWaiters = new Set();
+        /** Failures and cool-down of the mooket II volume side-lookup, kept apart from the read source's */
+        this.volumeFailures = 0;
+        this.volumeCooldownStreak = 0;
+        this.volumeCooldownUntil = 0;
     }
 
     /** @returns {boolean} Whether history may be fetched at all */
@@ -274,10 +354,15 @@ class MarketHistoryAPI {
      * effect on the next lookup without a reload. Falls back to the default when
      * the setting is unset or names a source that no longer exists.
      *
-     * @returns {{key: string, label: string, host: string, hasVolume: boolean, avgLabel: string}}
+     * With mooket I picked and the volume-merge setting on, this is {@link MOOKET1_WITH_VOLUME}
+     * (same `key`, a different `variant`).
+     *
+     * @returns {{key: string, label: string, host: string, hasVolume: boolean, avgLabel: string, variant?: string, volumeFrom?: string}}
      */
     currentSource() {
-        return SOURCES[config.getSetting('market_historySource')] || SOURCES[DEFAULT_SOURCE_KEY];
+        const source = SOURCES[config.getSetting('market_historySource')] || SOURCES[DEFAULT_SOURCE_KEY];
+        if (source.key === 'mooket1' && config.getSetting(VOLUME_MERGE_SETTING) === true) return MOOKET1_WITH_VOLUME;
+        return source;
     }
 
     /**
@@ -313,18 +398,23 @@ class MarketHistoryAPI {
      * @param {boolean} [options.force] - Skip the cached answer and ask the pool
      *   again, e.g. a player-pressed refresh. The fresh answer still overwrites
      *   the cache entry on success, so the *next* ordinary call benefits from it.
+     * @param {boolean} [options.volume] - `false` for a caller that reads prices only (the My Listings
+     *   refresh, the alerts): with mooket I's volume merge on it gets plain mooket I rows and mooket II
+     *   is not called for it
      * @param {string} [options.slotFor] - Internal: the source this call already waited its
      *   turn for, set when a paced call comes back through the checks after waiting
      * @returns {Promise<Array<Object>|null>} Rows, or null when unavailable
      */
-    async fetchHistory(itemHrid, enhancementLevel, days, { force = false, slotFor = null } = {}) {
+    async fetchHistory(itemHrid, enhancementLevel, days, { force = false, slotFor = null, volume = true } = {}) {
         if (!this.enabled || !itemHrid) return null;
 
-        const source = this.currentSource();
+        const live = this.currentSource();
+        const source = volume === false ? SOURCES[live.key] : live;
         // The source is part of the key: the same item at the same range is a
         // different answer from a different pool, and switching sources must not
         // read the other one's cached rows.
-        const key = `${source.key}:${itemHrid}:${enhancementLevel}:${days}`;
+        // The variant is too: mooket I with and without mooket II's volume are different answers.
+        const key = `${sourceId(source)}:${itemHrid}:${enhancementLevel}:${days}`;
         if (!force) {
             const cached = this.cache.get(key);
             if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.rows;
@@ -354,7 +444,7 @@ class MarketHistoryAPI {
             const waitMs = this.claimSlot(source.key);
             if (waitMs > 0) {
                 await this.waitForSlot(source.key, waitMs);
-                return this.fetchHistory(itemHrid, enhancementLevel, days, { force, slotFor: source.key });
+                return this.fetchHistory(itemHrid, enhancementLevel, days, { force, slotFor: source.key, volume });
             }
         }
 
@@ -365,9 +455,9 @@ class MarketHistoryAPI {
         const turn = this.takeSendTurn(source.key);
         if (turn) {
             endTurn = await turn;
-            if (!this.enabled || this.currentSource().key !== source.key) {
+            if (!this.enabled || !this.isCurrent(source)) {
                 endTurn(false);
-                return this.fetchHistory(itemHrid, enhancementLevel, days, { force, slotFor: source.key });
+                return this.fetchHistory(itemHrid, enhancementLevel, days, { force, slotFor: source.key, volume });
             }
             if (Date.now() < this.cooldownUntil) {
                 endTurn(false);
@@ -389,6 +479,9 @@ class MarketHistoryAPI {
                 : `${source.host}/api/market/history?item_id=${encodeURIComponent(itemHrid)}` +
                   `&variant=${enhancementLevel}&days=${days}`;
 
+        // Mooket II's volume for the same item, level and range, asked for alongside mooket I's prices
+        const volumeLookup = source.volumeFrom ? this.fetchVolumeRows(itemHrid, enhancementLevel, days, force) : null;
+
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
         try {
@@ -406,6 +499,16 @@ class MarketHistoryAPI {
             // with nothing said, and caching it made the next five minutes of
             // retries return the same non-answer without asking the server.
             if (!Array.isArray(rows)) throw new Error('history payload is not an array of rows');
+            if (volumeLookup) {
+                const volumeRows = await volumeLookup;
+                const merged = mergeMooket1Volume(rows, volumeRows);
+                // The setting or the source changed while the volume was in flight: this answer belongs to
+                // a variant that is no longer the one asked for, so it is not filed under that variant's key.
+                if (this.enabled && this.isCurrent(source)) this.remember(key, merged);
+                this.consecutiveFailures = 0;
+                this.cooldownStreak = 0;
+                return merged;
+            }
             this.remember(key, rows);
             // A working request is the only evidence the pool is healthy again;
             // both counters exist to be cleared by exactly this.
@@ -418,6 +521,99 @@ class MarketHistoryAPI {
         } finally {
             clearTimeout(timeout);
             // Nothing went out if the send itself threw: the turn is given back, not held
+            endTurn(false);
+        }
+    }
+
+    /**
+     * Whether a source descriptor a lookup began under is still what the settings say. A variant
+     * (mooket I with mooket II's volume) must match exactly; a plain request for a pool stays valid
+     * while that pool is read, merged or not, since it asked for no volume.
+     *
+     * @param {{key: string, variant?: string}} source - The descriptor the lookup began under
+     * @returns {boolean}
+     */
+    isCurrent(source) {
+        const current = this.currentSource();
+        return current.key === source.key && (!source.variant || current.variant === source.variant);
+    }
+
+    /**
+     * Mooket II's rows for one item, level and range, for {@link mergeMooket1Volume}.
+     *
+     * Never throws: `null` means no volume is known (the setting or pooled history went off, the host is
+     * cooling down or refused, the payload is not rows), and the caller keeps mooket I's rows with no
+     * volume. It shares mooket II's pace and cache with the mooket II source, but keeps its own failure
+     * count and cool-down, so a refusal here neither clobbers the mooket I back-off state nor stops
+     * mooket I's prices.
+     *
+     * @param {string} itemHrid - Item
+     * @param {number} enhancementLevel - Enhancement level
+     * @param {number} days - Range
+     * @param {boolean} force - Skip a cached answer
+     * @returns {Promise<Array<Object>|null>}
+     */
+    async fetchVolumeRows(itemHrid, enhancementLevel, days, force = false) {
+        const source = SOURCES.mooket2;
+        const key = `${source.key}:${itemHrid}:${enhancementLevel}:${days}`;
+        // Decided again after every wait: the setting can go off, or the source change, in between
+        const wanted = () => this.enabled && this.currentSource().volumeFrom === source.key;
+        const cachedRows = () => {
+            if (force) return null;
+            const cached = this.cache.get(key);
+            return cached && Date.now() - cached.at < CACHE_TTL_MS ? cached.rows : null;
+        };
+
+        if (!wanted()) return null;
+        const early = cachedRows();
+        if (early) return early;
+        if (Date.now() < this.volumeCooldownUntil) return null;
+
+        const waitMs = this.claimSlot(source.key);
+        if (waitMs > 0) await this.waitForSlot(source.key, waitMs);
+
+        let endTurn = () => {};
+        const turn = this.takeSendTurn(source.key);
+        if (turn) endTurn = await turn;
+
+        if (!wanted() || Date.now() < this.volumeCooldownUntil) {
+            endTurn(false);
+            return null;
+        }
+        const late = cachedRows();
+        if (late) {
+            endTurn(false);
+            return late;
+        }
+
+        const url =
+            `${source.host}/api/market/history?item_id=${encodeURIComponent(itemHrid)}` +
+            `&variant=${enhancementLevel}&days=${days}`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+        try {
+            const request = fetch(url, { signal: controller.signal });
+            endTurn(true);
+            const response = await request;
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const payload = await response.json();
+            if (!Array.isArray(payload)) throw new Error('volume payload is not an array of rows');
+            this.volumeFailures = 0;
+            this.volumeCooldownStreak = 0;
+            this.remember(key, payload);
+            return payload;
+        } catch (error) {
+            this.volumeFailures += 1;
+            if (this.volumeFailures >= FAILURE_THRESHOLD) {
+                this.volumeCooldownStreak += 1;
+                this.volumeFailures = 0;
+                this.volumeCooldownUntil =
+                    Date.now() + Math.min(COOLDOWN_BASE_MS * 2 ** (this.volumeCooldownStreak - 1), COOLDOWN_MAX_MS);
+            }
+            console.error('[MooketHistory] Fetching mooket II volume failed:', error);
+            return null;
+        } finally {
+            clearTimeout(timeout);
             endTurn(false);
         }
     }

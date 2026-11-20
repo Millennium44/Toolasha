@@ -238,6 +238,47 @@ describe('rendering', () => {
         expect(minMaxCell).toBe('—/—');
     });
 
+    describe("mooket I with mooket II's volume merged in", () => {
+        const merged = {
+            key: 'mooket1',
+            label: 'mooket I (IOMisaka)',
+            hasVolume: true,
+            volumeFrom: 'mooket2',
+            volumeLabel: 'mooket II',
+            hasTradeSplit: false,
+            variant: '+vol',
+            avgLabel: 'Mid',
+        };
+        const headerCells = () =>
+            [...document.querySelectorAll('.mwi-volume-stats table tr:first-child td')].map((td) => td.textContent);
+
+        test('shows Volume, names its source, and hides the Bought/Sold estimate it cannot make', async () => {
+            historyApi.currentSource.mockReturnValue(merged);
+            historyApi.rows = [{ a: 100, b: 80, p: 90, v: 12, time: Math.floor(Date.now() / 1000) - 3600 }];
+            const currentItem = buildCurrentItem('/items/coin');
+            await marketVolumeStats.initialize();
+            marketVolumeStats.currentKey = '/items/coin:0';
+            await marketVolumeStats.fetchAndRender(currentItem, '/items/coin', 0, '/items/coin:0', false);
+
+            expect(panelText()).not.toContain('could not be drawn');
+            expect(headerCells()).toContain('Volume');
+            expect(headerCells()).not.toContain('Bought/Sold');
+            expect(document.querySelector('.mwi-volume-stats').title).toContain('Volume is from mooket II');
+        });
+
+        test('merged volume that did not come back shows no Volume column, not a column of zeros', async () => {
+            historyApi.currentSource.mockReturnValue(merged);
+            historyApi.rows = [{ a: 100, b: 80, p: 90, v: null, time: Math.floor(Date.now() / 1000) - 3600 }];
+            const currentItem = buildCurrentItem('/items/coin');
+            await marketVolumeStats.initialize();
+            marketVolumeStats.currentKey = '/items/coin:0';
+            await marketVolumeStats.fetchAndRender(currentItem, '/items/coin', 0, '/items/coin:0', false);
+
+            expect(headerCells()).not.toContain('Volume');
+            expect(headerCells()).toContain('Average');
+        });
+    });
+
     test('a volume-less source (mooket I) hides Volume/Bought-Sold and notes why, without showing zeros as data', async () => {
         historyApi.currentSource.mockReturnValue({
             key: 'mooket1',

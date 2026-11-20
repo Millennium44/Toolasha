@@ -112,8 +112,27 @@ export function splitVolume(row) {
  * @param {Object} row - History row
  * @returns {boolean}
  */
-function hasVolumeReading(row) {
+export function hasVolumeReading(row) {
     return row?.v !== null && row?.v !== undefined && row?.v !== '' && Number.isFinite(Number(row.v));
+}
+
+/**
+ * One string naming a source and its variant, for keys and stale-answer checks.
+ * @param {{key: string, variant?: string}} source - A source descriptor
+ * @returns {string}
+ */
+export function sourceId(source) {
+    return `${source?.key}${source?.variant || ''}`;
+}
+
+/**
+ * Whether any row carries a real volume reading. A merged lookup whose volume side failed returns rows
+ * with `v: null`, and a reader of such rows must treat the volume as unknown, never as zero trades.
+ * @param {Array<Object>|null} rows - History rows
+ * @returns {boolean}
+ */
+export function rowsHaveVolume(rows) {
+    return Array.isArray(rows) && rows.some((row) => hasVolumeReading(row));
 }
 
 /**
@@ -121,7 +140,7 @@ function hasVolumeReading(row) {
  * @param {Object} row - History row
  * @returns {number}
  */
-function rowTime(row) {
+export function rowTime(row) {
     if (typeof row?.time === 'number') return row.time;
     const parsed = new Date(row?.time).getTime();
     return Number.isFinite(parsed) ? parsed / 1000 : 0;

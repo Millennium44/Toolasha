@@ -34,7 +34,7 @@ import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
 import marketHistoryAPI from './mooket/market-history-api.js';
-import { describeCooldown } from './mooket/market-history-data.js';
+import { describeCooldown, rowsHaveVolume } from './mooket/market-history-data.js';
 import { computeAllWindows, trimTrailingZeros } from '../../utils/market-volume-stats-math.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 
@@ -91,6 +91,7 @@ const COLUMNS = [
         color: '#90EE90',
         unit: 'count',
         volumeDependent: true,
+        splitDependent: true,
         read: (s) => [s.buyVolume, s.sellVolume],
         pair: true,
     },
@@ -473,8 +474,10 @@ class MarketVolumeStats {
             const windows = computeAllWindows(rows, Date.now(), enhancementLevel);
             // Cached so a column-visibility toggle can redraw without a refetch
             this.lastWindows = windows;
-            this.lastSource = source;
-            this.renderTable(freshPanel, windows, source);
+            // Merged volume that did not come back is "no volume", not a column of zeros
+            const shownSource = source.volumeFrom && !rowsHaveVolume(rows) ? { ...source, hasVolume: false } : source;
+            this.lastSource = shownSource;
+            this.renderTable(freshPanel, windows, shownSource);
             this.loadedKey = key;
         } finally {
             // Recorded even for a discarded fetch (the generation/key mismatch above
@@ -620,7 +623,10 @@ class MarketVolumeStats {
         }
 
         const columns = COLUMNS.filter(
-            (c) => this.visibleColumnIds.has(c.id) && (!c.volumeDependent || source.hasVolume)
+            (c) =>
+                this.visibleColumnIds.has(c.id) &&
+                (!c.volumeDependent || source.hasVolume) &&
+                (!c.splitDependent || source.hasTradeSplit !== false)
         );
 
         const header = columns.map((c) => `<td style="padding:0 6px 3px;text-align:center;">${c.label}</td>`).join('');
@@ -657,7 +663,9 @@ class MarketVolumeStats {
             .join('');
 
         const sourceNote = source.hasVolume
-            ? ''
+            ? source.volumeFrom
+                ? `Volume is from ${source.volumeLabel}, prices from ${source.label}; Bought/Sold is not shown. `
+                : ''
             : `${source.label} has no volume data — Volume and Bought/Sold are not shown. `;
 
         panel.innerHTML =

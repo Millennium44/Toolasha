@@ -49,6 +49,8 @@ import {
     normalizeGroupHours,
     priceTickLabel,
     tooltipFooterLines,
+    sourceId,
+    rowsHaveVolume,
 } from './market-history-data.js';
 import { priceKey } from './market-prices.js';
 import {
@@ -1244,7 +1246,7 @@ class MarketHistoryPanel {
         // The source is part of what the chart shows: the same item at the same range reads differently
         // from another pool (and labels its third line differently), so a switch must refetch
         const source = marketHistoryAPI.currentSource();
-        const key = `${priceKey(itemHrid, enhancementLevel)}:${this.prefs.days}:${source.key}`;
+        const key = `${priceKey(itemHrid, enhancementLevel)}:${this.prefs.days}:${sourceId(source)}`;
         if (!this.prefs.open || this.shown === key) return;
         // Drawing while folded shows the canvas in a panel with no fixed height, and a responsive chart
         // then grows without limit. Keep the title true and let expanding draw it.
@@ -1263,7 +1265,7 @@ class MarketHistoryPanel {
         // is rechecked against the live setting too: a paced fetch can answer from a pool newer than the
         // one this call began under, and a newer showItem would not have replaced `shown` if nothing else
         // asked for a chart.
-        if (this.shown !== key || marketHistoryAPI.currentSource().key !== source.key) {
+        if (this.shown !== key || sourceId(marketHistoryAPI.currentSource()) !== sourceId(source)) {
             if (this.shown === key) this.shown = null;
             return;
         }
@@ -1282,7 +1284,9 @@ class MarketHistoryPanel {
 
         this.drawnAt = Date.now();
         this.awaitingHistory = false;
-        this.drawChart(buildHistorySeries(rows, this.prefs.days), source);
+        // Merged volume that did not come back is "no volume", not a chart of zero-volume hours
+        const drawnSource = source.volumeFrom && !rowsHaveVolume(rows) ? { ...source, hasVolume: false } : source;
+        this.drawChart(buildHistorySeries(rows, this.prefs.days), drawnSource);
         this.drawAftermath(priceKey(itemHrid, level), rows);
     }
 
@@ -1397,7 +1401,7 @@ class MarketHistoryPanel {
             datasets.push({
                 toolKey: 'volume',
                 type: 'bar',
-                label: 'Volume',
+                label: source.volumeFrom ? `Volume (${source.volumeLabel})` : 'Volume',
                 // No reading is a missing bar, not an empty one
                 data: shown.map((point) => (Number.isFinite(point.volume) ? point.volume : null)),
                 backgroundColor: VOLUME_BAR_COLOR,
@@ -1514,7 +1518,10 @@ class MarketHistoryPanel {
                                 tooltipFooterLines(
                                     stateOf()?.series?.[items[0].dataIndex],
                                     {
-                                        hasVolume: marketHistoryAPI.currentSource().hasVolume,
+                                        // mooket I's merged volume has no traded price to split by, so no split is claimed
+                                        hasVolume:
+                                            marketHistoryAPI.currentSource().hasVolume &&
+                                            marketHistoryAPI.currentSource().hasTradeSplit !== false,
                                         showBaseValue: config.getSetting('market_historyBaseValue') !== false,
                                     },
                                     formatWithSeparator

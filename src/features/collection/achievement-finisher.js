@@ -127,7 +127,12 @@ const READINESS_EVENTS = [
 const READINESS_SETTINGS = ['profitCalc_pricingMode', 'profitCalc_patientTickBuy', 'profitCalc_patientTickSell'];
 
 /** Settings that decide whether, and from where, an output's sell volume can be measured */
-const VOLUME_SETTINGS = ['profitCalc_liquidityCap', 'market_pooledHistory', 'market_historySource'];
+const VOLUME_SETTINGS = [
+    'profitCalc_liquidityCap',
+    'market_pooledHistory',
+    'market_historySource',
+    'market_historyVolumeFromMooket2',
+];
 
 /** An output whose volume stayed unknown after a lookup (a failure, history off) is asked again after this */
 const VOLUME_RETRY_MS = 10 * 60_000;

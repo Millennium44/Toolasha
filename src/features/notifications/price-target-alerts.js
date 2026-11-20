@@ -197,7 +197,9 @@ class PriceTargetAlerts {
             await runPool(pins, MOOKET_CONCURRENCY, async (pin) => {
                 if (!isCurrent()) return;
                 try {
-                    const rows = await marketHistoryAPI.fetchHistory(pin.itemHrid, pin.enhancementLevel, 1);
+                    const rows = await marketHistoryAPI.fetchHistory(pin.itemHrid, pin.enhancementLevel, 1, {
+                        volume: false,
+                    });
                     if (!isCurrent()) return;
                     const sighting = freshestSighting(rows);
                     if (!sighting || (sighting.ask === null && sighting.bid === null)) return;

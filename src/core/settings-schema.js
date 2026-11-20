@@ -2102,6 +2102,14 @@ export const settingsGroups = {
                 ],
                 help: 'Which pooled server the price history, the pinned-item prices and the My Listings "Mooket Refresh" read from \u2014 and, since you feed the pool you read, the one your opened order books are contributed back to. mooket II (the default) carries ask, bid, average traded price and volume. mooket I is a separate community pool: it carries only ask and bid, so on it the chart\’s third line is a computed midpoint of the quotes (shown as "Mid", not a real traded average), there are no volume bars, and the goal planner\u2019s market-volume limits switch off (it has no volume to measure). Both are third parties and both are governed by the switch above.',
             },
+            market_historyVolumeFromMooket2: {
+                id: 'market_historyVolumeFromMooket2',
+                label: 'Market: With mooket I, also fetch volume from mooket II (q7.nainai.eu.org)',
+                type: 'checkbox',
+                default: false,
+                help: 'Mooket I has no volume. With this on and mooket I picked above, each history lookup also asks mooket II (q7.nainai.eu.org) for the same item, enhancement level and range, and draws its trade volume under mooket I\u2019s prices, matched by hour. Prices stay mooket I\u2019s. This calls a second third-party server, so it is off until you turn it on: it tells q7.nainai.eu.org which items you look up (nothing is sent to it from your order books). If mooket II cannot be reached, mooket I\u2019s prices show with no volume, never a volume of zero. Does nothing while mooket II is the source, or while the price history panel is off.',
+                requires: 'market_pooledHistory',
+            },
             market_historyBaseValue: {
                 id: 'market_historyBaseValue',
                 label: "Price history: show the game's base value in the chart tooltip",

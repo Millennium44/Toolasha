@@ -652,7 +652,7 @@ describe('market undercut alerts', () => {
 
             await vi.advanceTimersByTimeAsync(CACHE);
 
-            expect(fetchHistory).toHaveBeenCalledWith('/items/cheese', 0, 1);
+            expect(fetchHistory).toHaveBeenCalledWith('/items/cheese', 0, 1, { volume: false });
             expect(marketAPI.fetch).not.toHaveBeenCalled();
             fetchHistory.mockRestore();
         });

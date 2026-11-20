@@ -258,7 +258,9 @@ class MyListingsPriceRefresh {
                 FETCH_CONCURRENCY,
                 async (item) => {
                     try {
-                        const rows = await marketHistoryAPI.fetchHistory(item.itemHrid, item.enhancementLevel, 1);
+                        const rows = await marketHistoryAPI.fetchHistory(item.itemHrid, item.enhancementLevel, 1, {
+                            volume: false,
+                        });
                         if (!canContinue()) return;
                         const sighting = freshestSighting(rows);
                         if (!sighting || (sighting.ask === null && sighting.bid === null)) return;

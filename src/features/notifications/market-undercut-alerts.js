@@ -196,7 +196,9 @@ class MarketUndercutAlerts {
             await runPool(items, MOOKET_CONCURRENCY, async (item) => {
                 if (!isCurrent()) return;
                 try {
-                    const rows = await marketHistoryAPI.fetchHistory(item.itemHrid, item.enhancementLevel, 1);
+                    const rows = await marketHistoryAPI.fetchHistory(item.itemHrid, item.enhancementLevel, 1, {
+                        volume: false,
+                    });
                     if (!isCurrent()) return;
                     const sighting = freshestSighting(rows);
                     if (!sighting || (sighting.ask === null && sighting.bid === null)) return;

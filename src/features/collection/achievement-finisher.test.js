@@ -1106,6 +1106,7 @@ describe('hints on the game achievement cards', () => {
         expect(game.settingHandlers.map((e) => e.key).sort()).toEqual([
             'achievementFinisher',
             'market_historySource',
+            'market_historyVolumeFromMooket2',
             'market_pooledHistory',
             'profitCalc_liquidityCap',
             'profitCalc_patientTickBuy',

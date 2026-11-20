@@ -217,7 +217,7 @@ class DungeonShopPlanner {
     syncVolumeSource() {
         // Whether pooled history is on counts too: measured while it was off, every
         // item came back unknown
-        const source = `${config.getSetting('market_historySource') ?? ''}|${Boolean(
+        const source = `${config.getSetting('market_historySource') ?? ''}|${Boolean(config.getSetting('market_historyVolumeFromMooket2'))}|${Boolean(
             config.getSetting('market_pooledHistory')
         )}`;
         if (source === this.volumesSource) return;

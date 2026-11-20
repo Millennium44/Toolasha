@@ -59,7 +59,7 @@
  */
 
 import { marketHistoryAPI as liveMarketHistoryAPI } from '../../utils/bundle-bridge.js';
-import { buildHistorySeries } from '../market/mooket/market-history-data.js';
+import { buildHistorySeries, hasVolumeReading, sourceId as sourceIdOf } from '../market/mooket/market-history-data.js';
 import { runPool } from '../../utils/async-pool.js';
 
 /**
@@ -166,8 +166,10 @@ async function measureDailyVolume(itemHrid, enhancementLevel, key, source) {
         // `key` was filed under. Reading them with this source's volume support and caching the
         // result under `key` is how a pool with no volume leaves a measured zero behind.
         // (Only the pool is compared: a lookup begun with history on is a true measurement of that pool.)
-        if (marketHistoryAPI().currentSource().key !== source.key) return unknown;
-        if (Array.isArray(rows) && rows.length) {
+        if (sourceIdOf(marketHistoryAPI().currentSource()) !== sourceIdOf(source)) return unknown;
+        // Rows with no volume reading (mooket I's merged volume could not be had) say nothing about
+        // how much trades: unknown, not a measured zero
+        if (Array.isArray(rows) && rows.some((row) => hasVolumeReading(row))) {
             const series = buildHistorySeries(rows, LIQUIDITY_WINDOW_DAYS);
             const traded = series.reduce((sum, point) => sum + (Number(point.volume) || 0), 0);
 
@@ -176,8 +178,11 @@ async function measureDailyVolume(itemHrid, enhancementLevel, key, source) {
             // four times in a month, not four times in four days — counting only
             // the days something happened is how an item that sells once a week
             // comes out looking like an item that sells once a day.
-            const first = series[0]?.time || 0;
-            const last = series[series.length - 1]?.time || first;
+            // Only points that carry a volume reading count toward the span: a stretch the volume source
+            // had nothing for is not a stretch in which nothing traded.
+            const read = series.filter((point) => Number.isFinite(point.volume));
+            const first = read[0]?.time || 0;
+            const last = read[read.length - 1]?.time || first;
             const span = Math.min(LIQUIDITY_WINDOW_DAYS, Math.max(1, (last - first) / 86_400 + 1));
 
             answer = { itemHrid, unitsPerDay: traded / span, days: span, known: true };
@@ -230,7 +235,7 @@ export function cachedDailyVolume(itemHrid, enhancementLevel = 0) {
  * @returns {string}
  */
 function volumeKey(source, itemHrid, enhancementLevel) {
-    return `${source.key}:${marketHistoryAPI().enabled}:${itemHrid}:${enhancementLevel}`;
+    return `${sourceIdOf(source)}:${marketHistoryAPI().enabled}:${itemHrid}:${enhancementLevel}`;
 }
 
 /**
@@ -602,7 +607,7 @@ export async function applyLiquidityLimits(rates, { onProgress } = {}) {
     }
 
     bounded.sort((a, b) => (Number(b.goldPerHour) || 0) - (Number(a.goldPerHour) || 0));
-    const sourcePrefix = `${marketHistoryAPI().currentSource().key}:${marketHistoryAPI().enabled}:`;
+    const sourcePrefix = `${sourceIdOf(marketHistoryAPI().currentSource())}:${marketHistoryAPI().enabled}:`;
     const measured = [...cache.entries()].some(([key, entry]) => key.startsWith(sourcePrefix) && entry.known);
 
     // Some volume figures landed and this rate's own output has none: it was left unbounded, which
