@@ -151,6 +151,20 @@ describe('gatheringSessionLuck against a distribution that can be written down',
         expect(percentile).toBeLessThanOrEqual(1);
     });
 
+    test('the window covers the tripled maximum when Abundance is worn', () => {
+        // 50 guaranteed 500M drops, each tripled with 90%: a typical run pays about 70B, past the 37.5B an
+        // untripled maximum gives as its opening window, which aliased the CDF
+        const session = {
+            drops: [{ itemHrid: '/items/big', minCount: 1, maxCount: 1, dropRate: 1, price: 5e8, abundance: 0.9 }],
+            actionCount: 50,
+        };
+        const { cdf } = gatheringSessionLuck(session, 0);
+        const typical = 50 * 5e8 * 2.8;
+        expect(cdf(typical)).toBeGreaterThan(0.3);
+        expect(cdf(typical)).toBeLessThan(0.7);
+        expect(cdf(50 * 3 * 5e8 * 1.001)).toBeCloseTo(1, 6);
+    });
+
     test('reports a percentile, not a value', () => {
         const session = {
             drops: [{ itemHrid: '/items/x', minCount: 1, maxCount: 1, dropRate: 0.5, price: 1000 }],

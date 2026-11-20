@@ -285,7 +285,8 @@ export function gatheringSessionLuck(session, income, options = {}) {
     const maxPossible =
         session.actionCount *
         session.drops.reduce(
-            (sum, drop) => sum + Math.ceil(drop.maxCount * (1 + (drop.quantity || 0))) * drop.price,
+            (sum, drop) =>
+                sum + Math.ceil(drop.maxCount * (1 + (drop.quantity || 0)) * (drop.abundance > 0 ? 3 : 1)) * drop.price,
             0
         );
     const startingLimit = Math.max(1e8, 2e5 * Math.max(session.actionCount, 1), maxPossible * 1.5, (income || 0) * 1.5);

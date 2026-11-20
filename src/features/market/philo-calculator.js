@@ -832,9 +832,16 @@ class PhiloCalculator {
         try {
             const gameData = dataManager.getInitClientData();
             const actionDetails = gameData?.actionDetailMap?.[TRANSMUTE_ACTION_HRID];
+            // Equipment and drinks from one context, as alchemy-profit-calculator.js reads them
+            const actionContext = resolveActionContext('/action_types/alchemy');
+            // Chance (talisman Conservation) a catalyst that would be used up is kept instead; an estimated row
+            // still charges the catalyst, so it keeps the chance too
+            const conservation = Math.min(
+                1,
+                Math.max(0, talismanStat(actionContext.equipment, SKILLING_SPECIAL_STATS.conservation))
+            );
+            stats.conservation = conservation;
             if (actionDetails?.baseTimeCost) {
-                // Equipment and drinks from one context, as alchemy-profit-calculator.js reads them
-                const actionContext = resolveActionContext('/action_types/alchemy');
                 const actionStats = calculateActionStats(actionDetails, {
                     skills: dataManager.getSkills(),
                     equipment: actionContext.equipment,
@@ -848,11 +855,7 @@ class PhiloCalculator {
                         actionTime: actionStats.actionTime,
                         efficiency: (actionStats.totalEfficiency || 0) / 100,
                         estimated: false,
-                        // Chance (talisman Conservation) a catalyst that would be used up is kept instead
-                        conservation: Math.min(
-                            1,
-                            Math.max(0, talismanStat(actionContext.equipment, SKILLING_SPECIAL_STATS.conservation))
-                        ),
+                        conservation,
                     };
                 }
             }
