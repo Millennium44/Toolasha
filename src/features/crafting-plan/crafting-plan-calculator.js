@@ -9,7 +9,7 @@ import marketPriceStore from '../market/mooket/market-price-store.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { findProducingAction } from '../../utils/production-index.js';
-import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
+import { artisanBonusFor } from '../../utils/artisan-bonus.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { actionStartEligibility } from '../../utils/craft-start-eligibility.js';
@@ -96,8 +96,8 @@ export function getArtisanBonus(actionType, variant = 'current') {
         // longer buffed, matching the Missing Materials panel — a raw slot/equipment
         // read kept crediting the discount after the tea was gone.
         const { equipment, drinks: activeDrinks } = resolveActionContext(actionType);
-        const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-        return parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
+        // Invigoration (talisman): the reduction is the weighted mix of its two outcomes
+        return artisanBonusFor({ equipment, drinks: activeDrinks, itemDetailMap, actionType });
     } catch {
         return 0;
     }

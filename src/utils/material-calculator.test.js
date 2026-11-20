@@ -2,6 +2,7 @@
  * Tests for Material Calculator Utility
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { attachTalismanBonuses } from './talisman-bonuses.js';
 
 const state = vi.hoisted(() => ({
     settings: {},
@@ -461,6 +462,65 @@ describe('calculateArtisanBonus', () => {
             consumableDetail: { buffs: [{ typeHrid: '/buff_types/artisan', flatBoost: 0.1 }] },
         };
         expect(calculateArtisanBonus({ type: '/action_types/crafting' })).toBeCloseTo(0.1, 6);
+    });
+});
+
+describe('Invigoration (talisman: a chance to double the active drinks on cooking and brewing)', () => {
+    // Artisan Tea 10%: 0.1 as it is, 0.2 doubled. 10 flour per craft: 9 normal, 8 doubled.
+    const setupCooking = (invigoration) => {
+        state.gameData.itemDetailMap['/items/flour'] = { name: 'Flour', isTradable: true };
+        state.gameData.itemDetailMap['/items/artisan_tea'] = {
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/artisan', flatBoost: 0.1 }] },
+        };
+        state.gameData.actionDetailMap['/actions/cooking/bread'] = {
+            type: '/action_types/cooking',
+            inputItems: [{ itemHrid: '/items/flour', count: 10 }],
+        };
+        state.drinks = [{ itemHrid: '/items/artisan_tea' }];
+        state.equipment = attachTalismanBonuses(new Map(), {
+            noncombat: invigoration ? { invigoration } : {},
+            buffs: {},
+            combat: {},
+        });
+    };
+    const flour = (numActions) =>
+        calculateMaterialRequirements('/actions/cooking/bread', numActions).find((m) => m.itemHrid === '/items/flour')
+            .required;
+
+    test.each([
+        ['G1', 0.03],
+        ['G6', 0.12],
+    ])('%s expected mode: the reduction is the weighted mix, 10 x (1 - (1 - p) 0.1 - p 0.2) per craft', (_n, p) => {
+        setupCooking(p);
+        expect(calculateArtisanBonus({ type: '/action_types/cooking' })).toBeCloseTo((1 - p) * 0.1 + p * 0.2, 9);
+        expect(flour(1000)).toBe(Math.ceil(1000 * 10 * (1 - ((1 - p) * 0.1 + p * 0.2)) - 1e-9));
+    });
+
+    test('worst-case mode bills the outcome that saves least: 9 flour a craft, a proc only ever saves more', () => {
+        state.settings['actions_artisanMaterialMode'] = ARTISAN_MATERIAL_MODE.WORST_CASE;
+        setupCooking(0.12);
+        expect(flour(5)).toBe(45);
+        expect(calculateArtisanBonus({ type: '/action_types/cooking' }, { worstCase: true })).toBeCloseTo(0.1, 9);
+    });
+
+    test('hybrid reads worst-case below 100 crafts and the mix from 100', () => {
+        state.settings['actions_artisanMaterialMode'] = ARTISAN_MATERIAL_MODE.HYBRID;
+        setupCooking(0.12);
+        expect(flour(99)).toBe(99 * 9);
+        expect(flour(100)).toBe(Math.ceil(100 * 10 * (1 - (0.88 * 0.1 + 0.12 * 0.2)) - 1e-9));
+    });
+
+    test('absent, and on an action type it does not touch, the reduction is the plain 10%', () => {
+        setupCooking(0);
+        expect(flour(100)).toBe(900);
+        setupCooking(0.12);
+        expect(calculateArtisanBonus({ type: '/action_types/crafting' })).toBeCloseTo(0.1, 9);
+    });
+
+    test('no drinks: no reduction whatever the line', () => {
+        setupCooking(0.12);
+        state.drinks = [];
+        expect(calculateArtisanBonus({ type: '/action_types/cooking' })).toBe(0);
     });
 });
 

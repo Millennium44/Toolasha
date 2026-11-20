@@ -18,6 +18,8 @@ const {
     checkCombatLines,
     combatRankingReadiness,
     estimateCombatRankingSims,
+    isMechanicLine,
+    isNonlinearLine,
     runCombatLineRanking,
     runSkillingLineRanking,
     scaleAcrossGrades,
@@ -150,6 +152,48 @@ describe('buildRecommendedSet', () => {
             grade: 5,
         });
         expect(toRerollTargets(set)).toEqual([[{ hrid: 'a', minGrade: 5 }], [{ hrid: 'a', minGrade: 5 }]]);
+    });
+});
+
+describe('isMechanicLine', () => {
+    const lines = Object.values(FULL_MODIFIER_DETAILS);
+    const SPECIALS = [
+        'echo',
+        'fortify',
+        'overkill',
+        'shatter',
+        'smite',
+        'consistency',
+        'abundance',
+        'conservation',
+        'epiphany',
+        'invigoration',
+        'prosperity',
+    ];
+
+    test('is true for every Special, combat and skilling, and false for a regular line', () => {
+        for (const name of SPECIALS) {
+            const detail = lines.find((d) => d.hrid === `/talisman_modifiers/${name}`);
+            if (!detail) continue; // a table without that Special still has the others
+            expect(isMechanicLine(detail), name).toBe(true);
+        }
+        const regular = lines.filter((d) => d.groupHrid !== '/talisman_modifier_groups/special');
+        expect(regular.length).toBeGreaterThan(0);
+        expect(regular.filter((d) => isMechanicLine(d))).toEqual([]);
+    });
+
+    test('reads the data, not a stat list: a Special-group line on a stat nobody listed counts, and so does a group-less skilling Special', () => {
+        const unknown = {
+            hrid: '/talisman_modifiers/future',
+            groupHrid: '/talisman_modifier_groups/special',
+            keys: ['Future'],
+        };
+        const groupless = { hrid: '/talisman_modifiers/invigoration', keys: ['Invigoration'] };
+        expect(isMechanicLine(unknown)).toBe(true);
+        expect(isMechanicLine(groupless)).toBe(true);
+        expect(isNonlinearLine(groupless)).toBe(true);
+        expect(isMechanicLine({ hrid: '/talisman_modifiers/crit', keys: ['CriticalDamage'] })).toBe(false);
+        expect(isMechanicLine(null)).toBe(false);
     });
 });
 

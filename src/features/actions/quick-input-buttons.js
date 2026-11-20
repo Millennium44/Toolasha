@@ -17,7 +17,8 @@ import storage from '../../core/storage.js';
 import config from '../../core/config.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { parseEquipmentSpeedBonuses, debugEquipmentSpeedBonuses } from '../../utils/equipment-parser.js';
-import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
+import { getDrinkConcentration } from '../../utils/tea-parser.js';
+import { artisanBonusFor } from '../../utils/artisan-bonus.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { formatPercentage, timeReadable, formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
@@ -1324,8 +1325,13 @@ class QuickInputButtons {
             // slotted but out of stock and no longer buffed, matching the Missing Materials panel.
             const itemDetailMap = gameData?.itemDetailMap || {};
             const { equipment, drinks: activeDrinks } = resolveActionContext(actionDetails.type);
-            const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-            const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
+            // Invigoration (talisman): the reduction is the weighted mix of its two outcomes
+            const artisanBonus = artisanBonusFor({
+                equipment,
+                drinks: activeDrinks,
+                itemDetailMap,
+                actionType: actionDetails.type,
+            });
 
             let maxActions = Infinity;
 

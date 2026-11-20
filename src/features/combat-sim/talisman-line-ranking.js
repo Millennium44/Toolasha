@@ -40,7 +40,7 @@ import {
     talismanLines,
     toRerollTargets,
 } from '../../utils/talisman-line-sets.js';
-import { TALISMAN_MECHANICS, computeTalismanCombat } from './engine/talisman-combat.js';
+import { computeTalismanCombat } from './engine/talisman-combat.js';
 import { TALISMAN_MODELED_STATS } from './engine/player.js';
 import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { randomSeed } from './engine/rng.js';
@@ -225,12 +225,15 @@ export function isNonlinearLine(detail) {
 }
 
 /**
+ * Whether a line is a talisman-only Special line (combat: Echo, Fortify, Overkill, Shatter, Smite, Consistency;
+ * skilling: Abundance, Conservation, Epiphany, Invigoration, Prosperity). The same data-driven test as
+ * {@link isSpecialLine}: the Special group, or a stat a Special feeds, so a new Special in the group reads right
+ * without editing a stat list here.
  * @param {Object} detail - Modifier detail
- * @returns {boolean} A talisman-only Special line (combat: Echo, Fortify, Overkill, Shatter, Smite, Consistency; skilling: Abundance, Conservation, Epiphany, Invigoration, Prosperity)
+ * @returns {boolean}
  */
 export function isMechanicLine(detail) {
-    // By the stat it feeds, as the engine sorts them, not by the group label
-    return (detail?.keys || []).some((key) => TALISMAN_MECHANICS.includes(talismanStatName(key)));
+    return isSpecialLine(detail);
 }
 
 /**

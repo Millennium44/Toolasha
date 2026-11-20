@@ -26,6 +26,7 @@ import { alchemyProfitCalculator, expectedValueCalculator } from './bundle-bridg
 import { runningAction } from './combat-actions.js';
 import { expectedProcessedItems } from './gathering-processing.js';
 import { getCommunityGatheringQuantity } from './community-buffs.js';
+import { drinkEffectConcentration, drinkOutcomes } from './talisman-bonuses.js';
 
 /**
  * Skill name to action type mapping.
@@ -210,9 +211,52 @@ function getDrinkSlotCount(equipment, itemDetailMap) {
  * @param {Object} itemDetailMap - Item details from game data
  * @param {number} drinkConcentration - Drink concentration as decimal
  * @param {Map|null} [equipment] - Gear the setup wears; its slotted talismans add Gourmet and Processing
+ * @param {string|null} [actionType] - The skill's action type; with it, Invigoration adds `doubled` buffs and `invigoration`
  * @returns {Object} Aggregated buff values
  */
-function parseTeaBuffs(teaHrids, itemDetailMap, drinkConcentration, equipment = null) {
+function parseTeaBuffs(teaHrids, itemDetailMap, drinkConcentration, equipment = null, actionType = null) {
+    const buffs = parseTeaBuffsAt(teaHrids, itemDetailMap, drinkConcentration, equipment);
+    // Invigoration (talisman Special, cooking and brewing): with chance p the drinks' effects are twice what they are.
+    // That is a second outcome, scored whole beside this one (see mixScores), never an average of the two
+    const outcomes = actionType ? drinkOutcomes(equipment, actionType) : [];
+    if (outcomes.length > 1) {
+        buffs.invigoration = outcomes[1].weight;
+        buffs.doubled = parseTeaBuffsAt(
+            teaHrids,
+            itemDetailMap,
+            drinkEffectConcentration(equipment, actionType, drinkConcentration, 'doubled'),
+            equipment
+        );
+    }
+    return buffs;
+}
+
+/**
+ * Score one figure across the Invigoration outcomes: the buffs as they are, weighted 1 - p, and the doubled buffs,
+ * weighted p. Without Invigoration it is the plain call. Efficiency clamps at 0 and XP and profit multiply it by
+ * Wisdom and Gourmet from the same drinks, so each outcome is worked out whole rather than averaging the buffs.
+ * @param {Object} buffs - From {@link parseTeaBuffs}
+ * @param {function(Object): number} score - The figure for one outcome's buffs
+ * @returns {number}
+ */
+function mixScores(buffs, score) {
+    if (!buffs.doubled) return score(buffs);
+    return (1 - buffs.invigoration) * score(buffs) + buffs.invigoration * score(buffs.doubled);
+}
+
+/** Level gate for one outcome's buffs: the doubled outcome can raise the requirement past the player's level */
+function outcomeCanStart(action, playerLevel, normalizedSkill) {
+    return (outcomeBuffs) =>
+        canStartAction({
+            requiredLevel: action.levelRequirement?.level || 1,
+            skillLevel: playerLevel,
+            teaSkillLevelBonus: outcomeBuffs.skillLevels[normalizedSkill] || 0,
+            actionLevelBonus: outcomeBuffs.actionLevel,
+        });
+}
+
+/** One outcome's tea buffs at a Drink Concentration */
+function parseTeaBuffsAt(teaHrids, itemDetailMap, drinkConcentration, equipment) {
     const buffs = {
         efficiency: 0,
         wisdom: 0,
@@ -1376,7 +1420,7 @@ export function findOptimalTeas(
             : null;
 
     for (const combo of combinations) {
-        const buffs = parseTeaBuffs(combo, gameData.itemDetailMap, drinkConcentration, equipment);
+        const buffs = parseTeaBuffs(combo, gameData.itemDetailMap, drinkConcentration, equipment, actionType);
 
         // Calculate tea cost per hour for this combo
         const teaCostPerHour = calculateTeaCostPerHour(combo, drinkConcentration);
@@ -1433,18 +1477,26 @@ export function findOptimalTeas(
                     teaSkillLevelBonus: buffs.skillLevels[normalizedSkill] || 0,
                     actionLevelBonus: buffs.actionLevel,
                 });
+                // The doubled outcome (Invigoration) can raise the requirement past the level: it scores 0 there
+                const gate = outcomeCanStart(action, playerLevel, normalizedSkill);
 
                 if (canStart && goal === 'xp') {
-                    score = calculateXpPerHour(action, buffs, playerLevel, otherEfficiency, calcContext);
+                    score = mixScores(buffs, (b) =>
+                        gate(b) ? calculateXpPerHour(action, b, playerLevel, otherEfficiency, calcContext) : 0
+                    );
                     totalScore += score;
                 } else if (canStart && isGathering) {
-                    score = calculateGatheringGoldPerHour(
-                        action,
-                        buffs,
-                        playerLevel,
-                        otherEfficiency,
-                        gameData,
-                        calcContext
+                    score = mixScores(buffs, (b) =>
+                        gate(b)
+                            ? calculateGatheringGoldPerHour(
+                                  action,
+                                  b,
+                                  playerLevel,
+                                  otherEfficiency,
+                                  gameData,
+                                  calcContext
+                              )
+                            : 0
                     );
                     // Deduct tea costs from gold score
                     score -= teaCostPerHour.total;
@@ -1455,13 +1507,17 @@ export function findOptimalTeas(
                         if (unpricedByAction?.get(action.name)) hasMissingPrices = true;
                     }
                 } else if (canStart) {
-                    score = calculateProductionGoldPerHour(
-                        action,
-                        buffs,
-                        playerLevel,
-                        otherEfficiency,
-                        gameData,
-                        calcContext
+                    score = mixScores(buffs, (b) =>
+                        gate(b)
+                            ? calculateProductionGoldPerHour(
+                                  action,
+                                  b,
+                                  playerLevel,
+                                  otherEfficiency,
+                                  gameData,
+                                  calcContext
+                              )
+                            : 0
                     );
                     // Deduct tea costs from gold score
                     score -= teaCostPerHour.total;
@@ -2064,7 +2120,7 @@ export function calculateSkillPerformance(
 
     const filteredTeas = (teaHrids || []).filter(Boolean);
     const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
-    const buffs = parseTeaBuffs(filteredTeas, gameData.itemDetailMap, drinkConcentration, equipment);
+    const buffs = parseTeaBuffs(filteredTeas, gameData.itemDetailMap, drinkConcentration, equipment, actionType);
     const { available: actions } = getActionsForSkill(
         normalizedSkill,
         playerLevel,
@@ -2142,16 +2198,22 @@ export function calculateSkillPerformance(
             continue;
         }
 
-        const xp = calculateXpPerHour(action, buffs, playerLevel, otherEfficiency, calcContext);
+        const gate = outcomeCanStart(action, playerLevel, normalizedSkill);
+        const xp = mixScores(buffs, (b) =>
+            gate(b) ? calculateXpPerHour(action, b, playerLevel, otherEfficiency, calcContext) : 0
+        );
         if (xp > 0) {
             totalXp += xp;
         }
 
-        const gold = isGathering
-            ? calculateGatheringGoldPerHour(action, buffs, playerLevel, otherEfficiency, gameData, calcContext) -
-              teaCost.total
-            : calculateProductionGoldPerHour(action, buffs, playerLevel, otherEfficiency, gameData, calcContext) -
-              teaCost.total;
+        const gold =
+            mixScores(buffs, (b) =>
+                !gate(b)
+                    ? 0
+                    : isGathering
+                      ? calculateGatheringGoldPerHour(action, b, playerLevel, otherEfficiency, gameData, calcContext)
+                      : calculateProductionGoldPerHour(action, b, playerLevel, otherEfficiency, gameData, calcContext)
+            ) - teaCost.total;
         if (gold > 0) {
             totalGold += gold;
             goldCount++;
