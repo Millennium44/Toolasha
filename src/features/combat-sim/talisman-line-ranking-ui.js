@@ -122,7 +122,28 @@ function rosterFingerprint(dtos, ignoreTalismansOf = null) {
  * What the last finished ranking cost per simulated hour of work, this session only (memory; nothing is stored).
  * Wall seconds over sims times hours per sim, so lanes and overheads are in it.
  */
-const sessionRate = { secPerSimHour: null };
+const sessionRate = { secPerSimByHours: new Map() };
+
+/**
+ * Wall seconds one sim of `hours` should take, from the session's finished ranking runs: the run at the same hours,
+ * else the nearest hours scaled in proportion. A sim has a fixed cost besides the hours, so a 2 h run does not
+ * price a 10 h one by scaling.
+ * @param {number} hours
+ * @returns {number|null}
+ */
+export function estimatedSecPerSim(hours) {
+    let best = null;
+    for (const [h, secPerSim] of sessionRate.secPerSimByHours) {
+        if (h === hours) return secPerSim;
+        if (!best || Math.abs(h - hours) < Math.abs(best.h - hours)) best = { h, secPerSim };
+    }
+    return best ? (best.secPerSim * hours) / best.h : null;
+}
+
+/** Forget the session's measured rates (tests) */
+export function resetSessionRate() {
+    sessionRate.secPerSimByHours.clear();
+}
 
 /**
  * A length of time for the progress line: seconds under a minute, else whole minutes (rounded up).
@@ -241,10 +262,16 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         this._progress(`${done} / ${total} · ${description}${left ? ` · ${left}` : ''}`);
     }
 
-    /** Remember what a finished ranking cost per simulated hour, for the next estimate line */
-    _etaRemember(sims, hours) {
+    /**
+     * Remember what a finished ranking cost per sim at its hours, for the next estimate line. Only a run whose sims
+     * all ran at the run's hours counts: close-call re-sims run at 2x and 4x, so dividing their wall time by sims at
+     * the base hours would inflate the rate. The wall time covers lanes.
+     */
+    _etaRemember(result, hours) {
+        const sims = result?.sims;
+        if (result?.resim?.rounds > 0) return;
         const seconds = this._eta ? (Date.now() - this._eta.startedAt) / 1000 : 0;
-        if (sims > 0 && hours > 0 && seconds > 0) sessionRate.secPerSimHour = seconds / (sims * hours);
+        if (sims > 0 && hours > 0 && seconds > 0) sessionRate.secPerSimByHours.set(hours, seconds / sims);
     }
 
     _blocked() {
@@ -477,10 +504,11 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
                     ({ description }) => {
                         if (!current() || this._aborted) return;
                         // The one combined sim: about a sim's share of the last ranking, if there was one
-                        const rate = sessionRate.secPerSimHour;
+                        // One sim alone takes about a lane-amortized sim times the lanes
+                        const perSim = estimatedSecPerSim(previous.hours);
                         const left =
-                            rate && /checking/.test(description)
-                                ? ` · about ${durationText(previous.hours * rate)}`
+                            perSim && /checking/.test(description)
+                                ? ` · about ${durationText(perSim * analysisConcurrency())}`
                                 : '';
                         this._progress(`${description}${left}`);
                     },
@@ -660,10 +688,8 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             const resim = this._resimChecked() ? ', plus close-call re-sims' : '';
             const orbs = setMode === 'budget' ? ', then orb-cost solves' : '';
             const { hours } = this.host._readUpgradeInputs();
-            const time =
-                sessionRate.secPerSimHour && hours > 0
-                    ? `, roughly ${durationText(sims * hours * sessionRate.secPerSimHour)} (from the last run)`
-                    : '';
+            const perSim = hours > 0 ? estimatedSecPerSim(hours) : null;
+            const time = perSim ? `, roughly ${durationText(sims * perSim)} (from the last run)` : '';
             estimate.textContent = `Up to ${sims} sims${resim}${orbs}${time}, ${ready.slots} slot${ready.slots === 1 ? '' : 's'}, Talisman Power ${(ready.power * 100).toFixed(1)}%`;
         } catch (error) {
             console.error('[TalismanLineRanking] Estimate failed:', error);
@@ -876,7 +902,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             { abortSignal: () => this._aborted || !current() }
         );
         if (!current()) return null;
-        if (result.status === 'done') this._etaRemember(result.sims, hours);
+        if (result.status === 'done') this._etaRemember(result, hours);
         const gameData = buildGameDataPayload();
         result.zoneName = gameData?.actionDetailMap?.[zoneHrid]?.name || zoneHrid;
         result.difficultyTier = difficultyTier;
@@ -936,7 +962,8 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
                 (r.simmed ? 'the new set was checked with one more sim.' : 'no new sims.');
             if (r.metricDiffers) {
                 line +=
-                    ` The lines near the set's cut line were re-simmed, and the leading lines ran with a copy in every slot, ` +
+                    ` The ${result.resim?.rounds > 0 ? "lines near the set's cut line were re-simmed, and the leading lines" : 'leading lines'} ran ` +
+                    `${result.resim?.rounds > 0 ? '' : 'in the shortlist '}with a copy in every slot, ` +
                     `under ${ranBy}, so another metric may have chosen others. Rank again for the exact picture.`;
             }
             if (!r.metricDiffers && r.setDiffers && result.resim?.rounds > 0) {
