@@ -376,6 +376,36 @@ function getProtectionItemHrid(action) {
 }
 
 /**
+ * Whether a protected failure kept its protection item (Conservation talisman).
+ *
+ * Nothing in the message flags it. `endCharacterItems` lists only the stacks that changed, so a
+ * consumed protection shows its own stack (the one `secondaryItemHash` names) with the new count,
+ * and a kept one leaves it out. The stack is told apart from the enhanced item by its hash, or by
+ * item and enhancement level: the protection may be the same item type as the one enhanced.
+ * Kept only when the list is a non-empty array with no such row; a missing or empty list is an
+ * unknown shape (a reload-gap attempt carries no message), counted as consumed as before. The
+ * Philosopher's Mirror is never kept.
+ * @param {Object} action - Enhance action
+ * @param {string} protectionItemHrid - The protection item
+ * @param {Array|undefined} changedItems - The message's endCharacterItems
+ * @returns {boolean}
+ */
+function protectionWasKept(action, protectionItemHrid, changedItems) {
+    if (protectionItemHrid === PHILOSOPHERS_MIRROR_HRID) return false;
+    if (!Array.isArray(changedItems) || changedItems.length === 0) return false;
+    const hash = action.secondaryItemHash;
+    const { level } = parseItemHash(hash);
+    const touched = changedItems.some((row) => {
+        if (!row || typeof row !== 'object') return true;
+        if (typeof hash === 'string' && row.hash === hash) return true;
+        if (row.itemHrid !== protectionItemHrid) return false;
+        if ((row.enhancementLevel || 0) !== level) return false;
+        return row.itemLocationHrid == null || row.itemLocationHrid === '/item_locations/inventory';
+    });
+    return !touched;
+}
+
+/**
  * Get enhancement materials and costs for an item
  * Based on Ultimate Enhancement Tracker's getEnhancementMaterials function
  * @param {string} itemHrid - Item HRID
@@ -535,9 +565,10 @@ async function trackMirrorCosts(itemHrid, fromLevel) {
  * @param {number|null} p.previousLevel - Level the attempt started at, null when unknown
  * @param {number} p.newLevel - Level the attempt ended at
  * @param {boolean} p.scored - False when the start level is not known: costs only
+ * @param {Array} [p.changedItems] - The message's endCharacterItems, when this attempt came from one
  * @returns {Promise<void>}
  */
-async function applyAttempt({ session, action, itemHrid, previousLevel, newLevel, scored }) {
+async function applyAttempt({ session, action, itemHrid, previousLevel, newLevel, scored, changedItems }) {
     session.lastAttempt = {
         attemptNumber: calculateAdjustedAttemptCount(session),
         level: newLevel,
@@ -586,7 +617,9 @@ async function applyAttempt({ session, action, itemHrid, previousLevel, newLevel
 
     if (wasProtectedFailure && !mirror) {
         const protectionItemHrid = getProtectionItemHrid(action);
-        if (protectionItemHrid) {
+        if (protectionItemHrid && protectionWasKept(action, protectionItemHrid, changedItems)) {
+            await enhancementTracker.trackKeptProtection();
+        } else if (protectionItemHrid) {
             await enhancementTracker.trackProtectionCost(
                 protectionItemHrid,
                 protectionUnitPrice(action, protectionItemHrid)
@@ -662,9 +695,9 @@ async function startSessionFor(action, itemHrid, newLevel, baselineLevel, baseli
 /**
  * Handle enhancement result (success or failure)
  * @param {Object} action - Enhancement action data
- * @param {Object} _data - Full WebSocket message data
+ * @param {Object} data - Full WebSocket message data
  */
-async function handleEnhancementResult(action, _data) {
+async function handleEnhancementResult(action, data) {
     try {
         const { itemHrid, level: newLevel } = parseItemHash(action.primaryItemHash);
         const rawCount = action.currentCount || 0;
@@ -762,6 +795,7 @@ async function handleEnhancementResult(action, _data) {
             previousLevel,
             newLevel,
             scored: previousLevel != null,
+            changedItems: data?.endCharacterItems,
         });
     } catch (error) {
         console.error('[EnhancementHandlers] Enhancement result handler failed:', error);

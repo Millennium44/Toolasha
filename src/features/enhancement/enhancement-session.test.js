@@ -1313,3 +1313,17 @@ describe('attempts missed in gaps', () => {
         expect(foldSessions([first, second]).gapAttempts).toBe(7);
     });
 });
+
+describe('addKeptProtection', () => {
+    test('counts a kept protection apart from protectionCount and cost, and an older session reads as 0', async () => {
+        const { createSession, addKeptProtection, addProtectionCost } = await import('./enhancement-session.js');
+        const session = createSession('/items/cheese_boots', 'Cheese Boots', 0, 10, 2);
+        expect(session.protectionsKept).toBeUndefined();
+        addKeptProtection(session);
+        addKeptProtection(session);
+        addProtectionCost(session, '/items/cheese_boots', 100);
+        expect(session.protectionsKept).toBe(2);
+        expect(session.protectionCount).toBe(1);
+        expect(session.protectionCost).toBe(100);
+    });
+});

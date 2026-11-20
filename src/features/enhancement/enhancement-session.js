@@ -309,6 +309,16 @@ export function addCoinCost(session, amount) {
 }
 
 /**
+ * Record a protected failure whose protection item was kept (Conservation talisman). Nothing was
+ * spent, so protectionCount and protectionCost are untouched; the count is informational only.
+ * The field is absent on a session that never kept one, and readers treat absent as 0.
+ * @param {Object} session - Session object
+ */
+export function addKeptProtection(session) {
+    session.protectionsKept = (session.protectionsKept || 0) + 1;
+}
+
+/**
  * Add protection item cost to session
  * @param {Object} session - Session object
  * @param {string} protectionItemHrid - Protection item HRID
@@ -847,6 +857,9 @@ export function foldSessions(ordered) {
         newest.coinCount = (newest.coinCount || 0) + (session.coinCount || 0);
         newest.protectionCost = (newest.protectionCost || 0) + (session.protectionCost || 0);
         newest.protectionCount = (newest.protectionCount || 0) + (session.protectionCount || 0);
+        if (newest.protectionsKept || session.protectionsKept) {
+            newest.protectionsKept = (newest.protectionsKept || 0) + (session.protectionsKept || 0);
+        }
         newest.mirrorCost = (newest.mirrorCost || 0) + (session.mirrorCost || 0);
         newest.mirrorCount = (newest.mirrorCount || 0) + (session.mirrorCount || 0);
         newest.hasUnpricedInput = newest.hasUnpricedInput === true || deriveUnpricedInput(session);

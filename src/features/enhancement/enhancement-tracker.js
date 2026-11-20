@@ -12,6 +12,7 @@ import {
     addMaterialCost,
     addCoinCost,
     addProtectionCost,
+    addKeptProtection,
     addMirrorCost,
     finalizeSession,
     canExtendSession,
@@ -451,6 +452,18 @@ class EnhancementTracker {
         if (!session) return;
 
         addProtectionCost(session, protectionItemHrid, cost);
+        await saveSessions(this.sessions);
+    }
+
+    /**
+     * Record a protected failure whose protection item was kept (nothing spent)
+     * @returns {Promise<void>}
+     */
+    async trackKeptProtection() {
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        addKeptProtection(session);
         await saveSessions(this.sessions);
     }
 

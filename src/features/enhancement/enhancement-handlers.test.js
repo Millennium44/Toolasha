@@ -37,6 +37,7 @@ const trackerMock = vi.hoisted(() => {
         trackMaterialCost: async (...a) => state.costs.push(['mat', ...a]),
         saveSessions: async () => {},
         trackProtectionCost: vi.fn(async (...a) => state.calls.push(['prot', ...a])),
+        trackKeptProtection: vi.fn(async () => state.calls.push(['kept'])),
         trackMirrorCost: vi.fn(async (...a) => state.calls.push(['mirror', ...a])),
         extendSessionTarget: vi.fn(async (sessionId, newTarget) => {
             state.calls.push(['extend', sessionId, newTarget]);
@@ -1172,4 +1173,76 @@ describe('compact protection item hashes', () => {
             expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 40_000]);
         }
     );
+});
+
+describe('a protected failure under the Conservation talisman', () => {
+    // Real shapes: endCharacterItems rows are full inventory rows keyed by hash; only changed stacks are listed
+    const BOOTS = '/items/cheese_boots';
+    const row = (itemHrid, enhancementLevel, count) => ({
+        id: 1000 + enhancementLevel,
+        characterID: 32030,
+        itemLocationHrid: '/item_locations/inventory',
+        itemHrid,
+        enhancementLevel,
+        count,
+        hash: `32030::/item_locations/inventory::${itemHrid}::${enhancementLevel}`,
+    });
+    const msg = (level, currentCount, items, protection = `32030::/item_locations/inventory::${BOOTS}::0`) => ({
+        endCharacterAction: {
+            actionHrid: '/actions/enhancing/enhance',
+            currentCount,
+            primaryItemHash: `32030::/item_locations/inventory::${BOOTS}::${level}`,
+            secondaryItemHash: protection,
+            enhancingMaxLevel: 20,
+            enhancingProtectionMinLevel: 2,
+        },
+        ...(items === undefined ? {} : { endCharacterItems: items }),
+    });
+    const run = async (items, protection) => {
+        await state.handlers.action_completed(msg(3, 78, [row('/items/cheese', 5)], protection));
+        state.calls.length = 0;
+        await state.handlers.action_completed(msg(2, 79, items, protection));
+        return state.calls.map(([kind]) => kind);
+    };
+
+    test('a same-type protection absent from the changed stacks was kept', async () => {
+        const kinds = await run([row('/items/cheese', 957), row(BOOTS, 1), row(BOOTS, 3), row('/items/coin', 9)]);
+        expect(kinds).toContain('kept');
+        expect(kinds).not.toContain('prot');
+        expect(kinds).toContain('failure');
+    });
+
+    test('the protection stack present (hash or item and level) was consumed, and the primary stack alone is not it', async () => {
+        expect(await run([row(BOOTS, 2), row(BOOTS, 0)])).toContain('prot');
+        const noHash = row(BOOTS, 0);
+        delete noHash.hash;
+        expect(await run([row(BOOTS, 2), noHash])).toContain('prot');
+        expect(await run([row(BOOTS, 2), row(BOOTS, 3)])).toContain('kept');
+    });
+
+    test('a different protection item is matched by its own stack', async () => {
+        const other = '32030::/item_locations/inventory::/items/mirror_of_protection::0';
+        expect(await run([row('/items/mirror_of_protection', 0), row(BOOTS, 2)], other)).toContain('prot');
+        expect(await run([row(BOOTS, 2)], other)).toContain('kept');
+    });
+
+    test('a missing or empty item list is unknown and counts as consumed', async () => {
+        expect(await run(undefined)).toContain('prot');
+        expect(await run([])).toContain('prot');
+        expect(await run('nope')).toContain('prot');
+    });
+
+    test("the Philosopher's Mirror is never kept", async () => {
+        const mirror = '32030::/item_locations/inventory::/items/philosophers_mirror::0';
+        expect(await run([row(BOOTS, 2)], mirror)).not.toContain('kept');
+    });
+
+    test('a protected success uses nothing either way', async () => {
+        await state.handlers.action_completed(msg(3, 78, [row('/items/cheese', 5)]));
+        state.calls.length = 0;
+        await state.handlers.action_completed(msg(4, 79, [row(BOOTS, 4)]));
+        const kinds = state.calls.map(([kind]) => kind);
+        expect(kinds).not.toContain('kept');
+        expect(kinds).not.toContain('prot');
+    });
 });
