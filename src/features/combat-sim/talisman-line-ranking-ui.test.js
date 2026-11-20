@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
     deathsFor: {},
     /** The Talismans panel's fiber (for Aim for this opening the window) */
     panelFiber: null,
+    /** Community buffs the sims would run with */
+    buffs: null,
 }));
 
 const LARGE_10 = { hrid: '/items/large_talisman_belt', enhancementLevel: 10 };
@@ -85,7 +87,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('./combat-sim-adapter.js', () => ({
     buildAllPlayerDTOs: async () => ({ players: structuredClone(mocks.roster), selfHrid: '/players/1' }),
     buildGameDataPayload: () => gameData(),
-    getCommunityBuffs: () => ({}),
+    getCommunityBuffs: () => mocks.buffs ?? {},
     seedSimPriceCache: (cache) => cache,
 }));
 vi.mock('./combat-sim-runner.js', () => ({
@@ -202,6 +204,7 @@ beforeEach(() => {
     mocks.owned = [];
     mocks.settings = {};
     mocks.deathsFor = {};
+    mocks.buffs = null;
     delete globalThis.window.Toolasha;
     mocks.roster = [{ hrid: '/players/1', equipment: { '/equipment_types/belt': LARGE_10 }, talismans: [] }];
     mocks.gatheringCalculator = {
@@ -887,6 +890,47 @@ describe('rebuilding a finished ranking without new line sims', () => {
         expect(section._result.metricKey).toBe('dps');
     });
 
+    test('a stopped ranking still says a changed weight or budget needs a new Rank', async () => {
+        pick('metric', 'balanced');
+        mocks.stopAfter = 5;
+        mocks.onStop = () => section.stop();
+        await run();
+        expect(section._result.status).toBe('stopped');
+        expect(q('stale').style.display).toBe('none');
+        q('weight-dps').value = '3';
+        q('weight-dps').dispatchEvent(new Event('change'));
+        expect(q('stale').textContent).toContain('Balanced weights changed');
+        expect(q('stale').textContent).toContain('Rank again.');
+        expect(rebuildButton()).toBeNull();
+    });
+
+    test('a character switch or a changed community buff forces a Rank, not a rebuild', async () => {
+        await run();
+        mocks.buffs = { experience: 5 };
+        section.onShow();
+        expect(q('stale').textContent).toContain('community buffs');
+        expect(rebuildButton()).toBeNull();
+        mocks.buffs = null;
+        section.onShow();
+        expect(q('stale').style.display).toBe('none');
+        mocks.characterId = 'c2';
+        section.onShow();
+        expect(q('stale').textContent).toContain('character');
+        expect(q('stale').textContent).toContain('Rank again.');
+        expect(rebuildButton()).toBeNull();
+    });
+
+    test('the core advisor keeps its figures through a set-only rebuild, and loses them to a re-score', async () => {
+        await run();
+        const before = section._coreInputsNow().ranking;
+        pick('set-mode', 'ideal');
+        await section._onRebuild();
+        expect(section._coreInputsNow().ranking).toBe(before);
+        pick('metric', 'deaths');
+        await section._onRebuild();
+        expect(section._coreInputsNow().ranking).not.toBe(before);
+    });
+
     test('a stopped rebuild leaves the ranking exactly as it was', async () => {
         await run();
         const before = section._result;
@@ -976,13 +1020,17 @@ describe('Use in Configure', () => {
         host._editor = editor;
     });
 
+    const pick = (role, value) => {
+        q(role).value = value;
+        q(role).dispatchEvent(new Event('change'));
+    };
     const useButton = () => container.querySelector('[data-role="use-configure"]');
     const noteText = () => container.querySelector('[data-role="use-configure-note"]').textContent;
 
     test('the button sits beside Copy targets and says what it replaces', async () => {
         await run();
         expect(useButton()).not.toBeNull();
-        expect(useButton().title).toContain("Me's Belt rows");
+        expect(useButton().title).toContain("Belt rows of Me's seat");
         expect(useButton().title).toContain('replacing the talismans in every belt slot');
         expect(useButton().previousElementSibling.dataset.role).toBe('copy-targets');
     });
@@ -990,9 +1038,6 @@ describe('Use in Configure', () => {
     test('writes the recommended set to the player the ranking was run for, found by hrid', async () => {
         await run();
         const set = section._result.set.talismans;
-        // The roster is reordered after the run: position 1 is now somebody else
-        dtos = { '/players/2': dtos['/players/2'], '/players/1': dtos['/players/1'] };
-        editor.getEditedDTOs = () => dtos;
         useButton().click();
         expect(editor.applyTalismans).toHaveBeenCalledTimes(1);
         expect(editor.applyTalismans.mock.calls[0][0]).toBe('/players/1');
@@ -1004,6 +1049,54 @@ describe('Use in Configure', () => {
         // The build changed on purpose: the note says it is out of date and why
         expect(q('stale').textContent).toContain('build');
         expect(q('stale').textContent).toContain('a set applied in Configure counts');
+        // Only this player's talismans changed: pressing it again is fine
+        useButton().click();
+        expect(editor.applyTalismans).toHaveBeenCalledTimes(2);
+    });
+
+    test('a seat that now holds someone else, or a reordered roster, is refused', async () => {
+        await run();
+        // Configure loaded another person into the same seat (same hrid)
+        editor.getPlayerInfo = () => [
+            { hrid: '/players/1', name: 'Bob' },
+            { hrid: '/players/2', name: 'Mate' },
+        ];
+        useButton().click();
+        expect(editor.applyTalismans).not.toHaveBeenCalled();
+        expect(noteText()).toContain('now holds Bob, not Me');
+        editor.getPlayerInfo = () => [{ hrid: '/players/1', name: 'Me' }];
+        dtos = { '/players/2': dtos['/players/2'], '/players/1': dtos['/players/1'] };
+        editor.getEditedDTOs = () => dtos;
+        useButton().click();
+        expect(editor.applyTalismans).not.toHaveBeenCalled();
+        expect(noteText()).toContain('The player, ');
+    });
+
+    test('a changed zone, hours, grade, gear, party member or buff refuses; talismans alone do not', async () => {
+        await run();
+        const refused = (word) => {
+            useButton().click();
+            expect(editor.applyTalismans).not.toHaveBeenCalled();
+            expect(noteText()).toContain(word);
+        };
+        const inputs = host._readUpgradeInputs;
+        host._readUpgradeInputs = () => ({ ...inputs(), zoneHrid: '/actions/combat/other' });
+        refused('zone');
+        host._readUpgradeInputs = () => ({ ...inputs(), hours: 99 });
+        refused('hours');
+        host._readUpgradeInputs = inputs;
+        pick('grade', '4');
+        refused('grade');
+        pick('grade', '6');
+        dtos['/players/1'].equipment['/equipment_types/head'] = { hrid: '/items/hat', enhancementLevel: 0 };
+        refused('gear or build');
+        delete dtos['/players/1'].equipment['/equipment_types/head'];
+        dtos['/players/2'].attackLevel = 99;
+        refused('party');
+        dtos['/players/2'].attackLevel = undefined;
+        dtos['/players/1'].talismans = [{ slotIndex: 1, modifiers: [{ hrid: '/talisman_modifiers/armor', grade: 1 }] }];
+        useButton().click();
+        expect(editor.applyTalismans).toHaveBeenCalledTimes(1);
     });
 
     test('a player no longer in the roster is refused, and nothing is written', async () => {
@@ -1032,7 +1125,7 @@ describe('Use in Configure', () => {
         host._editor = editor;
         mocks.characterId = 'c2';
         useButton().click();
-        expect(noteText()).toContain('another character');
+        expect(noteText()).toContain('character changed');
         expect(editor.applyTalismans).not.toHaveBeenCalled();
     });
 

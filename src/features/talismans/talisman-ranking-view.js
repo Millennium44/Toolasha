@@ -1573,7 +1573,11 @@ export class TalismanRankingSectionBase {
         } catch (error) {
             console.error('[TalismanRanking] Reading the core quotes failed:', error);
         }
-        return { ...this._beltInputsNow(), ranking: this._result?.rankingId ?? null, 'core prices': prices };
+        return {
+            ...this._beltInputsNow(),
+            ranking: this._result?.rowsId ?? this._result?.rankingId ?? null,
+            'core prices': prices,
+        };
     }
 
     /** Say when the drawn core figures were valued for other inputs than stand now */

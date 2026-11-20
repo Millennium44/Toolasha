@@ -105,7 +105,13 @@ export function removeTalismanLine(talismans, slot, lineIndex) {
 export function talismanListSignature(talismans) {
     const rows = (Array.isArray(talismans) ? talismans : [])
         .filter((t) => t && typeof t === 'object' && Array.isArray(t.modifiers) && t.modifiers.length > 0)
-        .map((t) => [t.slotIndex, t.modifiers.map((m) => `${m?.hrid}@${m?.grade}`).join(',')])
+        .map((t) => [
+            t.slotIndex,
+            t.modifiers
+                .map((m) => `${m?.hrid}@${m?.grade}`)
+                .sort()
+                .join(','),
+        ])
         .sort((a, b) => (a[0] || 0) - (b[0] || 0));
     return JSON.stringify(rows);
 }

@@ -848,6 +848,11 @@ export async function rebuildCombatLineRanking(previous, controls, onProgress, d
             setChanged: setSignature(set) !== setSignature(previous.set),
             // The metric (and weights) the line sims, close-call re-sims and copies shortlist were chosen under
             ranWith: ctx.ranWith,
+            // The close-call re-sims were picked around the run's set (mode, cap, Special limit)
+            setDiffers: Boolean(
+                ctx.ranWith.setMode !== undefined &&
+                (setOptions.mode !== ctx.ranWith.setMode || setOptions.grade !== ctx.ranWith.setGrade)
+            ),
             metricDiffers: Boolean(
                 metric.key !== ctx.ranWith.metricKey ||
                 (metric.balanced &&
@@ -1170,7 +1175,12 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
             baselineResult,
             linesPerTalisman,
             // The metric the line sims, close-call re-sims and copies shortlist were chosen under
-            ranWith: { metricKey: metric.key, balanceWeights: base.balanceWeights },
+            ranWith: {
+                metricKey: metric.key,
+                balanceWeights: base.balanceWeights,
+                setMode: setOptions.mode,
+                setGrade: setOptions.grade,
+            },
         },
     };
 }
