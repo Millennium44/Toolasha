@@ -427,7 +427,8 @@ describe('set modes and orbs', () => {
         expect(q('stale').style.display).toBe('none');
         q('budget').value = '20m';
         q('budget').dispatchEvent(new Event('input'));
-        expect(q('stale').textContent).toContain('budget changed');
+        expect(q('stale').textContent).toContain('Budget changed');
+        expect(q('stale').querySelector('[data-role="rebuild"]')).not.toBeNull();
         const sims = mocks.simCalls;
         q('budget').value = 'junk';
         q('budget').dispatchEvent(new Event('input'));
@@ -801,5 +802,247 @@ describe('solver limits beside every cost', () => {
             overUpperBound: 2,
         });
         expect(text()).toContain('2 targets over the budget were costed only as an upper bound');
+    });
+});
+
+describe('rebuilding a finished ranking without new line sims', () => {
+    const pick = (role, value) => {
+        q(role).value = value;
+        q(role).dispatchEvent(new Event('change'));
+    };
+    const rebuildButton = () => q('stale').querySelector('[data-role="rebuild"]');
+
+    test('Rank by: offers a re-score, which sims at most the new set and says what it could not redo', async () => {
+        await run();
+        const ranked = mocks.simCalls;
+        pick('metric', 'deaths');
+        expect(q('stale').style.display).toBe('block');
+        expect(q('stale').textContent).toContain('Rank by changed');
+        expect(q('stale').textContent).not.toContain('These figures are out of date');
+        expect(rebuildButton().textContent).toBe('Re-score and rebuild set');
+        await section._onRebuild();
+        expect(mocks.simCalls - ranked).toBeLessThanOrEqual(1);
+        expect(text()).toContain('Rebuilt from the saved line measurements (scored again by Deaths/hr)');
+        expect(text()).toContain('ranked by Deaths/hr');
+        expect(text()).toContain('Rank again for the exact picture');
+        expect(text()).not.toMatch(/undefined|NaN/);
+        expect(q('stale').style.display).toBe('none');
+        expect(section._result.rankingId).toBe(2);
+    });
+
+    test('Balanced weights that leave the set alone cost no sim at all', async () => {
+        pick('metric', 'balanced');
+        await run();
+        const ranked = mocks.simCalls;
+        q('weight-xp').value = '4';
+        q('weight-xp').dispatchEvent(new Event('change'));
+        expect(q('stale').textContent).toContain('Balanced weights changed');
+        await section._onRebuild();
+        // The fake sim moves DPS only, so the weights re-score the same order: the stored combined sim stands
+        expect(mocks.simCalls).toBe(ranked);
+        expect(text()).toContain('no new sims');
+        expect(section._result.balanceWeights.xp).toBe(4);
+    });
+
+    test('Set mode: rebuilds the set from the same rows with one combined sim', async () => {
+        await run();
+        const ranked = mocks.simCalls;
+        pick('set-mode', 'ideal');
+        expect(q('stale').textContent).toContain('Set changed');
+        expect(rebuildButton().textContent).toBe('Rebuild set');
+        await section._onRebuild();
+        expect(mocks.simCalls - ranked).toBe(1);
+        expect(text()).toContain('Ideal: G6');
+        expect(text()).toContain('the new set was checked with one more sim');
+        expect(text()).toContain('Combined sim of the set');
+        expect(q('stale').style.display).toBe('none');
+        // Cores and Improve mine read a result that is still the ranking's: kept for a set-only rebuild
+        expect(section._result.rebuilt.rescored).toBe(false);
+    });
+
+    test('Cap: a Practical set is rebuilt for it, and in Ideal the Cap is not an input', async () => {
+        await run();
+        pick('cap', '2');
+        expect(q('stale').textContent).toContain('Cap changed');
+        await section._onRebuild();
+        expect(text()).toContain('Practical: grades capped at G2');
+        pick('set-mode', 'ideal');
+        await section._onRebuild();
+        pick('cap', '4');
+        expect(q('stale').style.display).toBe('none');
+    });
+
+    test('grade, zone, tier, hours and build need a new Rank: no button, and the press is refused', async () => {
+        await run();
+        const ranked = mocks.simCalls;
+        pick('grade', '4');
+        expect(q('stale').textContent).toContain('the grade changed since the ranking ran. Rank again.');
+        expect(rebuildButton()).toBeNull();
+        pick('metric', 'deaths');
+        // Rank-forcing inputs win: only "Rank again" is offered, never a rebuild on a stale measurement
+        expect(rebuildButton()).toBeNull();
+        await section._onRebuild();
+        expect(mocks.simCalls).toBe(ranked);
+        expect(q('notice').textContent).toContain('grade changed');
+        expect(section._result.metricKey).toBe('dps');
+    });
+
+    test('a stopped rebuild leaves the ranking exactly as it was', async () => {
+        await run();
+        const before = section._result;
+        const drawn = q('results').innerHTML;
+        mocks.stopAfter = mocks.simCalls;
+        mocks.onStop = () => section.stop();
+        pick('set-mode', 'ideal');
+        await section._onRebuild();
+        expect(section._result).toBe(before);
+        expect(q('results').innerHTML).toBe(drawn);
+        expect(q('notice').textContent).toContain('Rebuild stopped');
+        expect(q('notice').textContent).toContain('unchanged');
+        // The control still differs, so the way to try again is still offered
+        expect(rebuildButton()).not.toBeNull();
+        expect(section.isBusy()).toBe(false);
+    });
+
+    test('refused while the Combat Sim is busy, with the ranking kept', async () => {
+        await run();
+        pick('set-mode', 'ideal');
+        host.busy = true;
+        const drawn = q('results').innerHTML;
+        await section._onRebuild();
+        expect(q('notice').textContent).toContain('Something else is running');
+        expect(q('results').innerHTML).toBe(drawn);
+        host.busy = false;
+    });
+
+    test('a Budget rebuild with an unreadable budget is refused with the reason', async () => {
+        await run();
+        pick('set-mode', 'budget');
+        q('budget').value = 'junk';
+        q('budget').dispatchEvent(new Event('input'));
+        const ranked = mocks.simCalls;
+        await section._onRebuild();
+        expect(mocks.simCalls).toBe(ranked);
+        expect(q('notice').textContent).toContain('"junk" is not an amount');
+    });
+
+    test('the rebuilt result is what Copy targets, Improve mine and the cores read', async () => {
+        mocks.owned = [
+            talismanRow(42, [
+                { hrid: '/talisman_modifiers/armor', grade: 1 },
+                { hrid: '/talisman_modifiers/tenacity', grade: 1 },
+            ]),
+        ];
+        await run();
+        await section._onImprove();
+        expect(section._improve).not.toBeNull();
+        pick('set-mode', 'ideal');
+        await section._onRebuild();
+        // The options were worked out for the old set mode
+        expect(section._improve).toBeNull();
+        expect(q('improve').innerHTML).toBe('');
+        const targets = section._result.rerollTargets;
+        expect(targets.length).toBeGreaterThan(0);
+        expect(targets.flat().every((t) => t.minGrade === 6)).toBe(true);
+        await section._onImprove();
+        expect(section._improve.status).not.toBe('none_owned');
+    });
+});
+
+describe('Use in Configure', () => {
+    const dtoOf = (hrid, talismans = []) => ({
+        hrid,
+        equipment: { '/equipment_types/belt': LARGE_10 },
+        talismans,
+    });
+    let dtos;
+    let editor;
+
+    beforeEach(() => {
+        dtos = { '/players/1': dtoOf('/players/1'), '/players/2': dtoOf('/players/2') };
+        mocks.roster = Object.values(dtos);
+        editor = {
+            getEditedDTOs: () => dtos,
+            getSelfHrid: () => '/players/1',
+            getPlayerInfo: () => [
+                { hrid: '/players/1', name: 'Me' },
+                { hrid: '/players/2', name: 'Mate' },
+            ],
+            applyTalismans: vi.fn((hrid, talismans) => {
+                dtos[hrid].talismans = talismans;
+                return { ok: true, slots: 3 };
+            }),
+        };
+        host._editor = editor;
+    });
+
+    const useButton = () => container.querySelector('[data-role="use-configure"]');
+    const noteText = () => container.querySelector('[data-role="use-configure-note"]').textContent;
+
+    test('the button sits beside Copy targets and says what it replaces', async () => {
+        await run();
+        expect(useButton()).not.toBeNull();
+        expect(useButton().title).toContain("Me's Belt rows");
+        expect(useButton().title).toContain('replacing the talismans in every belt slot');
+        expect(useButton().previousElementSibling.dataset.role).toBe('copy-targets');
+    });
+
+    test('writes the recommended set to the player the ranking was run for, found by hrid', async () => {
+        await run();
+        const set = section._result.set.talismans;
+        // The roster is reordered after the run: position 1 is now somebody else
+        dtos = { '/players/2': dtos['/players/2'], '/players/1': dtos['/players/1'] };
+        editor.getEditedDTOs = () => dtos;
+        useButton().click();
+        expect(editor.applyTalismans).toHaveBeenCalledTimes(1);
+        expect(editor.applyTalismans.mock.calls[0][0]).toBe('/players/1');
+        expect(editor.applyTalismans.mock.calls[0][1].map((t) => [t.slotIndex, t.modifiers])).toEqual(
+            set.map((t) => [t.slotIndex, t.modifiers])
+        );
+        expect(dtos['/players/2'].talismans).toEqual([]);
+        expect(noteText()).toContain("Written to Me's Belt rows in Configure");
+        // The build changed on purpose: the note says it is out of date and why
+        expect(q('stale').textContent).toContain('build');
+        expect(q('stale').textContent).toContain('a set applied in Configure counts');
+    });
+
+    test('a player no longer in the roster is refused, and nothing is written', async () => {
+        await run();
+        delete dtos['/players/1'];
+        useButton().click();
+        expect(editor.applyTalismans).not.toHaveBeenCalled();
+        expect(noteText()).toContain('Me is no longer in the Configure roster');
+    });
+
+    test('the editor refusing (the belt is gone) is said, not hidden', async () => {
+        await run();
+        editor.applyTalismans = vi.fn(() => ({ ok: false, reason: 'no_belt', slots: 0 }));
+        useButton().click();
+        expect(noteText()).toContain('wears no Talisman Belt in Configure now');
+        editor.applyTalismans = vi.fn(() => ({ ok: false, reason: 'too_many_slots', slots: 2 }));
+        useButton().click();
+        expect(noteText()).toContain('belt has 2 slots, fewer than this set uses');
+    });
+
+    test('no editor, a run in flight and another character each refuse', async () => {
+        await run();
+        host._editor = null;
+        useButton().click();
+        expect(noteText()).toContain('Configure tab has no build loaded');
+        host._editor = editor;
+        mocks.characterId = 'c2';
+        useButton().click();
+        expect(noteText()).toContain('another character');
+        expect(editor.applyTalismans).not.toHaveBeenCalled();
+    });
+
+    test('a rebuilt set is the one written', async () => {
+        await run();
+        q('set-mode').value = 'ideal';
+        q('set-mode').dispatchEvent(new Event('change'));
+        await section._onRebuild();
+        useButton().click();
+        const written = editor.applyTalismans.mock.calls[0][1];
+        expect(written.flatMap((t) => t.modifiers).every((m) => m.grade === 6)).toBe(true);
     });
 });

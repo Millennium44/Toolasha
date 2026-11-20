@@ -413,6 +413,82 @@ describe('editable belt talismans', () => {
     });
 });
 
+describe('applyTalismans (a set from the Talisman lines ranking)', () => {
+    // A planner's set carries an orb cost on its records; none of it may reach the sim player
+    const set = [
+        { slotIndex: 1, modifiers: [{ hrid: ARMOR, grade: 3 }], cost: { orbs: 12 } },
+        {
+            slotIndex: 2,
+            modifiers: [
+                { hrid: ARMOR, grade: 3 },
+                { hrid: HASTE, grade: 3 },
+            ],
+            cost: { orbs: 30 },
+        },
+    ];
+
+    test('writes the set to the named player, redraws the Belt rows and strips the planner fields', () => {
+        const { el, editor } = open([
+            dtoWith(
+                'player1',
+                '/items/large_talisman_belt',
+                worn([{ slotIndex: 1, modifiers: [{ hrid: HASTE, grade: 1 }] }])
+            ),
+            dtoWith(
+                'player2',
+                '/items/large_talisman_belt',
+                worn([{ slotIndex: 3, modifiers: [{ hrid: HASTE, grade: 2 }] }])
+            ),
+        ]);
+        // The player on screen is not the one written to: found by hrid, not by what is shown
+        expect(editor.applyTalismans('player2', set)).toEqual({ ok: true, slots: 3 });
+        const dtos = editor.getEditedDTOs();
+        expect(dtos.player2.talismans).toEqual([
+            { slotIndex: 1, modifiers: [{ hrid: ARMOR, grade: 3 }] },
+            {
+                slotIndex: 2,
+                modifiers: [
+                    { hrid: ARMOR, grade: 3 },
+                    { hrid: HASTE, grade: 3 },
+                ],
+            },
+        ]);
+        expect(JSON.stringify(dtos.player2.talismans)).not.toContain('cost');
+        expect(dtos.player1.talismans.map((t) => t.slotIndex)).toEqual([1]);
+        // Slot 3 held a talisman the set does not fill: it is emptied (the set replaces the belt's talismans)
+        expect(dtos.player2.talismans.find((t) => t.slotIndex === 3)).toBeUndefined();
+        // Player 1 is the one drawn: its rows are untouched
+        expect(rows(el)).toHaveLength(1);
+        // Switching to the written player shows the new rows, the same path a hand edit takes
+        editor.showPlayer('player2');
+        expect(rows(el).map((s) => s.querySelector('option[selected]').value)).toEqual([ARMOR, ARMOR, HASTE]);
+        // Roster saves and export read the same list
+        expect(editor.getEditedDTOs().player2.talismans).toHaveLength(2);
+    });
+
+    test('an unknown player, no belt, and a set bigger than the belt are refused without writing', () => {
+        const { editor } = open([
+            dtoWith('player1', '/items/small_talisman_belt', null),
+            dtoWith('player2', null, null),
+        ]);
+        expect(editor.applyTalismans('player9', set)).toEqual({ ok: false, reason: 'no_player' });
+        expect(editor.applyTalismans('player2', set)).toMatchObject({ ok: false, reason: 'no_belt' });
+        expect(editor.applyTalismans('player1', set)).toMatchObject({ ok: false, reason: 'too_many_slots', slots: 1 });
+        expect(editor.getEditedDTOs().player1.talismans).toBeUndefined();
+        expect(editor.getEditedDTOs().player2.talismans).toBeUndefined();
+    });
+
+    test("the written list is the engine's: the lines add like a hand-edited set", () => {
+        const { editor } = open([dtoWith('player1', '/items/large_talisman_belt', null)]);
+        editor.applyTalismans('player1', set);
+        const dto = editor.getEditedDTOs().player1;
+        // Not the same array as the set handed in: a later edit of one never moves the other
+        expect(dto.talismans[0]).not.toBe(set[0]);
+        dto.talismans[0].modifiers[0].grade = 6;
+        expect(set[0].modifiers[0].grade).toBe(3);
+    });
+});
+
 describe('compact talisman layout', () => {
     const TWO = [
         { hrid: ARMOR, grade: 1 },

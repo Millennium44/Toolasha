@@ -3,6 +3,7 @@ import {
     addTalismanLine,
     clampGrade,
     removeTalismanLine,
+    replaceBeltTalismans,
     setTalismanLineGrade,
     setTalismanLineType,
     talismanInSlot,
@@ -63,6 +64,24 @@ describe('editing a sim talisman list', () => {
         const list = removeTalismanLine(three(), 1, 0);
         expect(talismanInSlot(list, 1).modifiers).toEqual([]);
         expect(removeTalismanLine(three(), 1, 5)).toEqual(three());
+    });
+
+    test('replacing the belt talismans empties the slots the set leaves, keeps slots past the belt, strips planner fields', () => {
+        const list = [...three(), { slotIndex: 4, modifiers: [{ hrid: POWER, grade: 2 }] }, null];
+        const set = [{ slotIndex: 2, modifiers: [{ hrid: HASTE, grade: 5 }], cost: { orbs: 3 }, id: 99 }];
+        const before = JSON.stringify(list);
+        const out = replaceBeltTalismans(list, set, 3);
+        expect(out).toEqual([
+            { slotIndex: 2, modifiers: [{ hrid: HASTE, grade: 5 }] },
+            { slotIndex: 4, modifiers: [{ hrid: POWER, grade: 2 }] },
+        ]);
+        // Nothing is mutated or shared
+        expect(JSON.stringify(list)).toBe(before);
+        out[1].modifiers[0].grade = 6;
+        expect(list[3].modifiers[0].grade).toBe(2);
+        // A set record past the belt is not written, and a missing list is fine
+        expect(replaceBeltTalismans(undefined, [{ slotIndex: 4, modifiers: [] }], 3)).toEqual([]);
+        expect(replaceBeltTalismans(list, [], 3)).toEqual([{ slotIndex: 4, modifiers: [{ hrid: POWER, grade: 2 }] }]);
     });
 
     test('tolerates a missing or junk list', () => {

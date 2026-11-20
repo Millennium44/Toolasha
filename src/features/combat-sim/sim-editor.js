@@ -58,6 +58,7 @@ import { isTestServer } from '../../utils/game-server.js';
 import {
     addTalismanLine,
     removeTalismanLine,
+    replaceBeltTalismans,
     setTalismanLineGrade,
     setTalismanLineType,
     talismanInSlot,
@@ -4233,6 +4234,30 @@ export class SimEditor {
         }
         if (appliedChanges.length > 0) this.renderEditor();
         return { applied: appliedChanges.length, skipped, appliedChanges };
+    }
+
+    /**
+     * Put a set of talismans on one player's belt (the Talisman lines ranking's "Use in Configure"): the same edit as
+     * the Belt rows make, so roster saves, copy/export and the Upgrade tab read it. The player is named by hrid,
+     * never by position. Replaces the talismans in the belt's slots; nothing reaches the game.
+     * @param {string} playerHrid
+     * @param {Array<Object>} talismans - `{slotIndex, modifiers: [{hrid, grade}]}` records
+     * @returns {{ok: boolean, reason?: 'no_player'|'no_belt'|'too_many_slots', slots?: number}}
+     */
+    applyTalismans(playerHrid, talismans) {
+        const dto = this._editedDTOs?.[playerHrid];
+        if (!dto) return { ok: false, reason: 'no_player' };
+        const belt = dto.equipment?.['/equipment_types/belt'];
+        const slots = belt?.hrid
+            ? getBeltSlotCount({ itemHrid: belt.hrid }, buildGameDataPayload()?.itemDetailMap || {})
+            : 0;
+        if (slots === 0) return { ok: false, reason: 'no_belt', slots };
+        if ((talismans || []).some((t) => !(t?.slotIndex >= 1 && t.slotIndex <= slots))) {
+            return { ok: false, reason: 'too_many_slots', slots };
+        }
+        dto.talismans = replaceBeltTalismans(dto.talismans, talismans, slots);
+        this.renderEditor();
+        return { ok: true, slots };
     }
 
     /** @private */

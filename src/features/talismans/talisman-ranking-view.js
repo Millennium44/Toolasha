@@ -602,6 +602,8 @@ export class TalismanRankingSectionBase {
         this._on(this._q('core-run'), 'click', () => this._onCores());
         this._on(this._q('results'), 'click', (e) => {
             if (e.target.closest?.('[data-role="copy-targets"]')) this._copyTargets(e.target);
+            const useConfigure = e.target.closest?.('[data-role="use-configure"]');
+            if (useConfigure) this._onUseInConfigure(useConfigure);
             if (e.target.closest?.('[data-role="improve-run"]')) this._onImprove();
         });
         this._on(this._q('results'), 'change', (e) => {
@@ -1121,6 +1123,14 @@ export class TalismanRankingSectionBase {
         return `${sort}<div style="overflow-x:auto;"><table style="border-collapse:collapse; font-size:11px; width:100%;">${head}${body}</table></div>`;
     }
 
+    /** Buttons a subclass adds beside "Copy targets" in the set box (HTML) */
+    _setButtonsHtml() {
+        return '';
+    }
+
+    /** A subclass's "Use in Configure" press: `button` is the pressed button */
+    _onUseInConfigure() {}
+
     /** Lines the set box adds for a subclass (the combined sim) */
     _setCheckLines() {
         return [];
@@ -1222,6 +1232,7 @@ export class TalismanRankingSectionBase {
                 ? `<div style="font-size:11px; color:#888; margin-top:4px;">${escapeHtml(orbNotes.filter(Boolean).join(' '))}</div>`
                 : '') +
             `<button data-role="copy-targets" style="${CHIP_BUTTON_STYLE} margin-top:4px;" title="${escapeHtml(TIP_COPY)}">Copy targets</button> ` +
+            this._setButtonsHtml(result) +
             improveButton +
             `</div>`
         );
