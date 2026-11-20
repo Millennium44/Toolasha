@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Volume with mooket I market history
+
+A new opt-in setting fetches trade volume from mooket II (q7.nainai.eu.org) while your market history source is mooket I, which has none. Prices still come from mooket I; an hour without a volume reading shows a dash, never zero trades.
+
 <!-- shipped in 3.90.0 -->
 
 ### Combat sim import sends your talismans
