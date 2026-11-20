@@ -501,23 +501,31 @@ describe('depthHistoryFor', () => {
         expect(savedHistory('/items/cheese:0')).toHaveLength(1);
     });
 
-    test('a book re-sent within 10 minutes is skipped, a changed one or one 10 minutes newer is appended', () => {
+    test('rapid re-sends replace the newest snapshot without sliding its bucket; 10 minutes later appends', () => {
         send('/items/cheese', book(100));
-        vi.setSystemTime(Date.now() + 5_000);
-        send('/items/cheese', book(100));
-        expect(marketPriceStore.depthHistoryFor('/items/cheese')).toHaveLength(1);
-        vi.setSystemTime(Date.now() + 5_000);
-        send('/items/cheese', book(100, 2));
+        for (let i = 2; i <= 6; i++) {
+            vi.setSystemTime(Date.now() + 100_000);
+            send('/items/cheese', book(100, i));
+        }
+        let history = marketPriceStore.depthHistoryFor('/items/cheese');
+        expect(history).toHaveLength(1);
+        expect(history[0].asks[0].quantity).toBe(6);
+        // 600 s in: past the bucket, so a second snapshot; 700 s: inside the new bucket
+        vi.setSystemTime(Date.now() + 100_000);
+        send('/items/cheese', book(100, 7));
         expect(marketPriceStore.depthHistoryFor('/items/cheese')).toHaveLength(2);
-        vi.setSystemTime(Date.now() + 10 * MIN);
-        send('/items/cheese', book(100, 2));
-        expect(marketPriceStore.depthHistoryFor('/items/cheese')).toHaveLength(3);
+        vi.setSystemTime(Date.now() + 100_000);
+        send('/items/cheese', book(100, 8));
+        history = marketPriceStore.depthHistoryFor('/items/cheese');
+        expect(history).toHaveLength(2);
+        expect(history.map((s) => s.asks[0].quantity)).toEqual([6, 8]);
+        expect(history[0]).not.toHaveProperty('bucketAt');
     });
 
     test('shape matches depthFor, oldest first; the newest equals depthFor; depthFor is unchanged', () => {
         send('/items/cheese', book(100, 4));
         const first = marketPriceStore.depthFor('/items/cheese');
-        vi.setSystemTime(Date.now() + MIN);
+        vi.setSystemTime(Date.now() + 11 * MIN);
         send('/items/cheese', book(99, 3));
         const history = marketPriceStore.depthHistoryFor('/items/cheese');
         expect(history[0]).toEqual(first);
@@ -529,7 +537,7 @@ describe('depthHistoryFor', () => {
     test('at most 12 snapshots stay, the newest', () => {
         for (let i = 1; i <= 15; i++) {
             send('/items/cheese', book(100, i));
-            vi.setSystemTime(Date.now() + MIN);
+            vi.setSystemTime(Date.now() + 11 * MIN);
         }
         const history = marketPriceStore.depthHistoryFor('/items/cheese');
         expect(history).toHaveLength(12);
@@ -537,17 +545,27 @@ describe('depthHistoryFor', () => {
         expect(history[11].asks[0].quantity).toBe(15);
     });
 
-    test('a flush keeps the union of a stored series and the one in memory, and drops 30-day-old snapshots', async () => {
+    test('a flush keeps the union of a stored series and the one in memory, 10 minutes apart, 30 days at most', async () => {
         const now = Date.now();
         const snap = (depthAt, quantity) => ({ askLevels: [{ price: 100, quantity }], bidLevels: [], depthAt });
         storageMock.saved.mooketDepthHistory = {
-            '/items/cheese:0': [snap(now - 31 * 24 * 60 * MIN, 1), snap(now - 3 * MIN, 2), snap(now - 1 * MIN, 3)],
+            '/items/cheese:0': [
+                snap(now - 31 * 24 * 60 * MIN, 1),
+                snap(now - 60 * MIN, 2),
+                snap(now - 41 * MIN, 3),
+                snap(now - 30 * MIN, 4),
+            ],
         };
-        marketPriceStore.depthHistory['/items/cheese:0'] = [snap(now - 2 * MIN, 5), snap(now - 1 * MIN, 7)];
+        marketPriceStore.depthHistory['/items/cheese:0'] = [snap(now - 45 * MIN, 5), snap(now - 25 * MIN, 7)];
         send('/items/cheese', book(100, 9));
         marketPriceStore.keepDepth();
         await marketPriceStore.flush();
         const saved = savedHistory('/items/cheese:0');
-        expect(saved.map((s) => s.askLevels[0].quantity)).toEqual([2, 5, 7, 9]);
+        // 60 opens a bucket; 45 is 15 min later and opens the next; 41 is inside it and replaces 45;
+        // 30 is 15 min after 45 and opens one; 25 replaces it; the book at now (9) is 25 min on
+        expect(saved.map((s) => s.askLevels[0].quantity)).toEqual([2, 3, 7, 9]);
+        for (let i = 1; i < saved.length; i++) {
+            expect(saved[i].depthAt - (saved[i - 1].bucketAt ?? saved[i - 1].depthAt)).toBeGreaterThanOrEqual(10 * MIN);
+        }
     });
 });

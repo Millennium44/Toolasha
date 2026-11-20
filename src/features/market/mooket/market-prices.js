@@ -267,42 +267,42 @@ export function mergeDepth(stored, memory, cutoff, now) {
 
 /** Snapshots kept per item and enhancement level in the depth history */
 export const HISTORY_MAX = 12;
-/** A book equal to the last snapshot is only added again once it is this much newer (ms) */
+/** Snapshots are kept at least this far apart (ms); a newer one inside the gap replaces the newest */
 export const HISTORY_MIN_GAP_MS = 10 * 60 * 1000;
 
-function sameLevels(a, b) {
-    return JSON.stringify(a) === JSON.stringify(b);
+/** When a snapshot's 10-minute bucket opened: `bucketAt` once it replaced an earlier book, else depthAt */
+function bucketStart(snapshot) {
+    return Number.isFinite(snapshot.bucketAt) ? snapshot.bucketAt : snapshot.depthAt;
 }
 
 /**
- * Add a depth snapshot to an item's series (oldest first, newest last). Skipped when it is not newer
- * than the last one, or when it shows the same book as the last one and is less than
- * {@link HISTORY_MIN_GAP_MS} newer, so a book the game re-sends seconds apart is stored once.
- * Never mutates the series it is given.
+ * Add a depth snapshot to an item's series (oldest first, newest last). While a player keeps an item
+ * open the game re-sends its book on every change, so a snapshot less than {@link HISTORY_MIN_GAP_MS}
+ * after the start of the newest one's bucket replaces it (the latest book of the bucket is kept, and
+ * the bucket does not slide); otherwise it is appended. Stored buckets are therefore at least the gap
+ * apart, and {@link HISTORY_MAX} of them span at least two hours. Never mutates the series it is given.
  * @param {Array|undefined} series - Held snapshots
  * @param {Object} snapshot - { askLevels, bidLevels, depthAt }
- * @returns {Array|null} The new series, or null when nothing was added
+ * @returns {Array|null} The new series, or null when the snapshot is not newer than the last
  */
 export function appendDepthSnapshot(series, snapshot) {
     const held = Array.isArray(series) ? series : [];
     const last = held[held.length - 1];
-    if (last && snapshot.depthAt <= last.depthAt) return null;
-    if (
-        last &&
-        snapshot.depthAt - last.depthAt < HISTORY_MIN_GAP_MS &&
-        sameLevels(last.askLevels, snapshot.askLevels) &&
-        sameLevels(last.bidLevels, snapshot.bidLevels)
-    ) {
-        return null;
+    if (!last) return [snapshot];
+    if (snapshot.depthAt <= last.depthAt) return null;
+    const start = bucketStart(last);
+    if (snapshot.depthAt - start < HISTORY_MIN_GAP_MS) {
+        return [...held.slice(0, -1), { ...snapshot, bucketAt: start }];
     }
     return [...held, snapshot].slice(-HISTORY_MAX);
 }
 
 /**
  * Fold a stored depth history under the one in memory: per item the union of both series by depthAt
- * (memory wins an equal depthAt), unusable snapshots and those older than the cutoff go, and only the
+ * (memory wins an equal depthAt), unusable snapshots and those older than the cutoff go, snapshots
+ * inside one bucket collapse to the newer (the same rule as {@link appendDepthSnapshot}), and only the
  * newest {@link HISTORY_MAX} stay. Neither side loses a snapshot the other lacks unless it is past
- * the cap or the cutoff.
+ * the cap or the cutoff, or superseded by a newer book in its bucket.
  * @param {Object} stored - key -> snapshots, as read back
  * @param {Object} memory - key -> snapshots, as held
  * @param {number} cutoff - Timestamp (ms); a snapshot older than this goes
@@ -324,7 +324,16 @@ export function mergeDepthHistory(stored, memory, cutoff, now) {
     }
     const merged = {};
     for (const [key, at] of Object.entries(byKey)) {
-        const sorted = [...at.values()].sort((a, b) => a.depthAt - b.depthAt).slice(-HISTORY_MAX);
+        const collapsed = [];
+        for (const snap of [...at.values()].sort((a, b) => a.depthAt - b.depthAt)) {
+            const last = collapsed[collapsed.length - 1];
+            if (last && snap.depthAt - bucketStart(last) < HISTORY_MIN_GAP_MS) {
+                collapsed[collapsed.length - 1] = { ...snap, bucketAt: bucketStart(last) };
+            } else {
+                collapsed.push(snap);
+            }
+        }
+        const sorted = collapsed.slice(-HISTORY_MAX);
         if (sorted.length) merged[key] = sorted;
     }
     return merged;
