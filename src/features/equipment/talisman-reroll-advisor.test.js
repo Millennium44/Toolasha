@@ -125,7 +125,7 @@ describe('where it runs', () => {
         expect(panel()).not.toBeNull();
         expect(panel().nextElementSibling.className).toContain('TalismanModal_footer');
         expect(modal.contains(panel())).toBe(true);
-        expect(moveText()).toBe('Pick up to four lines you want.');
+        expect(moveText()).toBe('Pick up to six lines you want.');
     });
 
     test('turning it off takes the panel out', () => {
@@ -499,7 +499,7 @@ describe('Aim for this, through the path the line ranking button uses', () => {
         vi.runAllTimers();
         const types = panel().querySelectorAll('.toolasha-reroll-advisor-type');
         expect(types[0].value).toBe(M('magic_experience'));
-        expect(moveText()).not.toBe('Pick up to four lines you want.');
+        expect(moveText()).not.toBe('Pick up to six lines you want.');
     });
 });
 

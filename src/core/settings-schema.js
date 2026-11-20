@@ -4197,7 +4197,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 hidden: !isTestServer(),
-                help: 'Test server only. Pick up to four lines you want in the talisman window; the advisor shows the next move (which orb, when to lock a line, whether to keep or use a new roll) and how many of each orb the best strategy spends on average. A coin cost appears only when every orb it uses has a market price. The advised game button is outlined, and Do next step presses it for you: one game action per click, never on its own',
+                help: 'Test server only. Pick up to six lines you want in the talisman window, how many of them you need (any K) and which are required; the advisor shows the next move (which orb, when to lock a line, whether to keep or use a new roll) and how many of each orb the best strategy spends on average. A coin cost appears only when every orb it uses has a market price. The advised game button is outlined, and Do next step presses it for you: one game action per click, never on its own',
             },
             overlayPanel: {
                 id: 'overlayPanel',

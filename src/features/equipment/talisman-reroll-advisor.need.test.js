@@ -167,7 +167,7 @@ describe('the need any K selector', () => {
         panel().querySelector('.toolasha-reroll-advisor-clear').click();
         vi.runAllTimers();
         expect(feature.getNeed({ id: 1 })).toBeNull();
-        expect(moveText()).toBe('Pick up to four lines you want.');
+        expect(moveText()).toBe('Pick up to six lines you want.');
     });
 });
 

@@ -1,7 +1,7 @@
 /**
  * Talisman reroll advisor
  *
- * Test server only. In the game's talisman window the player picks a target — up to four wanted lines, each a
+ * Test server only. In the game's talisman window the player picks a target — up to six wanted lines, each a
  * modifier type and a minimum grade, and how many of them are needed (all, or any K) — and the advisor shows the
  * next move (which orb, whether to lock a line with a Binding Orb, or whether to keep or use a pending roll) and how many of each orb the best strategy spends on
  * average from here. The strategy itself comes from utils/talisman-reroll-solver.js, which states its method and
@@ -41,6 +41,7 @@ import { coinCost, orbWeights, roundWeights } from '../../utils/talisman-orb-wei
 import {
     advise,
     buildProblem,
+    MAX_WANTED_LINES,
     meetsTarget,
     normalizeTarget,
     solveSteps,
@@ -52,7 +53,7 @@ const FOOTER_SELECTOR = '[class*="TalismanModal_footer"]';
 const PANEL_CLASS = 'toolasha-reroll-advisor';
 const RENDER_DEBOUNCE_MS = 80;
 const SLICE_MS = 12;
-const MAX_WANTED = 4;
+const MAX_WANTED = MAX_WANTED_LINES;
 const CACHE_LIMIT = 3;
 
 /** The assumptions a player should know about, shown in the panel's help */
@@ -61,9 +62,11 @@ export const ADVISOR_HELP = [
         'same curve); type odds follow the game data weights (2,088 lines); Attunement 65/20/15 (81 rolls: G3 lines ' +
         'down 69 / same 19 / up 12); Focus ×5 (100 rolls focused on Armor gave Armor in 33%, 36.9% predicted, grades ' +
         'kept).',
-    'Need any K: pick up to four wanted lines and how many of them the talisman must hold at their minimum grades. ' +
+    'Need any K: pick up to six wanted lines and how many of them the talisman must hold at their minimum grades. ' +
         'The default is all of them; a smaller K is cheaper because any K of the pool ends the search. A type picked ' +
-        'twice counts once.',
+        'twice counts once. Tick "required" on a line the talisman must hold whatever else it holds: K counts the ' +
+        'required lines too and cannot be lower than how many are ticked. A pool of five or six lines is solved ' +
+        'exactly but takes several seconds the first time (Mutation is left out of the biggest ones).',
     'Binding Orb, measured: a lock costs one Binding Orb, moving the lock to another line costs one more, and ' +
         'unlocking is free. A locked line is not changed by any orb, Attunement included: to raise it, unlock it, ' +
         'roll, and lock it again with another Binding Orb.',
@@ -120,12 +123,17 @@ export function describeAdvice(result, names) {
     const { build, advice } = result;
     const item = names.item;
     const mod = names.modifier;
-    if (build.status === 'noTarget') return { move: 'Pick up to four lines you want.', detail: [] };
+    if (build.status === 'noTarget') return { move: 'Pick up to six lines you want.', detail: [] };
     if (build.status === 'empty') return { move: 'This talisman has no lines yet.', detail: [] };
     if (build.status === 'noData') return { move: 'The game data for talismans has not loaded.', detail: [] };
     if (build.status === 'noOrbs') return { move: 'The game data lists no reroll orbs.', detail: [] };
     if (build.status === 'impossible') {
         const reasons = {
+            requiredNotRollable:
+                build.cause === 'gradeAboveCap'
+                    ? `${mod(build.hrid)} is marked required, but grades only go up to G6.`
+                    : `${mod(build.hrid)} is marked required, but it cannot roll on this talisman type.`,
+            poolTooLarge: `The pool has ${build.rollable} lines that can roll here; at most ${build.max} can be solved at once.`,
             tooFewRollable: `Only ${build.rollable} of the picked lines can roll on this talisman type at a grade the game offers, and you need ${build.need}.`,
             notInPool: `${mod(build.hrid)} cannot roll on this talisman type.`,
             gradeAboveCap: `${mod(build.hrid)}: grades only go up to G6.`,
@@ -390,6 +398,7 @@ class TalismanRerollAdvisor {
             (Array.isArray(targets) ? targets : []).map((t) => ({
                 hrid: t?.hrid,
                 minGrade: Math.floor(t?.minGrade) || 1,
+                ...(t?.required === true ? { required: true } : {}),
             })),
             need ?? null
         );
@@ -426,28 +435,35 @@ class TalismanRerollAdvisor {
         else this.needs.delete(key);
     }
 
-    /** The row's choice of K: a whole number below the pool size is kept; "all" (the pool size) is stored as null */
+    /**
+     * The row's choice of K: a whole number below the pool size is kept (never below the required lines); "all" (the
+     * pool size) is stored as null
+     */
     chooseNeed(talisman, value) {
-        const pool = normalizeTarget(this.getTargets(talisman)).pool;
-        const asked = Math.floor(Number(value));
+        const { pool, requiredCount } = normalizeTarget(this.getTargets(talisman));
+        const asked = Math.max(requiredCount, Math.floor(Number(value)));
         this.setNeedValue(talisman, asked >= 1 && asked < pool.length ? asked : null);
         this.cancelPress();
         this.stepStatus = '';
         this.schedule();
     }
 
-    /** Keep the "need any" selector at 1..pool size, showing the K in force; hidden for a pool of one or none */
+    /**
+     * Keep the "need any" selector at (required lines, at least 1)..pool size, showing the K in force; hidden for a
+     * pool of one or none, and when every line is required (K can only be all of them)
+     */
     syncNeedUi(talisman) {
         const row = this.panel?.querySelector(`.${PANEL_CLASS}-need-row`);
         const select = this.panel?.querySelector(`.${PANEL_CLASS}-need`);
         if (!row || !select) return;
-        const { pool, need } = normalizeTarget(this.getTargets(talisman), this.getNeed(talisman));
-        const hidden = pool.length < 2;
+        const { pool, need, requiredCount } = normalizeTarget(this.getTargets(talisman), this.getNeed(talisman));
+        const lowest = Math.max(1, requiredCount);
+        const hidden = pool.length < 2 || lowest >= pool.length;
         if (row.style.display !== (hidden ? 'none' : '')) row.style.display = hidden ? 'none' : '';
         if (hidden) return;
-        if (select.options.length !== pool.length) {
+        if (select.options.length !== pool.length - lowest + 1 || select.options[0].value !== String(lowest)) {
             select.replaceChildren();
-            for (let k = 1; k <= pool.length; k++) {
+            for (let k = lowest; k <= pool.length; k++) {
                 select.appendChild(option(k === pool.length ? `${k} (all)` : String(k), String(k)));
             }
         }
@@ -501,11 +517,16 @@ class TalismanRerollAdvisor {
         const maxGrade = Number(initData.talismanInfo.maxGrade) || 6;
         const rows = [];
         const readRows = () =>
-            rows.map(([typeSelect, gradeSelect]) => ({ hrid: typeSelect.value, minGrade: Number(gradeSelect.value) }));
+            rows.map(([typeSelect, gradeSelect, requiredBox]) => ({
+                hrid: typeSelect.value,
+                minGrade: Number(gradeSelect.value),
+                ...(requiredBox.checked ? { required: true } : {}),
+            }));
         const fillRows = (targets) => {
-            rows.forEach(([typeSelect, gradeSelect], i) => {
+            rows.forEach(([typeSelect, gradeSelect, requiredBox], i) => {
                 typeSelect.value = targets[i]?.hrid || '';
                 gradeSelect.value = String(targets[i]?.minGrade || 1);
+                requiredBox.checked = targets[i]?.required === true;
             });
         };
         for (let i = 0; i < MAX_WANTED; i++) {
@@ -519,12 +540,20 @@ class TalismanRerollAdvisor {
             const gradeSelect = document.createElement('select');
             gradeSelect.className = `${PANEL_CLASS}-grade`;
             for (let g = 1; g <= maxGrade; g++) gradeSelect.appendChild(option(`G${g}+`, String(g)));
+            const requiredLabel = document.createElement('label');
+            requiredLabel.style.cssText = 'display:flex;gap:3px;align-items:center;white-space:nowrap';
+            requiredLabel.title = 'The talisman must hold this line, whatever the rest of the pool does.';
+            const requiredBox = document.createElement('input');
+            requiredBox.type = 'checkbox';
+            requiredBox.className = `${PANEL_CLASS}-required`;
+            requiredLabel.append(requiredBox, 'required');
             const onChange = () => this.setTargets(talisman, readRows());
             typeSelect.addEventListener('change', onChange);
             gradeSelect.addEventListener('change', onChange);
-            row.append(typeSelect, gradeSelect);
+            requiredBox.addEventListener('change', onChange);
+            row.append(typeSelect, gradeSelect, requiredLabel);
             panel.appendChild(row);
-            rows.push([typeSelect, gradeSelect]);
+            rows.push([typeSelect, gradeSelect, requiredBox]);
         }
 
         const needRow = document.createElement('div');
