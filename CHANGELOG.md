@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancing tracker counts Conservation-kept protections
+
+When a Conservation talisman keeps your protection item on a failed enhance, the session tracker no longer counts it as used or adds its cost.
+
 ### Reroll advisor states large cost gaps as a multiple
 
 When locking a line first, or keeping a lock, costs more than ten times the advised plan, the advisor now says "about 530× as much" instead of a figure like "52845% more".
