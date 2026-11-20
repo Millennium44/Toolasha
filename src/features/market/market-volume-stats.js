@@ -191,6 +191,21 @@ class MarketVolumeStats {
         };
         config.onSettingChange('market_pooledHistory', handleChange);
         config.onSettingChange('market_volumeStats', handleChange);
+
+        const refreshSource = () => {
+            if (!this.isInitialized || !this.enabled) return;
+
+            this.loadedKey = null;
+            this.lastWindows = null;
+            this.lastSource = null;
+            // Free the update to fetch the new source while rejecting any previous response.
+            this.settledGeneration = ++this.generation;
+            this.scheduleUpdate();
+        };
+        config.onSettingChange('market_historySource', refreshSource);
+        config.onSettingChange('market_historyVolumeFromMooket2', () => {
+            if (marketHistoryAPI.currentSource().key === 'mooket1') refreshSource();
+        });
     }
 
     /**

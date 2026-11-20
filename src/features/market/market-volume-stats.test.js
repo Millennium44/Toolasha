@@ -266,6 +266,57 @@ describe('rendering', () => {
             expect(document.querySelector('.mwi-volume-stats').title).toContain('Volume is from mooket II');
         });
 
+        test('refreshes the open item as the volume opt-in and history source change', async () => {
+            vi.useFakeTimers();
+            try {
+                const plain = { key: 'mooket1', label: 'mooket I (IOMisaka)', hasVolume: false, avgLabel: 'Mid' };
+                const mooket2 = { key: 'mooket2', label: 'mooket II (Q7)', hasVolume: true, avgLabel: 'Avg' };
+                const quote = { a: 100, b: 80, p: 90, v: 0, time: Math.floor(Date.now() / 1000) - 3600 };
+                historyApi.currentSource.mockReturnValue(plain);
+                historyApi.rows = [quote];
+
+                buildCurrentItem('/items/furious_spear', 10);
+                await marketVolumeStats.initialize();
+                await vi.advanceTimersByTimeAsync(50);
+                expect(headerCells()).toContain('Average');
+                expect(headerCells()).not.toContain('Volume');
+                expect(historyApi.fetchHistory).toHaveBeenCalledTimes(1);
+
+                historyApi.currentSource.mockReturnValue(merged);
+                historyApi.rows = [{ ...quote, v: 17 }];
+                setSetting('market_historyVolumeFromMooket2', true);
+                await vi.advanceTimersByTimeAsync(50);
+                expect(headerCells()).toContain('Volume');
+                expect(headerCells()).not.toContain('Bought/Sold');
+                expect(historyApi.fetchHistory).toHaveBeenCalledTimes(2);
+
+                historyApi.currentSource.mockReturnValue(plain);
+                historyApi.rows = [quote];
+                setSetting('market_historyVolumeFromMooket2', false);
+                await vi.advanceTimersByTimeAsync(50);
+                expect(headerCells()).not.toContain('Volume');
+                expect(historyApi.fetchHistory).toHaveBeenCalledTimes(3);
+
+                historyApi.currentSource.mockReturnValue(mooket2);
+                historyApi.rows = [{ ...quote, v: 5 }];
+                setSetting('market_historySource', 'mooket2');
+                await vi.advanceTimersByTimeAsync(50);
+                expect(headerCells()).toContain('Bought/Sold');
+                expect(historyApi.fetchHistory).toHaveBeenLastCalledWith('/items/furious_spear', 10, 5, {
+                    force: false,
+                });
+                expect(historyApi.fetchHistory).toHaveBeenCalledTimes(4);
+
+                setSetting('market_historyVolumeFromMooket2', true);
+                await vi.advanceTimersByTimeAsync(50);
+                expect(historyApi.fetchHistory).toHaveBeenCalledTimes(4);
+            } finally {
+                delete settings.market_historySource;
+                delete settings.market_historyVolumeFromMooket2;
+                vi.useRealTimers();
+            }
+        });
+
         test('the opt-in turned off while the lookup waits never renders plain zeros as merged volume', async () => {
             const plain = { key: 'mooket1', label: 'mooket I (IOMisaka)', hasVolume: false, avgLabel: 'Mid' };
             const time = Math.floor(Date.now() / 1000) - 3600;

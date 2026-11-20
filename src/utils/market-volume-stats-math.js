@@ -198,7 +198,7 @@ export function splitBuySellVolume(rows) {
 
 /**
  * @typedef {Object} MarketWindowStats
- * @property {boolean} hasData - Whether any row fell in this window at all
+ * @property {boolean} hasData - Whether any price or volume row fell in this window
  * @property {boolean} hasTrades - Whether any of those rows carry a real trade price
  * @property {number|null} volume - Total traded volume (Σv over every row); null only for merged volume
  *   with no reading in the window
@@ -227,18 +227,18 @@ export function splitBuySellVolume(rows) {
  * a new, unverified claim rather than a fallback.
  * @param {Array<Object>} rows - Rows already filtered to the window (see `filterWindow`)
  * @param {number} [enhancementLevel=0] - Enhancement level, for snapping min/max to its price tiers
+ * @param {Object} [options]
+ * @param {boolean} [options.volumeMerged] - Whether prices and volume come from different feeds
+ * @param {Array<Object>} [options.volumeRows] - Separately windowed volume readings for a merged feed
  * @returns {MarketWindowStats}
  */
-export function computeMarketStats(rows, enhancementLevel = 0, { volumeMerged = false } = {}) {
+export function computeMarketStats(rows, enhancementLevel = 0, { volumeMerged = false, volumeRows = null } = {}) {
     const safeRows = Array.isArray(rows) ? rows : [];
-    const hasData = safeRows.length > 0;
-
-    // Merged volume (mooket I's prices with mooket II's volume): a row's `v` is null where mooket II had no
-    // reading for that hour, which is "no reading", not zero trades. Only rows with a reading count, and a
-    // window with none has `volume: null` (shown as no reading), never 0.
-    const volumeRows = volumeMerged ? safeRows.filter((row) => hasVolumeReading(row)) : safeRows;
+    const readings = volumeMerged ? (volumeRows ?? safeRows).filter(hasVolumeReading) : safeRows;
+    // A merged window can contain volume even if none of the price observations fell within it.
+    const hasData = safeRows.length > 0 || readings.length > 0;
     const volume =
-        volumeMerged && volumeRows.length === 0 ? null : volumeRows.reduce((sum, row) => sum + (Number(row.v) || 0), 0);
+        volumeMerged && readings.length === 0 ? null : readings.reduce((sum, row) => sum + (Number(row.v) || 0), 0);
 
     // See the module doc comment: unlike the source, both the average and the
     // median exclude non-positive prices from numerator and denominator alike.
@@ -301,12 +301,18 @@ export const STAT_WINDOWS_DAYS = [1, 3, 5];
  * @param {Array<Object>} rows - Unfiltered rows for the widest window fetched
  * @param {number} [now] - Reference time in ms, defaults to `Date.now()`
  * @param {number} [enhancementLevel=0] - Enhancement level of the item the rows are for
+ * @param {{volumeMerged?: boolean}} [options] - Whether prices and volume come from different feeds
  * @returns {{days: number, stats: MarketWindowStats}[]}
  */
-export function computeAllWindows(rows, now = Date.now(), enhancementLevel = 0, options = {}) {
+export function computeAllWindows(rows, now = Date.now(), enhancementLevel = 0, { volumeMerged = false } = {}) {
+    // Hourly chart totals sit on price rows. Use the volume feed's timestamps for rolling windows.
+    const readings = volumeMerged && Array.isArray(rows) ? rows.flatMap((row) => row?.volumeReadings ?? [row]) : [];
     return STAT_WINDOWS_DAYS.map((days) => ({
         days,
-        stats: computeMarketStats(filterWindow(rows, days, now), enhancementLevel, options),
+        stats: computeMarketStats(filterWindow(rows, days, now), enhancementLevel, {
+            volumeMerged,
+            volumeRows: volumeMerged ? filterWindow(readings, days, now) : undefined,
+        }),
     }));
 }
 
