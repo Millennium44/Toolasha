@@ -87,7 +87,7 @@ function findProductionAction(itemHrid) {
  * @param {string} actionType - e.g. '/action_types/brewing'
  * @returns {number} Reduction as decimal (e.g. 0.112 for 11.2%)
  */
-export function getArtisanBonus(actionType, variant = 'current') {
+export function getArtisanBonus(actionType, variant = 'current', outcome) {
     if (variant.includes('no-artisan')) return 0;
     try {
         const gameData = dataManager.getInitClientData();
@@ -97,7 +97,7 @@ export function getArtisanBonus(actionType, variant = 'current') {
         // read kept crediting the discount after the tea was gone.
         const { equipment, drinks: activeDrinks } = resolveActionContext(actionType);
         // Invigoration (talisman): the reduction is the weighted mix of its two outcomes
-        return artisanBonusFor({ equipment, drinks: activeDrinks, itemDetailMap, actionType });
+        return artisanBonusFor({ equipment, drinks: activeDrinks, itemDetailMap, actionType, outcome });
     } catch {
         return 0;
     }
@@ -120,13 +120,27 @@ export function getArtisanBonus(actionType, variant = 'current') {
  * @param {number} outputCount - Units of the parent one craft yields
  * @returns {number} Units of the input
  */
+/**
+ * The reduction a run of `actions` crafts is billed with. Expected-value rounding takes the mix over Invigoration's
+ * outcomes (exact); worst-case rounding (hybrid under its threshold included) rounds every craft up, and a craft
+ * without a proc needs the most, so it takes the no-proc outcome: the mix would under-buy.
+ */
+function billedBonus(bonus, noProcBonus, artisanMode, actions) {
+    return usesWorstCaseRounding(artisanMode, actions) && noProcBonus !== undefined ? noProcBonus : bonus;
+}
+
 function memoChildQuantity(template, quantity, outputCount) {
     const actions = Math.ceil(quantity / outputCount);
     const perAction = template.qtyPerUnit * outputCount;
     if (template.countPerAction === undefined) return perAction * actions;
     const artisanMode = getArtisanMaterialMode();
     if (!usesWorstCaseRounding(artisanMode, actions)) return perAction * actions;
-    return artisanInputTotal(template.countPerAction, template.artisanBonus, actions, artisanMode);
+    return artisanInputTotal(
+        template.countPerAction,
+        billedBonus(template.artisanBonus, template.noProcBonus, artisanMode, actions),
+        actions,
+        artisanMode
+    );
 }
 
 /**
@@ -288,7 +302,13 @@ export function computeBestCraftingPlan(
                           // remainder's exact input count under the artisan mode's own
                           // rounding instead of linearly scaling an already-rounded total.
                           ...(c.countPerAction !== undefined
-                              ? { craftInputMeta: { countPerAction: c.countPerAction, artisanBonus: c.artisanBonus } }
+                              ? {
+                                    craftInputMeta: {
+                                        countPerAction: c.countPerAction,
+                                        artisanBonus: c.artisanBonus,
+                                        noProcBonus: c.noProcBonus,
+                                    },
+                                }
                               : { isUpgradeItem: true }),
                       }))
                     : [],
@@ -364,6 +384,7 @@ export function computeBestCraftingPlan(
     visited.add(itemHrid);
     const { actionHrid, action, outputCount } = production;
     const artisanBonus = getArtisanBonus(action.type, variant);
+    const noProcBonus = getArtisanBonus(action.type, variant, 'normal');
     const artisanMode = getArtisanMaterialMode();
     const actionsForOne = 1 / outputCount; // actions per 1 output item
 
@@ -379,10 +400,11 @@ export function computeBestCraftingPlan(
             // The average reduced count prices the craft; the quantity bought follows the rounding mode
             const qtyPerUnit = reducedCount * actionsForOne;
 
+            const craftsForQty = Math.ceil(quantity / outputCount);
             const inputQty = artisanInputTotal(
                 inputCountPerAction,
-                artisanBonus,
-                Math.ceil(quantity / outputCount),
+                billedBonus(artisanBonus, noProcBonus, artisanMode, craftsForQty),
+                craftsForQty,
                 artisanMode
             );
             const childPlan = computeBestCraftingPlan(
@@ -409,6 +431,7 @@ export function computeBestCraftingPlan(
                 qtyPerUnit,
                 countPerAction: inputCountPerAction,
                 artisanBonus,
+                noProcBonus,
             });
         }
     }
@@ -501,7 +524,12 @@ export function computeBestCraftingPlan(
         if (action.inputItems) {
             for (const input of action.inputItems) {
                 const inputCountPerAction = input.count || 1;
-                const inputQty = artisanInputTotal(inputCountPerAction, artisanBonus, actionsNeeded, artisanMode);
+                const inputQty = artisanInputTotal(
+                    inputCountPerAction,
+                    billedBonus(artisanBonus, noProcBonus, artisanMode, actionsNeeded),
+                    actionsNeeded,
+                    artisanMode
+                );
                 children.push({
                     ...computeBestCraftingPlan(
                         input.itemHrid,
@@ -523,7 +551,7 @@ export function computeBestCraftingPlan(
                     // Lets collectMissingMaterials re-derive an owned-intermediate
                     // remainder's exact input count under the artisan mode's own
                     // rounding instead of linearly scaling an already-rounded total.
-                    craftInputMeta: { countPerAction: inputCountPerAction, artisanBonus },
+                    craftInputMeta: { countPerAction: inputCountPerAction, artisanBonus, noProcBonus },
                 });
             }
         }
@@ -721,8 +749,17 @@ export function collectMissingMaterials(plan, inventory) {
             // so a full run of 150 (expected-value) with a 40-action remainder (still
             // worst-case) disagree, and the linear scale silently kept the wrong one.
             if (actionsForRemainder !== null && child.craftInputMeta) {
-                const { countPerAction, artisanBonus: childArtisanBonus } = child.craftInputMeta;
-                const childQty = artisanInputTotal(countPerAction, childArtisanBonus, actionsForRemainder, artisanMode);
+                const {
+                    countPerAction,
+                    artisanBonus: childArtisanBonus,
+                    noProcBonus: childNoProc,
+                } = child.craftInputMeta;
+                const childQty = artisanInputTotal(
+                    countPerAction,
+                    billedBonus(childArtisanBonus, childNoProc, artisanMode, actionsForRemainder),
+                    actionsForRemainder,
+                    artisanMode
+                );
                 walk(child, 1, false, childQty);
             } else if (actionsForRemainder !== null && child.isUpgradeItem) {
                 // Upgrade items are never reduced or rounded — exactly one per action.
