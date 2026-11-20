@@ -98,8 +98,14 @@ export const COMBAT_RANKING_METRICS = [
     { key: 'balanced', label: 'Balanced', rate: () => 0, lowerIsBetter: false, balanced: true },
 ];
 
-/** Balanced weights unless the player sets them: equal */
-export const DEFAULT_BALANCE_WEIGHTS = Object.freeze({ xp: 1, profit: 1, dps: 1 });
+/** The parts of the Balanced score, each with a weight */
+export const BALANCE_WEIGHT_KEYS = Object.freeze(['xp', 'profit', 'dps', 'encounters', 'deaths']);
+
+/**
+ * Balanced weights unless the player sets them: EXP, Profit and DPS equal; Encounters/hr and Deaths/hr off (0), so a
+ * score is what it was before they existed
+ */
+export const DEFAULT_BALANCE_WEIGHTS = Object.freeze({ xp: 1, profit: 1, dps: 1, encounters: 0, deaths: 0 });
 
 /**
  * How much of a significant rise in deaths/hr (in %) comes off the Balanced score: one equal share, as if deaths were a
@@ -132,22 +138,28 @@ export function profitNoiseOfNetPct(noisePct, baseline) {
 }
 
 /**
- * Weights as finite non-negative numbers; all zero (or none) falls back to equal.
+ * Weights as finite non-negative numbers (a key never stored, as the two newest were not, reads as 0); all zero (or
+ * none) falls back to the defaults.
  * @param {Object} weights
- * @returns {{xp: number, profit: number, dps: number}}
+ * @returns {{xp: number, profit: number, dps: number, encounters: number, deaths: number}}
  */
 export function normalizeBalanceWeights(weights) {
     const out = {};
-    for (const key of ['xp', 'profit', 'dps']) {
+    for (const key of BALANCE_WEIGHT_KEYS) {
         const value = Number(weights?.[key]);
         out[key] = Number.isFinite(value) && value > 0 ? value : 0;
     }
-    return out.xp + out.profit + out.dps > 0 ? out : { ...DEFAULT_BALANCE_WEIGHTS };
+    return BALANCE_WEIGHT_KEYS.some((key) => out[key] > 0) ? out : { ...DEFAULT_BALANCE_WEIGHTS };
 }
 
 /**
- * The Balanced score of one measurement: the weighted average of the % gains in EXP/hr, Profit/hr and DPS, less a
- * share of a significant rise in deaths/hr.
+ * The Balanced score of one measurement: the weighted average of the % gains in EXP/hr, Profit/hr, DPS and (when
+ * weighted) Encounters/hr, and of the % fall in Deaths/hr (a rise counts against). While the Deaths weight is 0, a
+ * share of a significant rise in deaths/hr comes off instead (the automatic penalty).
+ *
+ * Deaths/hr is the % change `computeDeltas` gives, so a baseline of zero deaths follows its convention: any deaths
+ * where there were none is +100% (a full-size loss), none is 0. A line that only trades a few deaths for a lot of
+ * DPS is for the player to weigh with the Deaths weight.
  *
  * Profit's % is taken on the gold moving through the fight (the larger of revenue, cost and |profit| per hour, the
  * upgrade advisor's `profitScale`), not on net profit, which can be near zero; that is also the scale its error bar
@@ -163,7 +175,7 @@ export function normalizeBalanceWeights(weights) {
  */
 export function balancedScore({ deltas, noise, change, baseline, significantBy }, weights) {
     const w = normalizeBalanceWeights(weights);
-    const total = w.xp + w.profit + w.dps;
+    const total = BALANCE_WEIGHT_KEYS.reduce((sum, key) => sum + w[key], 0);
     const scale = Math.max(
         Math.abs(Number(baseline?.profitPerHour) || 0),
         Number(baseline?.revenuePerHour) || 0,
@@ -173,15 +185,20 @@ export function balancedScore({ deltas, noise, change, baseline, significantBy }
         xp: Number(deltas?.xp) || 0,
         profit: scale > 0 ? ((Number(change?.profit) || 0) / scale) * 100 : 0,
         dps: Number(deltas?.dps) || 0,
+        encounters: Number(deltas?.encounters) || 0,
+        // A rise in deaths is a loss
+        deaths: -(Number(deltas?.deaths) || 0),
     };
     let score = 0;
     let err = 0;
-    for (const key of ['xp', 'profit', 'dps']) {
+    for (const key of BALANCE_WEIGHT_KEYS) {
+        if (!(w[key] > 0)) continue;
         score += (w[key] / total) * parts[key];
         err += (w[key] / total) * Z * (Number(noise?.[key]) || 0);
     }
     const deathsRise = Boolean(significantBy?.deaths) && Number(deltas?.deaths) > 0;
-    if (deathsRise) {
+    // The Deaths weight, once set, replaces the automatic penalty
+    if (deathsRise && !(w.deaths > 0)) {
         score -= DEATHS_PENALTY_SHARE * deltas.deaths;
         err += DEATHS_PENALTY_SHARE * Z * (Number(noise?.deaths) || 0);
     }
@@ -759,7 +776,7 @@ export async function rebuildCombatLineRanking(previous, controls, onProgress, d
     const sameWeights =
         Boolean(weights) &&
         Boolean(previous.balanceWeights) &&
-        ['xp', 'profit', 'dps'].every((k) => weights[k] === previous.balanceWeights[k]);
+        BALANCE_WEIGHT_KEYS.every((k) => weights[k] === (previous.balanceWeights[k] ?? 0));
     const rescored = metric.key !== previous.metricKey || (Boolean(metric.balanced) && !sameWeights);
 
     // New rows: the previous ones are never touched, so a stopped rebuild leaves the ranking as it was
@@ -856,7 +873,7 @@ export async function rebuildCombatLineRanking(previous, controls, onProgress, d
             metricDiffers: Boolean(
                 metric.key !== ctx.ranWith.metricKey ||
                 (metric.balanced &&
-                    ['xp', 'profit', 'dps'].some((k) => weights[k] !== (ctx.ranWith.balanceWeights?.[k] ?? NaN)))
+                    BALANCE_WEIGHT_KEYS.some((k) => weights[k] !== (ctx.ranWith.balanceWeights?.[k] ?? 0)))
             ),
         },
     };
@@ -875,7 +892,7 @@ export async function rebuildCombatLineRanking(previous, controls, onProgress, d
  * @param {Object} params.communityBuffs
  * @param {number} params.grade - Grade simulated and aimed for
  * @param {string} params.metricKey - A COMBAT_RANKING_METRICS key
- * @param {Object} [params.balanceWeights] - `{xp, profit, dps}` for the Balanced metric
+ * @param {Object} [params.balanceWeights] - `{xp, profit, dps, encounters, deaths}` for the Balanced metric
  * @param {string} [params.setMode] - 'practical' (default: one Special per talisman, grades capped), 'ideal' or
  *   'budget' (needs `deps.orbs`)
  * @param {number} [params.capGrade] - The Practical and Budget cap (default 3)

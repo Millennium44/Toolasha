@@ -69,7 +69,7 @@ export const METRIC_HELP = {
     encounters: 'Monsters fought per hour.',
     deaths: 'Deaths per hour. Lower is better, so a line that cuts deaths shows as a gain.',
     balanced:
-        'One score: the weighted average of the % gains in EXP/hr, Profit/hr and DPS (weights set beside it), less a share of any clear rise in deaths.',
+        'One score: the weighted average of the % gains in EXP/hr, Profit/hr and DPS (and Encounters/hr, and the % change in Deaths/hr, when their weights are above 0; weights set beside it). With no Deaths weight, a share of any clear rise in deaths comes off instead.',
 };
 
 const TIP_RANK_BY = 'The figure each talisman line is ranked by. Hover an option for what it measures.';

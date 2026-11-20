@@ -766,9 +766,78 @@ describe('Balanced', () => {
         expect(quiet.valuePct).toBeCloseTo(9, 9);
     });
 
+    test('Encounters/hr counts its % gain when weighted, and not at all at weight 0 (old scores do not move)', () => {
+        const parts = {
+            deltas: { xp: 3, dps: 6, encounters: 12, deaths: 0 },
+            noise,
+            change: { profit: 250 },
+            baseline: base,
+            significantBy: {},
+        };
+        const old = balancedScore(parts, { xp: 1, profit: 1, dps: 1 });
+        expect(balancedScore(parts, { xp: 1, profit: 1, dps: 1, encounters: 0, deaths: 0 })).toEqual(old);
+        expect(old.valuePct).toBeCloseTo((3 + 5 + 6) / 3, 9);
+        const withEnc = balancedScore(parts, { xp: 1, profit: 1, dps: 1, encounters: 1 });
+        expect(withEnc.valuePct).toBeCloseTo((3 + 5 + 6 + 12) / 4, 9);
+        // Its error bar joins the sum the same way
+        expect(withEnc.errPct).toBeCloseTo((1.96 * (1 + 1 + 2 + 1)) / 4, 9);
+    });
+
+    test('a Deaths weight counts the % change against, replaces the automatic penalty, and a fall adds', () => {
+        const parts = {
+            deltas: { xp: 0, dps: 9, deaths: 30 },
+            noise,
+            change: { profit: 0 },
+            baseline: base,
+            significantBy: { deaths: true },
+        };
+        const weights = { xp: 0, profit: 0, dps: 1, deaths: 1 };
+        const score = balancedScore(parts, weights);
+        // (9 - 30) / 2 at weight 1:1 and not the extra third on top
+        expect(score.valuePct).toBeCloseTo((9 - 30) / 2, 9);
+        expect(score.errPct).toBeCloseTo((1.96 * (2 + 10)) / 2, 9);
+        expect(score.deathsRise).toBe(true);
+        // Not significant: the weight still counts the measured change (it is the player's trade-off)
+        expect(balancedScore({ ...parts, significantBy: { deaths: false } }, weights).valuePct).toBeCloseTo(-10.5, 9);
+        // A fall in deaths adds
+        expect(balancedScore({ ...parts, deltas: { ...parts.deltas, deaths: -20 } }, weights).valuePct).toBeCloseTo(
+            (9 + 20) / 2,
+            9
+        );
+        // From a zero-death baseline computeDeltas says +100: any deaths are a full-size loss
+        expect(balancedScore({ ...parts, deltas: { ...parts.deltas, deaths: 100 } }, weights).valuePct).toBeCloseTo(
+            (9 - 100) / 2,
+            9
+        );
+        // Weight 0 keeps the automatic penalty
+        expect(balancedScore(parts, { xp: 0, profit: 0, dps: 1 }).valuePct).toBeCloseTo(9 - 30 / 3, 9);
+    });
+
+    test('weights stored before the two newest existed read as 0', () => {
+        expect(normalizeBalanceWeights({ xp: 1, profit: 2, dps: 3 })).toEqual({
+            xp: 1,
+            profit: 2,
+            dps: 3,
+            encounters: 0,
+            deaths: 0,
+        });
+    });
+
     test('weights: negative or missing count as zero, all zero falls back to equal', () => {
-        expect(normalizeBalanceWeights({ xp: -1, profit: 2 })).toEqual({ xp: 0, profit: 2, dps: 0 });
-        expect(normalizeBalanceWeights({ xp: 0, profit: 0, dps: 0 })).toEqual({ xp: 1, profit: 1, dps: 1 });
+        expect(normalizeBalanceWeights({ xp: -1, profit: 2 })).toEqual({
+            xp: 0,
+            profit: 2,
+            dps: 0,
+            encounters: 0,
+            deaths: 0,
+        });
+        expect(normalizeBalanceWeights({ xp: 0, profit: 0, dps: 0 })).toEqual({
+            xp: 1,
+            profit: 1,
+            dps: 1,
+            encounters: 0,
+            deaths: 0,
+        });
     });
 });
 
