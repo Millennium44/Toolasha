@@ -226,6 +226,22 @@ describe('hand-checked values', () => {
         const advice = advise(solution, talismanRow(1, [line('melee_evasion', 1)]), targets);
         expect(advice.value).toBeCloseTo(43.5, 8);
         expect(advice.counts['/items/reforging_orb']).toBeCloseTo(43.5, 8);
+        // Only an Armor roll beats the junk line: P(better) = 1/43.5, and the one keeper carries Armor
+        expect(advice.move.keepChance).toBeCloseTo(1 / 43.5, 6);
+        expect(advice.move.keepLineHrid).toBe(M('armor'));
+    });
+
+    test('keeper odds name no line when the keepers share two lines the talisman lacks', () => {
+        const targets = [
+            { hrid: M('armor'), minGrade: 1 },
+            { hrid: M('smite'), minGrade: 1 },
+        ];
+        const solution = solutionFor(targets, 2, { weights: { '/items/reforging_orb': 1 } });
+        const advice = advise(solution, talismanRow(1, [line('melee_evasion', 1), line('melee_accuracy', 1)]), targets);
+        // Without a lock, only a roll carrying both lines beats two junk lines: two lines are common, so none is named
+        expect(advice.move.keepChance).toBeGreaterThan(0);
+        expect(advice.move.keepChance).toBeLessThan(1 / 43.5);
+        expect(advice.move.keepLineHrid).toBeUndefined();
     });
 
     test('two lines, Attunement only, armor G3+ and smite G2+ from G1/G1: 19.57041219', () => {

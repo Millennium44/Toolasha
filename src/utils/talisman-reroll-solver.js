@@ -843,6 +843,11 @@ export function* solveSteps(problem, options = {}) {
     order.sort((a, b) => stepOf[a] - stepOf[b]);
     const NE = nodes.map(() => new Float64Array(K));
     const DE = new Float64Array(nodes.length);
+    // Per state, for the chosen reroll: the chance one roll is worth keeping (P(better)), and the wanted slots
+    // (bit label) that every such roll carries. Both are read at the state's own step, before later states count.
+    const keepChance = new Float32Array(S);
+    const keepMask = new Int8Array(S);
+    const NM = new Int8Array(nodes.length).fill(-1);
     let i = 0;
     let sinceYield = 0;
     while (i < order.length) {
@@ -860,16 +865,22 @@ export function* solveSteps(problem, options = {}) {
             if (type === 1) {
                 const node = nodes[arg];
                 for (let k = 0; k < K; k++) E[base + k] = (NE[arg][k] + (k === node.orb ? 1 : 0)) / DE[arg];
+                keepChance[s] = DE[arg];
+                keepMask[s] = NM[arg];
             } else if (type === 2) {
                 const entry = mutationParts[s].find((e) => e.orb === arg);
                 let den = 0;
+                let mask = -1;
                 const num = new Float64Array(K);
                 num[arg] = 1;
                 for (const [nodeId, weight] of entry.parts) {
                     den += weight * DE[nodeId];
+                    mask &= NM[nodeId];
                     for (let k = 0; k < K; k++) num[k] += weight * NE[nodeId][k];
                 }
                 for (let k = 0; k < K; k++) E[base + k] = num[k] / den;
+                keepChance[s] = den;
+                keepMask[s] = mask;
             } else if (type === 3 || type === 4) {
                 const codes = stCodes[s];
                 const lock = stLock[s];
@@ -887,10 +898,12 @@ export function* solveSteps(problem, options = {}) {
         for (let x = i; x < j; x++) {
             const s = order[x];
             const refs = rev[s];
+            const outcomeMask = wantedMaskOf(stCodes[s], stLock[s]);
             for (let r = 0; r < refs.length; r += 2) {
                 const nodeId = refs[r];
                 const p = refs[r + 1];
                 DE[nodeId] += p;
+                NM[nodeId] &= outcomeMask;
                 const acc = NE[nodeId];
                 for (let k = 0; k < K; k++) acc[k] += p * E[s * K + k];
             }
@@ -909,6 +922,8 @@ export function* solveSteps(problem, options = {}) {
         actArg,
         actOrb,
         rerollValue,
+        keepChance,
+        keepMask,
         orbHrids: [...orbs.map((o) => o.hrid), binding ? binding.hrid : ''],
         stateIndex,
     });
@@ -1090,6 +1105,17 @@ export function advise(solution, talisman, targets) {
                 .map((w) => w.hrid);
         }
         // A line that meets its slot is rerolled unlocked only when locking it is shown to cost more
+        // How often a roll is worth keeping; the line is named only when every keeper carries one the talisman lacks
+        const have = lineCodes.reduce(
+            (mask, code) => (solution.labelOf(code) > 0 ? mask | (1 << solution.labelOf(code)) : mask),
+            0
+        );
+        const shared = solution.keepMask[index] & ~have;
+        const common = [];
+        for (let label = 1; label <= wanted.length; label++)
+            if (shared & (1 << label)) common.push(wanted[label - 1].hrid);
+        move.keepChance = solution.keepChance[index];
+        if (common.length === 1) move.keepLineHrid = common[0];
         const lockFirst = lockFirstValue(solution, modifiers, lineCodes, lockIndex);
         if (lockFirst && lockFirst.value <= value * (1 + 1e-9)) {
             // A tie goes to the lock
