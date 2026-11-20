@@ -106,14 +106,36 @@ describe('a target that needs more lines than the talisman has', () => {
         expect(priced.value).toBeLessThanOrEqual(unpriced.value * (1 + 1e-9));
     });
 
-    test('a locked line: the plan unlocks first (adds are planned on a lock-free talisman only)', () => {
+    test('a locked line: add with the lock kept (the game adds while a line is locked), no unlock first', () => {
         const locked = talismanRow(2, [line('armor', 2), line('critical_rate', 1)], { lockedModifierHrid: M('armor') });
+        const add3 = { kind: 'add', itemHrid: ADVANCED, count: 1, lineNumber: 3 };
         const priced = advise(solutionFor(POOL3, 3, 2, { coreWeights: CHEAP_CORES }), locked, POOL3, 3);
         expect(priced.status).toBe('move');
-        expect(priced.move.kind).toBe('unlock');
+        expect(priced.move).toEqual(add3);
+        // No Binding Orb: the lock is never moved or taken off and put back
+        expect(priced.counts['/items/binding_orb'] || 0).toBeLessThan(1);
         const unpriced = advise(solutionFor(POOL3, 3, 2, { coreWeights: {} }), locked, POOL3, 3);
-        expect(unpriced.move.kind).toBe('unlock');
-        expect(unpriced.addRequired).toMatchObject({ kind: 'add', lineNumber: 3, itemHrid: ADVANCED, unpriced: true });
+        expect(unpriced.move).toEqual(add3);
+        expect(unpriced.addRequired).toMatchObject({ ...add3, unpriced: true, unpricedCores: [ADVANCED] });
+        // The same talisman without the lock is told the same
+        const free = talismanRow(2, [line('armor', 2), line('critical_rate', 1)]);
+        const freeAdvice = advise(solutionFor(POOL3, 3, 2, { coreWeights: CHEAP_CORES }), free, POOL3, 3);
+        expect(freeAdvice.move).toEqual(add3);
+    });
+
+    test('mixed prices (basic priced, advanced not): unpriced names only the advanced core', () => {
+        const addLine = { coreWeights: { [BASIC]: 1000 } };
+        const advice = advise(solutionFor(POOL3, 3, 1, addLine), ONE_LINE, POOL3, 3);
+        expect(advice.status).toBe('move');
+        expect(advice.move).toEqual({ kind: 'add', itemHrid: BASIC, count: 5, lineNumber: 2 });
+        // Line 3 has no price, so even the priced first add is not weighed: required, not chosen on cost
+        expect(advice.addRequired).toMatchObject({ unpriced: false, unpricedCores: [ADVANCED] });
+        expect(advice.counts[BASIC]).toBeCloseTo(5, 9);
+        expect(advice.counts[ADVANCED]).toBeCloseTo(1, 9);
+        // From two lines the priced core is spent: the add to line 3 is still required and unpriced
+        const two = talismanRow(1, [line('ability_haste', 2), line('critical_rate', 1)]);
+        const next = advise(solutionFor(POOL3, 3, 2, addLine), two, POOL3, 3);
+        expect(next.addRequired).toMatchObject({ lineNumber: 3, unpriced: true, unpricedCores: [ADVANCED] });
     });
 
     test('a pending roll is decided first: never an add while it waits', () => {
@@ -161,7 +183,6 @@ describe('an add competes with rerolls', () => {
         expect(unpriced.value).toBeCloseTo(plain.value, 6);
         expect(unpriced.addSuggestion).toMatchObject({
             move: { kind: 'add', itemHrid: BASIC, count: 5, lineNumber: 2 },
-            unlockFirst: false,
         });
         expect(unpriced.addSuggestion.saving).toBeGreaterThan(0);
         expect(unpriced.addSuggestion.value + unpriced.addSuggestion.saving).toBeCloseTo(unpriced.value, 6);

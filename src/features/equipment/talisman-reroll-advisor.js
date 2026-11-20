@@ -78,8 +78,8 @@ export const ADVISOR_HELP = [
         '15%, the Reforging curve cut at G3), types by weight among the types the talisman does not hold. A talisman ' +
         'with fewer than four lines may be told to add a line with cores first: when the cores have a market price ' +
         '(or your own) and every orb is priced, adding competes with rerolling on cost; otherwise the advice rerolls and says how ' +
-        'many orbs adding first would save, or says the add is required when the target needs more lines. Adds are ' +
-        'planned on an unlocked talisman only (whether the game adds while a line is locked is not checked), and Do ' +
+        'many orbs adding first would save, or says the add is required when the target needs more lines. A locked ' +
+        'line stays locked through an add (checked live), and Do ' +
         'next step never presses the add: do it in the game window. ' +
         'The Core advisor (Combat Sim Upgrade tab, Skilling Optimizer Talismans) values the next line of a worn talisman against its cores.',
     'Orbs are weighed by market price when every orb has a live listing, otherwise by the game item value; a coin ' +
@@ -170,12 +170,7 @@ export function describeAdvice(result, names) {
             const needs = advice.addRequired?.need ?? build.problem?.need;
             const needsLines = needs > names.lineCount ? ` The target needs ${needs} lines.` : '';
             if (next.kind === 'lock') move = `Next: lock ${mod(next.modifierHrid)} with a ${item(next.itemHrid)}.`;
-            else if (next.kind === 'unlock' && advice.addRequired) {
-                const then = advice.addRequired;
-                move =
-                    `Next: unlock the locked line (free), then add line ${then.lineNumber} with ` +
-                    `${then.count} ${item(then.itemHrid)}.${needsLines}`;
-            } else if (next.kind === 'unlock') move = 'Next: unlock the locked line (free).';
+            else if (next.kind === 'unlock') move = 'Next: unlock the locked line (free).';
             else if (next.kind === 'add') {
                 move = `Next: add line ${next.lineNumber} with ${next.count} ${item(next.itemHrid)}.${needsLines}`;
             } else {
@@ -221,10 +216,12 @@ export function describeAdvice(result, names) {
             detail.push(`About 1 roll in ${formatOdds(1 / chance)} is worth keeping${named}; the rest are discarded.`);
         }
     }
-    if (advice.status === 'move' && advice.addRequired?.unpriced) {
+    const unpricedCores = advice.status === 'move' ? advice.addRequired?.unpricedCores || [] : [];
+    if (unpricedCores.length > 0) {
         detail.push(
-            "Lines are added only where the target needs them: the cores are not priced on the orbs' scale (a " +
-                'market listing or your own price, with every orb priced), so they are not weighed against orbs.'
+            `Lines are added only where the target needs them: ${unpricedCores.map(item).join(', ')} ` +
+                "not priced on the orbs' scale (a market listing or your own price, with every orb priced), so not " +
+                'weighed against orbs.'
         );
     }
     if (advice.status === 'move' && advice.addSuggestion) {
@@ -235,7 +232,7 @@ export function describeAdvice(result, names) {
                 ? ` about ${formatCount(sg.saving / unit)} fewer orbs expected (${item(result.reference.hrid)} equivalents)`
                 : ' fewer orbs expected';
         detail.push(
-            `${sg.unlockFirst ? 'Unlock and add' : 'Add'} a line first (${sg.move.count} ${item(sg.move.itemHrid)}):` +
+            `Add a line first (${sg.move.count} ${item(sg.move.itemHrid)}):` +
                 `${fewer}. The cores are not priced on the orbs' scale, so they are not weighed against the orbs.`
         );
     }
@@ -753,7 +750,12 @@ class TalismanRerollAdvisor {
                 ...(addShape.length ? [addShape] : []),
             ]);
             const key = JSON.stringify([shape, weights, ...(addShape.length ? [coreWeights] : [])]);
-            let solution = this.solutions.get(key);
+            let solution = this.solutions.get(key) || this.solvedLayer(build.problem);
+            if (solution && !this.solutions.has(key)) {
+                // A layer of a cached solve (one line fewer, before the add): kept under its own key, which holds no
+                // more memory while the solve it belongs to is cached
+                this.remember(key, shape, solution);
+            }
             if (!solution) {
                 this.startSolve(key, shape, build.problem);
                 // Until the new prices are solved, the last solution for this target stands, marked as updating
@@ -938,6 +940,47 @@ class TalismanRerollAdvisor {
         pressing.timer = setTimeout(tick, PRESS_TICK_MS);
     }
 
+    /**
+     * The layer of a cached solve that is exactly this problem: after an add, the line count above was already solved
+     * as part of the plan. Exact means the same target, orbs, grade levels and adds above this line count.
+     * @param {Object} problem
+     * @returns {Object|null}
+     */
+    solvedLayer(problem) {
+        const signature = (p, n) =>
+            JSON.stringify([
+                n,
+                p.G,
+                p.need,
+                p.maxGrade,
+                p.wanted,
+                p.junkWeight,
+                p.junkCount,
+                p.orbs,
+                p.binding,
+                p.focusMult,
+                (p.adds || []).filter((a) => a.line > n),
+                (p.layers || []).filter((l) => l.n > n),
+            ]);
+        const wanted = signature(problem, problem.n);
+        for (const cached of this.solutions.values()) {
+            for (let layer = cached.upper; layer; layer = layer.upper) {
+                if (layer.problem.n === problem.n && signature(layer.problem, problem.n) === wanted) return layer;
+            }
+        }
+        return null;
+    }
+
+    /** Cache a solution (the oldest entries go past CACHE_LIMIT) */
+    remember(key, shape, solution) {
+        this.solutions.delete(key);
+        if (this.solutions.size >= CACHE_LIMIT) this.solutions.delete(this.solutions.keys().next().value);
+        this.solutions.set(key, solution);
+        this.latest.delete(shape);
+        if (this.latest.size >= CACHE_LIMIT) this.latest.delete(this.latest.keys().next().value);
+        this.latest.set(shape, solution);
+    }
+
     /** Solve in slices so the window stays responsive; a newer request replaces an older one */
     startSolve(key, shape, problem) {
         if (this.running?.key === key) return;
@@ -954,11 +997,7 @@ class TalismanRerollAdvisor {
                 while (!step.done && Date.now() - started < SLICE_MS) step = runner.next();
                 if (step.done) {
                     this.running = null;
-                    if (this.solutions.size >= CACHE_LIMIT) this.solutions.delete(this.solutions.keys().next().value);
-                    this.solutions.set(key, step.value);
-                    this.latest.delete(shape);
-                    if (this.latest.size >= CACHE_LIMIT) this.latest.delete(this.latest.keys().next().value);
-                    this.latest.set(shape, step.value);
+                    this.remember(key, shape, step.value);
                     this.schedule();
                     return;
                 }

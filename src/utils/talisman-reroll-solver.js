@@ -42,9 +42,8 @@
  *  - Exchange is assumed to be a uniform random permutation of the unlocked grades (not measured).
  *  - Adding lines with talisman cores is planned only on request (`addLine`): one layer per line count, the full
  *    count solved first, each lower count then offered an add into the layer above (a chance node over the new line,
- *    drawn as creation and cores draw it). An add is offered from a lock-free state only (whether the game adds while
- *    a line is locked is not checked), so a locked talisman unlocks first, which may cost a Binding Orb more than the
- *    game would ask. A core with no price is never weighed as free: its add is not a move, and advice reports what it
+ *    drawn as creation and cores draw it). An add is offered from every state, a locked one included: the game adds a
+ *    line while one is locked and keeps the lock (checked live 2026-11-20). A core with no price is never weighed as free: its add is not a move, and advice reports what it
  *    would save, or that it is required. A layer over MAX_STATES, and every layer above it, is left out (`addLeftOut`).
  *  - Mutation (random_lines) fans out widely; a target whose state space is larger than MUTATION_STATE_LIMIT is
  *    solved without it, and the result says so.
@@ -642,7 +641,7 @@ export function* solveSteps(problem, options = {}) {
 }
 
 /**
- * One line count's solve. With `upper` (the solution one line up), every lock-free state may also add the next line
+ * One line count's solve. With `upper` (the solution one line up), every state (lock kept) may also add the next line
  * with cores: a chance node with no self-loop (the new line is always kept), valued core weight + Σ p·V_up(s'), the
  * line drawn as creation and cores draw it (G1-G3, see MEASURED_ODDS.freshLineGrades; type by weight among the types
  * not held). An unpriced add is never offered as a move; its value without the cores is kept for advice.
@@ -981,8 +980,7 @@ function* solveLayer(problem, options, upper) {
     }
     yield;
 
-    // Adding the next line (lock-free states only: whether the game adds while a line is locked is not checked, so a
-    // locked talisman is planned through the free unlock)
+    // Adding the next line, from any state: the game adds while a line is locked and keeps the lock (checked live)
     const add = upper ? problem.adds[n - problem.adds[0].line + 1] : null;
     const addOut = add ? new Array(S) : null;
     // E[V_up] after the add, the cores left out (Infinity where some draw cannot reach the target)
@@ -993,18 +991,21 @@ function* solveLayer(problem, options, upper) {
     if (add) {
         for (let s = 0; s < S; s++) {
             if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
-            if (stLock[s] >= 0) continue;
             const codes = stCodes[s];
-            const junkHeld = codes.filter((c) => labelOf(c) === 0).length;
-            const draws = yield* drawLines(1, wantedMaskOf(codes, -1), junkHeld, { cap: freshCap });
-            const lifted = codes.map((c) => upper.codeOf(labelOf(c), gradeOf(c)));
+            const lock = stLock[s];
+            // The new line never repeats a type the talisman holds, the locked line's included
+            const junkHeld = codes.filter((c) => labelOf(c) === 0).length + lockJunk(lock);
+            const draws = yield* drawLines(1, wantedMaskOf(codes, lock), junkHeld, { cap: freshCap });
+            const lift = (c) => upper.codeOf(labelOf(c), gradeOf(c));
+            const lifted = codes.map(lift);
+            const upperLock = lock >= 0 ? lift(lock) : -1;
             const out = [];
             let value = 0;
             let priced = 0;
             let mass = 0;
             for (const d of draws) {
                 const code = d.codes[0];
-                const t = upper.indexOf(-1, [...lifted, upper.codeOf(labelOf(code), gradeOf(code))]);
+                const t = upper.indexOf(upperLock, [...lifted, lift(code)]);
                 if (t === undefined || !(d.p > 0)) continue;
                 out.push(t, d.p);
                 value += d.p * upper.U[t];
@@ -1266,35 +1267,25 @@ function* solveLayer(problem, options, upper) {
     }
 
     // ---- With unpriced adds: the value and counts of adding lines only where the target needs them ----
-    // U = V where V is finite, else (a lock-free state) the add's value without its cores, else (a locked state) its
-    // lock-free counterpart's (the unlock is free). EU holds the counts of the states where U is not V.
+    // U = V where V is finite, else the add's value without its cores (the lock kept). EU holds the counts of the
+    // states where U is not V.
     const U = new Float64Array(V);
     const EU = new Map();
     if (add) {
-        for (let pass = 0; pass < 2; pass++) {
-            for (let s = 0; s < S; s++) {
-                if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
-                if (Number.isFinite(V[s]) || stLock[s] >= 0 !== (pass === 1)) continue;
-                if (pass === 0) {
-                    if (!Number.isFinite(addValue[s])) continue;
-                    U[s] = addValue[s];
-                    const counts = new Float64Array(K);
-                    const out = addOut[s];
-                    let mass = 0;
-                    for (let r = 0; r < out.length; r += 2) mass += out[r + 1];
-                    for (let r = 0; r < out.length; r += 2) {
-                        const at = upper.countsOf(out[r]);
-                        for (let k = 0; k < K; k++) counts[k] += (out[r + 1] / mass) * at[k];
-                    }
-                    counts[addSlot] += add.count;
-                    EU.set(s, counts);
-                } else {
-                    const free = stateIndex.get(keyOf(-1, insertSorted(stCodes[s], stLock[s])));
-                    if (free === undefined || !Number.isFinite(U[free])) continue;
-                    U[s] = U[free];
-                    EU.set(s, EU.get(free) || E.slice(free * K, free * K + K));
-                }
+        for (let s = 0; s < S; s++) {
+            if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
+            if (Number.isFinite(V[s]) || !Number.isFinite(addValue[s])) continue;
+            U[s] = addValue[s];
+            const counts = new Float64Array(K);
+            const out = addOut[s];
+            let mass = 0;
+            for (let r = 0; r < out.length; r += 2) mass += out[r + 1];
+            for (let r = 0; r < out.length; r += 2) {
+                const at = upper.countsOf(out[r]);
+                for (let k = 0; k < K; k++) counts[k] += (out[r + 1] / mass) * at[k];
             }
+            counts[addSlot] += add.count;
+            EU.set(s, counts);
         }
     }
 
@@ -1469,16 +1460,28 @@ function addMove(add) {
 /**
  * An unpriced add worth suggesting from a state: adding the next line first (then rerolling, adding more lines only
  * where the target needs them) is expected to cost fewer orbs. Its cores are not weighed: they have no price.
- * @returns {Object|null} {move, value, saving, unlockFirst} with values on the solution's weight scale
+ * @returns {Object|null} {move, value, saving} with values on the solution's weight scale
  */
-function addSuggestion(solution, index, lineCodes, lockIndex, value) {
+function addSuggestion(solution, index, value) {
     const add = solution.add;
     if (!add || add.weight > 0 || !solution.addValue) return null;
-    let free = index;
-    if (lockIndex >= 0) free = solution.indexOf(-1, lineCodes);
-    const after = free === undefined ? Infinity : solution.addValue[free];
+    const after = solution.addValue[index];
     if (!Number.isFinite(after) || !(after < value * (1 - 1e-9))) return null;
-    return { move: addMove(add), value: after, saving: value - after, unlockFirst: lockIndex >= 0 };
+    return { move: addMove(add), value: after, saving: value - after };
+}
+
+/**
+ * The cores without a weight among the adds a target needing `need` lines takes from `n` lines (deduplicated).
+ * @returns {string[]}
+ */
+function unpricedCores(problem, n, need) {
+    const out = [];
+    for (const a of problem.adds || []) {
+        if (a.line > n && a.line <= Math.max(need, n + 1) && !(a.weight > 0) && !out.includes(a.itemHrid)) {
+            out.push(a.itemHrid);
+        }
+    }
+    return out;
 }
 
 /**
@@ -1520,15 +1523,22 @@ export function advise(solution, talisman, targets, need) {
     if (index === undefined) return { status: 'unknownState' };
     const value = solution.V[index];
     if (!Number.isFinite(value)) {
-        // Only adding lines whose cores have no price reaches the target (it needs more lines than it has)
+        // Only adding lines reaches the target (it needs more lines than it has), and some core on the way has no
+        // price, so the adds are not weighed. The lock, if any, is kept
         const after = solution.U ? solution.U[index] : Infinity;
         if (!Number.isFinite(after) || !solution.add) return { status: 'unreachable' };
+        const needed = need ?? solution.problem.need;
         return {
             status: 'move',
-            move: lockIndex >= 0 ? { kind: 'unlock' } : addMove(solution.add),
+            move: addMove(solution.add),
             value: after,
             counts: countsAt(solution, index),
-            addRequired: { ...addMove(solution.add), need: need ?? solution.problem.need, unpriced: true },
+            addRequired: {
+                ...addMove(solution.add),
+                need: needed,
+                unpriced: !(solution.add.weight > 0),
+                unpricedCores: unpricedCores(solution.problem, solution.problem.n, needed),
+            },
         };
     }
     const type = solution.actType[index];
@@ -1536,7 +1546,7 @@ export function advise(solution, talisman, targets, need) {
     const counts = countsAt(solution, index);
     const { orbs, wanted } = solution.problem;
     const extraFor = (advised) => {
-        const suggestion = addSuggestion(solution, index, lineCodes, lockIndex, advised);
+        const suggestion = addSuggestion(solution, index, advised);
         return suggestion ? { addSuggestion: suggestion } : {};
     };
     const extra = extraFor(value);

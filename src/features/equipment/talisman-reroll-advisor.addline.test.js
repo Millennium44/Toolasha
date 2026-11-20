@@ -221,13 +221,23 @@ describe('in the window', () => {
         expect(detailText()).toContain('No coin cost: not every orb or core used has a market listing');
     });
 
-    test('a locked line and a target that needs more lines: unlock first, then the add', () => {
+    test('a locked line and a target that needs more lines: add with the lock kept', () => {
         priceAll({});
         openWindow(talismanRow(1, [line('armor', 2), line('ability_haste', 1)], { lockedModifierHrid: M('armor') }));
         aim(POOL3);
-        expect(moveText()).toBe(
-            'Next: unlock the locked line (free), then add line 3 with 1 Advanced Talisman Core. The target needs 3 lines.'
+        expect(moveText()).toBe('Next: add line 3 with 1 Advanced Talisman Core. The target needs 3 lines.');
+        expect(detailText()).toContain(
+            "Lines are added only where the target needs them: Advanced Talisman Core not priced on the orbs' scale"
         );
+    });
+
+    test('mixed prices: the unpriced advanced core is named, not the priced basic one', () => {
+        priceAll({ [BASIC]: 1000 });
+        openWindow(talismanRow(1, [line('ability_haste', 1)]));
+        aim(POOL3);
+        expect(moveText()).toBe('Next: add line 2 with 5 Basic Talisman Core. The target needs 3 lines.');
+        expect(detailText()).toContain('Lines are added only where the target needs them: Advanced Talisman Core not');
+        expect(detailText()).not.toContain('them: Basic');
     });
 
     test('a core price arriving re-solves: the cached unpriced plan is not reused', () => {
@@ -240,6 +250,21 @@ describe('in the window', () => {
         vi.advanceTimersByTime(200);
         vi.runAllTimers();
         expect(moveText()).toBe('Next: add line 2 with 5 Basic Talisman Core.');
+    });
+
+    test('after the add, the line count above comes from the solve already done (no new solve)', () => {
+        priceAll({ [BASIC]: 1000, [ADVANCED]: 5000, [EXPERT]: 20000 });
+        openWindow(talismanRow(1, [line('armor', 1)]));
+        aim(SMITE);
+        expect(moveText()).toBe('Next: add line 2 with 5 Basic Talisman Core.');
+        const solves = vi.spyOn(feature, 'startSolve');
+        game.shown = talismanRow(1, [line('armor', 1), line('critical_rate', 2)]);
+        game.handlers.get('talismans_updated')?.();
+        vi.advanceTimersByTime(200);
+        vi.runAllTimers();
+        expect(solves).not.toHaveBeenCalled();
+        expect(moveText()).toBe('Next: add line 3 with 1 Advanced Talisman Core.');
+        solves.mockRestore();
     });
 
     test('a pending roll is decided before any add', () => {
@@ -298,7 +323,7 @@ describe('describeAdvice for an add', () => {
         );
     });
 
-    test('a suggestion with a lock: unlock and add', () => {
+    test('a suggestion: add first, with the saving in reference orbs', () => {
         const text = describeAdvice(
             {
                 build,
@@ -309,13 +334,13 @@ describe('describeAdvice for an add', () => {
                     move: { kind: 'orb', itemHrid: '/items/reforging_orb' },
                     value: 3e6,
                     counts: {},
-                    addSuggestion: { move: add, value: 1.5e6, saving: 1.5e6, unlockFirst: true },
+                    addSuggestion: { move: add, value: 1.5e6, saving: 1.5e6 },
                 },
             },
             names
         );
         expect(text.detail[0]).toBe(
-            'Unlock and add a line first (1 Advanced Talisman Core): about 5 fewer orbs expected (Reforging Orb ' +
+            'Add a line first (1 Advanced Talisman Core): about 5 fewer orbs expected (Reforging Orb ' +
                 "equivalents). The cores are not priced on the orbs' scale, so they are not weighed against the orbs."
         );
     });
