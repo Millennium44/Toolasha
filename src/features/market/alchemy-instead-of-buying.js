@@ -38,6 +38,7 @@ import { getItemPriceInfo } from '../../utils/market-data.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { getDrinkConcentration } from '../../utils/tea-parser.js';
+import { SKILLING_SPECIAL_STATS, talismanStat } from '../../utils/talisman-bonuses.js';
 import {
     calculateActionsPerHour,
     calculatePriceAfterTax,
@@ -667,7 +668,9 @@ function characterSetupSignature() {
                 dataManager.getPersonalBuffFlatBoost?.(ALCHEMY_ACTION_TYPE, type) ?? 0,
             ]),
         ]);
-        return [dataManager.getBuffStateVersion?.() ?? '', gear, drinkList, level, house, buffs].join('|');
+        // Talismans ride on the equipment Map's own property, not in its entries, so the keep chance is added here
+        const keep = talismanStat(equipment, SKILLING_SPECIAL_STATS.conservation);
+        return [dataManager.getBuffStateVersion?.() ?? '', gear, drinkList, level, house, buffs, keep].join('|');
     } catch (error) {
         console.error('[AlchemyInstead] Setup signature failed:', error);
         // Never reuse a run whose setup could not be read
@@ -946,6 +949,9 @@ export function makeRateChoices() {
         const gameData = dataManager.getInitClientData?.();
         const itemDetailMap = gameData?.itemDetailMap;
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
+        // Conservation (talisman Special line) keeps this share of the catalysts a success would use up, so a
+        // catalyst costs that much less per success, the same share the calculator's catalyst line takes off
+        const conservation = Math.min(1, Math.max(0, talismanStat(equipment, SKILLING_SPECIAL_STATS.conservation)));
         // A tea counts only when it can be bought, the same real-ask rule buyableSetup applies to the
         // candidates; without it the ranking scores the no-tea setup alone
         const teaHrids = (drinks || []).map((drink) => drink?.itemHrid).filter(Boolean);
@@ -1030,7 +1036,7 @@ export function makeRateChoices() {
                 const penalty = penalties.get(key);
                 for (const { bonus, price } of catalystsFor(actionType)) {
                     const rate = calc.calculateSuccessRateBreakdown(baseRate, bonus, tea, penalty).total;
-                    choices.push({ rate, catalystPrice: price, teaPerAction });
+                    choices.push({ rate, catalystPrice: price * (1 - conservation), teaPerAction });
                 }
             });
             return choices;

@@ -63,7 +63,7 @@ describe('buildGatheringSession', () => {
 
         expect(session.actionCount).toBe(25);
         expect(session.drops).toEqual([
-            { itemHrid: '/items/log', minCount: 1, maxCount: 2, dropRate: 1, price: 40, quantity: 0 },
+            { itemHrid: '/items/log', minCount: 1, maxCount: 2, dropRate: 1, price: 40, quantity: 0, abundance: 0 },
         ]);
     });
 
@@ -291,6 +291,68 @@ describe('gathering quantity and Processing', () => {
         expect(gatheringLootValue(session, { '/items/milk': 4, '/items/cheese': 3, '/items/lumber': 5 })).toBe(
             (4 + 3 * 2) * 10
         );
+    });
+});
+
+describe('talisman Abundance (a chance to triple the gathered count)', () => {
+    const mean = (outcomes) => [...outcomes].reduce((sum, [count, p]) => sum + count * p, 0);
+
+    test('absent (0 or missing) leaves the outcomes exactly as they were', () => {
+        const drop = { minCount: 1, maxCount: 3, dropRate: 0.9, quantity: 0.5 };
+        expect([...gatheringCountOutcomes({ ...drop, abundance: 0 })]).toEqual([...gatheringCountOutcomes(drop)]);
+    });
+
+    test('triples the count the gathering quantity gave, with its chance, and stays a distribution', () => {
+        // 1-3 at +50% and 4% Abundance: the mean is (1 + 2 x 0.04) x the buffed mean
+        const outcomes = gatheringCountOutcomes({
+            minCount: 1,
+            maxCount: 3,
+            dropRate: 0.9,
+            quantity: 0.5,
+            abundance: 0.04,
+        });
+        expect([...outcomes.values()].reduce((sum, p) => sum + p, 0)).toBeCloseTo(1, 12);
+        expect(mean(outcomes)).toBeCloseTo(0.9 * 2 * 1.5 * 1.08, 12);
+        // a tripled 3 x 1.5 = 4.5 can land on 13 or 14; the plain table tops out at 5
+        expect(outcomes.get(13)).toBeCloseTo((0.9 / 3 / 2) * 0.04, 12);
+        expect(outcomes.get(9)).toBeCloseTo((0.9 / 3) * 0.04, 12);
+    });
+
+    test('a G6-sized quantity composes with it: (1 + quantity) x (1 + 2 x chance)', () => {
+        const outcomes = gatheringCountOutcomes({
+            minCount: 2,
+            maxCount: 6,
+            dropRate: 1,
+            quantity: 0.6,
+            abundance: 0.02,
+        });
+        expect(mean(outcomes)).toBeCloseTo(4 * 1.6 * 1.04, 12);
+    });
+
+    test('the session mean carries it, and a run at its expected takings reads typical', () => {
+        const actionDetail = { dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 3 }] };
+        const priceOf = pricedAt({ '/items/milk': 10 });
+        const session = buildGatheringSession({
+            actionDetail,
+            actionCount: 2000,
+            priceOf,
+            gatheringQuantity: 0.2,
+            abundance: 0.04,
+        });
+        expect(gatheringSessionMean(session)).toBeCloseTo(2000 * 2 * 1.2 * 1.08 * 10, 6);
+        const { percentile } = gatheringSessionLuck(session, gatheringSessionMean(session));
+        expect(percentile).toBeGreaterThan(0.35);
+        expect(percentile).toBeLessThan(0.65);
+    });
+
+    test('is clamped to a chance', () => {
+        const session = buildGatheringSession({
+            actionDetail: { dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 1 }] },
+            actionCount: 1,
+            priceOf: pricedAt({ '/items/milk': 10 }),
+            abundance: 4,
+        });
+        expect(session.drops[0].abundance).toBe(1);
     });
 });
 

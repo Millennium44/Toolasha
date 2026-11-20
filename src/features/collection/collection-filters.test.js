@@ -1809,3 +1809,27 @@ test('an item two gathering actions drop is credited to the action that yields t
     // An item only one action drops is unaffected
     expect(collectionFilters.itemActionCache.eternal_milk.actionDetails.levelRequirement.level).toBe(100);
 });
+
+describe('items per hour with the talisman Abundance line', () => {
+    const gather = (context) => {
+        mockEfficiency.context = { actionTime: 10, efficiencyMultiplier: 1.5, totalGathering: 0.2, ...context };
+        collectionFilters.itemActionCache = {
+            '/items/log': {
+                actionDetails: { dropTable: [{ itemHrid: '/items/log', dropRate: 0.5, minCount: 2, maxCount: 4 }] },
+                outputIndex: 0,
+                source: 'dropTable',
+            },
+        };
+        return collectionFilters._getEffectiveItemsPerHour('/items/log');
+    };
+
+    test('absent (or missing) leaves the rate as it was', () => {
+        const bare = (3600 / 10) * 1.5 * 1.2 * (3 * 0.5);
+        expect(gather({})).toBeCloseTo(bare, 9);
+        expect(gather({ abundance: 0 })).toBeCloseTo(bare, 9);
+    });
+
+    test('multiplies the gathered amount by (1 + 2 x chance), beside the gathering quantity', () => {
+        expect(gather({ abundance: 0.04 })).toBeCloseTo((3600 / 10) * 1.5 * 1.2 * 1.08 * 1.5, 9);
+    });
+});

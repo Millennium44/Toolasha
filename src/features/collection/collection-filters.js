@@ -1480,8 +1480,14 @@ class CollectionFilters {
                 outputCount = actionDetails.outputItems[outputIndex].count ?? 1;
             }
 
-            // totalGathering is 0 for production actions (efficiency.js zeroes it out)
-            const rate = (3600 / ctx.actionTime) * ctx.efficiencyMultiplier * (1 + ctx.totalGathering) * outputCount;
+            // totalGathering is 0 for production actions (efficiency.js zeroes it out), and so is abundance (the
+            // talisman chance to triple a gathered amount, applied to the gathered quantity like main's profit)
+            const rate =
+                (3600 / ctx.actionTime) *
+                ctx.efficiencyMultiplier *
+                (1 + ctx.totalGathering) *
+                (1 + 2 * (ctx.abundance || 0)) *
+                outputCount;
             return rate;
         } catch (err) {
             console.warn('[CollectionFilters] _getEffectiveItemsPerHour error for ' + itemId + ':', err);

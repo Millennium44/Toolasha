@@ -170,6 +170,33 @@ describe('the equipped catalyst', () => {
     });
 });
 
+describe('Conservation in the catalyst line', () => {
+    const catalystLine = async (conservation) => {
+        selectTab('Decompose');
+        calculator.decompose.mockImplementation(() => ({
+            ...profitData({ successRate: 0.6, catalyst: PRIME }),
+            catalystCost: { itemHrid: PRIME, price: 100, costPerAttempt: 45, costPerHour: 8100 },
+            conservation,
+        }));
+        const container = mountPanel();
+        await display.updateDisplay(container);
+        return profitSection().textContent;
+    };
+
+    test('counts the catalysts an hour a success uses up, less the share kept, and says so', async () => {
+        // 180 actions an hour x 60% success x (1 - 25%) = 81 used up
+        const text = await catalystLine(0.25);
+        expect(text).toContain('Prime Catalyst: 81/hr (consumed only on success, 60.00%, 25.00% kept)');
+    });
+
+    test('no line (absent or zero) is the count it always was', async () => {
+        expect(await catalystLine(0)).toContain('Prime Catalyst: 108/hr (consumed only on success, 60.00%)');
+        document.body.innerHTML = '';
+        display.sectionExpanded.clear();
+        expect(await catalystLine(undefined)).toContain('Prime Catalyst: 108/hr (consumed only on success, 60.00%)');
+    });
+});
+
 describe('a localized client', () => {
     test('the tab position, not its label or the running action, picks the calculator', async () => {
         selectTab('点金'); // transmute selected on a Chinese strip

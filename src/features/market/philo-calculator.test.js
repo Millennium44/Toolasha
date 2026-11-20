@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
     patientTickBuy: false,
     patientTickSell: false,
     characterId: 'char1',
+    // The worn gear (null: none); talisman lines ride on it
+    equipment: null,
     // Refine actions, keyed by HRID, merged into actionDetailMap so a test
     // can give getRefinementCraftCost something to find.
     refineActions: {},
@@ -133,7 +135,7 @@ vi.mock('../../core/data-manager.js', () => ({
             mocks.itemDetails[itemHrid] ??
             (itemHrid in mocks.vendorPrices ? { sellPrice: mocks.vendorPrices[itemHrid] } : null),
         getSkills: () => mocks.skills,
-        getEquipment: () => new Map(),
+        getEquipment: () => mocks.equipment ?? new Map(),
         getActionDrinkSlots: () => mocks.drinkSlots,
         getInventory: () => mocks.inventory,
     },
@@ -225,6 +227,7 @@ beforeEach(() => {
         [`${TEA_HRID}+0`]: { ask: 500, bid: 400 },
     };
     mocks.skills = [{ skillHrid: '/skills/alchemy', level: 100 }];
+    mocks.equipment = null;
     mocks.actionStats = { actionTime: 8, totalEfficiency: 50 };
     mocks.actionStatsCalls = [];
     mocks.bonusDrops = [];
@@ -366,6 +369,46 @@ describe('costs', () => {
         const row = calc.calculateRow(WIDGET_HRID, widget());
         expect(row.effectiveTransmuteChance).toBeCloseTo(0.625, 10);
         expect(row.transmuteCost).toBeCloseTo(1000 + 50 + 0.625 * 400, 6);
+    });
+
+    describe('Conservation (talisman Special line) keeps part of the catalyst a success would use up', () => {
+        const worn = async (conservation) => {
+            const { attachTalismanBonuses } = await import('../../utils/talisman-bonuses.js');
+            mocks.equipment = attachTalismanBonuses(new Map(), { noncombat: { conservation }, buffs: {}, combat: {} });
+            calc._actionStatsCache.clear();
+        };
+
+        test('absent line: the catalyst bill is unchanged', async () => {
+            calc.useCatalyst = true;
+            calc.catalystPrice = 400;
+            await worn(0);
+            const row = calc.calculateRow(WIDGET_HRID, widget());
+            expect(row.transmuteCost).toBeCloseTo(1000 + 50 + 0.625 * 400, 6);
+        });
+
+        test('the catalyst is charged at (1 - chance) of rate x price; item, coin fee and success rate are not', async () => {
+            calc.useCatalyst = true;
+            calc.catalystPrice = 400;
+            await worn(0.08);
+            const row = calc.calculateRow(WIDGET_HRID, widget());
+            expect(row.effectiveTransmuteChance).toBeCloseTo(0.625, 10);
+            expect(row.transmuteCost).toBeCloseTo(1000 + 50 + 0.625 * 400 * 0.92, 6);
+        });
+
+        test('a catalyst the table is not using costs nothing either way', async () => {
+            calc.useCatalyst = false;
+            await worn(0.08);
+            const row = calc.calculateRow(WIDGET_HRID, widget());
+            expect(row.transmuteCost).toBeCloseTo(1000 + 50, 6);
+        });
+
+        test('a typed catalyst price of 0 ("I own them") stays free', async () => {
+            calc.useCatalyst = true;
+            calc.catalystPrice = 0;
+            calc._manualCatalystPrice = true;
+            await worn(0.08);
+            expect(calc.calculateRow(WIDGET_HRID, widget()).transmuteCost).toBeCloseTo(1000 + 50, 6);
+        });
     });
 });
 

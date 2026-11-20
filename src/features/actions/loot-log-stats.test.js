@@ -313,6 +313,33 @@ describe('LootLogStats.calculateExpectedRunValue', () => {
         expect(result.bidExpected).toBeCloseTo(37.5 * 80, 6);
     });
 
+    test('Abundance multiplies the expectation by (1 + 2 x chance) on top of the gathering quantity', () => {
+        dataManager.getActionDetails.mockReturnValue({
+            type: '/action_types/woodcutting',
+            dropTable: [{ itemHrid: '/items/log', dropRate: 0.5, minCount: 2, maxCount: 4 }],
+        });
+        getItemPrices.mockReturnValue({ ask: 100, bid: 80 });
+        stats.gatheringQuantityFor = () => 0.25;
+        stats.abundanceFor = () => 0.04;
+
+        const result = stats.calculateExpectedRunValue('/actions/woodcutting/tree', 20);
+
+        // 0.5 * 3 * 1.25 * 1.08 * 20 = 40.5 logs
+        expect(result.askExpected).toBeCloseTo(40.5 * 100, 6);
+        expect(result.bidExpected).toBeCloseTo(40.5 * 80, 6);
+    });
+
+    test('reads the chance off the efficiency context, and a non-gathering action has none', () => {
+        getActionEfficiencyContext.mockReturnValueOnce({
+            totalGathering: 0.1,
+            efficiencyMultiplier: 1,
+            processingBonus: 0,
+            abundance: 0.03,
+        });
+        expect(stats.abundanceFor({ type: '/action_types/woodcutting' })).toBe(0.03);
+        expect(stats.abundanceFor({ type: '/action_types/cooking' })).toBe(0);
+    });
+
     test('values coin drops at face value without a market lookup', () => {
         dataManager.getActionDetails.mockReturnValue({
             dropTable: [{ itemHrid: '/items/coin', dropRate: 1, minCount: 10, maxCount: 10 }],
@@ -731,7 +758,7 @@ describe('LootLogStats.buildLuckReading', () => {
 
         expect(reading.session.actionCount).toBe(10);
         expect(reading.session.drops).toEqual([
-            { itemHrid: '/items/log', minCount: 1, maxCount: 1, dropRate: 1, price: 40, quantity: 0 },
+            { itemHrid: '/items/log', minCount: 1, maxCount: 1, dropRate: 1, price: 40, quantity: 0, abundance: 0 },
         ]);
         expect(reading.income).toBe(9 * 40);
     });
@@ -753,6 +780,34 @@ describe('LootLogStats.buildLuckReading', () => {
         const percentile = stats.luckPercentileFor(reading, logData);
         expect(percentile).toBeGreaterThan(0.3);
         expect(percentile).toBeLessThan(0.7);
+    });
+
+    test('models Abundance in the expectation and leaves the recorded drops alone', () => {
+        dataManager.getActionDetails.mockReturnValue({
+            type: '/action_types/woodcutting',
+            dropTable: [{ itemHrid: '/items/log', dropRate: 1, minCount: 1, maxCount: 3 }],
+        });
+        dataManager.getItemDetails.mockReturnValue({});
+        getItemPrices.mockReturnValue({ ask: 40, bid: 30 });
+        stats.gatheringQuantityFor = () => 0.2;
+        stats.abundanceFor = () => 0.04;
+
+        // 2000 actions: 2 x 1.2 x 1.08 logs each on average; the recorded 5184 logs are counted as they are
+        const logData = { actionHrid: '/actions/woodcutting/tree', actionCount: 2000, drops: { '/items/log': 5184 } };
+        const reading = stats.buildLuckReading(logData);
+
+        expect(reading.session.drops[0].abundance).toBe(0.04);
+        expect(reading.abundance).toBe(0.04);
+        expect(reading.income).toBe(5184 * 40);
+        const percentile = stats.luckPercentileFor(reading, logData);
+        expect(percentile).toBeGreaterThan(0.3);
+        expect(percentile).toBeLessThan(0.7);
+
+        // The same takings with no line worn read as a fluke: the line is the difference, in the model only
+        stats.abundanceFor = () => 0;
+        const bare = stats.buildLuckReading(logData);
+        expect(bare.income).toBe(reading.income);
+        expect(stats.luckPercentileFor(bare, logData)).toBeGreaterThan(0.95);
     });
 
     test('counts Processing output as the raw drops it was made from', () => {

@@ -208,6 +208,8 @@ export function buildEquipmentBuffsForSkill(editorEquipment, actionTypeHrid, ite
     const talisman = talismanNoncombat || {};
     const talismanSpeed = (talisman[`${skillId}Speed`] || 0) + (talisman.skillingSpeed || 0);
     const talismanEfficiency = (talisman[`${skillId}Efficiency`] || 0) + (talisman.skillingEfficiency || 0);
+    // Gathering quantity only: in the labyrinth it is the chance of double progress, not an amount gathered, so the
+    // talisman Abundance line (triple the resources gathered) has nothing to triple here and is left out
     const talismanGathering = talisman.gatheringQuantity || 0;
     // Wisdom: the editor kit's gear experience is not part of this forecast, so only the talismans' is added
     const talismanExperience = (talisman[`${skillId}Experience`] || 0) + (talisman.skillingExperience || 0);

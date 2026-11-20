@@ -16,7 +16,7 @@ import { formatLargeNumber, numberFormatter, formatDateTime } from '../../utils/
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { MARKET_TAX, GATHERING_TYPES } from '../../utils/profit-constants.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
-import { processingConversions, expectedProcessedItems } from '../../utils/gathering-processing.js';
+import { processingConversions, expectedProcessedItemsWithAbundance } from '../../utils/gathering-processing.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { signedPercent } from '../../utils/overlay-format.js';
 import {
@@ -978,7 +978,10 @@ class LootLogStats {
 
         // The game multiplies every gathered count by 1 + gathering quantity
         const gatheringQuantity = this.gatheringQuantityFor(actionDetails);
-        const quantityMultiplier = 1 + gatheringQuantity;
+        // Talisman Abundance triples a gathered count with its chance. This is an expectation, so it is added here;
+        // the drops a run actually recorded already carry every triple that happened and are never scaled
+        const abundance = this.abundanceFor(actionDetails);
+        const quantityMultiplier = (1 + gatheringQuantity) * (1 + 2 * abundance);
         const efficiencyContext = this._gatheringEfficiencyContext(actionDetails);
         const conversions = this._processingConversions();
 
@@ -1019,11 +1022,12 @@ class LootLogStats {
             ) {
                 const processedPerCompletion =
                     efficiencyContext.processingBonus *
-                    expectedProcessedItems(
+                    expectedProcessedItemsWithAbundance(
                         drop,
                         conversion.conversionRatio,
                         gatheringQuantity,
-                        efficiencyContext.efficiencyMultiplier
+                        efficiencyContext.efficiencyMultiplier,
+                        abundance
                     );
                 const processedCount = (processedPerCompletion / efficiencyContext.efficiencyMultiplier) * actionCount;
                 rawCount = Math.max(0, rawCount - processedCount * conversion.conversionRatio);
@@ -1320,6 +1324,7 @@ class LootLogStats {
                     totalGathering: context.totalGathering || 0,
                     efficiencyMultiplier: context.efficiencyMultiplier || 1,
                     processingBonus: context.processingBonus || 0,
+                    abundance: context.abundance || 0,
                 };
             }
         } catch (error) {
@@ -1358,6 +1363,16 @@ class LootLogStats {
      */
     gatheringQuantityFor(actionDetail) {
         return this._gatheringEfficiencyContext(actionDetail)?.totalGathering || 0;
+    }
+
+    /**
+     * The talisman Abundance chance (a gathered count tripled) the current character gathers this action at.
+     * Like the gathering quantity it is today's figure, used on the expected side only.
+     * @param {Object} actionDetail - The action's `actionDetailMap` entry
+     * @returns {number} Chance as a decimal; 0 for a non-gathering action or when it cannot be read
+     */
+    abundanceFor(actionDetail) {
+        return this._gatheringEfficiencyContext(actionDetail)?.abundance || 0;
     }
 
     /**
@@ -1413,16 +1428,18 @@ class LootLogStats {
 
         const actionDetail = dataManager.getActionDetails(logData.actionHrid);
         const gatheringQuantity = this.gatheringQuantityFor(actionDetail);
+        const abundance = this.abundanceFor(actionDetail);
         const session = buildGatheringSession({
             actionDetail,
             actionCount: logData.actionCount,
             priceOf: (itemHrid) => this.getModelPrice(itemHrid),
             gatheringQuantity,
+            abundance,
             processedFrom: this.processingConversionsFor(actionDetail),
         });
         if (!session) return null;
 
-        return { session, income: gatheringLootValue(session, logData.drops), gatheringQuantity };
+        return { session, income: gatheringLootValue(session, logData.drops), gatheringQuantity, abundance };
     }
 
     /**
@@ -1505,7 +1522,7 @@ class LootLogStats {
         // Gathering quantity is read live, not stored on the entry, so the same
         // action/count/income can carry a different distribution than the last
         // time this was cached (gear or drinks changed while the panel stayed open)
-        const key = `${logData.actionHrid}|${logData.actionCount}|${Math.round(reading.income)}|${reading.gatheringQuantity || 0}`;
+        const key = `${logData.actionHrid}|${logData.actionCount}|${Math.round(reading.income)}|${reading.gatheringQuantity || 0}|${reading.abundance || 0}`;
         let percentile = this.luckCache.get(key);
         if (percentile !== undefined) {
             // Least recently used last: a hit moves the key to the end of the Map's order

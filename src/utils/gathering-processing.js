@@ -45,6 +45,35 @@ export function expectedProcessedItems(drop, conversionRatio, gatheringQuantity,
     return baseConversions * (1 - extraRepeatChance) + extraConversions * extraRepeatChance;
 }
 
+/**
+ * {@link expectedProcessedItems} with the talisman Abundance chance: with that chance the whole gathered stack is
+ * tripled (after the gathering quantity), so the conversions are worked out on each stack and weighted.
+ * @param {Object} drop - One game drop-table row
+ * @param {number} conversionRatio - Raw items consumed per processed item
+ * @param {number} gatheringQuantity - Gathering bonus as a decimal
+ * @param {number} efficiencyMultiplier - Expected gather rolls per completion
+ * @param {number} [abundance=0] - Chance the gathered stack is tripled, as a decimal
+ * @returns {number} Expected processed items if Processing procs
+ */
+export function expectedProcessedItemsWithAbundance(
+    drop,
+    conversionRatio,
+    gatheringQuantity,
+    efficiencyMultiplier,
+    abundance = 0
+) {
+    const chance = Math.min(1, Math.max(0, abundance || 0));
+    const normal = expectedProcessedItems(drop, conversionRatio, gatheringQuantity, efficiencyMultiplier);
+    if (!(chance > 0)) return normal;
+    const tripled = expectedProcessedItems(
+        drop,
+        conversionRatio,
+        3 * (1 + gatheringQuantity) - 1,
+        efficiencyMultiplier
+    );
+    return (1 - chance) * normal + chance * tripled;
+}
+
 /** The skills whose recipes Processing performs: milk → cheese, logs → lumber, raw fibre → fabric */
 const PROCESSING_ACTION_TYPES = ['/action_types/cheesesmithing', '/action_types/crafting', '/action_types/tailoring'];
 

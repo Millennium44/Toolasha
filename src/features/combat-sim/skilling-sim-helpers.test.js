@@ -383,6 +383,14 @@ describe('the kit talismans reach the room like the labyrinth loadout reader sum
         expect(buffs['/buff_types/gathering'].flatBoost).toBeCloseTo(0.02, 10);
     });
 
+    test('Abundance (triple the resources gathered) adds nothing: here gathering quantity is double progress', () => {
+        const withLine = buildEquipmentBuffsForSkill(kit, '/action_types/woodcutting', ITEMS, {
+            ...talismans,
+            abundance: 0.04,
+        });
+        expect(withLine).toEqual(buildEquipmentBuffsForSkill(kit, '/action_types/woodcutting', ITEMS, talismans));
+    });
+
     test('no talismans (a live server, no belt, a loadout without any) leaves the gear figures untouched', () => {
         const without = buildEquipmentBuffsForSkill(kit, '/action_types/woodcutting', ITEMS);
         expect(buildEquipmentBuffsForSkill(kit, '/action_types/woodcutting', ITEMS, null)).toEqual(without);

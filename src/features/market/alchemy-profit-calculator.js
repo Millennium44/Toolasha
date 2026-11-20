@@ -1292,6 +1292,8 @@ class AlchemyProfitCalculator {
                 // Per-attempt economics
                 materialCost,
                 catalystPrice: combo.catalystPrice,
+                /** Chance (talisman Conservation) a catalyst a success would use up is kept; catalystPrice is per use */
+                conservation: talismanStat(equipment, SKILLING_SPECIAL_STATS.conservation),
                 costPerAttempt,
                 incomePerAttempt: revenuePerAttempt,
                 netProfitPerAttempt,
@@ -1709,6 +1711,8 @@ class AlchemyProfitCalculator {
                 // Per-attempt economics
                 materialCost: inputPrice,
                 catalystPrice: combo.catalystPrice,
+                /** Chance (talisman Conservation) a catalyst a success would use up is kept; catalystPrice is per use */
+                conservation: talismanStat(equipment, SKILLING_SPECIAL_STATS.conservation),
                 costPerAttempt,
                 incomePerAttempt: revenuePerAttempt,
                 netProfitPerAttempt,
@@ -2147,6 +2151,8 @@ class AlchemyProfitCalculator {
                 grossMaterialCost,
                 selfReturnValue,
                 catalystPrice: combo.catalystPrice,
+                /** Chance (talisman Conservation) a catalyst a success would use up is kept; catalystPrice is per use */
+                conservation: talismanStat(equipment, SKILLING_SPECIAL_STATS.conservation),
                 costPerAttempt,
                 incomePerAttempt: revenuePerAttempt,
                 netProfitPerAttempt,
