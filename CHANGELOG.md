@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 When a Conservation talisman keeps your protection item on a failed enhance, the session tracker no longer counts it as used or adds its cost.
 
+### Reroll advisor plans adding lines with cores
+
+A talisman with fewer than four lines can now be told to add a line with a core first: each Reshaping roll then tries every line. With priced cores the add competes on cost; unpriced cores show the orbs it would save, and a target needing more lines says to add one instead of "unreachable".
+
 ### Reroll advisor states large cost gaps as a multiple
 
 When locking a line first, or keeping a lock, costs more than ten times the advised plan, the advisor now says "about 530× as much" instead of a figure like "52845% more".
