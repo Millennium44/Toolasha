@@ -524,6 +524,37 @@ describe('Improve mine', () => {
         expect(q('improve').textContent).toContain('Open talisman #42');
     });
 
+    test('Aim for any K hands a pool with K and required marks, and says what it sent', async () => {
+        mocks.owned = [armorTalisman(42, { slotIndex: 2 })];
+        const aimAt = vi.fn(() => true);
+        globalThis.window.Toolasha = { UI: { talismanRerollAdvisor: { aimAt } } };
+        await run();
+        await improve();
+        const button = q('improve').querySelector('[data-role="aim-any"]');
+        expect(button).not.toBeNull();
+        expect(button.title).toContain('required');
+        button.click();
+        expect(aimAt).toHaveBeenCalledTimes(1);
+        const [id, targets, need] = aimAt.mock.calls[0];
+        expect(id).toBe(42);
+        expect(targets.length).toBeGreaterThanOrEqual(need);
+        expect(need).toBeGreaterThanOrEqual(1);
+        expect(targets.filter((t) => t.required).length).toBeLessThanOrEqual(need);
+        expect(q('improve').textContent).toMatch(/any \d+ of \d+/);
+        expect(q('improve').textContent).not.toMatch(/undefined|NaN/);
+    });
+
+    test('Aim for any K with the advisor off or refusing says so, as Aim for this does', async () => {
+        mocks.owned = [armorTalisman(42)];
+        await run();
+        await improve();
+        q('improve').querySelector('[data-role="aim-any"]').click();
+        expect(q('improve').textContent).toContain('reroll advisor is not running');
+        globalThis.window.Toolasha = { UI: { talismanRerollAdvisor: { initialized: true, aimAt: () => false } } };
+        q('improve').querySelector('[data-role="aim-any"]').click();
+        expect(q('improve').textContent).toContain('did not take it');
+    });
+
     test('the reroll advisor off: Aim for this says to turn it on', async () => {
         mocks.owned = [armorTalisman(42)];
         await run();

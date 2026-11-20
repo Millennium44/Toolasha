@@ -35,6 +35,7 @@ import {
     DEFAULT_CAP_GRADE,
     DEFAULT_SET_MODE,
     SET_MODES,
+    planAnyKTarget,
     planImprovements,
     rankingMetric,
     talismanLimits,
@@ -94,6 +95,8 @@ const TIP_SORT_PER_ORB = 'Most gain per expected orb first: the cheapest lines t
 const TIP_COPY = 'Copies the set as reroll targets: per talisman, each line with its lowest acceptable grade.';
 const TIP_IMPROVE = 'From the talismans you own of this type, the next targets with the most value per orb.';
 const TIP_AIM = 'Hands this target to the reroll advisor in the talisman window and opens the talisman there.';
+const TIP_AIM_ANY =
+    'Hands the reroll advisor every line whose gain is within noise of the last line the target needs, with the lines that clearly beat all of those marked required, and "need any K" of them (K is the line count of the target). The advisor then aims for the cheapest way to hold K of them, required ones included.';
 const TIP_BELT_HEAD =
     'Which belt upgrade is worth buying: every candidate belt is valued with the talismans slotted now, then set against its cost.';
 const TIP_BELT_COST =
@@ -316,15 +319,18 @@ export function makeOrbSolver(abortSignal) {
 /**
  * Hand a target to the reroll advisor in the talisman window (the ui bundle's one copy, `Toolasha.UI`).
  * @param {number|string} talismanId
- * @param {Array<{hrid: string, minGrade: number}>} targets
+ * @param {Array<{hrid: string, minGrade: number, required?: boolean}>} targets
+ * @param {number|null} [need] - How many of the targets are needed (default: all of them)
  * @returns {'ok'|'refused'|'off'} 'refused': the advisor runs but would not take it (not this character's
  *   talisman); 'off': no advisor running
  */
-export function aimRerollAdvisor(talismanId, targets) {
+export function aimRerollAdvisor(talismanId, targets, need) {
     const advisor = globalThis.window?.Toolasha?.UI?.talismanRerollAdvisor;
     if (typeof advisor?.aimAt !== 'function' || advisor.initialized === false) return 'off';
     try {
-        return advisor.aimAt(talismanId, targets) === true ? 'ok' : 'refused';
+        const handed =
+            need === undefined ? advisor.aimAt(talismanId, targets) : advisor.aimAt(talismanId, targets, need);
+        return handed === true ? 'ok' : 'refused';
     } catch (error) {
         console.error('[TalismanRanking] Handing the target to the reroll advisor failed:', error);
         return 'refused';
@@ -641,6 +647,8 @@ export class TalismanRankingSectionBase {
         this._on(this._q('improve'), 'click', (e) => {
             const button = e.target.closest?.('[data-role="aim"]');
             if (button) this._aim(Number(button.dataset.index));
+            const anyButton = e.target.closest?.('[data-role="aim-any"]');
+            if (anyButton) this._aim(Number(anyButton.dataset.index), true);
         });
         this._syncSetControls();
         this._syncMetricControls();
@@ -947,6 +955,7 @@ export class TalismanRankingSectionBase {
             if (!current()) return;
             improve.allNoise = (result.rows || []).filter((r) => !r.noEffect).every((r) => !r.significant);
             improve.ownerId = ownerId;
+            improve.rows = result.rows;
             improve.maxSolves = this._orbs.maxSolves;
             this._improve = improve;
             this._renderImprove();
@@ -962,7 +971,13 @@ export class TalismanRankingSectionBase {
         if (button) button.textContent = this._improveRunning ? 'Stop Improve mine' : 'Improve mine';
     }
 
-    _aim(index) {
+    /**
+     * Hand an option's target to the reroll advisor: the picked lines as they are, or (`any`) the pool of lines within
+     * noise of the last one needed, with the required ones marked, and "need any K"
+     * @param {number} index
+     * @param {boolean} [any]
+     */
+    _aim(index, any = false) {
         const option = this._improve?.options?.[index];
         const note = this._q('improve')?.querySelector(`[data-role="aim-note"][data-index="${index}"]`);
         if (!option || !note) return;
@@ -972,7 +987,29 @@ export class TalismanRankingSectionBase {
             note.textContent = 'These options were for another character. Run Improve mine again.';
             return;
         }
-        const handed = aimRerollAdvisor(id, option.targets);
+        let targets = option.targets;
+        let need;
+        let anyNote = '';
+        if (any) {
+            const plan = planAnyKTarget(this._improve.rows, {
+                grade: option.targets[0]?.minGrade || 1,
+                k: option.targets.length,
+            });
+            if (!plan) {
+                note.textContent = 'No line has a gain to aim for here.';
+                return;
+            }
+            targets = plan.targets;
+            need = plan.need;
+            const sure = plan.targets.filter((t) => t.required).length;
+            anyNote =
+                ` (${sure} required, any ${plan.need} of ${plan.poolSize}` +
+                (plan.leftOut
+                    ? `; ${plan.leftOut} weaker line${plan.leftOut === 1 ? '' : 's'} left out to fit the solver`
+                    : '') +
+                ')';
+        }
+        const handed = aimRerollAdvisor(id, targets, need);
         const ok = handed === 'ok';
         // Opened after the target is in, so the window's first draw already shows it
         const opened = ok && openTalismanWindow(id);
@@ -981,8 +1018,8 @@ export class TalismanRankingSectionBase {
                 ? `The reroll advisor did not take it: talisman #${id} is not one of this character's talismans (any more).`
                 : `The reroll advisor is not running (turn on "Talisman window: Reroll advisor" in Settings), then open talisman #${id} in the talisman window and pick these lines there.`
             : opened
-              ? `Talisman #${id} is open in the game's talisman window with this target: the reroll advisor there shows it and Do next step.`
-              : `Target handed to the reroll advisor. Open talisman #${id} in the game's talisman window (character panel, Talismans tab): the advisor there shows this target and Do next step.`;
+              ? `Talisman #${id} is open in the game's talisman window with this target${anyNote}: the reroll advisor there shows it and Do next step.`
+              : `Target handed to the reroll advisor${anyNote}. Open talisman #${id} in the game's talisman window (character panel, Talismans tab): the advisor there shows this target and Do next step.`;
     }
 
     _renderMessage(text) {
@@ -1309,6 +1346,7 @@ export class TalismanRankingSectionBase {
                         : '') +
                     `</div>` +
                     `<button data-role="aim" data-index="${index}" style="${CHIP_BUTTON_STYLE} margin-top:2px;" title="${escapeHtml(TIP_AIM)}">Aim for this</button> ` +
+                    `<button data-role="aim-any" data-index="${index}" style="${CHIP_BUTTON_STYLE} margin-top:2px;" title="${escapeHtml(TIP_AIM_ANY)}">Aim for any K</button> ` +
                     `<span data-role="aim-note" data-index="${index}" style="color:#888;"></span>` +
                     `</div>`
             );

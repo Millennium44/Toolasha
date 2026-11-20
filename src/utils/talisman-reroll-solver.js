@@ -8,7 +8,8 @@
  * METHOD — exact dynamic program over a compressed state, solved in increasing order of value (Dijkstra-style).
  *
  * Goal: at least `need` of the wanted slots hold a line at or above their minimum grade (every slot when need is the
- * pool size). The state space is the same for every need; only which states are absorbing changes.
+ * pool size), and every slot marked required is among them. The state space is the same for every need and every
+ * required set; only which states are absorbing changes.
  *
  * State: the talisman's lines as a multiset, each line reduced to (label, grade): its label is the wanted slot
  * whose type it carries, or "junk" for any other type, and its grade, clamped to G. G is the game's top grade
@@ -98,6 +99,14 @@ export const MEASURED_ODDS = Object.freeze({
 /** Above this many states the solver leaves Mutation out (its outcome fan-out is the expensive part) */
 export const MUTATION_STATE_LIMIT = 25000;
 
+/**
+ * The most wanted lines a target may hold. States grow fast with the pool (n = 4, G = 6: 4 lines 59,958 states,
+ * 5 lines 140,442, 6 lines 289,290; measured solves of about 3 s, 7 s and 14 s, run in slices so the page stays
+ * live). The keep-mask is an Int8 bit set with one bit per wanted slot, which holds six (bits 1..6; a seventh would
+ * set the sign bit).
+ */
+export const MAX_WANTED_LINES = 6;
+
 /** The largest state space solved at the game's top grade; above it grades are clamped lower */
 export const CLAMP_STATE_LIMIT = 40000;
 
@@ -180,22 +189,38 @@ export function gradeOdds(cap) {
 
 /**
  * A target's pool without blanks or repeats, and how many of its lines are needed. A type listed twice counts once
- * (the first entry's minimum grade stands: a talisman never holds a type twice). `need` is all of the pool unless
- * a whole number from 1 up says otherwise, and never more than the pool.
- * @param {Array<{hrid: string, minGrade: number}>} targets
+ * (the first entry's minimum grade stands: a talisman never holds a type twice) and is required when any copy of it
+ * is. An entry marked `required: true` must be satisfied whatever else is; the rest count toward `need` only.
+ * `need` is all of the pool unless a whole number from 1 up says otherwise, never more than the pool and never
+ * fewer than the required lines (a K below the required count is raised to it).
+ * @param {Array<{hrid: string, minGrade: number, required?: boolean}>} targets
  * @param {number|null} [need]
- * @returns {{pool: Array<{hrid: string, minGrade: number}>, need: number}} need is 0 for an empty pool
+ * @returns {{pool: Array<{hrid: string, minGrade: number, required?: boolean}>, need: number, requiredCount: number}}
+ *   need is 0 for an empty pool. Only a required entry carries `required` (true) in the returned pool.
  */
 export function normalizeTarget(targets, need) {
     const pool = [];
-    const seen = new Set();
+    const at = new Map();
     for (const t of targets || []) {
-        if (!t || !t.hrid || seen.has(t.hrid)) continue;
-        seen.add(t.hrid);
-        pool.push(t);
+        if (!t || !t.hrid) continue;
+        const wants = t.required === true;
+        if (at.has(t.hrid)) {
+            const i = at.get(t.hrid);
+            if (wants && pool[i].required !== true) pool[i] = { ...pool[i], required: true };
+            continue;
+        }
+        at.set(t.hrid, pool.length);
+        if (wants) pool.push(t);
+        else if ('required' in t) pool.push({ hrid: t.hrid, minGrade: t.minGrade });
+        else pool.push(t);
     }
+    const requiredCount = pool.filter((t) => t.required === true).length;
     const asked = Math.floor(Number(need));
-    return { pool, need: pool.length === 0 ? 0 : Math.min(pool.length, asked >= 1 ? asked : pool.length) };
+    return {
+        pool,
+        need: pool.length === 0 ? 0 : Math.min(pool.length, Math.max(requiredCount, asked >= 1 ? asked : pool.length)),
+        requiredCount,
+    };
 }
 
 /**
@@ -239,8 +264,15 @@ export function buildProblem({
         } else if (!(grade >= 1) || grade > maxGrade) {
             reason = 'gradeAboveCap';
         }
+        if (reason && target.required === true) {
+            // A required line that can never count makes the whole target unreachable, whatever K says
+            return { status: 'impossible', reason: 'requiredNotRollable', cause: reason, hrid: target.hrid };
+        }
         if (reason) firstFailure = firstFailure || { reason, hrid: target.hrid };
         else rollable.push(target);
+    }
+    if (rollable.length > MAX_WANTED_LINES) {
+        return { status: 'impossible', reason: 'poolTooLarge', rollable: rollable.length, max: MAX_WANTED_LINES };
     }
     if (rollable.length < need) {
         // Every line needed: the first line that cannot count is named. Any K: say how many can
@@ -261,6 +293,7 @@ export function buildProblem({
             minGrade: Math.floor(t.minGrade),
             weight: Number(detail.weight) || 0,
             focusable: isFocusable(detail),
+            ...(t.required === true ? { required: true } : {}),
         };
     });
     const junkTypes = pool.filter((d) => !seen.has(d.hrid));
@@ -506,6 +539,8 @@ export function* solveSteps(problem, options = {}) {
         let met = 0;
         for (let j = 1; j <= m; j++) {
             if (all.some((code) => labelOf(code) === j && gradeOf(code) >= wanted[j - 1].minGrade)) met++;
+            // A required line that is missing fails the goal whatever else is present
+            else if (wanted[j - 1].required) return false;
         }
         return met >= need;
     };
@@ -1037,10 +1072,11 @@ export function encodeLines(solution, modifiers, lockedHrid) {
  * @returns {boolean}
  */
 export function meetsTarget(modifiers, targets, need) {
-    const { pool, need: required } = normalizeTarget(targets, need);
+    const { pool, need: wantedCount } = normalizeTarget(targets, need);
     if (pool.length === 0) return false;
-    const met = pool.filter((t) => (modifiers || []).some((mod) => mod.hrid === t.hrid && mod.grade >= t.minGrade));
-    return met.length >= required;
+    const holds = (t) => (modifiers || []).some((mod) => mod.hrid === t.hrid && mod.grade >= t.minGrade);
+    if (pool.some((t) => t.required === true && !holds(t))) return false;
+    return pool.filter(holds).length >= wantedCount;
 }
 
 /**

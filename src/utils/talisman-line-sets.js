@@ -687,6 +687,80 @@ function rankOptions(options, top) {
 }
 
 /**
+ * The most lines an "any K" target holds. The reroll solver's `MAX_WANTED_LINES` (kept equal by a test: this module
+ * does not import the solver).
+ */
+export const ANY_K_MAX_POOL = 6;
+
+/**
+ * The "any K" version of a ranking target: instead of fixing the K best lines (the picks "Improve mine" aims for),
+ * keep every line whose gain overlaps the K-th line's noise band as a candidate, require the lines that beat every
+ * possible replacement beyond noise, and need any K of the pool. A line within noise of the K-th is as likely to
+ * belong as the K-th itself, so the target accepts any K that includes the sure ones.
+ *
+ * Gains are at `grade` (the grade "Aim for this" aims at, scaled from the simulated grade as the table does); a row's
+ * noise is its error bar at the simulated grade, scaled with its gain (a relative error), and a row with no noise
+ * figure counts as exact. Lines with no effect or no gain are out; at most one Special is considered, the best one
+ * (a talisman holds one, and "Improve mine" picks the same way).
+ *
+ * @param {Array<Object>} rows - Ranking rows (`hrid`, `byGrade`/`value`, `valuePct`, `errPct`, `noEffect`, `special`)
+ * @param {Object} params
+ * @param {number} params.grade - The minimum grade every pool line is wanted at
+ * @param {number} params.k - How many lines the target talisman holds
+ * @param {number} [params.maxPool] - The most lines in the pool (default {@link ANY_K_MAX_POOL})
+ * @returns {{targets: Array<{hrid: string, minGrade: number, required?: boolean}>, need: number, leftOut: number,
+ *   poolSize: number}|null} Null when no line has a gain. `leftOut`: pool lines cut to fit `maxPool` (never a required
+ *   one). `need` is K, or fewer when fewer lines have a gain.
+ */
+export function planAnyKTarget(rows, { grade, k, maxPool = ANY_K_MAX_POOL }) {
+    const scored = [];
+    let special = null;
+    for (const row of rows || []) {
+        if (!row || row.noEffect || !row.hrid) continue;
+        const gain = valueAtGrade(row, grade);
+        if (!(gain > 0)) continue;
+        const rel =
+            Number.isFinite(row.errPct) && Number.isFinite(row.valuePct) && row.valuePct !== 0
+                ? Math.abs(row.errPct / row.valuePct)
+                : 0;
+        const entry = { hrid: row.hrid, gain, noise: gain * rel };
+        if (row.special) {
+            if (!special || entry.gain > special.gain) special = entry;
+        } else scored.push(entry);
+    }
+    if (special) scored.push(special);
+    if (scored.length === 0) return null;
+    scored.sort((a, b) => b.gain - a.gain || String(a.hrid).localeCompare(String(b.hrid)));
+
+    const need = Math.min(Math.max(1, Math.floor(k) || 1), scored.length);
+    const top = scored.slice(0, need);
+    const kth = top[need - 1];
+    const floor = kth.gain - kth.noise;
+    const pool = scored.filter((s, i) => i < need || s.gain + s.noise >= floor);
+    const outside = pool.slice(need);
+    const bar = outside.length ? Math.max(...outside.map((s) => s.gain + s.noise)) : -Infinity;
+    const required = new Set(top.filter((s) => s.gain - s.noise > bar).map((s) => s.hrid));
+
+    // Over the solver's limit: the weakest lines that are not required go first
+    let kept = pool;
+    if (kept.length > maxPool) {
+        const droppable = [...kept].reverse().filter((s) => !required.has(s.hrid));
+        const drop = new Set(droppable.slice(0, kept.length - maxPool).map((s) => s.hrid));
+        kept = kept.filter((s) => !drop.has(s.hrid));
+    }
+    return {
+        targets: kept.map((s) => ({
+            hrid: s.hrid,
+            minGrade: grade,
+            ...(required.has(s.hrid) ? { required: true } : {}),
+        })),
+        need,
+        leftOut: pool.length - kept.length,
+        poolSize: kept.length,
+    };
+}
+
+/**
  * Build the set a mode asks for. Practical and Ideal are greedy over the measured values; Budget needs the orb solver.
  * @param {Array<Object>} rows
  * @param {Object} params - `{mode, slots, simGrade, capGrade, budget, typeHrid, orbs, linesPerTalisman}`
