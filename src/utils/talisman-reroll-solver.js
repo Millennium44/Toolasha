@@ -1,10 +1,14 @@
 /**
  * Talisman reroll solver
  *
- * Given a talisman and a target (up to four wanted lines, each a modifier type and a minimum grade), finds the
- * strategy that reaches the target for the least expected orb spend, and how many of each orb it uses on average.
+ * Given a talisman and a target (a pool of up to four wanted lines, each a modifier type and a minimum grade, and
+ * how many of them are needed: all by default, or any K), finds the strategy that reaches the target for the least
+ * expected orb spend, and how many of each orb it uses on average.
  *
  * METHOD — exact dynamic program over a compressed state, solved in increasing order of value (Dijkstra-style).
+ *
+ * Goal: at least `need` of the wanted slots hold a line at or above their minimum grade (every slot when need is the
+ * pool size). The state space is the same for every need; only which states are absorbing changes.
  *
  * State: the talisman's lines as a multiset, each line reduced to (label, grade): its label is the wanted slot
  * whose type it carries, or "junk" for any other type, and its grade, clamped to G. G is the game's top grade
@@ -175,43 +179,82 @@ export function gradeOdds(cap) {
 }
 
 /**
+ * A target's pool without blanks or repeats, and how many of its lines are needed. A type listed twice counts once
+ * (the first entry's minimum grade stands: a talisman never holds a type twice). `need` is all of the pool unless
+ * a whole number from 1 up says otherwise, and never more than the pool.
+ * @param {Array<{hrid: string, minGrade: number}>} targets
+ * @param {number|null} [need]
+ * @returns {{pool: Array<{hrid: string, minGrade: number}>, need: number}} need is 0 for an empty pool
+ */
+export function normalizeTarget(targets, need) {
+    const pool = [];
+    const seen = new Set();
+    for (const t of targets || []) {
+        if (!t || !t.hrid || seen.has(t.hrid)) continue;
+        seen.add(t.hrid);
+        pool.push(t);
+    }
+    const asked = Math.floor(Number(need));
+    return { pool, need: pool.length === 0 ? 0 : Math.min(pool.length, asked >= 1 ? asked : pool.length) };
+}
+
+/**
  * Turn game data and a target into a solver problem, or say why there is nothing to solve.
  * @param {Object} input
  * @param {string} input.talismanTypeHrid
  * @param {number} input.lineCount - Lines on the talisman now
- * @param {Array<{hrid: string, minGrade: number}>} input.targets
+ * @param {Array<{hrid: string, minGrade: number}>} input.targets - The pool of wanted lines
+ * @param {number|null} [input.need] - How many of the pool are needed (default: all of it)
  * @param {Object} input.info - talismanInfo
  * @param {Object} input.modifierDetailMap - talismanModifierDetailMap
  * @param {Object<string, number>} input.weights - Cost weight per orb item hrid (one scale for all)
  * @returns {{status: 'ok', problem: Object}|{status: string, reason?: string, hrid?: string}}
  */
-export function buildProblem({ talismanTypeHrid, lineCount, targets, info, modifierDetailMap, weights }) {
+export function buildProblem({
+    talismanTypeHrid,
+    lineCount,
+    targets,
+    need: needInput,
+    info,
+    modifierDetailMap,
+    weights,
+}) {
     if (!info || !modifierDetailMap) return { status: 'noData' };
     const n = Math.floor(lineCount) || 0;
     if (n <= 0) return { status: 'empty' };
-    const wantedList = (targets || []).filter((t) => t && t.hrid);
+    const { pool: wantedList, need } = normalizeTarget(targets, needInput);
     if (wantedList.length === 0) return { status: 'noTarget' };
     const maxGrade = Number(info.maxGrade) || 6;
 
-    const seen = new Set();
+    // A line that can never count (not on this talisman type, a grade above the cap) is left out of the solve; the
+    // target is unreachable only when fewer than `need` lines remain
+    const rollable = [];
+    let firstFailure = null;
     for (const target of wantedList) {
-        if (seen.has(target.hrid)) return { status: 'impossible', reason: 'duplicate', hrid: target.hrid };
-        seen.add(target.hrid);
         const detail = modifierDetailMap[target.hrid];
-        if (!detail || detail.talismanTypeHrid !== talismanTypeHrid) {
-            return { status: 'impossible', reason: 'notInPool', hrid: target.hrid };
-        }
         const grade = Math.floor(target.minGrade);
-        if (!(grade >= 1) || grade > maxGrade) {
-            return { status: 'impossible', reason: 'gradeAboveCap', hrid: target.hrid };
+        let reason = null;
+        if (!detail || detail.talismanTypeHrid !== talismanTypeHrid || !(Number(detail.weight) > 0)) {
+            reason = 'notInPool';
+        } else if (!(grade >= 1) || grade > maxGrade) {
+            reason = 'gradeAboveCap';
         }
+        if (reason) firstFailure = firstFailure || { reason, hrid: target.hrid };
+        else rollable.push(target);
     }
-    if (wantedList.length > n) return { status: 'impossible', reason: 'needsMoreLines' };
+    if (rollable.length < need) {
+        // Every line needed: the first line that cannot count is named. Any K: say how many can
+        return need === wantedList.length
+            ? { status: 'impossible', ...firstFailure }
+            : { status: 'impossible', reason: 'tooFewRollable', rollable: rollable.length, need };
+    }
+    if (need > n) return { status: 'impossible', reason: 'needsMoreLines', need };
+    const seen = new Set(rollable.map((t) => t.hrid));
 
     const pool = Object.values(modifierDetailMap).filter(
         (d) => d && d.talismanTypeHrid === talismanTypeHrid && Number(d.weight) > 0
     );
-    const wanted = wantedList.map((t) => {
+    const wanted = rollable.map((t) => {
         const detail = modifierDetailMap[t.hrid];
         return {
             hrid: t.hrid,
@@ -220,7 +263,6 @@ export function buildProblem({ talismanTypeHrid, lineCount, targets, info, modif
             focusable: isFocusable(detail),
         };
     });
-    if (wanted.some((w) => !(w.weight > 0))) return { status: 'impossible', reason: 'notInPool' };
     const junkTypes = pool.filter((d) => !seen.has(d.hrid));
     const junkWeight = junkTypes.reduce((sum, d) => sum + Number(d.weight), 0);
 
@@ -256,6 +298,7 @@ export function buildProblem({ talismanTypeHrid, lineCount, targets, info, modif
         problem: {
             n,
             m: wanted.length,
+            need,
             G: gradeLevels,
             gradeClamped: gradeLevels < maxGrade,
             maxGrade,
@@ -407,6 +450,7 @@ export function solve(problem, options = {}) {
  */
 export function* solveSteps(problem, options = {}) {
     const { n, m, G, wanted, junkWeight, junkCount, orbs, binding, focusMult } = problem;
+    const need = problem.need ?? m;
     const C = (m + 1) * G;
     const codeOf = (label, grade) => label * G + (Math.min(Math.max(grade, 1), G) - 1);
     const labelOf = (code) => Math.floor(code / G);
@@ -459,10 +503,11 @@ export function* solveSteps(problem, options = {}) {
     const isGoal = (s) => {
         const lock = stLock[s];
         const all = lock >= 0 ? [...stCodes[s], lock] : stCodes[s];
+        let met = 0;
         for (let j = 1; j <= m; j++) {
-            if (!all.some((code) => labelOf(code) === j && gradeOf(code) >= wanted[j - 1].minGrade)) return false;
+            if (all.some((code) => labelOf(code) === j && gradeOf(code) >= wanted[j - 1].minGrade)) met++;
         }
-        return true;
+        return met >= need;
     };
 
     // ---- Type draws ----
@@ -984,15 +1029,18 @@ export function encodeLines(solution, modifiers, lockedHrid) {
 }
 
 /**
- * Whether real lines meet the target (checked on the raw grades, never the compressed state).
+ * Whether real lines meet the target: at least `need` of the pool's lines present at their minimum grade (checked
+ * on the raw grades, never the compressed state). A type listed twice counts once.
  * @param {Array<{hrid: string, grade: number}>} modifiers
  * @param {Array<{hrid: string, minGrade: number}>} targets
+ * @param {number|null} [need] - Default: every line of the pool
  * @returns {boolean}
  */
-export function meetsTarget(modifiers, targets) {
-    const wanted = (targets || []).filter((t) => t && t.hrid);
-    if (wanted.length === 0) return false;
-    return wanted.every((t) => (modifiers || []).some((mod) => mod.hrid === t.hrid && mod.grade >= t.minGrade));
+export function meetsTarget(modifiers, targets, need) {
+    const { pool, need: required } = normalizeTarget(targets, need);
+    if (pool.length === 0) return false;
+    const met = pool.filter((t) => (modifiers || []).some((mod) => mod.hrid === t.hrid && mod.grade >= t.minGrade));
+    return met.length >= required;
 }
 
 /**
@@ -1060,17 +1108,18 @@ function countsAt(solution, index) {
  * @param {Object} solution
  * @param {Object} talisman - characterTalismans entry
  * @param {Array<{hrid: string, minGrade: number}>} targets
+ * @param {number|null} [need] - How many of the pool are needed (default: all); the figure the solution was built with
  * @returns {Object} advice: {status, move?, value?, counts?}
  *   status 'met' | 'accept' | 'discard' | 'move' | 'unreachable' | 'unknownState'
  */
-export function advise(solution, talisman, targets) {
+export function advise(solution, talisman, targets, need) {
     const modifiers = talisman?.modifiers || [];
     const pending = Array.isArray(talisman?.pendingModifiers) ? talisman.pendingModifiers : null;
     const locked = talisman?.lockedModifierHrid || '';
 
     if (pending && pending.length > 0) {
         // Hard rule: a pending result that meets the target is always taken
-        if (meetsTarget(pending, targets)) return { status: 'accept', value: 0, counts: {}, met: true };
+        if (meetsTarget(pending, targets, need)) return { status: 'accept', value: 0, counts: {}, met: true };
         const current = encodeLines(solution, modifiers, locked).index;
         const next = encodeLines(solution, pending, locked).index;
         if (current === undefined || next === undefined) return { status: 'unknownState' };
@@ -1078,14 +1127,14 @@ export function advise(solution, talisman, targets) {
         const take = solution.V[next];
         if (!Number.isFinite(keep) && !Number.isFinite(take)) return { status: 'unreachable' };
         // A new roll that already meets the current lines' worth is taken only when strictly better
-        if (meetsTarget(modifiers, targets) || keep <= take) {
+        if (meetsTarget(modifiers, targets, need) || keep <= take) {
             return { status: 'discard', value: keep, counts: countsAt(solution, current), otherValue: take };
         }
         return { status: 'accept', value: take, counts: countsAt(solution, next), otherValue: keep };
     }
 
     // Hard rule: a met target recommends nothing
-    if (meetsTarget(modifiers, targets)) return { status: 'met', value: 0, counts: {} };
+    if (meetsTarget(modifiers, targets, need)) return { status: 'met', value: 0, counts: {} };
 
     const { index, lineCodes, lockIndex } = encodeLines(solution, modifiers, locked);
     if (index === undefined) return { status: 'unknownState' };

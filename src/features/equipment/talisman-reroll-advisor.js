@@ -2,8 +2,8 @@
  * Talisman reroll advisor
  *
  * Test server only. In the game's talisman window the player picks a target — up to four wanted lines, each a
- * modifier type and a minimum grade — and the advisor shows the next move (which orb, whether to lock a line with
- * a Binding Orb, or whether to keep or use a pending roll) and how many of each orb the best strategy spends on
+ * modifier type and a minimum grade, and how many of them are needed (all, or any K) — and the advisor shows the
+ * next move (which orb, whether to lock a line with a Binding Orb, or whether to keep or use a pending roll) and how many of each orb the best strategy spends on
  * average from here. The strategy itself comes from utils/talisman-reroll-solver.js, which states its method and
  * limits.
  *
@@ -38,7 +38,14 @@ import {
 } from './talisman-step-controls.js';
 import { isTestServer } from '../../utils/game-server.js';
 import { coinCost, orbWeights, roundWeights } from '../../utils/talisman-orb-weights.js';
-import { advise, buildProblem, meetsTarget, solveSteps, REROLL_MODES } from '../../utils/talisman-reroll-solver.js';
+import {
+    advise,
+    buildProblem,
+    meetsTarget,
+    normalizeTarget,
+    solveSteps,
+    REROLL_MODES,
+} from '../../utils/talisman-reroll-solver.js';
 
 const MODAL_CLASS = 'TalismanModal_talismanModal';
 const FOOTER_SELECTOR = '[class*="TalismanModal_footer"]';
@@ -54,6 +61,9 @@ export const ADVISOR_HELP = [
         'same curve); type odds follow the game data weights (2,088 lines); Attunement 65/20/15 (81 rolls: G3 lines ' +
         'down 69 / same 19 / up 12); Focus ×5 (100 rolls focused on Armor gave Armor in 33%, 36.9% predicted, grades ' +
         'kept).',
+    'Need any K: pick up to four wanted lines and how many of them the talisman must hold at their minimum grades. ' +
+        'The default is all of them; a smaller K is cheaper because any K of the pool ends the search. A type picked ' +
+        'twice counts once.',
     'Binding Orb, measured: a lock costs one Binding Orb, moving the lock to another line costs one more, and ' +
         'unlocking is free. A locked line is not changed by any orb, Attunement included: to raise it, unlock it, ' +
         'roll, and lock it again with another Binding Orb.',
@@ -116,7 +126,7 @@ export function describeAdvice(result, names) {
     if (build.status === 'noOrbs') return { move: 'The game data lists no reroll orbs.', detail: [] };
     if (build.status === 'impossible') {
         const reasons = {
-            duplicate: `Each type can be wanted once: ${mod(build.hrid)} is picked twice.`,
+            tooFewRollable: `Only ${build.rollable} of the picked lines can roll on this talisman type at a grade the game offers, and you need ${build.need}.`,
             notInPool: `${mod(build.hrid)} cannot roll on this talisman type.`,
             gradeAboveCap: `${mod(build.hrid)}: grades only go up to G6.`,
             needsMoreLines: `The talisman has ${names.lineCount} line(s); add lines with talisman cores first (the Core advisor in the Talismans sections says whether the next line is worth it).`,
@@ -243,6 +253,7 @@ class TalismanRerollAdvisor {
         this.renderTimer = null;
         this.sliceTimer = null;
         this.targets = new Map();
+        this.needs = new Map();
         this.solutions = new Map();
         this.latest = new Map();
         this.running = null;
@@ -357,11 +368,12 @@ class TalismanRerollAdvisor {
      * Aim the advisor at a target for one of the character's talismans, from outside the window (the Combat Sim's
      * "Aim for this"). The target shows when that talisman's window is next open, or at once if it is open now.
      * @param {number|string} talismanId
-     * @param {Array<{hrid: string, minGrade: number}>} targets
+     * @param {Array<{hrid: string, minGrade: number}>} targets - The pool of wanted lines
+     * @param {number|null} [need] - How many of the pool are needed (default: all of it)
      * @returns {boolean} false when the advisor is not running (off, or not the test server), or the talisman is not
      *   one of the current character's
      */
-    aimAt(talismanId, targets) {
+    aimAt(talismanId, targets, need) {
         if (!this.initialized || talismanId === undefined || talismanId === null) return false;
         // Only one of this character's own talismans: a target for anyone else's is never kept
         const owned = dataManager.getCharacterTalismans?.() || [];
@@ -378,7 +390,8 @@ class TalismanRerollAdvisor {
             (Array.isArray(targets) ? targets : []).map((t) => ({
                 hrid: t?.hrid,
                 minGrade: Math.floor(t?.minGrade) || 1,
-            }))
+            })),
+            need ?? null
         );
         return true;
     }
@@ -387,12 +400,58 @@ class TalismanRerollAdvisor {
         return this.targets.get(this.targetKey(talisman)) || [];
     }
 
-    setTargets(talisman, targets) {
+    /** The chosen "need any K", or null while it follows the pool size (every line) */
+    getNeed(talisman) {
+        return this.needs.get(this.targetKey(talisman)) ?? null;
+    }
+
+    /**
+     * @param {Object} talisman
+     * @param {Array<{hrid: string, minGrade: number}>} targets
+     * @param {number|null} [need] - undefined keeps the chosen K; null goes back to every line
+     */
+    setTargets(talisman, targets, need) {
         this.targets.set(this.targetKey(talisman), targets.filter((t) => t.hrid).slice(0, MAX_WANTED));
+        if (need !== undefined) this.setNeedValue(talisman, need);
         // A new target: a press in flight belongs to the old one
         this.cancelPress();
         this.stepStatus = '';
         this.schedule();
+    }
+
+    setNeedValue(talisman, need) {
+        const key = this.targetKey(talisman);
+        const asked = Math.floor(Number(need));
+        if (asked >= 1) this.needs.set(key, asked);
+        else this.needs.delete(key);
+    }
+
+    /** The row's choice of K: a whole number below the pool size is kept; "all" (the pool size) is stored as null */
+    chooseNeed(talisman, value) {
+        const pool = normalizeTarget(this.getTargets(talisman)).pool;
+        const asked = Math.floor(Number(value));
+        this.setNeedValue(talisman, asked >= 1 && asked < pool.length ? asked : null);
+        this.cancelPress();
+        this.stepStatus = '';
+        this.schedule();
+    }
+
+    /** Keep the "need any" selector at 1..pool size, showing the K in force; hidden for a pool of one or none */
+    syncNeedUi(talisman) {
+        const row = this.panel?.querySelector(`.${PANEL_CLASS}-need-row`);
+        const select = this.panel?.querySelector(`.${PANEL_CLASS}-need`);
+        if (!row || !select) return;
+        const { pool, need } = normalizeTarget(this.getTargets(talisman), this.getNeed(talisman));
+        const hidden = pool.length < 2;
+        if (row.style.display !== (hidden ? 'none' : '')) row.style.display = hidden ? 'none' : '';
+        if (hidden) return;
+        if (select.options.length !== pool.length) {
+            select.replaceChildren();
+            for (let k = 1; k <= pool.length; k++) {
+                select.appendChild(option(k === pool.length ? `${k} (all)` : String(k), String(k)));
+            }
+        }
+        if (select.value !== String(need)) select.value = String(need);
     }
 
     render() {
@@ -468,6 +527,19 @@ class TalismanRerollAdvisor {
             rows.push([typeSelect, gradeSelect]);
         }
 
+        const needRow = document.createElement('div');
+        needRow.className = `${PANEL_CLASS}-need-row`;
+        needRow.style.cssText = 'display:flex;gap:6px;align-items:center;margin-top:4px';
+        const needLabel = document.createElement('span');
+        needLabel.textContent = 'Need any';
+        const needSelect = document.createElement('select');
+        needSelect.className = `${PANEL_CLASS}-need`;
+        needSelect.addEventListener('change', () => this.chooseNeed(talisman, needSelect.value));
+        const needTail = document.createElement('span');
+        needTail.textContent = 'of these';
+        needRow.append(needLabel, needSelect, needTail);
+        panel.appendChild(needRow);
+
         const buttons = document.createElement('div');
         buttons.style.cssText = 'display:flex;gap:6px;margin-top:6px';
         const useCurrent = document.createElement('button');
@@ -480,7 +552,7 @@ class TalismanRerollAdvisor {
                 .slice(0, MAX_WANTED)
                 .map((mod) => ({ hrid: mod.hrid, minGrade: mod.grade }));
             fillRows(targets);
-            this.setTargets(talisman, targets);
+            this.setTargets(talisman, targets, null);
         });
         const clearButton = document.createElement('button');
         clearButton.type = 'button';
@@ -488,7 +560,7 @@ class TalismanRerollAdvisor {
         clearButton.textContent = 'Clear';
         clearButton.addEventListener('click', () => {
             fillRows([]);
-            this.setTargets(talisman, []);
+            this.setTargets(talisman, [], null);
         });
         buttons.append(useCurrent, clearButton);
         panel.appendChild(buttons);
@@ -538,6 +610,8 @@ class TalismanRerollAdvisor {
     /** Work out (or look up) the advice and write it, touching the DOM only when the text changes */
     update(talisman, initData, window = {}) {
         const targets = this.getTargets(talisman);
+        const need = this.getNeed(talisman);
+        this.syncNeedUi(talisman);
         const info = initData.talismanInfo;
         const { weights: exactWeights, prices, scale, crafted } = orbWeights(info, initData.itemDetailMap);
         // Two significant figures: a market tick does not start a new solve
@@ -546,6 +620,7 @@ class TalismanRerollAdvisor {
             talismanTypeHrid: talisman.talismanTypeHrid,
             lineCount: (talisman.modifiers || []).length,
             targets,
+            need,
             info,
             modifierDetailMap: initData.talismanModifierDetailMap,
             weights,
@@ -563,12 +638,12 @@ class TalismanRerollAdvisor {
 
         // Hard rules first, on the raw lines, whatever the solver says
         const pending = Array.isArray(talisman.pendingModifiers) && talisman.pendingModifiers.length > 0;
-        if (build.status === 'ok' && pending && meetsTarget(talisman.pendingModifiers, targets)) {
+        if (build.status === 'ok' && pending && meetsTarget(talisman.pendingModifiers, targets, need)) {
             result.advice = { status: 'accept', met: true, counts: {} };
-        } else if (build.status === 'ok' && meetsTarget(talisman.modifiers, targets)) {
+        } else if (build.status === 'ok' && meetsTarget(talisman.modifiers, targets, need)) {
             result.advice = pending ? { status: 'discard', counts: {} } : { status: 'met', counts: {} };
         } else if (build.status === 'ok') {
-            const shape = JSON.stringify([talisman.talismanTypeHrid, build.problem.n, targets]);
+            const shape = JSON.stringify([talisman.talismanTypeHrid, build.problem.n, targets, build.problem.need]);
             const key = JSON.stringify([shape, weights]);
             let solution = this.solutions.get(key);
             if (!solution) {
@@ -578,7 +653,7 @@ class TalismanRerollAdvisor {
                 result.updating = !!solution;
             }
             if (solution) {
-                result.advice = advise(solution, talisman, targets);
+                result.advice = advise(solution, talisman, targets, need);
                 result.mutationUsed = solution.mutationUsed;
             }
         }
@@ -814,6 +889,7 @@ class TalismanRerollAdvisor {
             this.solutions = new Map();
             this.latest = new Map();
             this.targets = new Map();
+            this.needs = new Map();
             this.initialized = false;
         }
     }
@@ -826,10 +902,11 @@ const talismanRerollAdvisor = new TalismanRerollAdvisor();
  * the same singleton through `Toolasha.UI.talismanRerollAdvisor.aimAt`.
  * @param {number|string} talismanId
  * @param {Array<{hrid: string, minGrade: number}>} targets
+ * @param {number|null} [need] - How many of the targets are needed (default: all of them)
  * @returns {boolean}
  */
-export function setRerollTarget(talismanId, targets) {
-    return talismanRerollAdvisor.aimAt(talismanId, targets);
+export function setRerollTarget(talismanId, targets, need) {
+    return talismanRerollAdvisor.aimAt(talismanId, targets, need);
 }
 
 export default talismanRerollAdvisor;

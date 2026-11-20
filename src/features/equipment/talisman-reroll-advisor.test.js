@@ -177,11 +177,11 @@ describe('every way it ends', () => {
         expect(moveText()).toBe('Keep Current: the new roll is not better.');
     });
 
-    test('an impossible target: one type twice', () => {
+    test('one type twice counts once, so it is a target, not an impossible one', () => {
         openWindow(talismanRow(1, [line('melee_evasion', 1), line('melee_accuracy', 1)]));
         pick(0, M('armor'), 2);
         pick(1, M('armor'), 3);
-        expect(moveText()).toMatch(/^Not reachable\. Each type can be wanted once/);
+        expect(moveText()).toMatch(/^Next: /);
     });
 
     test('an empty talisman', () => {
