@@ -75,8 +75,7 @@ export const METRIC_HELP = {
 const TIP_RANK_BY = 'The figure each talisman line is ranked by. Hover an option for what it measures.';
 const TIP_GRADE = 'The grade each line is measured at. Other grades are shown from it.';
 const SET_MODE_HELP = {
-    practical:
-        'At most one Special line (Echo, Fortify, Overkill, Shatter, Smite) per talisman, and grades no higher than Cap.',
+    practical: 'At most one Special line per talisman, and grades no higher than Cap.',
     ideal: 'The measured grade for every line, with no limit on how many different Special lines (a second copy of the same Special adds nothing, measured). Shows what the best case is worth, not what is cheap to roll.',
     budget: 'The most valuable set whose expected orb cost per talisman fits your budget (grades no higher than Cap, at most one Special per talisman).',
 };

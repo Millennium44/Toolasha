@@ -25,6 +25,7 @@ import {
 import { calculateHouseEfficiency } from './house-efficiency.js';
 import { getCommunityGatheringQuantity } from './community-buffs.js';
 import { GATHERING_TYPES, PRODUCTION_TYPES } from './profit-constants.js';
+import { INVIGORATION_ACTION_TYPES, SKILLING_SPECIAL_STATS, talismanStat } from './talisman-bonuses.js';
 
 /**
  * Stack additive bonuses (most game bonuses)
@@ -216,21 +217,30 @@ export function getActionEfficiencyContext(actionDetails, options = {}) {
         }
     }
 
+    // Invigoration (talisman Special line): a chance to double the active drinks' effects on a cooking or brewing
+    // action, so in expectation they act (1 + chance) times as strong. Only the effects of the drinks scale; what a
+    // drink costs (its drinks per hour, which Drink Concentration shortens) does not, so the cost keeps reading
+    // `drinkConcentration`. Applied on top of Drink Concentration (unmeasured whether the game adds or multiplies).
+    const invigoration = INVIGORATION_ACTION_TYPES.includes(actionDetails.type)
+        ? talismanStat(equipment, SKILLING_SPECIAL_STATS.invigoration)
+        : 0;
+    const drinkEffectConcentration = (1 + drinkConcentration) * (1 + invigoration) - 1;
+
     // Tea bonuses (shared by both paths)
     const teaSkillLevelBonus = parseTeaSkillLevelBonus(
         actionDetails.type,
         drinkSlots,
         itemDetailMap,
-        drinkConcentration
+        drinkEffectConcentration
     );
-    const teaEfficiency = parseTeaEfficiency(actionDetails.type, drinkSlots, itemDetailMap, drinkConcentration);
+    const teaEfficiency = parseTeaEfficiency(actionDetails.type, drinkSlots, itemDetailMap, drinkEffectConcentration);
     const processingBonus = GATHERING_TYPES.includes(actionDetails.type)
         ? parseProcessingBonus(drinkSlots, itemDetailMap, drinkConcentration) +
           dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/processing') +
           parseEquipmentTalismanBuff(equipment, '/buff_types/processing')
         : 0;
     const gourmetBonus = PRODUCTION_TYPES.includes(actionDetails.type)
-        ? parseGourmetBonus(drinkSlots, itemDetailMap, drinkConcentration) +
+        ? parseGourmetBonus(drinkSlots, itemDetailMap, drinkEffectConcentration) +
           dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/gourmet') +
           parseEquipmentTalismanBuff(equipment, '/buff_types/gourmet')
         : 0;
@@ -253,8 +263,8 @@ export function getActionEfficiencyContext(actionDetails, options = {}) {
     houseEfficiency = calculateHouseEfficiency(actionDetails.type, { gameData });
 
     if (isProduction) {
-        artisanBonus = parseArtisanBonus(drinkSlots, itemDetailMap, drinkConcentration);
-        actionLevelBonus = parseActionLevelBonus(drinkSlots, itemDetailMap, drinkConcentration);
+        artisanBonus = parseArtisanBonus(drinkSlots, itemDetailMap, drinkEffectConcentration);
+        actionLevelBonus = parseActionLevelBonus(drinkSlots, itemDetailMap, drinkEffectConcentration);
     }
 
     // Gathering-only: gathering quantity bonuses
@@ -301,6 +311,12 @@ export function getActionEfficiencyContext(actionDetails, options = {}) {
 
     const efficiencyMultiplier = calculateEfficiencyMultiplier(efficiencyBreakdown.totalEfficiency);
 
+    // Abundance (talisman Special line): a chance to triple what a gathering action gathers, so the gathered amount
+    // is (1 + 2 x chance) times larger in expectation. Zero off gathering.
+    const abundance = GATHERING_TYPES.includes(actionDetails.type)
+        ? talismanStat(equipment, SKILLING_SPECIAL_STATS.abundance)
+        : 0;
+
     return {
         // Equipment / drinks
         equipment,
@@ -335,6 +351,9 @@ export function getActionEfficiencyContext(actionDetails, options = {}) {
         // Gathering-only (zero/null for production)
         totalGathering,
         gatheringDetails,
+        abundance,
+        // Talisman Invigoration chance (cooking and brewing; zero elsewhere)
+        invigoration,
         // Final efficiency results
         efficiencyBreakdown,
         efficiencyMultiplier,

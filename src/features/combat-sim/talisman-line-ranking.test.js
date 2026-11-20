@@ -538,6 +538,101 @@ describe('runSkillingLineRanking', () => {
         expect(result.current.value).toBe(0);
     });
 
+    describe('the skilling Special lines (test patch 2026-11-20)', () => {
+        const SMITHING = '/actions/cheesesmithing/cheese';
+        const smithingData = () =>
+            gameData({
+                actionDetailMap: {
+                    '/actions/milking/cow': {
+                        hrid: '/actions/milking/cow',
+                        type: '/action_types/milking',
+                        name: 'Cow',
+                    },
+                    [SMITHING]: { hrid: SMITHING, type: '/action_types/cheesesmithing', name: 'Cheese' },
+                },
+            });
+        /** A calculator that reads the five Special stats the way the real math does */
+        const specials = vi.fn(async (_hrid, { equipment }) => {
+            const s = talismanBonusesOf(equipment).noncombat;
+            return {
+                profitPerHour: 1000 * (1 + 2 * (s.abundance || 0)) + 500 * (s.prosperity || 0),
+                xpPerHour: 100 * (1 + (s.epiphany || 0)),
+                hasMissingPrices: false,
+            };
+        });
+        const run = (actionHrid, metricKey, data = gameData()) =>
+            runSkillingLineRanking(
+                { actionHrid, grade: 6, metricKey },
+                {
+                    getGameData: () => data,
+                    resolveContext: () => ({ equipment: new Map([[BELT_LOCATION, milkingBelt]]), drinks: [] }),
+                    evaluate: specials,
+                    yieldNow: async () => {},
+                }
+            );
+        const rowFor = (result, key) => result.rows.find((r) => r.hrid === `/talisman_modifiers/${key}`);
+
+        test('Abundance is valued on a gathering action: G2 (0.015 x 1.258) triples that share of 1,000 an hour', async () => {
+            const result = await run('/actions/milking/cow', 'profit');
+            // 1000 x 2 x 0.015 x 1.258
+            expect(rowFor(result, 'abundance').byGrade[1]).toBeCloseTo(1000 * 2 * 0.015 * 1.258, 6);
+            expect(rowFor(result, 'abundance').special).toBe(true);
+            expect(rowFor(result, 'abundance').noEffect).toBe(false);
+        });
+
+        test('Epiphany is valued by EXP/hr on every ranked action: G6 (0.04 x 1.258) of 100 XP an hour', async () => {
+            const result = await run('/actions/milking/cow', 'xp');
+            expect(rowFor(result, 'epiphany').byGrade[5]).toBeCloseTo(100 * 0.04 * 1.258, 6);
+        });
+
+        test('Prosperity is valued on a production skill it pays on, and does not apply to gathering', async () => {
+            const smithing = await run(SMITHING, 'profit', smithingData());
+            // 500 x 0.12 x 1.258
+            expect(rowFor(smithing, 'prosperity').byGrade[5]).toBeCloseTo(500 * 0.12 * 1.258, 6);
+            const milking = await run('/actions/milking/cow', 'profit');
+            expect(rowFor(milking, 'prosperity')).toBeUndefined();
+            expect(milking.otherLines.map((d) => d.hrid)).toContain('/talisman_modifiers/prosperity');
+        });
+
+        test('Invigoration applies to cooking and brewing only: on cheesesmithing it is set aside, not valued as 0', async () => {
+            const smithing = await run(SMITHING, 'profit', smithingData());
+            expect(rowFor(smithing, 'invigoration')).toBeUndefined();
+            expect(smithing.otherLines.map((d) => d.hrid)).toContain('/talisman_modifiers/invigoration');
+            expect(smithing.notValued.map((n) => n.detail.hrid)).not.toContain('/talisman_modifiers/invigoration');
+        });
+
+        test('Conservation cannot be valued here (Alchemy and Enhancing are not ranked): it is listed as not valued, with why', async () => {
+            const result = await run('/actions/milking/cow', 'profit');
+            expect(rowFor(result, 'conservation')).toBeUndefined();
+            expect(result.notValued).toHaveLength(1);
+            expect(result.notValued[0].detail.hrid).toBe('/talisman_modifiers/conservation');
+            expect(result.notValued[0].reason).toMatch(/not ranked/);
+            expect(result.otherLines.map((d) => d.hrid)).not.toContain('/talisman_modifiers/conservation');
+        });
+
+        test('a Special line a later patch adds, which no skilling math reads, is not valued rather than zero', async () => {
+            const data = gameData();
+            data.talismanModifierDetailMap = {
+                ...data.talismanModifierDetailMap,
+                '/talisman_modifiers/windfall': {
+                    ...data.talismanModifierDetailMap['/talisman_modifiers/abundance'],
+                    hrid: '/talisman_modifiers/windfall',
+                    name: 'Windfall',
+                    keys: ['Windfall'],
+                },
+            };
+            const result = await run('/actions/milking/cow', 'profit', data);
+            const windfall = result.notValued.find((n) => n.detail.hrid === '/talisman_modifiers/windfall');
+            expect(windfall.reason).toMatch(/does not model/);
+        });
+
+        test('the recommended set can carry a valued skilling Special (one per talisman)', async () => {
+            const result = await run('/actions/milking/cow', 'profit');
+            const hrids = result.set.talismans.flatMap((t) => t.modifiers.map((m) => m.hrid));
+            expect(hrids).toContain('/talisman_modifiers/abundance');
+        });
+    });
+
     describe('unpriced inputs', () => {
         /** Speed lines raise material consumption; the material has no price, so the profit counts it as free */
         const withFreeInput = (outputsUnpriced) =>

@@ -226,7 +226,7 @@ export function isNonlinearLine(detail) {
 
 /**
  * @param {Object} detail - Modifier detail
- * @returns {boolean} A talisman-only mechanic (Echo, Fortify, Overkill, Shatter, Smite)
+ * @returns {boolean} A talisman-only Special line (combat: Echo, Fortify, Overkill, Shatter, Smite, Consistency; skilling: Abundance, Conservation, Epiphany, Invigoration, Prosperity)
  */
 export function isMechanicLine(detail) {
     // By the stat it feeds, as the engine sorts them, not by the group label

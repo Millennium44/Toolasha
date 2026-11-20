@@ -14,7 +14,12 @@ function merged() {
     const out = {};
     for (const [hrid, detail] of Object.entries({ ...COMBAT_MODIFIER_DETAILS, ...MODIFIER_DETAILS })) {
         const reroll = REROLL_MODIFIERS[hrid] || {};
-        out[hrid] = { ...reroll, ...detail, groupHrid: reroll.groupHrid, weight: reroll.weight };
+        out[hrid] = {
+            ...reroll,
+            ...detail,
+            groupHrid: reroll.groupHrid ?? detail.groupHrid,
+            weight: reroll.weight ?? detail.weight,
+        };
     }
     return out;
 }

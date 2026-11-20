@@ -1004,6 +1004,36 @@ describe('official alchemy rules', () => {
         expect(result.catalystCost.costPerSuccess).toBe(100);
     });
 
+    test.each(paths)(
+        '%s: Conservation keeps its share of the catalyst, so the catalyst costs (1 - chance) as much',
+        async (_name, run) => {
+            const { attachTalismanBonuses } = await import('../../utils/talisman-bonuses.js');
+            mocks.itemPrice = 10_000;
+            mocks.itemPrices = {
+                '/items/catalyst_of_coinification': 100,
+                '/items/catalyst_of_decomposition': 100,
+                '/items/catalyst_of_transmutation': 100,
+                '/items/prime_catalyst': 100,
+                '/items/cheese_hat': 0,
+                '/items/milk': 0,
+            };
+            const bare = run(alchemyProfitCalculator);
+            mocks.resolvedEquipment = attachTalismanBonuses(new Map(), {
+                noncombat: { conservation: 0.25 },
+                buffs: {},
+                combat: {},
+            });
+            const kept = run(alchemyProfitCalculator);
+
+            // Same catalyst and success rate; a 25% chance to keep it leaves 75% of the 100 x rate bill
+            expect(kept.catalystCost.itemHrid).toBe(bare.catalystCost.itemHrid);
+            expect(kept.successRate).toBeCloseTo(bare.successRate, 12);
+            expect(kept.catalystCost.costPerAttempt).toBeCloseTo(100 * bare.successRate * 0.75, 8);
+            expect(kept.catalystCost.costPerAttempt).toBeCloseTo(bare.catalystCost.costPerAttempt * 0.75, 8);
+            expect(kept.catalystCost.costPerSuccess).toBe(100);
+        }
+    );
+
     test('a forced prime catalyst with no price leaves transmute risk economics unavailable', () => {
         mocks.itemPrices['/items/prime_catalyst'] = null;
 

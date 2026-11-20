@@ -28,11 +28,43 @@ const TARGET_NONCOMBAT = '/talisman_modifier_targets/noncombat_stat';
 const TARGET_COMBAT = '/talisman_modifier_targets/combat_stat';
 const TARGET_BUFF = '/talisman_modifier_targets/buff';
 
-/** The group of the five talisman-only lines (Echo, Fortify, Overkill, Shatter, Smite), from the game data */
+/**
+ * The group of the talisman-only Special lines, from the game data. Combat: Echo, Fortify, Overkill, Shatter, Smite,
+ * Consistency. Skilling: Abundance, Conservation, Epiphany, Invigoration, Prosperity.
+ */
 export const SPECIAL_GROUP = '/talisman_modifier_groups/special';
 
-/** The stat names of the five Special lines (what their `keys` feed, first letter lowercased) */
+/** The stat names of the older combat Special lines (what their `keys` feed, first letter lowercased) */
 export const SPECIAL_MECHANIC_STATS = Object.freeze(['echo', 'smite', 'shatter', 'fortify', 'overkill']);
+
+/**
+ * The skilling Special lines (test patch 2026-11-20), as the stat names their `keys` feed. Each rides on the equipment
+ * Map under `noncombat` like any gear stat, and only ever as a chance (a fraction), so a reader takes it with
+ * {@link talismanStat}.
+ * - abundance: chance to triple the resources a gathering action gathers
+ * - conservation: chance to keep a catalyst or protection item that would be consumed
+ * - epiphany: chance of double XP on a skilling action
+ * - invigoration: chance to double the effects of the active drinks on a cooking or brewing action
+ * - prosperity: chance to also get coins equal to the vendor value of the items produced
+ *   (Cheesesmithing, Crafting and Tailoring)
+ */
+export const SKILLING_SPECIAL_STATS = Object.freeze({
+    abundance: 'abundance',
+    conservation: 'conservation',
+    epiphany: 'epiphany',
+    invigoration: 'invigoration',
+    prosperity: 'prosperity',
+});
+
+/** The action types Prosperity pays coins on */
+export const PROSPERITY_ACTION_TYPES = Object.freeze([
+    '/action_types/cheesesmithing',
+    '/action_types/crafting',
+    '/action_types/tailoring',
+]);
+
+/** The action types Invigoration doubles drinks on */
+export const INVIGORATION_ACTION_TYPES = Object.freeze(['/action_types/cooking', '/action_types/brewing']);
 
 /**
  * Whether a modifier detail is a Special line: in the Special group, or feeding one of the five mechanic stats
@@ -46,7 +78,10 @@ export function isSpecialModifierDetail(detail) {
     if (!detail) return false;
     return (
         detail.groupHrid === SPECIAL_GROUP ||
-        (detail.keys || []).some((key) => SPECIAL_MECHANIC_STATS.includes(talismanStatName(key)))
+        (detail.keys || []).some((key) => {
+            const stat = talismanStatName(key);
+            return SPECIAL_MECHANIC_STATS.includes(stat) || Object.hasOwn(SKILLING_SPECIAL_STATS, stat);
+        })
     );
 }
 

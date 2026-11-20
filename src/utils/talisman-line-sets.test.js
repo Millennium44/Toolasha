@@ -54,12 +54,23 @@ function fakeOrbs({ stopAfter = Infinity } = {}) {
 }
 
 describe('special lines come from the game data group', () => {
-    test('the five Special-group lines, and nothing else', () => {
+    test('every Special-group line (combat and skilling), and nothing else', () => {
         const specials = Object.values(FULL_MODIFIER_DETAILS)
             .filter(isSpecialLine)
             .map((d) => d.name)
             .sort();
-        expect(specials).toEqual(['Echo', 'Fortify', 'Overkill', 'Shatter', 'Smite']);
+        expect(specials).toEqual([
+            'Abundance',
+            'Conservation',
+            'Echo',
+            'Epiphany',
+            'Fortify',
+            'Invigoration',
+            'Overkill',
+            'Prosperity',
+            'Shatter',
+            'Smite',
+        ]);
     });
 });
 

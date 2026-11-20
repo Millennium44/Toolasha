@@ -73,7 +73,7 @@ import {
     zoneSimRateKey,
 } from '../../utils/all-zones-snapshot.js';
 import { characterKey } from '../../utils/character-key.js';
-import { resolveLoadoutTalismans } from '../../utils/talisman-bonuses.js';
+import { resolveLoadoutTalismans, SKILLING_SPECIAL_STATS, talismanStat } from '../../utils/talisman-bonuses.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { loadoutSnapshot, combatSimUI } from '../../utils/bundle-bridge.js';
 
@@ -3106,7 +3106,9 @@ class ActionTimeDisplay {
                 gatheringTea + communityGathering + achievementGathering + personalGathering + equipmentGathering;
 
             // Apply gathering bonus to average amount
-            const avgAmountPerAction = baseAvgAmount * (1 + totalGathering);
+            // Talisman Abundance triples the gathered amount with its chance: (1 + 2 x chance) in expectation
+            const abundance = talismanStat(equipment, SKILLING_SPECIAL_STATS.abundance);
+            const avgAmountPerAction = baseAvgAmount * (1 + totalGathering) * (1 + 2 * abundance);
 
             // Items per hour = actions × drop rate × avg amount × efficiency
             itemsPerHour = baseActionsPerHour * mainDrop.dropRate * avgAmountPerAction * avgActionsPerBaseAction;
