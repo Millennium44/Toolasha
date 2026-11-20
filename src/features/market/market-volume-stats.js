@@ -34,7 +34,7 @@ import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
 import marketHistoryAPI from './mooket/market-history-api.js';
-import { describeCooldown, rowsHaveVolume } from './mooket/market-history-data.js';
+import { describeCooldown, rowsHaveVolume, sourceId } from './mooket/market-history-data.js';
 import { computeAllWindows, trimTrailingZeros } from '../../utils/market-volume-stats-math.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 
@@ -455,6 +455,13 @@ class MarketVolumeStats {
             // A slower response for an item the player has since navigated away
             // from (or a teardown mid-flight) must not overwrite what is shown now.
             if (generation !== this.generation || this.currentKey !== key) return;
+
+            // The source (or the volume opt-in) changed while the lookup waited: the rows may be plain mooket I's
+            // placeholder zeros, which must never be read as merged volume. Ask again under the new source.
+            if (sourceId(marketHistoryAPI.currentSource()) !== sourceId(source)) {
+                await this.fetchAndRender(currentItemElement, itemHrid, enhancementLevel, key, force);
+                return;
+            }
 
             const freshPanel = this.attachPanel(currentItemElement);
             if (rows === null) {

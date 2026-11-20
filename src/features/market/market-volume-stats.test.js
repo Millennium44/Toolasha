@@ -266,6 +266,31 @@ describe('rendering', () => {
             expect(document.querySelector('.mwi-volume-stats').title).toContain('Volume is from mooket II');
         });
 
+        test('the opt-in turned off while the lookup waits never renders plain zeros as merged volume', async () => {
+            const plain = { key: 'mooket1', label: 'mooket I (IOMisaka)', hasVolume: false, avgLabel: 'Mid' };
+            const time = Math.floor(Date.now() / 1000) - 3600;
+            historyApi.currentSource.mockReturnValue(merged);
+            let calls = 0;
+            historyApi.fetchHistory.mockImplementation(async () => {
+                calls += 1;
+                if (calls === 1) {
+                    // the setting goes off during the wait; the answer is plain mooket I's v:0 placeholder
+                    historyApi.currentSource.mockReturnValue(plain);
+                    return [{ a: 100, b: 80, p: 90, v: 0, time }];
+                }
+                return [{ a: 100, b: 80, p: 90, v: 0, time }];
+            });
+            const currentItem = buildCurrentItem('/items/coin');
+            await marketVolumeStats.initialize();
+            marketVolumeStats.currentKey = '/items/coin:0';
+            await marketVolumeStats.fetchAndRender(currentItem, '/items/coin', 0, '/items/coin:0', false);
+
+            expect(calls).toBe(2);
+            expect(headerCells()).not.toContain('Volume');
+            expect(document.querySelector('.mwi-volume-stats').title).not.toContain('Volume is from');
+            historyApi.fetchHistory.mockImplementation(async () => historyApi.rows);
+        });
+
         test('merged volume that did not come back shows no Volume column, not a column of zeros', async () => {
             historyApi.currentSource.mockReturnValue(merged);
             historyApi.rows = [{ a: 100, b: 80, p: 90, v: null, time: Math.floor(Date.now() / 1000) - 3600 }];
