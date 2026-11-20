@@ -114,6 +114,43 @@ function rosterFingerprint(dtos, ignoreTalismansOf = null) {
     );
 }
 
+/**
+ * What the last finished ranking cost per simulated hour of work, this session only (memory; nothing is stored).
+ * Wall seconds over sims times hours per sim, so lanes and overheads are in it.
+ */
+const sessionRate = { secPerSimHour: null };
+
+/**
+ * A length of time for the progress line: seconds under a minute, else whole minutes (rounded up).
+ * @param {number} seconds
+ * @returns {string}
+ */
+export function durationText(seconds) {
+    const s = Math.max(1, Math.ceil(seconds));
+    return s < 60 ? `${s} s` : `${Math.ceil(s / 60)} min`;
+}
+
+/**
+ * Time left in a run from the sims finished so far. Counted from the baseline's end (it runs alone, the lines in
+ * lanes): until one sim has finished after it, nothing is said. While fewer have finished than there are lanes, the
+ * lanes are taken to be full, so the first wave is not read as one lane's speed. A total that grows (close-call
+ * rounds) lengthens the estimate on the next report.
+ * @param {Object} p
+ * @param {number} p.done - Sims finished, the baseline included
+ * @param {number} p.total
+ * @param {number} p.baseDone - `done` when the baseline finished
+ * @param {number} p.sinceBaseMs - Wall time since then
+ * @param {number} p.lanes
+ * @returns {string} "about N min left", or '' while it cannot tell
+ */
+export function etaLeftText({ done, total, baseDone, sinceBaseMs, lanes }) {
+    const finished = done - baseDone;
+    const remaining = total - done;
+    if (finished < 1 || remaining <= 0 || !(sinceBaseMs > 0)) return '';
+    const parallel = Math.max(finished, Math.min(Math.max(1, lanes), finished + remaining));
+    return `about ${durationText((remaining / parallel) * (sinceBaseMs / 1000))} left`;
+}
+
 /** The Upgrade tab's Talisman lines section */
 export class TalismanLineRankingSection extends TalismanRankingSectionBase {
     /**
@@ -174,6 +211,36 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
 
     _onStop() {
         cancelActiveSimulations();
+    }
+
+    /** Start the clock a run's time estimate reads */
+    _etaStart() {
+        this._eta = { startedAt: Date.now(), baseAt: null, baseDone: 1 };
+    }
+
+    /** The progress line: `done / total · what`, with the time left once the baseline and a line are done */
+    _etaProgress(done, total, description) {
+        const eta = this._eta;
+        if (eta && eta.baseAt === null && done >= 1) {
+            eta.baseAt = Date.now();
+            eta.baseDone = done;
+        }
+        const left = eta?.baseAt
+            ? etaLeftText({
+                  done,
+                  total,
+                  baseDone: eta.baseDone,
+                  sinceBaseMs: Date.now() - eta.baseAt,
+                  lanes: analysisConcurrency(),
+              })
+            : '';
+        this._progress(`${done} / ${total} · ${description}${left ? ` · ${left}` : ''}`);
+    }
+
+    /** Remember what a finished ranking cost per simulated hour, for the next estimate line */
+    _etaRemember(sims, hours) {
+        const seconds = this._eta ? (Date.now() - this._eta.startedAt) / 1000 : 0;
+        if (sims > 0 && hours > 0 && seconds > 0) sessionRate.secPerSimHour = seconds / (sims * hours);
     }
 
     _blocked() {
@@ -404,7 +471,14 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
                         budget: controls.budget,
                     },
                     ({ description }) => {
-                        if (current() && !this._aborted) this._progress(description);
+                        if (!current() || this._aborted) return;
+                        // The one combined sim: about a sim's share of the last ranking, if there was one
+                        const rate = sessionRate.secPerSimHour;
+                        const left =
+                            rate && /checking/.test(description)
+                                ? ` · about ${durationText(previous.hours * rate)}`
+                                : '';
+                        this._progress(`${description}${left}`);
                     },
                     { ...this._simDeps(), orbs },
                     { abortSignal: () => this._aborted || !current() }
@@ -581,7 +655,12 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             });
             const resim = this._resimChecked() ? ', plus close-call re-sims' : '';
             const orbs = setMode === 'budget' ? ', then orb-cost solves' : '';
-            estimate.textContent = `Up to ${sims} sims${resim}${orbs}, ${ready.slots} slot${ready.slots === 1 ? '' : 's'}, Talisman Power ${(ready.power * 100).toFixed(1)}%`;
+            const { hours } = this.host._readUpgradeInputs();
+            const time =
+                sessionRate.secPerSimHour && hours > 0
+                    ? `, roughly ${durationText(sims * hours * sessionRate.secPerSimHour)} (from the last run)`
+                    : '';
+            estimate.textContent = `Up to ${sims} sims${resim}${orbs}${time}, ${ready.slots} slot${ready.slots === 1 ? '' : 's'}, Talisman Power ${(ready.power * 100).toFixed(1)}%`;
         } catch (error) {
             console.error('[TalismanLineRanking] Estimate failed:', error);
             estimate.textContent = '';
@@ -698,6 +777,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
     async _runBelts(current, metricKey) {
         const { zoneHrid, difficultyTier, hours } = this.host._readUpgradeInputs();
         const playerIndex = this.host._upgradePlayerIndex();
+        this._etaStart();
         const { playerDTOs, selfHrid } = await this._loadRoster();
         if (!current()) return null;
         const result = await runCombatBeltAdvisor(
@@ -714,7 +794,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             },
             ({ current: done, total, description }) => {
                 if (!current() || this._aborted) return;
-                this._progress(`${done} / ${total} · ${description}`);
+                this._etaProgress(done, total, description);
             },
             this._simDeps(),
             { abortSignal: () => this._aborted || !current() }
@@ -751,6 +831,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         const { metricKey, grade, setMode, capGrade, budget } = this._readControls(solverOrbReference(orbs));
         const inputs = this._currentInputs();
         const resimCloseCalls = this._resimChecked();
+        this._etaStart();
         const { playerDTOs, selfHrid } = await this._loadRoster();
         if (!current()) return null;
         const buildNow = rosterFingerprint(playerDTOs);
@@ -773,7 +854,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             },
             ({ current: done, total, description }) => {
                 if (!current() || this._aborted) return;
-                this._progress(`${done} / ${total} · ${description}`);
+                this._etaProgress(done, total, description);
             },
             {
                 buildGameDataPayload,
@@ -791,6 +872,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             { abortSignal: () => this._aborted || !current() }
         );
         if (!current()) return null;
+        if (result.status === 'done') this._etaRemember(result.sims, hours);
         const gameData = buildGameDataPayload();
         result.zoneName = gameData?.actionDetailMap?.[zoneHrid]?.name || zoneHrid;
         result.difficultyTier = difficultyTier;

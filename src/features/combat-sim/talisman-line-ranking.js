@@ -993,6 +993,8 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
     const baselineResult = await simulate([]);
     if (!baselineResult || stopped()) return stoppedResult([]);
     current++;
+    // The progress line's time estimate starts from here: the baseline runs alone, the lines run in lanes
+    report('Talisman lines: measuring each line');
     const { metricsOf, measureAgainst } = createMeasurer({
         deps,
         gameData,
