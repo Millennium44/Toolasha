@@ -70,3 +70,21 @@ describe('Focus with a held optional line', () => {
         expect([...labels(3)]).toEqual([1]);
     });
 });
+
+describe('a required line that cannot be focused', () => {
+    // Required Smite (a Special: not focusable), optional Melee Evasion and Armor, K 2, Melee Evasion locked
+    const pool = [want('smite', 1, true), want('melee_evasion', 1), want('armor', 1)];
+
+    test('Focus stays legal on the optional picks, since a focused reroll can still draw the Special', () => {
+        const { solution } = solveFor(pool, 2, 2);
+        const held = talismanRow(1, [line('melee_evasion', 1), line('ability_damage', 1)], {
+            lockedModifierHrid: M('melee_evasion'),
+        });
+        const advice = advise(solution, held, pool, 2);
+        expect(advice.move.itemHrid).toBe(FOCUS);
+        expect(advice.move.focusHrids).toEqual([M('armor')]);
+        // Unlocking and rerolling with the 1000-cost orbs was ~1056; Focus on Armor is ~465
+        expect(advice.value).toBeLessThan(600);
+        expect(advice.value).toBeCloseTo(465, -1);
+    });
+});
