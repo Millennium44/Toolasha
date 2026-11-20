@@ -67,6 +67,21 @@ export const PROSPERITY_ACTION_TYPES = Object.freeze([
 export const INVIGORATION_ACTION_TYPES = Object.freeze(['/action_types/cooking', '/action_types/brewing']);
 
 /**
+ * The Drink Concentration to read a drink's effects with on this action: Invigoration (a chance to double the active
+ * drinks' effects on a cooking or brewing action) makes them (1 + chance) times as strong in expectation, on top of
+ * Drink Concentration (unmeasured whether the game adds or multiplies the two). Only the effects take it: what a drink
+ * costs (drinks per hour, which Drink Concentration shortens) keeps the plain Drink Concentration.
+ * @param {Map|null|undefined} equipment - The equipment Map the talisman share rides on
+ * @param {string} actionTypeHrid
+ * @param {number} drinkConcentration - Plain Drink Concentration, as a decimal
+ * @returns {number} The concentration for effects, as a decimal
+ */
+export function drinkEffectConcentration(equipment, actionTypeHrid, drinkConcentration) {
+    if (!INVIGORATION_ACTION_TYPES.includes(actionTypeHrid)) return drinkConcentration;
+    return (1 + drinkConcentration) * (1 + talismanStat(equipment, SKILLING_SPECIAL_STATS.invigoration)) - 1;
+}
+
+/**
  * Whether a modifier detail is a Special line: in the Special group, or feeding one of the five mechanic stats
  * (so a table without group labels still reads right). The one test every reader uses. Measured on the test server (2026-11-13): a second copy of a
  * Special line on another worn talisman adds nothing (Fortify G2 at power 0.15 reads 0.01725 with one copy or two),

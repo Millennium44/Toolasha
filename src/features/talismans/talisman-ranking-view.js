@@ -1784,7 +1784,9 @@ export class TalismanRankingSectionBase {
                 'Each outcome is the ranking row for that line (measured with that line alone on the belt), so lines are assumed to add up. ' +
                     'It is a lottery: the expected gain is an average over draws, and the Useful chance and Best outcome show the spread. ' +
                     'What the extra line does to the orbs the other lines need later is not included. ' +
-                    (result.notValued ? `${result.notValued} lines were not valued by the sim and count as 0.` : '')
+                    (result.notValued
+                        ? `${result.notValued} lines were not valued and are left out (not counted as 0).`
+                        : '')
             )}</div>`
         );
         box.innerHTML = parts.join('');
