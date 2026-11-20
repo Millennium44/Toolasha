@@ -197,7 +197,9 @@ Every brief to a sub-agent carries these lines:
   have left processes running for hours after the agent finished.
 - Commit messages go in a uniquely named file (`msg-<branch>.txt`); the scratch folder is shared, and a
   generic name has been overwritten by a sibling. Run Prettier and ESLint on the touched files before
-  committing with `--no-verify -F <file>`.
+  committing with `--no-verify -F <file>`. A new module under `src/utils` or `src/core`: also run
+  `npx --no-install vitest run scripts/bundle-sharing-precheck.test.js`, since a module copied into several
+  bundles fails the gates (2026-11-20, the orb recipe module).
 - **Logs, edit scripts and message files go in your session scratchpad**, never the folder above the repo
   (`../gates.log`). About 200 of them piled up there.
 - **Saved-data work names its worst failure first.** The brief says which outcome is unacceptable and which
