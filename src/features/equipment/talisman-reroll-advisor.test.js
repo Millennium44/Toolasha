@@ -280,6 +280,40 @@ describe('describeAdvice', () => {
         expect(text.detail.join(' ')).toContain('grades above G5 count as G5');
     });
 
+    test('the keeper odds note: shown below 1 in 5, named or not, and only for an orb move', () => {
+        const orb = (extra) => ({
+            status: 'move',
+            value: 1,
+            counts: {},
+            move: { kind: 'orb', itemHrid: '/items/focus_orb', ...extra },
+        });
+        const detail = (advice) => describeAdvice({ build: ok, advice }, names).detail.join(' ');
+        expect(detail(orb({ keepChance: 1 / 160, keepLineHrid: M('armor') }))).toContain(
+            'About 1 roll in 160 is worth keeping (one with Armor); the rest are discarded.'
+        );
+        expect(detail(orb({ keepChance: 1 / 7 }))).toContain('About 1 roll in 7 is worth keeping; the rest');
+        expect(detail(orb({ keepChance: 1 / 7 }))).not.toContain('(one with');
+        expect(detail(orb({ keepChance: 0.21 }))).not.toContain('worth keeping');
+        expect(detail(orb({ keepChance: 0.5 }))).not.toContain('worth keeping');
+        const quiet = [
+            { status: 'met', value: 0, counts: {} },
+            { status: 'accept', value: 1, counts: {} },
+            { status: 'discard', value: 1, counts: {}, keepChance: 0.001 },
+            {
+                status: 'move',
+                value: 1,
+                counts: {},
+                move: { kind: 'lock', itemHrid: '/items/binding_orb', modifierHrid: M('armor'), keepChance: 0.001 },
+            },
+            { status: 'move', value: 1, counts: {}, move: { kind: 'unlock', keepChance: 0.001 } },
+        ];
+        for (const advice of quiet) expect(detail(advice)).not.toContain('worth keeping');
+    });
+
+    test('the help says a locked line is not changed by any orb', () => {
+        expect(ADVISOR_HELP.join(' ')).toMatch(/locked line is not changed by any orb, Attunement included/);
+    });
+
     test('unreachable, unlock and lock moves', () => {
         expect(describeAdvice({ build: ok, advice: { status: 'unreachable' } }, names).move).toContain('Not reachable');
         const unlock = describeAdvice(

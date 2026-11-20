@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reroll advisor says when most rolls are thrown away
+
+When the advised orb rarely gives a roll worth keeping, the advisor now says so ("About 1 roll in 160 is worth keeping (one with Overkill)"), so a long run of discards no longer looks broken. Its help also says a locked line is not changed by any orb.
+
 ### Talisman orbs priced at crafting cost
 
 An orb with no market listing now counts at its crafting cost (inputs at their market buy price, artisan tea applied), so the reroll advisor can give a coin cost once every orb has a listing or a priced recipe. The coin line names the orbs priced this way.

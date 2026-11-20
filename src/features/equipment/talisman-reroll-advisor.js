@@ -55,7 +55,8 @@ export const ADVISOR_HELP = [
         'down 69 / same 19 / up 12); Focus ×5 (100 rolls focused on Armor gave Armor in 33%, 36.9% predicted, grades ' +
         'kept).',
     'Binding Orb, measured: a lock costs one Binding Orb, moving the lock to another line costs one more, and ' +
-        'unlocking is free.',
+        'unlocking is free. A locked line is not changed by any orb, Attunement included: to raise it, unlock it, ' +
+        'roll, and lock it again with another Binding Orb.',
     'Approximations: junk types are lumped by their average weight, and the order in which Focus draws the lines ' +
         'is unknown. A talisman never holds one type twice (the game keys its lines by type).',
     'Assumed, not measured: Exchange shuffles the unlocked grades uniformly.',
@@ -82,6 +83,14 @@ function formatCount(value) {
     if (value >= 100) return String(Math.round(value));
     if (value >= 10) return value.toFixed(1).replace(/\.0$/, '');
     return value.toFixed(2).replace(/0$/, '').replace(/\.0$/, '');
+}
+
+/** Shown only when fewer than this share of rolls is worth keeping (worse than 1 in 5) */
+const KEEP_ODDS_NOTE_BELOW = 0.2;
+
+function formatOdds(value) {
+    if (value >= 100) return String(Math.round(value / 10) * 10).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return String(Math.round(value));
 }
 
 function formatCoins(value) {
@@ -155,6 +164,14 @@ export function describeAdvice(result, names) {
         detail.push(
             `Locking ${mod(advice.lockFirst.modifierHrid)} first is expected to cost ${more(advice.lockFirst.value)}% more.`
         );
+    }
+    // Say so when most rolls of the advised orb are thrown away, so a long streak of discards is expected
+    if (advice.status === 'move' && advice.move.kind === 'orb' && advice.move.keepChance > 0) {
+        const chance = advice.move.keepChance;
+        if (chance < KEEP_ODDS_NOTE_BELOW) {
+            const named = advice.move.keepLineHrid ? ` (one with ${mod(advice.move.keepLineHrid)})` : '';
+            detail.push(`About 1 roll in ${formatOdds(1 / chance)} is worth keeping${named}; the rest are discarded.`);
+        }
     }
     const counts = advice.counts || {};
     const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
