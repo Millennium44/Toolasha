@@ -412,6 +412,14 @@ describe('depthFor', () => {
         expect(savedDepth('/items/milk:0')).toBeDefined();
     });
 
+    test('keepDepth alone starts saving, books already seen included', async () => {
+        send('/items/cheese', [{ asks: [{ price: 100, quantity: 1 }], bids: [] }]);
+        marketPriceStore.keepDepth();
+        await marketPriceStore.flush();
+        expect(savedDepth('/items/cheese:0')).toBeDefined();
+        expect(marketPriceStore.depthFor('/items/cheese', 0).asks).toEqual([{ price: 100, quantity: 1 }]);
+    });
+
     test('teardown writes for a reader that asked, then the next session must ask again', async () => {
         send('/items/cheese', [{ asks: [{ price: 100, quantity: 1 }], bids: [] }]);
         marketPriceStore.depthFor('/items/cheese', 0);

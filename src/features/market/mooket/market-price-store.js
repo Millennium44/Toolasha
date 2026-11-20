@@ -296,7 +296,7 @@ class MarketPriceStore {
     depthFor(itemHrid, enhancementLevel = 0) {
         // A reader exists: from the next flush on, the depth held so far (books seen before this call
         // too) is written
-        this.depthWanted = true;
+        this.keepDepth();
         const record = this.depth[priceKey(itemHrid, enhancementLevel)];
         if (!hasDepth(record, Date.now())) return null;
         return {
@@ -304,6 +304,15 @@ class MarketPriceStore {
             bids: record.bidLevels.map((level) => ({ price: level.price, quantity: level.quantity })),
             depthAt: record.depthAt,
         };
+    }
+
+    /**
+     * Say that a reader wants depth saved, so saving starts at page load rather than at its first
+     * {@link MarketPriceStore#depthFor}. Until this or depthFor is called, depth is recorded in memory
+     * only. Safe to call repeatedly; lasts until the store's next teardown.
+     */
+    keepDepth() {
+        this.depthWanted = true;
     }
 
     /** @param {Function} listener - Called with the keys that changed */
