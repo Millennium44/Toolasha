@@ -11,6 +11,10 @@ import {
     specialPrice,
     pruneStale,
     levelsOfSide,
+    depthFromBook,
+    foldDepth,
+    mergeDepth,
+    hasDepth,
 } from './market-prices.js';
 
 describe('priceKey', () => {
@@ -40,16 +44,7 @@ describe('topOfSide', () => {
 describe('entryFromBook', () => {
     test('both sides and their sizes', () => {
         const book = { asks: [{ price: 120, quantity: 3 }], bids: [{ price: 100, quantity: 800 }] };
-        expect(entryFromBook(book, 5)).toEqual({
-            ask: 120,
-            bid: 100,
-            askQty: 3,
-            bidQty: 800,
-            at: 5,
-            askLevels: [{ price: 120, quantity: 3 }],
-            bidLevels: [{ price: 100, quantity: 800 }],
-            depthAt: 5,
-        });
+        expect(entryFromBook(book, 5)).toEqual({ ask: 120, bid: 100, askQty: 3, bidQty: 800, at: 5 });
     });
 });
 
@@ -151,7 +146,7 @@ describe('pruneStale', () => {
     });
 });
 
-describe('book depth', () => {
+describe('book depth (kept apart from the price entries)', () => {
     const book = {
         asks: [
             { listingId: 1, price: 100, quantity: 5 },
@@ -164,20 +159,24 @@ describe('book depth', () => {
         ],
         bids: [],
     };
+    const NOW = 1_000_000;
 
-    test('a book keeps up to five price levels per side, one per price, with depthAt', () => {
-        const entry = entryFromBook(book, 500);
-        expect(entry.askLevels).toEqual([
+    test('a price entry keeps exactly its old shape: no depth fields', () => {
+        const entry = foldPrice(undefined, entryFromBook(book, 500));
+        expect(Object.keys(entry).sort()).toEqual(['ask', 'askQty', 'at', 'bid', 'bidQty', 'rise', 'riseSpanMs']);
+    });
+
+    test('a book keeps up to five levels per side, one per price, with depthAt; an empty side is []', () => {
+        const record = depthFromBook(book, 500);
+        expect(record.askLevels).toEqual([
             { price: 100, quantity: 12 },
             { price: 110, quantity: 1 },
             { price: 120, quantity: 2 },
             { price: 130, quantity: 3 },
             { price: 140, quantity: 4 },
         ]);
-        // seen and empty, which is not the same as unknown
-        expect(entry.bidLevels).toEqual([]);
-        expect(entry.depthAt).toBe(500);
-        expect(entry).toMatchObject({ ask: 100, askQty: 12, bid: -1, bidQty: 0, at: 500 });
+        expect(record.bidLevels).toEqual([]);
+        expect(record.depthAt).toBe(500);
     });
 
     test('a repeated price later in the book joins its level and does not take a slot', () => {
@@ -192,32 +191,49 @@ describe('book depth', () => {
         ]);
     });
 
-    test('a newer reading with a book replaces the depth', () => {
-        const old = foldPrice(undefined, entryFromBook(book, 100));
-        const next = foldPrice(old, entryFromBook({ asks: [{ price: 90, quantity: 1 }], bids: [] }, 200));
-        expect(next.askLevels).toEqual([{ price: 90, quantity: 1 }]);
-        expect(next.depthAt).toBe(200);
+    test('a newer book replaces the depth; an older or equal one does not', () => {
+        const held = depthFromBook(book, 100);
+        const newer = depthFromBook({ asks: [{ price: 90, quantity: 1 }], bids: [] }, 200);
+        expect(foldDepth(held, newer, NOW)).toBe(newer);
+        expect(foldDepth(newer, held, NOW)).toBeNull();
+        expect(foldDepth(held, depthFromBook(book, 100), NOW)).toBeNull();
     });
 
-    test('a newer sizeless sighting keeps the older depth and its older depthAt', () => {
-        const old = foldPrice(undefined, entryFromBook(book, 100));
-        const next = foldPrice(old, { ask: 105, bid: 80, askQty: 0, bidQty: 0, at: 300 });
-        expect(next).toMatchObject({ ask: 105, bid: 80, askQty: 0, at: 300, depthAt: 100 });
-        expect(next.askLevels).toEqual(old.askLevels);
-        expect(next.bidLevels).toEqual([]);
+    test('a held depth timed in the future is replaced by any reading', () => {
+        const future = depthFromBook(book, NOW + 5000);
+        const next = depthFromBook(book, 100);
+        expect(foldDepth(future, next, NOW)).toBe(next);
+        expect(hasDepth(future, NOW)).toBe(false);
     });
 
-    test('a sizeless sighting over an entry with no depth leaves depth unknown, not empty', () => {
-        const before = { ask: 1, bid: 1, askQty: 0, bidQty: 0, at: 1 };
-        const next = foldPrice(before, { ask: 2, bid: 1, askQty: 0, bidQty: 0, at: 2 });
-        expect(next.askLevels).toBeUndefined();
-        expect(next.depthAt).toBeUndefined();
+    test('merge keeps the newer depthAt of two tabs, memory on a tie', () => {
+        const a = depthFromBook({ asks: [{ price: 1, quantity: 1 }], bids: [] }, 300);
+        const b = depthFromBook({ asks: [{ price: 2, quantity: 1 }], bids: [] }, 400);
+        expect(mergeDepth({ k: a }, { k: b }, 0, NOW).k).toBe(b);
+        expect(mergeDepth({ k: b }, { k: a }, 0, NOW).k).toBe(b);
+        const tie = depthFromBook({ asks: [{ price: 3, quantity: 1 }], bids: [] }, 300);
+        expect(mergeDepth({ k: a }, { k: tie }, 0, NOW).k).toBe(tie);
     });
 
-    test('a cowbell quoted from the bag carries no depth', () => {
+    test('merge drops books older than the cutoff, future ones, and malformed ones', () => {
+        const merged = mergeDepth(
+            {
+                old: depthFromBook(book, 100),
+                future: depthFromBook(book, NOW + 1),
+                bad: { askLevels: [{ price: 'x' }], bidLevels: [], depthAt: 500 },
+                none: { depthAt: 500 },
+                ok: depthFromBook(book, 600),
+            },
+            {},
+            200,
+            NOW
+        );
+        expect(Object.keys(merged)).toEqual(['ok']);
+    });
+
+    test('a cowbell quote has no depth fields', () => {
         const bag = { ...entryFromBook({ asks: [{ price: 1000, quantity: 3 }], bids: [] }, 5), rise: 0 };
         const quote = specialPrice('/items/cowbell', () => bag, 9);
-        expect(quote.ask).toBe(100);
         expect(quote.askLevels).toBeUndefined();
         expect(quote.depthAt).toBeUndefined();
     });

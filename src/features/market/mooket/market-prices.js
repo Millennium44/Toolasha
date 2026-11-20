@@ -17,20 +17,15 @@
  * lasts only until the next snapshot re-reads that item. Consumers that need
  * depth must treat a zero size as "unknown", not "none listed".
  *
- * Depth. Beyond the top level, an entry from an order book also keeps up to
- * {@link DEPTH_LEVELS} price levels per side (`askLevels` / `bidLevels`, best
- * first, each `{price, quantity}` with the quantities of one price summed) and
- * `depthAt`, the time of the book they came from. `at` is the age of the
- * price; `depthAt` is the age of the depth, and the two differ whenever a
- * sizeless sighting (a marketplace.json snapshot) has refreshed the price over
- * an older book: the depth is kept, with its older `depthAt`.
- *
- * Absent `askLevels`/`bidLevels` means depth UNKNOWN (an entry written before
- * this field existed, or never seen as a book); an empty array means the book
- * was seen and that side was empty. Readers must also check that `levels[0].price`
- * equals the entry's current best (`ask` / `bid`) before trusting the depth:
- * when it does not, the price has moved since `depthAt` and the levels describe
- * a book that is gone. Use `depthFor` on the store to read it.
+ * Depth lives apart from these entries, in its own device-only record
+ * (`mooketDepth`, see market-price-store.js), keyed by {@link priceKey}:
+ * `{askLevels, bidLevels, depthAt}`, up to {@link DEPTH_LEVELS} price levels per
+ * side (best first, each `{price, quantity}`, quantities of one price summed)
+ * and the time of the book they came from. It is not part of the synced price
+ * entries, so their shape never changes. A missing record means depth UNKNOWN;
+ * an empty array means that side was seen empty. Readers must also check that
+ * `levels[0].price` equals the current best ask / bid before trusting it: when
+ * it does not, the price has moved since `depthAt`.
  *
  * Pure: entries in, entries out. Storage and sockets live in the feature module.
  */
@@ -65,87 +60,16 @@ export function topOfSide(orders) {
     return { price, quantity };
 }
 
-/** Price levels kept per side of a book */
-export const DEPTH_LEVELS = 5;
-
-/**
- * The first levels of one side, in the order the game sends them (best
- * first), with the quantities of orders at one price summed.
- * @param {Array<Object>} orders - Orders, best first
- * @param {number} [max=DEPTH_LEVELS] - Levels to keep
- * @returns {Array<{price: number, quantity: number}>} Empty for an empty side
- */
-export function levelsOfSide(orders, max = DEPTH_LEVELS) {
-    const levels = [];
-    const seen = new Map();
-    for (const order of Array.isArray(orders) ? orders : []) {
-        if (!order || !Number.isFinite(order.price)) continue;
-        const quantity = Math.max(0, Number(order.quantity) || 0);
-        const held = seen.get(order.price);
-        if (held) {
-            held.quantity += quantity;
-        } else if (levels.length < max) {
-            const level = { price: order.price, quantity };
-            seen.set(order.price, level);
-            levels.push(level);
-        }
-    }
-    return levels;
-}
-
-/**
- * Whether a stored list of levels is one a reader can use.
- * @param {*} levels - Candidate
- * @returns {boolean}
- */
-function validLevels(levels) {
-    return (
-        Array.isArray(levels) &&
-        levels.every((level) => level && Number.isFinite(level.price) && Number.isFinite(level.quantity))
-    );
-}
-
-/**
- * Whether an entry carries depth: both sides present and a time for it.
- * @param {Object|null|undefined} entry - A stored entry
- * @returns {boolean}
- */
-export function hasDepth(entry) {
-    return !!entry && validLevels(entry.askLevels) && validLevels(entry.bidLevels) && Number.isFinite(entry.depthAt);
-}
-
 /**
  * Fold one order book into an entry.
  * @param {Object|null} book - { asks, bids }
  * @param {number} at - Timestamp (ms)
- * @returns {Object} { ask, bid, askQty, bidQty, at, askLevels, bidLevels, depthAt }
+ * @returns {Object} { ask, bid, askQty, bidQty, at }
  */
 export function entryFromBook(book, at) {
     const ask = topOfSide(book?.asks);
     const bid = topOfSide(book?.bids);
-    return {
-        ask: ask.price,
-        bid: bid.price,
-        askQty: ask.quantity,
-        bidQty: bid.quantity,
-        at,
-        askLevels: levelsOfSide(book?.asks),
-        bidLevels: levelsOfSide(book?.bids),
-        depthAt: at,
-    };
-}
-
-/**
- * Give a winning entry the depth of another when the other's is newer or the
- * winner has none. Never invents depth, and never mutates.
- * @param {Object} winner - The entry being kept
- * @param {Object|undefined} other - The entry it replaces
- * @returns {Object} winner, or a copy carrying other's depth
- */
-export function withNewerDepth(winner, other) {
-    if (!hasDepth(other)) return winner;
-    if (hasDepth(winner) && winner.depthAt >= other.depthAt) return winner;
-    return { ...winner, askLevels: other.askLevels, bidLevels: other.bidLevels, depthAt: other.depthAt };
+    return { ask: ask.price, bid: bid.price, askQty: ask.quantity, bidQty: bid.quantity, at };
 }
 
 /**
@@ -200,10 +124,7 @@ export function foldPrice(existing, next) {
         }
     }
 
-    // A reading with a book replaces the depth. One without (a pooled sighting
-    // carries no sizes) keeps the depth it is laid over, with its older depthAt.
-    const folded = { ...next, rise, riseSpanMs };
-    return hasDepth(next) ? folded : withNewerDepth(folded, existing);
+    return { ...next, rise, riseSpanMs };
 }
 
 /**
@@ -224,12 +145,7 @@ export function specialPrice(itemHrid, lookup, at) {
     if (itemHrid === '/items/cowbell') {
         const bag = lookup(priceKey('/items/bag_of_10_cowbells'));
         if (!bag) return null;
-        // Depth is the bag's book, in bags and at the bag's prices: not a cowbell's
-        const rest = { ...bag };
-        delete rest.askLevels;
-        delete rest.bidLevels;
-        delete rest.depthAt;
-        return { ...rest, ask: bag.ask / 10, bid: bag.bid / 10 };
+        return { ...bag, ask: bag.ask / 10, bid: bag.bid / 10 };
     }
 
     return null;
@@ -243,4 +159,108 @@ export function specialPrice(itemHrid, lookup, at) {
  */
 export function pruneStale(entries, cutoff) {
     return Object.fromEntries(Object.entries(entries || {}).filter(([, entry]) => entry?.at >= cutoff));
+}
+
+/** Price levels kept per side of a book */
+export const DEPTH_LEVELS = 5;
+
+/**
+ * The first levels of one side, in the order the game sends them (best
+ * first), with the quantities of orders at one price summed.
+ * @param {Array<Object>} orders - Orders, best first
+ * @param {number} [max=DEPTH_LEVELS] - Levels to keep
+ * @returns {Array<{price: number, quantity: number}>} Empty for an empty side
+ */
+export function levelsOfSide(orders, max = DEPTH_LEVELS) {
+    const levels = [];
+    const seen = new Map();
+    for (const order of Array.isArray(orders) ? orders : []) {
+        if (!order || !Number.isFinite(order.price)) continue;
+        const quantity = Math.max(0, Number(order.quantity) || 0);
+        const held = seen.get(order.price);
+        if (held) {
+            held.quantity += quantity;
+        } else if (levels.length < max) {
+            const level = { price: order.price, quantity };
+            seen.set(order.price, level);
+            levels.push(level);
+        }
+    }
+    return levels;
+}
+
+/**
+ * @param {*} levels - Candidate list of levels
+ * @returns {boolean} True when every level has a numeric price and quantity
+ */
+function validLevels(levels) {
+    return (
+        Array.isArray(levels) &&
+        levels.every((level) => level && Number.isFinite(level.price) && Number.isFinite(level.quantity))
+    );
+}
+
+/**
+ * Whether a depth record is one a reader can use: both sides, a time for it,
+ * and that time not in the future (a clock that ran ahead is more likely wrong
+ * than the book, as with {@link foldPrice}).
+ * @param {Object|null|undefined} record - { askLevels, bidLevels, depthAt }
+ * @param {number} now - Current time (ms)
+ * @returns {boolean}
+ */
+export function hasDepth(record, now) {
+    return (
+        !!record &&
+        validLevels(record.askLevels) &&
+        validLevels(record.bidLevels) &&
+        Number.isFinite(record.depthAt) &&
+        record.depthAt <= now
+    );
+}
+
+/**
+ * The depth record of one order book.
+ * @param {Object|null} book - { asks, bids }
+ * @param {number} at - Timestamp (ms)
+ * @returns {{askLevels: Array, bidLevels: Array, depthAt: number}}
+ */
+export function depthFromBook(book, at) {
+    return { askLevels: levelsOfSide(book?.asks), bidLevels: levelsOfSide(book?.bids), depthAt: at };
+}
+
+/**
+ * Take a depth reading if it is newer than what is held. A held record that is
+ * unusable (malformed, or timed in the future) is replaced by any reading.
+ * @param {Object|undefined} existing - Held record
+ * @param {Object} next - New record
+ * @param {number} now - Current time (ms)
+ * @returns {Object|null} The record to store, or null when not newer
+ */
+export function foldDepth(existing, next, now) {
+    if (hasDepth(existing, now) && existing.depthAt >= next.depthAt) return null;
+    return next;
+}
+
+/**
+ * Fold a stored depth map under the one in memory: per item the newer depthAt
+ * wins (memory on a tie), unusable records go, and anything whose book is older
+ * than the cutoff goes. Age is the book's, not the price entry's: a snapshot
+ * refreshes the entry's `at` and says nothing new about depth.
+ * @param {Object} stored - key -> record, as read back
+ * @param {Object} memory - key -> record, as held
+ * @param {number} cutoff - Timestamp (ms); a book older than this goes
+ * @param {number} now - Current time (ms)
+ * @returns {Object} A new object
+ */
+export function mergeDepth(stored, memory, cutoff, now) {
+    const merged = {};
+    for (const source of [stored, memory]) {
+        if (!source || typeof source !== 'object') continue;
+        for (const [key, record] of Object.entries(source)) {
+            if (!hasDepth(record, now) || record.depthAt < cutoff) continue;
+            const held = merged[key];
+            if (!held || record.depthAt >= held.depthAt) merged[key] = record;
+        }
+    }
+    return merged;
 }

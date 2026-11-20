@@ -97,6 +97,8 @@ export const DEVICE_ONLY_STORES = ['actionProgress'];
  * - `combatStats` `latestCombatRun`: the live snapshot of the fight in
  *   progress, rewritten every battle and meaningful only on the device that is
  *   fighting (`features/combat-stats/combat-stats-data-collector.js`).
+ * - `marketListings` `mooketDepth`: the order-book levels this device last saw per item, beside the
+ *   synced `mooketPrices` rather than inside it (`features/market/mooket/market-price-store.js`).
  * - `networthHistory` `networthMovers`: the per-item value maps behind the
  *   chart's "what moved" view, and their index. Large, and only useful beside
  *   the readings this device took (`features/networth/networth-movers.js`).
@@ -116,6 +118,10 @@ export const DEVICE_ONLY_STORE_KEY_PREFIXES = {
     // The per-item maps behind the net worth chart's "what moved" view (networthMovers_<id>_<t> and the
     // index networthMoversIndex_<id>): up to ~1 MB a character, rebuilt by playing, and meant for one device
     networthHistory: ['networthMovers', 'networthMarkerState'],
+    // `mooketDepth`: the order-book levels this device last saw per item (features/market/mooket/market-price-store.js).
+    // One device's look at a book, rebuilt by browsing it, and kept out of the synced `mooketPrices` entries so
+    // their shape is the one every build reads.
+    marketListings: ['mooketDepth'],
 };
 
 /**
