@@ -248,6 +248,7 @@ export function adviseCores({ talismans, ranking, power, typeHrid, gameData, pri
             key: `${talisman.id ?? ''}@${talisman.slotIndex}`,
             id: talisman.id ?? null,
             // The game's icon and marker, so the table can tell two talismans of one type apart
+            talismanTypeHrid: talisman.talismanTypeHrid ?? null,
             iconHrid: talisman.iconHrid ?? null,
             marker: talisman.marker ?? 0,
             slotIndex: talisman.slotIndex,
