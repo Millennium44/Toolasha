@@ -708,13 +708,16 @@ export const ANY_K_MAX_POOL = 6;
  * @param {number} params.grade - The minimum grade every pool line is wanted at
  * @param {number} params.k - How many lines the target talisman holds
  * @param {number} [params.maxPool] - The most lines in the pool (default {@link ANY_K_MAX_POOL})
+ * @param {function(number): boolean} [params.fits] - Whether a pool of that many lines can be solved at this grade
+ *   (the solver's state ceiling); the weakest optional lines go until it does
  * @returns {{targets: Array<{hrid: string, minGrade: number, required?: boolean}>, need: number, leftOut: number,
- *   poolSize: number}|null} Null when no line has a gain. `leftOut`: pool lines cut to fit `maxPool` (never a required
+ *   poolSize: number}|null} Null when no line has a gain. `leftOut`: pool lines cut to fit `maxPool` and `fits`, and a second Special within noise of the K-th line (never a required
  *   one). `need` is K, or fewer when fewer lines have a gain.
  */
-export function planAnyKTarget(rows, { grade, k, maxPool = ANY_K_MAX_POOL }) {
+export function planAnyKTarget(rows, { grade, k, maxPool = ANY_K_MAX_POOL, fits = () => true }) {
     const scored = [];
     let special = null;
+    const ignored = [];
     for (const row of rows || []) {
         if (!row || row.noEffect || !row.hrid) continue;
         const gain = valueAtGrade(row, grade);
@@ -725,7 +728,11 @@ export function planAnyKTarget(rows, { grade, k, maxPool = ANY_K_MAX_POOL }) {
                 : 0;
         const entry = { hrid: row.hrid, gain, noise: gain * rel };
         if (row.special) {
-            if (!special || entry.gain > special.gain) special = entry;
+            if (!special) special = entry;
+            else if (entry.gain > special.gain) {
+                ignored.push(special);
+                special = entry;
+            } else ignored.push(entry);
         } else scored.push(entry);
     }
     if (special) scored.push(special);
@@ -743,11 +750,18 @@ export function planAnyKTarget(rows, { grade, k, maxPool = ANY_K_MAX_POOL }) {
 
     // Over the solver's limit: the weakest lines that are not required go first
     let kept = pool;
-    if (kept.length > maxPool) {
-        const droppable = [...kept].reverse().filter((s) => !required.has(s.hrid));
-        const drop = new Set(droppable.slice(0, kept.length - maxPool).map((s) => s.hrid));
-        kept = kept.filter((s) => !drop.has(s.hrid));
+    const droppable = [...kept].reverse().filter((s) => !required.has(s.hrid));
+    const drop = new Set();
+    while (kept.length - drop.size > need && droppable.length > drop.size) {
+        const size = kept.length - drop.size;
+        if (size <= maxPool && fits(size)) break;
+        drop.add(droppable[drop.size].hrid);
     }
+    kept = kept.filter((s) => !drop.has(s.hrid));
+    // A second Special the talisman could not hold alongside the first still counts as left out when it was within
+    // noise of the K-th line (it would have been in the pool)
+    const keptSet = new Set(pool.map((s) => s.hrid));
+    const specialsOut = ignored.filter((s) => s.gain + s.noise >= floor && !keptSet.has(s.hrid)).length;
     return {
         targets: kept.map((s) => ({
             hrid: s.hrid,
@@ -755,7 +769,7 @@ export function planAnyKTarget(rows, { grade, k, maxPool = ANY_K_MAX_POOL }) {
             ...(required.has(s.hrid) ? { required: true } : {}),
         })),
         need,
-        leftOut: pool.length - kept.length,
+        leftOut: pool.length - kept.length + specialsOut,
         poolSize: kept.length,
     };
 }

@@ -3,9 +3,13 @@ import { ORB_ITEMS, REROLL_MODIFIERS, TALISMAN_INFO, talismanRow } from '../__fi
 import {
     advise,
     buildProblem,
+    countStates,
+    effectiveStates,
+    MAX_STATES,
     MAX_WANTED_LINES,
     meetsTarget,
     normalizeTarget,
+    solveSteps,
     solve,
 } from './talisman-reroll-solver.js';
 
@@ -229,4 +233,46 @@ describe('the largest pool', () => {
         expect(advise(solution, holds(names.slice(0, 4)), pool, 4).status).toBe('met');
         expect(advise(solution, holds(names.slice(2, 6)), pool, 4).status).not.toBe('met');
     }, 60000);
+});
+
+describe('the state ceiling', () => {
+    const names = Object.keys(REROLL_MODIFIERS)
+        .filter((h) => REROLL_MODIFIERS[h].talismanTypeHrid === COMBAT && REROLL_MODIFIERS[h].weight > 0)
+        .slice(0, MAX_WANTED_LINES);
+    const poolOf = (count, minGrade) => names.slice(0, count).map((hrid) => ({ hrid, minGrade }));
+
+    test('six lines at G6 on four lines is refused with the numbers; five lines at G6 is allowed', () => {
+        expect(MAX_STATES).toBe(150000);
+        expect(problemFor(poolOf(6, 6), 4, 4)).toMatchObject({
+            status: 'impossible',
+            reason: 'tooManyStates',
+            rollable: 6,
+            states: 289290,
+            max: MAX_STATES,
+        });
+        const five = problemFor(poolOf(5, 6), 4, 4);
+        expect(five.status).toBe('ok');
+        expect(countStates(4, 5, five.problem.G)).toBe(140442);
+    });
+
+    test('a lower grade clamps the space under the ceiling instead of refusing', () => {
+        expect(problemFor(poolOf(6, 4), 4, 4).status).toBe('ok');
+        expect(effectiveStates(4, 6, 2, 6)).toEqual({ G: 3, states: countStates(4, 6, 3) });
+        // Never clamped below the highest minimum grade
+        expect(effectiveStates(4, 6, 6, 6).G).toBe(6);
+    });
+
+    test('the solver yields while it enumerates: the first slice is a small part of a 59,958-state problem', () => {
+        const built = problemFor(poolOf(4, 6), 4, 4);
+        const run = solveSteps(built.problem);
+        let yields = 0;
+        let step = run.next();
+        // The whole of enumeration, allocation and the goal scan used to be two or three yields; now it is dozens
+        while (!step.done && yields < 150) {
+            yields++;
+            step = run.next();
+        }
+        expect(step.done).toBe(false);
+        expect(yields).toBe(150);
+    });
 });

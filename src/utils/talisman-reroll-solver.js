@@ -1,7 +1,7 @@
 /**
  * Talisman reroll solver
  *
- * Given a talisman and a target (a pool of up to four wanted lines, each a modifier type and a minimum grade, and
+ * Given a talisman and a target (a pool of up to six wanted lines, each a modifier type and a minimum grade, and
  * how many of them are needed: all by default, or any K), finds the strategy that reaches the target for the least
  * expected orb spend, and how many of each orb it uses on average.
  *
@@ -107,6 +107,13 @@ export const MUTATION_STATE_LIMIT = 25000;
  */
 export const MAX_WANTED_LINES = 6;
 
+/**
+ * The most states a solve may have. Measured (n = 4): 289,290 states (6 lines, G6) peaked at 1.13 GB of heap while it
+ * ran (19 MB kept afterwards), which a browser tab on Firefox should not be asked for. 140,442 (5 lines, G6) is
+ * allowed. Past it grades cannot be clamped honestly (a line wanted at G6 needs G6), so the target is refused.
+ */
+export const MAX_STATES = 150000;
+
 /** The largest state space solved at the game's top grade; above it grades are clamped lower */
 export const CLAMP_STATE_LIMIT = 40000;
 
@@ -115,6 +122,34 @@ const WORK_PER_SLICE = 8000;
 
 /** Per-state loops yield every 128 states: each state can cost a fixed-point solve, so 2048 ran to 100 ms or more */
 const STATE_YIELD_MASK = 127;
+
+/** Enumeration and allocation yield every 1024 states: a state costs microseconds there */
+const ENUMERATE_YIELD_MASK = 1023;
+
+/** `count` empty arrays, yielding now and then (one allocation of a few hundred thousand held the thread for ~100 ms) */
+function* emptyLists(count) {
+    const lists = new Array(count);
+    for (let i = 0; i < count; i++) {
+        lists[i] = [];
+        if ((i & ENUMERATE_YIELD_MASK) === ENUMERATE_YIELD_MASK) yield;
+    }
+    return lists;
+}
+
+/**
+ * The states a solve would have: the grade levels clamp lower while the space is over {@link CLAMP_STATE_LIMIT}, never
+ * below the highest minimum grade.
+ * @param {number} n - Lines on the talisman
+ * @param {number} m - Wanted slots
+ * @param {number} highestMin - Highest minimum grade among them
+ * @param {number} maxGrade
+ * @returns {{G: number, states: number}}
+ */
+export function effectiveStates(n, m, highestMin, maxGrade) {
+    let G = maxGrade;
+    while (G > highestMin && countStates(n, m, G) > CLAMP_STATE_LIMIT) G--;
+    return { G, states: countStates(n, m, G) };
+}
 
 function choose(n, k) {
     if (k < 0 || k > n) return 0;
@@ -323,8 +358,10 @@ export function buildProblem({
 
     // The top grade when it fits; otherwise the smallest clamp at or above the highest minimum that does
     const highestMin = Math.max(...wanted.map((w) => w.minGrade));
-    let gradeLevels = maxGrade;
-    while (gradeLevels > highestMin && countStates(n, wanted.length, gradeLevels) > CLAMP_STATE_LIMIT) gradeLevels--;
+    const { G: gradeLevels, states } = effectiveStates(n, wanted.length, highestMin, maxGrade);
+    if (states > MAX_STATES) {
+        return { status: 'impossible', reason: 'tooManyStates', rollable: wanted.length, states, max: MAX_STATES };
+    }
 
     return {
         status: 'ok',
@@ -513,21 +550,23 @@ export function* solveSteps(problem, options = {}) {
         }
         return mask;
     };
-    const enumerate = (lock, length, start, codes, mask) => {
+    // A generator, yielding every few thousand states, so a big state space never holds the thread for long
+    const enumerate = function* (lock, length, start, codes, mask) {
         if (codes.length === length) {
             addState(lock, codes);
+            if ((stLock.length & ENUMERATE_YIELD_MASK) === 0) yield;
             return;
         }
         for (let code = start; code < C; code++) {
             const label = labelOf(code);
             if (label > 0 && mask & (1 << label)) continue;
-            enumerate(lock, length, code, [...codes, code], label > 0 ? mask | (1 << label) : mask);
+            yield* enumerate(lock, length, code, [...codes, code], label > 0 ? mask | (1 << label) : mask);
         }
     };
-    enumerate(-1, n, 0, [], 0);
+    yield* enumerate(-1, n, 0, [], 0);
     for (let lock = 0; lock < C; lock++) {
         const label = labelOf(lock);
-        enumerate(lock, n - 1, 0, [], label > 0 ? 1 << label : 0);
+        yield* enumerate(lock, n - 1, 0, [], label > 0 ? 1 << label : 0);
     }
     const S = stLock.length;
     const useMutation = options.mutation !== false && S <= (options.mutationStateLimit ?? MUTATION_STATE_LIMIT);
@@ -583,11 +622,14 @@ export function* solveSteps(problem, options = {}) {
      * New lines: `count` lines drawn without replacement. `grades` fixes each line's grade (Focus); otherwise
      * grades come from `cap`'s distribution. Returns sorted code lists with their probability.
      */
-    const drawLines = (count, keptMask, keptJunk, { cap = 0, grades = null, focus = false }) => {
+    const drawLines = function* (count, keptMask, keptJunk, { cap = 0, grades = null, focus = false }) {
         let current = new Map([['', { codes: [], mask: keptMask, junk: keptJunk, p: 1 }]]);
         for (let i = 0; i < count; i++) {
             const next = new Map();
+            let seen = 0;
             for (const entry of current.values()) {
+                // The biggest draws (a full reroll of every line) are tens of thousands of outcomes: yield inside
+                if (++seen % 128 === 0) yield;
                 const lineGrades = grades ? [[grades[i], 1]] : gradeDist(cap);
                 for (const [label, pl] of labelOptions(entry.mask, entry.junk, focus)) {
                     for (const [grade, pg] of lineGrades) {
@@ -614,13 +656,15 @@ export function* solveSteps(problem, options = {}) {
     // nodes: reroll actions with an outcome list. kind 0 = group (members share the value), 1 = one state,
     // 2 = a mutation part (kept lines K), combined per state.
     const nodes = [];
-    const rev = Array.from({ length: S }, () => []);
-    const addNode = (kind, orb, outcomes, extra) => {
+    const rev = yield* emptyLists(S);
+    const addNode = function* (kind, orb, outcomes, extra) {
         const id = nodes.length;
         const out = [];
         const node = { kind, orb, cost: orb >= 0 ? orbs[orb].weight : 0, N: 0, D: 0, done: false, out, ...extra };
         nodes.push(node);
+        let seen = 0;
         for (const { codes, lock, p } of outcomes) {
+            if (++seen % 2048 === 0) yield;
             const s = stateIndex.get(keyOf(lock, codes));
             if (s === undefined || !(p > 0)) continue;
             rev[s].push(id, p);
@@ -628,30 +672,34 @@ export function* solveSteps(problem, options = {}) {
         }
         return id;
     };
-    const stateMembers = (predicate) => {
-        const members = [];
-        for (let s = 0; s < S; s++) if (predicate(s)) members.push(s);
-        return members;
-    };
+    // The states of each lock choice, in one pass (a scan per lock would be C passes over every state)
+    const membersByLock = new Map();
+    for (let s = 0; s < S; s++) {
+        if ((s & ENUMERATE_YIELD_MASK) === ENUMERATE_YIELD_MASK) yield;
+        const lock = stLock[s];
+        if (!membersByLock.has(lock)) membersByLock.set(lock, []);
+        membersByLock.get(lock).push(s);
+    }
     const lockMask = (lock) => (lock >= 0 && labelOf(lock) > 0 ? 1 << labelOf(lock) : 0);
     const lockJunk = (lock) => (lock >= 0 && labelOf(lock) === 0 ? 1 : 0);
 
-    const groupOfState = Array.from({ length: S }, () => []);
-    const singleNodes = Array.from({ length: S }, () => []);
-    const mutationParts = Array.from({ length: S }, () => []);
+    const groupOfState = yield* emptyLists(S);
+    const singleNodes = yield* emptyLists(S);
+    const mutationParts = yield* emptyLists(S);
     const mutationNodes = new Map();
 
     for (let o = 0; o < orbs.length; o++) {
         const orb = orbs[o];
+        yield;
         if (orb.mode === MODES.full) {
             for (let lock = -1; lock < C; lock++) {
                 const u = lock >= 0 ? n - 1 : n;
                 if (u < orb.minUnlocked) continue;
-                const members = stateMembers((s) => stLock[s] === lock);
-                if (members.length === 0) continue;
+                const members = membersByLock.get(lock);
+                if (!members || members.length === 0) continue;
                 if (lock >= 0) yield;
-                const draws = drawLines(u, lockMask(lock), lockJunk(lock), { cap: orb.cap });
-                const id = addNode(
+                const draws = yield* drawLines(u, lockMask(lock), lockJunk(lock), { cap: orb.cap });
+                const id = yield* addNode(
                     0,
                     o,
                     draws.map((d) => ({ codes: d.codes, lock, p: d.p })),
@@ -676,8 +724,8 @@ export function* solveSteps(problem, options = {}) {
             let groupCount = 0;
             for (const { lock, grades, members } of groups.values()) {
                 if (++groupCount % 64 === 0) yield;
-                const draws = drawLines(grades.length, lockMask(lock), lockJunk(lock), { grades, focus: true });
-                const id = addNode(
+                const draws = yield* drawLines(grades.length, lockMask(lock), lockJunk(lock), { grades, focus: true });
+                const id = yield* addNode(
                     0,
                     o,
                     draws.map((d) => ({ codes: d.codes, lock, p: d.p })),
@@ -703,8 +751,8 @@ export function* solveSteps(problem, options = {}) {
                     if (nodeId === undefined) {
                         const keptMask = wantedMaskOf(kept, lock);
                         const keptJunk = kept.filter((c) => labelOf(c) === 0).length + lockJunk(lock);
-                        const draws = drawLines(take, keptMask, keptJunk, { cap: orb.cap });
-                        nodeId = addNode(
+                        const draws = yield* drawLines(take, keptMask, keptJunk, { cap: orb.cap });
+                        nodeId = yield* addNode(
                             2,
                             o,
                             draws.map((d) => ({
@@ -737,7 +785,7 @@ export function* solveSteps(problem, options = {}) {
                     if (!outcomes.has(key)) outcomes.set(key, { codes: next, lock: stLock[s], p: 0 });
                     outcomes.get(key).p += 1 / perms.length;
                 }
-                singleNodes[s].push(addNode(1, o, [...outcomes.values()], { member: s }));
+                singleNodes[s].push(yield* addNode(1, o, [...outcomes.values()], { member: s }));
             }
         } else if (orb.mode === MODES.gradeShift) {
             const same = Math.max(0, 1 - orb.down - orb.up);
@@ -767,14 +815,14 @@ export function* solveSteps(problem, options = {}) {
                     current = next;
                 }
                 const outcomes = [...current.values()].map((e) => ({ ...e, lock: stLock[s] }));
-                singleNodes[s].push(addNode(1, o, outcomes, { member: s }));
+                singleNodes[s].push(yield* addNode(1, o, outcomes, { member: s }));
             }
         }
         yield;
     }
 
     // Deterministic moves: lock a line (Binding Orb, replaces the old lock) and unlock (free)
-    const predecessors = Array.from({ length: S }, () => []);
+    const predecessors = yield* emptyLists(S);
     for (let s = 0; s < S; s++) {
         if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
         const codes = stCodes[s];
@@ -826,7 +874,10 @@ export function* solveSteps(problem, options = {}) {
         return den > 0 ? num / den : Infinity;
     };
 
-    for (let s = 0; s < S; s++) if (isGoal(s)) offer(s, 0, 0, -1);
+    for (let s = 0; s < S; s++) {
+        if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
+        if (isGoal(s)) offer(s, 0, 0, -1);
+    }
 
     let step = 0;
     let work = 0;
@@ -878,7 +929,14 @@ export function* solveSteps(problem, options = {}) {
             const node = nodes[id - S];
             if (node.done) continue;
             node.done = true;
-            for (const s of node.members) if (!finalized[s]) finalize(s, value, 1, id - S);
+            for (const s of node.members) {
+                if (!finalized[s]) finalize(s, value, 1, id - S);
+                // A group can hold most of the state space: yield inside it too
+                if (work > WORK_PER_SLICE) {
+                    work = 0;
+                    yield;
+                }
+            }
         }
         step++;
         if (work > WORK_PER_SLICE) {
@@ -908,6 +966,7 @@ export function* solveSteps(problem, options = {}) {
         rerollValue[s] = bestValue;
     }
 
+    yield;
     // The orb behind each state's chosen reroll
     const actOrb = new Int8Array(S).fill(-1);
     for (let s = 0; s < S; s++) {
@@ -917,11 +976,29 @@ export function* solveSteps(problem, options = {}) {
 
     // ---- Expected orb counts under the chosen policy, in the same order ----
     const K = orbs.length + 1; // last slot: Binding Orb
+    yield;
     const E = new Float64Array(S * K);
-    const order = [];
-    for (let s = 0; s < S; s++) if (finalized[s]) order.push(s);
-    order.sort((a, b) => stepOf[a] - stepOf[b]);
+    yield;
+    // States by the step they were finalized at (a counting sort, stable: a comparator sort of every state is one long
+    // pause at the largest sizes)
+    yield;
+    const stepStart = new Int32Array(step + 2);
+    let finalCount = 0;
+    for (let s = 0; s < S; s++) {
+        if ((s & 8191) === 8191) yield;
+        if (!finalized[s]) continue;
+        stepStart[stepOf[s] + 1]++;
+        finalCount++;
+    }
+    for (let t = 0; t <= step; t++) stepStart[t + 1] += stepStart[t];
+    const order = new Int32Array(finalCount);
+    for (let s = 0; s < S; s++) {
+        if ((s & 8191) === 8191) yield;
+        if (finalized[s]) order[stepStart[stepOf[s]]++] = s;
+    }
+    yield;
     const NE = nodes.map(() => new Float64Array(K));
+    yield;
     const DE = new Float64Array(nodes.length);
     // Per state, for the chosen reroll: the chance one roll is worth keeping (P(better)), and the wanted slots
     // (bit label) that every such roll carries. Both are read at the state's own step, before later states count.
@@ -938,6 +1015,7 @@ export function* solveSteps(problem, options = {}) {
         let j = i;
         while (j < order.length && stepOf[order[j]] === stepOf[order[i]]) j++;
         for (let x = i; x < j; x++) {
+            if ((x & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
             const s = order[x];
             const base = s * K;
             const type = actType[s];
@@ -976,6 +1054,7 @@ export function* solveSteps(problem, options = {}) {
             }
         }
         for (let x = i; x < j; x++) {
+            if ((x & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
             const s = order[x];
             const refs = rev[s];
             const outcomeMask = wantedMaskOf(stCodes[s], stLock[s]);

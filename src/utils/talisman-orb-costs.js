@@ -1,7 +1,7 @@
 /**
  * Talisman orb costs for the line ranking
  *
- * Expected orb spend to reach a target (up to four lines, each with a minimum grade), from the reroll advisor's exact
+ * Expected orb spend to reach a target (up to six lines, each with a minimum grade), from the reroll advisor's exact
  * solver (utils/talisman-reroll-solver.js), on the same orb scale (utils/talisman-orb-weights.js):
  *
  * - From a fresh talisman: created, then lines added with cores up to the full count, then rerolled. Lines from

@@ -139,3 +139,35 @@ describe('planAnyKTarget', () => {
         expect(ANY_K_MAX_POOL).toBe(MAX_WANTED_LINES);
     });
 });
+
+describe('planAnyKTarget limits', () => {
+    test('a pool the solver would refuse loses its weakest optional lines until it fits, and they are counted', () => {
+        const rows = [row('top', 100, 1)];
+        for (let i = 0; i < 5; i++) rows.push(row(`m${i}`, 20 - i * 0.1, 1));
+        const plan = planAnyKTarget(rows, { grade: G, k: 4, fits: (size) => size <= 5 });
+        expect(plan.poolSize).toBe(5);
+        expect(plan.leftOut).toBe(1);
+        expect(requiredNames(plan)).toEqual(['top']);
+        expect(names(plan)).not.toContain('m4');
+        // A ceiling below the required lines stops at them rather than dropping one
+        const tight = planAnyKTarget(rows, { grade: G, k: 4, fits: (size) => size <= 1 });
+        expect(tight.targets.length).toBeGreaterThanOrEqual(tight.need);
+        expect(requiredNames(tight)).toEqual(['top']);
+    });
+
+    test('a second Special within noise of the K-th line counts as left out', () => {
+        const rows = [
+            row('s1', 30, 0.5, { special: true }),
+            row('s2', 29.8, 0.5, { special: true }),
+            row('a', 20, 0.5),
+            row('far', 1, 0.1, { special: true }),
+        ];
+        // K = 2: the K-th line (a, 20 ± 0.5) is far from s2 (29.8), and s2 is above it: it would have been a candidate
+        const plan = planAnyKTarget(rows, { grade: G, k: 2 });
+        expect(names(plan)).toEqual(['s1', 'a']);
+        expect(plan.leftOut).toBe(1);
+        // A second Special well below the K-th line is not counted
+        const quiet = planAnyKTarget([rows[0], rows[2], rows[3]], { grade: G, k: 2 });
+        expect(quiet.leftOut).toBe(0);
+    });
+});
