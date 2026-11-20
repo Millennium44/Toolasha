@@ -97,7 +97,7 @@ const TIP_COPY = 'Copies the set as reroll targets: per talisman, each line with
 const TIP_IMPROVE = 'From the talismans you own of this type, the next targets with the most value per orb.';
 const TIP_AIM = 'Hands this target to the reroll advisor in the talisman window and opens the talisman there.';
 const TIP_AIM_ANY =
-    'Hands the reroll advisor every line whose gain is within noise of the last line the target needs, with the lines that clearly beat all of those marked required, and "need any K" of them (K is the line count of the target). The advisor then aims for the cheapest way to hold K of them, required ones included.';
+    'Hands the reroll advisor this option\'s own lines plus every other line whose gain is within noise of the weakest of them, as acceptable alternatives, and "need any K" of them (K is the option\'s line count). An option line that clearly beats every alternative is marked required; with no alternatives all of them are. The advisor then aims for the cheapest way to hold K of them.';
 const TIP_BELT_HEAD =
     'Which belt upgrade is worth buying: every candidate belt is valued with the talismans slotted now, then set against its cost.';
 const TIP_BELT_COST =
@@ -998,6 +998,8 @@ export class TalismanRankingSectionBase {
             const plan = planAnyKTarget(this._improve.rows, {
                 grade,
                 k: option.targets.length,
+                // The option's own lines stay in the pool, whatever else the ranking holds
+                own: option.targets.map((t) => t.hrid),
                 // The solver's state ceiling: a pool it would refuse is cut down here instead
                 fits: (size) => effectiveStates(lines, size, grade, maxGrade).states <= MAX_STATES,
             });

@@ -171,3 +171,92 @@ describe('planAnyKTarget limits', () => {
         expect(quiet.leftOut).toBe(0);
     });
 });
+
+describe('planAnyKTarget anchored on an option', () => {
+    const own = (...keys) => keys.map((key) => H(key));
+
+    test('the live case (a 1-line option ranking below Overkill): own line, an alternative within noise, nothing required, K = 1', () => {
+        const at = (key, gain, noise = 0.86, extra = {}) => ({
+            ...row(key, gain, noise, extra),
+            byGrade: [gain, 0, 0, 0, 0, gain],
+        });
+        const rows = [at('overkill', 71.0), at('elemental_amplify', 70.4), at('consistency', 26.3)];
+        const plan = planAnyKTarget(rows, { grade: 1, k: 1, own: own('elemental_amplify') });
+        expect(names(plan)).toEqual(['elemental_amplify', 'overkill']);
+        expect(plan.targets[0].hrid).toBe(H('elemental_amplify'));
+        expect(requiredNames(plan)).toEqual([]);
+        expect(plan.need).toBe(1);
+        expect(plan.poolSize).toBe(2);
+        // Consistency is far below the anchor: not in the pool
+        expect(names(plan)).not.toContain('consistency');
+        // Overkill clearly better than the own line: still only an alternative, the own line is never dropped
+        const clear = [at('overkill', 90), at('elemental_amplify', 50)];
+        const far = planAnyKTarget(clear, { grade: 1, k: 1, own: own('elemental_amplify') });
+        expect(names(far)).toEqual(['elemental_amplify', 'overkill']);
+    });
+
+    test('nothing within noise of the anchor: no alternatives, every own line required (Aim for this)', () => {
+        const rows = [row('a', 50), row('b', 40), row('c', 30), row('d', 20), row('e', 5)];
+        const plan = planAnyKTarget(rows, { grade: G, k: 4, own: own('a', 'b', 'c', 'd') });
+        expect(plan.need).toBe(4);
+        expect(names(plan)).toEqual(['a', 'b', 'c', 'd']);
+        expect(requiredNames(plan)).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    test('a 4-line option: lines beating every alternative are required, the rest compete', () => {
+        const rows = [
+            row('a', 71),
+            row('b', 26.3),
+            row('c', 13.5),
+            row('d', 13.5),
+            row('alt1', 11.9),
+            row('alt2', 11.7),
+            row('low', 5),
+        ];
+        const plan = planAnyKTarget(rows, { grade: G, k: 4, own: own('a', 'b', 'c', 'd') });
+        expect(plan.need).toBe(4);
+        expect(plan.targets.slice(0, 4).map((t) => t.hrid)).toEqual(own('a', 'b', 'c', 'd'));
+        expect(requiredNames(plan)).toEqual(['a', 'b']);
+        expect(names(plan).slice(4).sort()).toEqual(['alt1']);
+        expect(plan.leftOut).toBe(0);
+    });
+
+    test('an own line with no ranking row stays required and the anchor comes from the rest', () => {
+        const rows = [row('a', 30), row('alt', 29.5)];
+        const plan = planAnyKTarget(rows, { grade: G, k: 2, own: own('a', 'ghost') });
+        expect(plan.need).toBe(2);
+        expect(plan.targets.map((t) => t.hrid)).toContain(H('ghost'));
+        expect(requiredNames(plan)).toContain('ghost');
+        expect(names(plan)).toEqual(['a', 'ghost', 'alt']);
+        // Nothing known at all: the own lines as they are
+        const none = planAnyKTarget([row('x', 5)], { grade: G, k: 1, own: own('ghost') });
+        expect(requiredNames(none)).toEqual(['ghost']);
+        expect(none.poolSize).toBe(1);
+    });
+
+    test('the cut never drops an own line: added lines go weakest first, and if the own lines alone do not fit they are sent alone', () => {
+        const rows = [row('a', 20, 1), row('b', 19.9, 1), row('c', 19.8, 1), row('d', 19.7, 1)];
+        const cut = planAnyKTarget(rows, { grade: G, k: 1, own: own('d'), fits: (size) => size <= 2 });
+        expect(names(cut)).toEqual(['d', 'a']);
+        expect(cut.leftOut).toBe(2);
+        const alone = planAnyKTarget(rows, { grade: G, k: 1, own: own('d'), fits: () => false });
+        expect(names(alone)).toEqual(['d']);
+        expect(requiredNames(alone)).toEqual(['d']);
+        expect(alone.need).toBe(1);
+        // maxPool cuts the same way
+        const small = planAnyKTarget(rows, { grade: G, k: 1, own: own('d'), maxPool: 2 });
+        expect(small.poolSize).toBe(2);
+        expect(names(small)).toContain('d');
+    });
+
+    test('a second Special is never added beside an own Special, and counts as left out within noise', () => {
+        const rows = [
+            row('s1', 30, 0.5, { special: true }),
+            row('s2', 29.9, 0.5, { special: true }),
+            row('p', 29.8, 0.5),
+        ];
+        const plan = planAnyKTarget(rows, { grade: G, k: 1, own: own('s1') });
+        expect(names(plan)).toEqual(['s1', 'p']);
+        expect(plan.leftOut).toBe(1);
+    });
+});
