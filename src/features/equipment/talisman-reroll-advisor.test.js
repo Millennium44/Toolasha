@@ -262,7 +262,14 @@ describe('describeAdvice', () => {
             'cannot roll on this talisman type'
         );
         expect(text({ status: 'impossible', reason: 'gradeAboveCap', hrid: M('armor') })).toContain('G6');
-        expect(text({ status: 'impossible', reason: 'needsMoreLines' })).toContain('add lines with talisman cores');
+        // Only when no core can add the lines: past the most a talisman holds, or no core in the game data
+        expect(text({ status: 'impossible', reason: 'needsMoreLines' })).toContain('lists no core to add more');
+        expect(
+            describeAdvice(
+                { build: { status: 'impossible', reason: 'needsMoreLines', need: 5 } },
+                { ...names, maxLines: 4 }
+            ).move
+        ).toBe('Not reachable. The target needs 5 lines; a talisman holds at most 4.');
     });
 
     test('a clamped large target says so', () => {

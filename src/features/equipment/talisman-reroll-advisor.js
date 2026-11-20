@@ -37,7 +37,8 @@ import {
     scanControls,
 } from './talisman-step-controls.js';
 import { isTestServer } from '../../utils/game-server.js';
-import { coinCost, orbWeights, roundWeights } from '../../utils/talisman-orb-weights.js';
+import { referenceOrb } from '../../utils/talisman-orb-costs.js';
+import { coinCost, corePrices, orbWeights, roundWeights } from '../../utils/talisman-orb-weights.js';
 import {
     advise,
     buildProblem,
@@ -74,10 +75,16 @@ export const ADVISOR_HELP = [
         'is unknown. A talisman never holds one type twice (the game keys its lines by type).',
     'Assumed, not measured: Exchange shuffles the unlocked grades uniformly.',
     'Measured: lines from creating a talisman and from cores roll G1-G3 only, whatever the core (396 lines: 57 / 28 / ' +
-        '15%, the Reforging curve cut at G3). This advice does not plan adding lines: it uses the lines the talisman has now. ' +
+        '15%, the Reforging curve cut at G3), types by weight among the types the talisman does not hold. A talisman ' +
+        'with fewer than four lines may be told to add a line with cores first: when the cores have a market price ' +
+        '(or your own), adding competes with rerolling on cost; when they have none, the advice rerolls and says how ' +
+        'many orbs adding first would save, or says the add is required when the target needs more lines. Adds are ' +
+        'planned on an unlocked talisman only (whether the game adds while a line is locked is not checked), and Do ' +
+        'next step never presses the add: do it in the game window. ' +
         'The Core advisor (Combat Sim Upgrade tab, Skilling Optimizer Talismans) values the next line of a worn talisman against its cores.',
     'Orbs are weighed by market price when every orb has a live listing, otherwise by the game item value; a coin ' +
-        'cost is shown only when every orb the strategy uses has a market price.',
+        'cost is shown only when every orb (and core) the strategy uses has a market price. Cores are weighed only ' +
+        'on the market scale.',
     'Do next step does one game action per click (choosing the orb in the picker first when needed) and then waits ' +
         'for the talisman to change; it never continues on its own.',
 ];
@@ -138,7 +145,10 @@ export function describeAdvice(result, names) {
             tooFewRollable: `Only ${build.rollable} of the picked lines can roll on this talisman type at a grade the game offers, and you need ${build.need}.`,
             notInPool: `${mod(build.hrid)} cannot roll on this talisman type.`,
             gradeAboveCap: `${mod(build.hrid)}: grades only go up to G6.`,
-            needsMoreLines: `The talisman has ${names.lineCount} line(s); add lines with talisman cores first (the Core advisor in the Talismans sections says whether the next line is worth it).`,
+            needsMoreLines:
+                names.maxLines && build.need > names.maxLines
+                    ? `The target needs ${build.need} lines; a talisman holds at most ${names.maxLines}.`
+                    : `The talisman has ${names.lineCount} line(s), and the game data lists no core to add more.`,
         };
         return { move: `Not reachable. ${reasons[build.reason] || ''}`.trim(), detail: [] };
     }
@@ -157,9 +167,18 @@ export function describeAdvice(result, names) {
             break;
         case 'move': {
             const next = advice.move;
+            const needs = advice.addRequired?.need ?? build.problem?.need;
+            const needsLines = needs > names.lineCount ? ` The target needs ${needs} lines.` : '';
             if (next.kind === 'lock') move = `Next: lock ${mod(next.modifierHrid)} with a ${item(next.itemHrid)}.`;
-            else if (next.kind === 'unlock') move = 'Next: unlock the locked line (free).';
-            else {
+            else if (next.kind === 'unlock' && advice.addRequired) {
+                const then = advice.addRequired;
+                move =
+                    `Next: unlock the locked line (free), then add line ${then.lineNumber} with ` +
+                    `${then.count} ${item(then.itemHrid)}.${needsLines}`;
+            } else if (next.kind === 'unlock') move = 'Next: unlock the locked line (free).';
+            else if (next.kind === 'add') {
+                move = `Next: add line ${next.lineNumber} with ${next.count} ${item(next.itemHrid)}.${needsLines}`;
+            } else {
                 move = `Next: ${item(next.itemHrid)}.`;
                 if (next.mode === REROLL_MODES.typesOnly && next.focusHrids?.length) {
                     move += ` Focus on ${next.focusHrids.map(mod).join(', ')}.`;
@@ -197,6 +216,24 @@ export function describeAdvice(result, names) {
             detail.push(`About 1 roll in ${formatOdds(1 / chance)} is worth keeping${named}; the rest are discarded.`);
         }
     }
+    if (advice.status === 'move' && advice.addRequired?.unpriced) {
+        detail.push(
+            'Lines are added only where the target needs them: the cores have no market price, so they are not ' +
+                'weighed against orbs.'
+        );
+    }
+    if (advice.status === 'move' && advice.addSuggestion) {
+        const sg = advice.addSuggestion;
+        const unit = result.reference?.weight > 0 ? result.reference.weight : 0;
+        const fewer =
+            unit > 0
+                ? ` about ${formatCount(sg.saving / unit)} fewer orbs expected (${item(result.reference.hrid)} equivalents)`
+                : ' fewer orbs expected';
+        detail.push(
+            `${sg.unlockFirst ? 'Unlock and add' : 'Add'} a line first (${sg.move.count} ${item(sg.move.itemHrid)}):` +
+                `${fewer}. The cores have no market price, so they are not weighed against the orbs.`
+        );
+    }
     const counts = advice.counts || {};
     const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
     if (entries.length > 0 && advice.status !== 'met') {
@@ -209,7 +246,9 @@ export function describeAdvice(result, names) {
                 `About ${formatCoins(coins)} coins (${craftedUsed.map(item).join(', ')} at crafting cost, the rest at market prices).`
             );
         } else if (coins !== null) detail.push(`About ${formatCoins(coins)} coins at market prices.`);
-        else detail.push('No coin cost: not every orb used has a market listing or a priced recipe.');
+        else if (entries.some(([hrid]) => names.isCore?.(hrid))) {
+            detail.push('No coin cost: not every orb or core used has a market listing or a priced recipe.');
+        } else detail.push('No coin cost: not every orb used has a market listing or a priced recipe.');
         if (result.scale === 'market' && (result.crafted || []).length > 0) {
             detail.push(`Orbs without a listing weighed at crafting cost: ${result.crafted.map(item).join(', ')}.`);
         } else if (result.scale !== 'market') {
@@ -225,6 +264,9 @@ export function describeAdvice(result, names) {
     if (met) return { move, detail };
     if (result.updating) detail.push('Updating for new prices…');
     if (result.mutationUsed === false) detail.push('Target too large to weigh the Mutation Orb; it is left out.');
+    if (result.addLeftOut) {
+        detail.push('Target too large to plan every line the cores could add; the largest line counts are left out.');
+    }
     if (result.gradeClamped) {
         detail.push(
             `Target too large to track every grade: grades above G${result.clampGrade} count as G${result.clampGrade}, ` +
@@ -257,6 +299,8 @@ const REROLL_WAIT_TRIES = 10;
 const REROLL_WAIT_MS = 50;
 const CONFIRM_TEXT = "Confirm in the game's dialog";
 const REFUSED_TEXT = 'No response — the game may have refused this (rerolls are blocked in combat)';
+/** Adding a line is never pressed by Do next step (the press has not been tested live) */
+export const ADD_MANUAL_TEXT = 'Add the line in the game window yourself: Do next step does not press this one.';
 
 class TalismanRerollAdvisor {
     constructor() {
@@ -648,9 +692,19 @@ class TalismanRerollAdvisor {
         const need = this.getNeed(talisman);
         this.syncNeedUi(talisman);
         const info = initData.talismanInfo;
-        const { weights: exactWeights, prices, scale, crafted } = orbWeights(info, initData.itemDetailMap);
+        const { weights: exactWeights, prices: orbPrices, scale, crafted } = orbWeights(info, initData.itemDetailMap);
         // Two significant figures: a market tick does not start a new solve
         const weights = roundWeights(exactWeights);
+        // Cores weigh against orbs only on the coin scale, at a live listing or the player's own price; any other
+        // core is unpriced (suggested, never weighed as free)
+        const cores = corePrices(info);
+        const coreHrids = new Set(
+            [info.createInputItemHrid, ...Object.values(info.addModifierInputMap || {}).map((i) => i?.itemHrid)].filter(
+                Boolean
+            )
+        );
+        const coreWeights = scale === 'market' ? roundWeights(cores) : {};
+        const prices = { ...orbPrices, ...cores };
         const build = buildProblem({
             talismanTypeHrid: talisman.talismanTypeHrid,
             lineCount: (talisman.modifiers || []).length,
@@ -659,16 +713,22 @@ class TalismanRerollAdvisor {
             info,
             modifierDetailMap: initData.talismanModifierDetailMap,
             weights,
+            addLine: { coreWeights },
         });
+        // A clamp in any line count planned shows: the lowest grade levels of them
+        const layers = build.status === 'ok' ? [build.problem, ...(build.problem.layers || [])] : [];
+        const clamped = layers.filter((l) => l.gradeClamped);
         const result = {
             build,
             advice: null,
             scale,
             prices,
             crafted,
+            reference: referenceOrb(info, weights),
             mutationUsed: true,
-            gradeClamped: build.status === 'ok' ? build.problem.gradeClamped : false,
-            clampGrade: build.status === 'ok' ? build.problem.G : 0,
+            gradeClamped: clamped.length > 0,
+            clampGrade: clamped.length > 0 ? Math.min(...clamped.map((l) => l.G)) : layers[0]?.G || 0,
+            addLeftOut: build.status === 'ok' && build.problem.addLeftOut === true,
         };
 
         // Hard rules first, on the raw lines, whatever the solver says
@@ -678,8 +738,16 @@ class TalismanRerollAdvisor {
         } else if (build.status === 'ok' && meetsTarget(talisman.modifiers, targets, need)) {
             result.advice = pending ? { status: 'discard', counts: {} } : { status: 'met', counts: {} };
         } else if (build.status === 'ok') {
-            const shape = JSON.stringify([talisman.talismanTypeHrid, build.problem.n, targets, build.problem.need]);
-            const key = JSON.stringify([shape, weights]);
+            // Which adds are weighed (priced) changes the moves the solution can name, so it is part of the shape
+            const addShape = (build.problem.adds || []).map((a) => (a.weight > 0 ? 1 : 0));
+            const shape = JSON.stringify([
+                talisman.talismanTypeHrid,
+                build.problem.n,
+                targets,
+                build.problem.need,
+                ...(addShape.length ? [addShape] : []),
+            ]);
+            const key = JSON.stringify([shape, weights, ...(addShape.length ? [coreWeights] : [])]);
             let solution = this.solutions.get(key);
             if (!solution) {
                 this.startSolve(key, shape, build.problem);
@@ -697,6 +765,8 @@ class TalismanRerollAdvisor {
             item: (hrid) => initData.itemDetailMap?.[hrid]?.name || hrid,
             modifier: (hrid) => initData.talismanModifierDetailMap?.[hrid]?.name || hrid,
             lineCount: (talisman.modifiers || []).length,
+            maxLines: Number(info.maxModifierCount) || 4,
+            isCore: (hrid) => coreHrids.has(hrid),
         };
         const text = describeAdvice(result, names);
         const moveEl = this.panel?.querySelector(`.${PANEL_CLASS}-move`);
@@ -747,7 +817,17 @@ class TalismanRerollAdvisor {
         } else {
             button.style.display = '';
             const item = itemFor(context.advice);
-            if (!this.pressing && item && inventoryCount(context.instance, item) === 0) {
+            const add =
+                context.advice.status === 'move' && context.advice.move?.kind === 'add' ? context.advice.move : null;
+            if (add) {
+                // Nothing to press: say what to do, and whether the cores are there
+                disabled = true;
+                const have = inventoryCount(context.instance, add.itemHrid);
+                text =
+                    have !== null && have < add.count
+                        ? `${ADD_MANUAL_TEXT} Needs ${add.count} ${context.names.item(add.itemHrid)}; you have ${have}.`
+                        : ADD_MANUAL_TEXT;
+            } else if (!this.pressing && item && inventoryCount(context.instance, item) === 0) {
                 disabled = true;
                 text = `No ${context.names.item(item)} in inventory`;
             }

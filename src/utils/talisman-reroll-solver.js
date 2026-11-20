@@ -40,7 +40,12 @@
  *    weight from the pool rather than its own type's weight.
  *  - Focus draws types line by line in grade order; the server's draw order is unknown.
  *  - Exchange is assumed to be a uniform random permutation of the unlocked grades (not measured).
- *  - Adding lines with talisman cores is not planned: the advisor works with the talisman's current line count.
+ *  - Adding lines with talisman cores is planned only on request (`addLine`): one layer per line count, the full
+ *    count solved first, each lower count then offered an add into the layer above (a chance node over the new line,
+ *    drawn as creation and cores draw it). An add is offered from a lock-free state only (whether the game adds while
+ *    a line is locked is not checked), so a locked talisman unlocks first, which may cost a Binding Orb more than the
+ *    game would ask. A core with no price is never weighed as free: its add is not a move, and advice reports what it
+ *    would save, or that it is required. A layer over MAX_STATES, and every layer above it, is left out (`addLeftOut`).
  *  - Mutation (random_lines) fans out widely; a target whose state space is larger than MUTATION_STATE_LIMIT is
  *    solved without it, and the result says so.
  *
@@ -304,6 +309,9 @@ export function normalizeTarget(targets, need) {
  * @param {Object} input.info - talismanInfo
  * @param {Object} input.modifierDetailMap - talismanModifierDetailMap
  * @param {Object<string, number>} input.weights - Cost weight per orb item hrid (one scale for all)
+ * @param {{coreWeights?: Object<string, number>}|null} [input.addLine] - Opt in to planning lines added with cores
+ *   (see {@link addLinePlan}): the cost weight per core item hrid, on the orbs' scale. A core with no weight here is
+ *   unpriced: its add is never weighed against orbs (never as free), only suggested. Left out: today's solve.
  * @returns {{status: 'ok', problem: Object}|{status: string, reason?: string, hrid?: string}}
  */
 export function buildProblem({
@@ -314,6 +322,7 @@ export function buildProblem({
     info,
     modifierDetailMap,
     weights,
+    addLine = null,
 }) {
     if (!info || !modifierDetailMap) return { status: 'noData' };
     const n = Math.floor(lineCount) || 0;
@@ -359,7 +368,13 @@ export function buildProblem({
             ? { status: 'impossible', ...firstFailure }
             : { status: 'impossible', reason: 'tooFewRollable', rollable: rollable.length, need };
     }
-    if (need > n) return { status: 'impossible', reason: 'needsMoreLines', need };
+    // Lines the cores can add, each a layer above this one (the opt-in only)
+    const plan = addLine ? addLinePlan(info, n, addLine.coreWeights) : [];
+    // Unpriced adds past the last priced one matter only up to the line count the target needs (or one line up, for
+    // the suggestion): no layer is solved above that
+    const lastPriced = plan.reduce((last, a, i) => (a.weight > 0 ? i : last), -1);
+    const adds = plan.slice(0, Math.max(lastPriced + 1, 1, need - n));
+    if (need > n + adds.length) return { status: 'impossible', reason: 'needsMoreLines', need };
     const seen = new Set(rollable.map((t) => t.hrid));
 
     const pool = Object.values(modifierDetailMap).filter(
@@ -407,23 +422,74 @@ export function buildProblem({
         return { status: 'impossible', reason: 'tooManyStates', rollable: wanted.length, states, max: MAX_STATES };
     }
 
+    const problem = {
+        n,
+        m: wanted.length,
+        need,
+        G: gradeLevels,
+        gradeClamped: gradeLevels < maxGrade,
+        maxGrade,
+        wanted,
+        junkWeight,
+        junkCount: junkTypes.length,
+        orbs,
+        binding,
+        focusMult: focusMultiplier(info),
+    };
+    if (adds.length === 0) return { status: 'ok', problem };
+
+    // One layer per line count above this one, each with its own grade clamp (as a solve at that count would have).
+    // A layer over MAX_STATES and every layer above it are left out: the lines below are planned without that add.
+    const layers = [];
+    for (let k = 1; k <= adds.length; k++) {
+        const layer = effectiveStates(n + k, wanted.length, highestMin, maxGrade);
+        if (layer.states > MAX_STATES) break;
+        layers.push({ n: n + k, G: layer.G, gradeClamped: layer.G < maxGrade, states: layer.states });
+    }
+    const kept = adds.slice(0, layers.length);
+    const addLeftOut = layers.length < adds.length;
+    if (need > n + kept.length) {
+        return {
+            status: 'impossible',
+            reason: 'tooManyStates',
+            rollable: wanted.length,
+            states: null,
+            max: MAX_STATES,
+        };
+    }
+    if (kept.length === 0) return { status: 'ok', problem: { ...problem, addLeftOut } };
     return {
         status: 'ok',
         problem: {
-            n,
-            m: wanted.length,
-            need,
-            G: gradeLevels,
-            gradeClamped: gradeLevels < maxGrade,
-            maxGrade,
-            wanted,
-            junkWeight,
-            junkCount: junkTypes.length,
-            orbs,
-            binding,
-            focusMult: focusMultiplier(info),
+            ...problem,
+            adds: kept,
+            layers,
+            coreHrids: [...new Set(kept.map((a) => a.itemHrid))],
+            ...(addLeftOut ? { addLeftOut } : {}),
         },
     };
+}
+
+/**
+ * The lines a talisman with `n` lines can still take from cores, from `talismanInfo` (`addModifierInputMap` keyed by
+ * the line being added, `maxModifierCount` the most lines). A line whose cost is missing stops the plan there.
+ * @param {Object} info - talismanInfo
+ * @param {number} n - Lines now
+ * @param {Object<string, number>} [coreWeights] - Cost weight per core item hrid
+ * @returns {Array<{line: number, itemHrid: string, count: number, weight: number|null}>} weight is null when the core
+ *   has no weight (unpriced: never weighed as free)
+ */
+export function addLinePlan(info, n, coreWeights) {
+    const maxLines = Number(info?.maxModifierCount) || 4;
+    const adds = [];
+    for (let line = n + 1; line <= maxLines; line++) {
+        const input = info?.addModifierInputMap?.[line] ?? info?.addModifierInputMap?.[String(line)];
+        const count = Number(input?.count);
+        if (!input?.itemHrid || !(count > 0)) break;
+        const unit = Number(coreWeights?.[input.itemHrid]);
+        adds.push({ line, itemHrid: input.itemHrid, count, weight: unit > 0 ? unit * count : null });
+    }
+    return adds;
 }
 
 /** A small indexed binary min-heap with decrease-key */
@@ -563,6 +629,29 @@ export function solve(problem, options = {}) {
  * @returns {Generator<undefined, Object>}
  */
 export function* solveSteps(problem, options = {}) {
+    if (!(problem.adds?.length > 0)) return yield* solveLayer(problem, options, null);
+    // Lines only ever increase: the full line count first, then each count below with an add into the layer above,
+    // whose values are final by then
+    const top = problem.n + problem.adds.length;
+    let upper = null;
+    for (let lines = top; lines >= problem.n; lines--) {
+        const layer = lines === problem.n ? problem : { ...problem, ...problem.layers[lines - problem.n - 1] };
+        upper = yield* solveLayer({ ...layer, n: lines }, options, upper);
+    }
+    return upper;
+}
+
+/**
+ * One line count's solve. With `upper` (the solution one line up), every lock-free state may also add the next line
+ * with cores: a chance node with no self-loop (the new line is always kept), valued core weight + Σ p·V_up(s'), the
+ * line drawn as creation and cores draw it (G1-G3, see MEASURED_ODDS.freshLineGrades; type by weight among the types
+ * not held). An unpriced add is never offered as a move; its value without the cores is kept for advice.
+ * @param {Object} problem - A layer of the problem: `n` is this layer's line count
+ * @param {Object} options
+ * @param {Object|null} upper
+ * @returns {Generator<undefined, Object>}
+ */
+function* solveLayer(problem, options, upper) {
     const { n, m, G, wanted, junkWeight, junkCount, orbs, binding, focusMult } = problem;
     const need = problem.need ?? m;
     const C = (m + 1) * G;
@@ -892,10 +981,46 @@ export function* solveSteps(problem, options = {}) {
     }
     yield;
 
+    // Adding the next line (lock-free states only: whether the game adds while a line is locked is not checked, so a
+    // locked talisman is planned through the free unlock)
+    const add = upper ? problem.adds[n - problem.adds[0].line + 1] : null;
+    const addOut = add ? new Array(S) : null;
+    // E[V_up] after the add, the cores left out (Infinity where some draw cannot reach the target)
+    const addValue = new Float64Array(S).fill(Infinity);
+    // The same with the layer above's own values (its adds only where priced): what a priced add is weighed by
+    const addPriced = new Float64Array(S).fill(Infinity);
+    const freshCap = Math.min(problem.maxGrade, MEASURED_ODDS.freshLineGrades.cap);
+    if (add) {
+        for (let s = 0; s < S; s++) {
+            if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
+            if (stLock[s] >= 0) continue;
+            const codes = stCodes[s];
+            const junkHeld = codes.filter((c) => labelOf(c) === 0).length;
+            const draws = yield* drawLines(1, wantedMaskOf(codes, -1), junkHeld, { cap: freshCap });
+            const lifted = codes.map((c) => upper.codeOf(labelOf(c), gradeOf(c)));
+            const out = [];
+            let value = 0;
+            let priced = 0;
+            let mass = 0;
+            for (const d of draws) {
+                const code = d.codes[0];
+                const t = upper.indexOf(-1, [...lifted, upper.codeOf(labelOf(code), gradeOf(code))]);
+                if (t === undefined || !(d.p > 0)) continue;
+                out.push(t, d.p);
+                value += d.p * upper.U[t];
+                priced += d.p * upper.V[t];
+                mass += d.p;
+            }
+            addOut[s] = out;
+            addValue[s] = mass > 0 ? value / mass : Infinity;
+            addPriced[s] = mass > 0 ? priced / mass : Infinity;
+        }
+    }
+
     // ---- Solve in increasing value ----
     const V = new Float64Array(S).fill(Infinity);
     const best = new Float64Array(S).fill(Infinity);
-    // Action per state: type 0 none/goal, 1 orb node, 2 mutation (orb index), 3 lock (code), 4 unlock
+    // Action per state: type 0 none/goal, 1 orb node, 2 mutation (orb index), 3 lock (code), 4 unlock, 5 add a line
     const actType = new Int8Array(S);
     const actArg = new Int32Array(S).fill(-1);
     const bestType = new Int8Array(S);
@@ -924,6 +1049,13 @@ export function* solveSteps(problem, options = {}) {
     for (let s = 0; s < S; s++) {
         if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
         if (isGoal(s)) offer(s, 0, 0, -1);
+    }
+    // A priced add: a fixed value, since the layer above is final (offered like a goal with a cost)
+    if (add && add.weight > 0) {
+        for (let s = 0; s < S; s++) {
+            if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
+            if (addOut[s] && Number.isFinite(addPriced[s])) offer(s, add.weight + addPriced[s], 5, -1);
+        }
     }
 
     let step = 0;
@@ -1022,7 +1154,11 @@ export function* solveSteps(problem, options = {}) {
     }
 
     // ---- Expected orb counts under the chosen policy, in the same order ----
-    const K = orbs.length + 1; // last slot: Binding Orb
+    // Slots: each orb, the Binding Orb, then each core the adds use (none without the opt-in)
+    const coreHrids = problem.coreHrids || [];
+    const BINDING_SLOT = orbs.length;
+    const K = orbs.length + 1 + coreHrids.length;
+    const addSlot = add ? orbs.length + 1 + coreHrids.indexOf(add.itemHrid) : -1;
     yield;
     const E = new Float64Array(S * K);
     yield;
@@ -1097,7 +1233,19 @@ export function* solveSteps(problem, options = {}) {
                 } else {
                     target = stateIndex.get(keyOf(-1, insertSorted(codes, lock)));
                 }
-                for (let k = 0; k < K; k++) E[base + k] = E[target * K + k] + (type === 3 && k === K - 1 ? 1 : 0);
+                for (let k = 0; k < K; k++) {
+                    E[base + k] = E[target * K + k] + (type === 3 && k === BINDING_SLOT ? 1 : 0);
+                }
+            } else if (type === 5) {
+                const out = addOut[s];
+                let mass = 0;
+                for (let r = 0; r < out.length; r += 2) mass += out[r + 1];
+                for (let r = 0; r < out.length; r += 2) {
+                    const t = out[r];
+                    const q = out[r + 1] / mass;
+                    for (let k = 0; k < K; k++) E[base + k] += q * upper.E[t * K + k];
+                }
+                E[base + addSlot] += add.count;
             }
         }
         for (let x = i; x < j; x++) {
@@ -1117,6 +1265,39 @@ export function* solveSteps(problem, options = {}) {
         i = j;
     }
 
+    // ---- With unpriced adds: the value and counts of adding lines only where the target needs them ----
+    // U = V where V is finite, else (a lock-free state) the add's value without its cores, else (a locked state) its
+    // lock-free counterpart's (the unlock is free). EU holds the counts of the states where U is not V.
+    const U = new Float64Array(V);
+    const EU = new Map();
+    if (add) {
+        for (let pass = 0; pass < 2; pass++) {
+            for (let s = 0; s < S; s++) {
+                if ((s & STATE_YIELD_MASK) === STATE_YIELD_MASK) yield;
+                if (Number.isFinite(V[s]) || stLock[s] >= 0 !== (pass === 1)) continue;
+                if (pass === 0) {
+                    if (!Number.isFinite(addValue[s])) continue;
+                    U[s] = addValue[s];
+                    const counts = new Float64Array(K);
+                    const out = addOut[s];
+                    let mass = 0;
+                    for (let r = 0; r < out.length; r += 2) mass += out[r + 1];
+                    for (let r = 0; r < out.length; r += 2) {
+                        const at = upper.countsOf(out[r]);
+                        for (let k = 0; k < K; k++) counts[k] += (out[r + 1] / mass) * at[k];
+                    }
+                    counts[addSlot] += add.count;
+                    EU.set(s, counts);
+                } else {
+                    const free = stateIndex.get(keyOf(-1, insertSorted(stCodes[s], stLock[s])));
+                    if (free === undefined || !Number.isFinite(U[free])) continue;
+                    U[s] = U[free];
+                    EU.set(s, EU.get(free) || E.slice(free * K, free * K + K));
+                }
+            }
+        }
+    }
+
     // Keep only what advice needs. The solution is built outside this scope, so the closures above (and the
     // reverse edges, heap and accumulators they reach) are not pinned by a cached solution.
     return makeSolution({
@@ -1130,8 +1311,18 @@ export function* solveSteps(problem, options = {}) {
         rerollValue,
         keepChance,
         keepMask,
-        orbHrids: [...orbs.map((o) => o.hrid), binding ? binding.hrid : ''],
+        orbHrids: [...orbs.map((o) => o.hrid), binding ? binding.hrid : '', ...coreHrids],
         stateIndex,
+        ...(upper
+            ? {
+                  U,
+                  EU,
+                  add,
+                  addValue,
+                  upper,
+                  mutationUsed: upper.mutationUsed && (useMutation || !orbs.some((o) => o.mode === MODES.randomLines)),
+              }
+            : { U: V, EU }),
     });
 }
 
@@ -1149,9 +1340,12 @@ function makeSolution(parts) {
         for (const code of codes) key = key * (C + 1) + code + 1;
         return key;
     };
+    const K = parts.orbHrids.length;
     return {
         ...parts,
         stateCount: parts.V.length,
+        /** @returns {ArrayLike<number>} expected counts per slot from a state (with unpriced adds where needed) */
+        countsOf: (index) => parts.EU.get(index) || parts.E.subarray(index * K, index * K + K),
         /** @returns {number|undefined} state index of a compressed state */
         indexOf: (lock, codes) =>
             stateIndex.get(
@@ -1257,12 +1451,34 @@ function lockFirstValue(solution, modifiers, lineCodes, lockIndex) {
 
 function countsAt(solution, index) {
     const K = solution.orbHrids.length;
+    const at = solution.countsOf ? solution.countsOf(index) : solution.E.subarray(index * K, index * K + K);
     const counts = {};
     for (let k = 0; k < K; k++) {
-        const value = solution.E[index * K + k];
-        if (solution.orbHrids[k] && value > 1e-9) counts[solution.orbHrids[k]] = value;
+        const value = at[k];
+        if (solution.orbHrids[k] && value > 1e-9)
+            counts[solution.orbHrids[k]] = (counts[solution.orbHrids[k]] || 0) + value;
     }
     return counts;
+}
+
+/** The move that adds the next line, from a layer's add */
+function addMove(add) {
+    return { kind: 'add', itemHrid: add.itemHrid, count: add.count, lineNumber: add.line };
+}
+
+/**
+ * An unpriced add worth suggesting from a state: adding the next line first (then rerolling, adding more lines only
+ * where the target needs them) is expected to cost fewer orbs. Its cores are not weighed: they have no price.
+ * @returns {Object|null} {move, value, saving, unlockFirst} with values on the solution's weight scale
+ */
+function addSuggestion(solution, index, lineCodes, lockIndex, value) {
+    const add = solution.add;
+    if (!add || add.weight > 0 || !solution.addValue) return null;
+    let free = index;
+    if (lockIndex >= 0) free = solution.indexOf(-1, lineCodes);
+    const after = free === undefined ? Infinity : solution.addValue[free];
+    if (!Number.isFinite(after) || !(after < value * (1 - 1e-9))) return null;
+    return { move: addMove(add), value: after, saving: value - after, unlockFirst: lockIndex >= 0 };
 }
 
 /**
@@ -1285,8 +1501,10 @@ export function advise(solution, talisman, targets, need) {
         const current = encodeLines(solution, modifiers, locked).index;
         const next = encodeLines(solution, pending, locked).index;
         if (current === undefined || next === undefined) return { status: 'unknownState' };
-        const keep = solution.V[current];
-        const take = solution.V[next];
+        // U is V wherever V is finite; past it, the value of adding the lines the target needs (unpriced cores)
+        const values = solution.U || solution.V;
+        const keep = values[current];
+        const take = values[next];
         if (!Number.isFinite(keep) && !Number.isFinite(take)) return { status: 'unreachable' };
         // A new roll that already meets the current lines' worth is taken only when strictly better
         if (meetsTarget(modifiers, targets, need) || keep <= take) {
@@ -1301,11 +1519,29 @@ export function advise(solution, talisman, targets, need) {
     const { index, lineCodes, lockIndex } = encodeLines(solution, modifiers, locked);
     if (index === undefined) return { status: 'unknownState' };
     const value = solution.V[index];
-    if (!Number.isFinite(value)) return { status: 'unreachable' };
+    if (!Number.isFinite(value)) {
+        // Only adding lines whose cores have no price reaches the target (it needs more lines than it has)
+        const after = solution.U ? solution.U[index] : Infinity;
+        if (!Number.isFinite(after) || !solution.add) return { status: 'unreachable' };
+        return {
+            status: 'move',
+            move: lockIndex >= 0 ? { kind: 'unlock' } : addMove(solution.add),
+            value: after,
+            counts: countsAt(solution, index),
+            addRequired: { ...addMove(solution.add), need: need ?? solution.problem.need, unpriced: true },
+        };
+    }
     const type = solution.actType[index];
     const arg = solution.actArg[index];
     const counts = countsAt(solution, index);
     const { orbs, wanted } = solution.problem;
+    const extraFor = (advised) => {
+        const suggestion = addSuggestion(solution, index, lineCodes, lockIndex, advised);
+        return suggestion ? { addSuggestion: suggestion } : {};
+    };
+    const extra = extraFor(value);
+
+    if (type === 5) return { status: 'move', move: addMove(solution.add), value, counts };
 
     if (type === 1 || type === 2) {
         const orb = orbs[solution.actOrb[index]];
@@ -1342,9 +1578,10 @@ export function advise(solution, talisman, targets, need) {
                 move: { kind: 'lock', itemHrid: bindingHrid, modifierHrid: lockFirst.modifierHrid },
                 value: lockFirst.value,
                 counts: lockCounts,
+                ...extraFor(lockFirst.value),
             };
         }
-        return { status: 'move', move, value, counts, ...(lockFirst ? { lockFirst } : {}) };
+        return { status: 'move', move, value, counts, ...(lockFirst ? { lockFirst } : {}), ...extra };
     }
     if (type === 3) {
         const line = lineCodes.findIndex((code, i) => code === arg && i !== lockIndex);
@@ -1353,6 +1590,7 @@ export function advise(solution, talisman, targets, need) {
             move: { kind: 'lock', itemHrid: solution.problem.binding?.hrid, modifierHrid: modifiers[line]?.hrid },
             value,
             counts,
+            ...extra,
         };
     }
     if (type === 4) {
@@ -1362,6 +1600,7 @@ export function advise(solution, talisman, targets, need) {
             value,
             counts,
             stayLockedValue: solution.rerollValue[index],
+            ...extra,
         };
     }
     return { status: 'unknownState' };

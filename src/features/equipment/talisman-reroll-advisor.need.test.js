@@ -55,6 +55,9 @@ vi.mock('../../utils/react-click.js', () => ({
     }),
 }));
 
+// A talisman under four lines also solves the line counts the cores can add: a few picks take longer
+vi.setConfig({ testTimeout: 30000 });
+
 const { default: feature, describeAdvice, setRerollTarget } = await import('./talisman-reroll-advisor.js');
 
 const M = (name) => `/talisman_modifiers/${name}`;
@@ -244,7 +247,8 @@ describe('what each outcome shows', () => {
         pick(0, M('armor'), 3);
         pick(1, M('melee_evasion'), 3);
         pick(2, M('melee_accuracy'), 3);
-        expect(moveText()).toMatch(/^Not reachable\. The talisman has 2 line/);
+        // The cores have no market price here: the add is named as required, not "not reachable"
+        expect(moveText()).toBe('Next: add line 3 with 1 /items/advanced_talisman_core. The target needs 3 lines.');
         chooseNeed(2);
         expect(moveText()).toMatch(/^Next: /);
     });

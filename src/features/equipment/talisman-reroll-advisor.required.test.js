@@ -55,6 +55,9 @@ vi.mock('../../utils/react-click.js', () => ({
     }),
 }));
 
+// A talisman under four lines also solves the line counts the cores can add: a few picks take longer
+vi.setConfig({ testTimeout: 30000 });
+
 const { default: feature, describeAdvice, setRerollTarget } = await import('./talisman-reroll-advisor.js');
 
 const M = (name) => `/talisman_modifiers/${name}`;

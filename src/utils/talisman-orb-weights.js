@@ -68,6 +68,33 @@ export function orbWeights(info, itemDetailMap, priceInfo = getItemPriceInfo, re
 }
 
 /**
+ * The market price of every talisman core (create and add lines), the same quote an orb gets: the market Buy price
+ * under the profit pricing mode, or the player's own price. A core with no live listing and no own price is left out
+ * (never 0, never an estimate, never the tester shop).
+ * @param {Object} info - talismanInfo
+ * @param {Function} [priceInfo] - getItemPriceInfo-shaped; injectable for tests
+ * @returns {Object<string, number>} Core item hrid to its unit price
+ */
+export function corePrices(info, priceInfo = getItemPriceInfo) {
+    const hrids = new Set();
+    if (info?.createInputItemHrid) hrids.add(info.createInputItemHrid);
+    for (const input of Object.values(info?.addModifierInputMap || {})) if (input?.itemHrid) hrids.add(input.itemHrid);
+    const prices = {};
+    for (const hrid of hrids) {
+        let quote = null;
+        try {
+            quote = priceInfo(hrid, { context: 'profit', side: 'buy', marketQuote: true });
+        } catch (error) {
+            console.error('[TalismanOrbWeights] Pricing a core failed:', error);
+        }
+        if (quote && (quote.source === 'book' || quote.source === 'custom') && quote.price > 0) {
+            prices[hrid] = quote.price;
+        }
+    }
+    return prices;
+}
+
+/**
  * Coins the expected orb counts cost, or null unless every orb used has a market or crafting price.
  * @param {Object<string, number>} counts
  * @param {Object<string, number>} prices - Market and crafting prices

@@ -133,6 +133,8 @@ export function advisedElements(advice, controls, instance) {
     const move = advice.move;
     const selected = instance?.state?.selectedOrbHrid || '';
     if (move.kind === 'unlock') return [controls.unlock].filter(Boolean);
+    // Adding a line: the window's add control is not one this module knows, so nothing is marked
+    if (move.kind === 'add') return [];
     if (move.kind === 'lock') {
         const lock = controls.lockButtons.get(move.modifierHrid);
         return [selected === move.itemHrid && lock ? lock : controls.picker].filter(Boolean);
@@ -171,7 +173,7 @@ export function clearMarks() {
     }
 }
 
-/** The item a move spends, or null */
+/** The item a move spends through Do next step, or null (an add spends cores, but is never pressed here) */
 export function itemFor(advice) {
     if (advice?.status !== 'move') return null;
     if (advice.move.kind === 'orb' || advice.move.kind === 'lock') return advice.move.itemHrid || null;
@@ -332,6 +334,12 @@ export function performStep({ modal, instance, advice, names }) {
     if (advice.status !== 'move') return { status: 'nothing' };
 
     const move = advice.move;
+    // Never pressed: adding a line has not been pressed live, so the player does it in the game window
+    if (move.kind === 'add') {
+        return { status: 'manual', message: 'Add the line in the game window yourself: this step is not pressed.' };
+    }
+    // Only the kinds below are pressed; anything else is never guessed at
+    if (move.kind !== 'orb' && move.kind !== 'lock' && move.kind !== 'unlock') return { status: 'nothing' };
     const itemHrid = itemFor(advice);
     if (itemHrid && inventoryCount(instance, itemHrid) === 0) {
         return { status: 'noItem', message: `No ${item(itemHrid)} in inventory` };
