@@ -391,3 +391,28 @@ describe('the core advisor in the Optimizer', () => {
         expect(cores()).toContain('out of date for this gear');
     });
 });
+
+describe('the game icon and marker in the core table', () => {
+    test('two talismans of one type with different markers are told apart', async () => {
+        mocks.worn = [
+            { ...talisman(1, [MILKING_SPEED]), marker: 3 },
+            { ...talisman(2, [MILKING_SPEED, OTHERS[0]]), marker: 9 },
+        ];
+        await rank();
+        await check();
+        expect(cores()).not.toContain('could not be drawn');
+        const markers = [...q('core-results').querySelectorAll('[data-talisman-marker]')].map((e) =>
+            e.getAttribute('data-talisman-marker')
+        );
+        expect(markers.sort()).toEqual(['3', '9']);
+        expect(cores()).toContain('slot 1');
+        expect(cores()).toContain('slot 2');
+    });
+
+    test('records without the fields (a party member or an old server) show no badge', async () => {
+        await rank();
+        await check();
+        expect(q('core-results').querySelector('[data-talisman-badge]')).toBeNull();
+        expect(section._core.rows.every((r) => r.marker === 0 && r.iconHrid === null)).toBe(true);
+    });
+});

@@ -115,6 +115,11 @@ const ALLOWLIST = new Map([
         'Pure solver: functions over a problem object and frozen measured odds; no module state to share.',
     ],
     [
+        'src/utils/talisman-appearance.js',
+        // Read by the Optimizer's Talismans section (actions), the Combat Sim ranking (combat/sim) and the loadout check
+        'Pure functions over a talisman record; the sprite sheet cache it reads lives in overlay-format, which is shared.',
+    ],
+    [
         'src/utils/talisman-line-sets.js',
         // The Combat Sim's Talisman lines (combat) and the Skilling Optimizer's Talismans section (actions)
         'Pure set building and skilling ranking over what each call is handed; no module state to share.',

@@ -101,3 +101,18 @@ describe('checkLoadoutTalismans', () => {
         expect(commonWarnings([medium, medium])).toEqual(medium);
     });
 });
+
+describe('markers in warnings', () => {
+    test('a warning names the marker of the talisman it is about, and only that one', () => {
+        game.server = true;
+        const list = [
+            { id: 31, talismanTypeHrid: '/talisman_types/skilling', slotIndex: 0, modifiers: [], marker: 4 },
+            { id: 32, talismanTypeHrid: '/talisman_types/skilling', slotIndex: 0, modifiers: [], marker: 0 },
+        ];
+        const warnings = run(loadout({ talismanIdMap: { 1: 31, 2: 32 } }), list);
+        expect(warnings.map((w) => w.text)).toEqual([
+            'Slot 1 (marker 4): a skilling talisman does nothing in a combat loadout.',
+            'Slot 2: a skilling talisman does nothing in a combat loadout.',
+        ]);
+    });
+});
