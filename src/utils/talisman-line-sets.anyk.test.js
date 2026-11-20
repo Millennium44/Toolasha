@@ -260,3 +260,54 @@ describe('planAnyKTarget anchored on an option', () => {
         expect(plan.leftOut).toBe(1);
     });
 });
+
+describe('a strong alternative does not loosen the own lines', () => {
+    const own = (...keys) => keys.map((key) => H(key));
+
+    test("Codex's case: own 100 / 90 / 10, alternatives 9.9 (in the 10's band) and a Special at 1000", () => {
+        const rows = [
+            row('p100', 100, 0.5),
+            row('p90', 90, 0.5),
+            row('p10', 10, 0.5),
+            row('alt', 9.9, 0.5),
+            row('spec', 1000, 0.5, { special: true }),
+        ];
+        const plan = planAnyKTarget(rows, { grade: G, k: 3, own: own('p100', 'p90', 'p10') });
+        expect(plan.need).toBe(3);
+        expect(requiredNames(plan)).toEqual(['p100', 'p90']);
+        expect(names(plan).sort()).toEqual(['alt', 'p10', 'p100', 'p90', 'spec']);
+    });
+
+    test('a stronger alternative frees an own line only when it overlaps its band, or when it is the weakest stand-in', () => {
+        // Overkill 71 is within noise of the own 70.4: it can stand in for it, nothing is required (the live case)
+        const near = planAnyKTarget([row('own', 70.4, 0.86), row('overkill', 71, 0.86)], {
+            grade: G,
+            k: 1,
+            own: own('own'),
+        });
+        expect(requiredNames(near)).toEqual([]);
+        // The weak 4.8 is the easiest stand-in for b (5), not for a (20): a stays required, b is optional
+        const clear = planAnyKTarget([row('a', 20, 0.5), row('b', 5, 0.5), row('c', 4.8, 0.5)], {
+            grade: G,
+            k: 2,
+            own: own('a', 'b'),
+        });
+        expect(requiredNames(clear)).toEqual(['a']);
+    });
+
+    test('unanchored: a top line only the noisiest outside line overlaps is still required', () => {
+        // Outside the top 3: noisy (10 +- 6) reaches 16, quiet (12.9 +- 0.1) reaches 13.0, which is all the 15 +- 0.2
+        // line has to beat to be a sure thing; against the noisy line's 16 alone it would be optional
+        const rows = [
+            row('top', 50, 0.5),
+            row('mid', 15, 0.2),
+            row('third', 13, 0.2),
+            row('noisy', 10, 6),
+            row('quiet', 12.9, 0.1),
+        ];
+        const plan = planAnyKTarget(rows, { grade: G, k: 3 });
+        expect(requiredNames(plan)).toEqual(['top', 'mid']);
+        expect(names(plan)).toContain('noisy');
+        expect(names(plan)).toContain('quiet');
+    });
+});

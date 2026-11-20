@@ -748,8 +748,7 @@ export function planAnyKTarget(rows, { grade, k, own, maxPool = ANY_K_MAX_POOL, 
     const floor = kth.gain - kth.noise;
     const pool = scored.filter((s, i) => i < need || s.gain + s.noise >= floor);
     const outside = pool.slice(need);
-    const bar = outside.length ? Math.max(...outside.map((s) => s.gain + s.noise)) : -Infinity;
-    const required = new Set(top.filter((s) => s.gain - s.noise > bar).map((s) => s.hrid));
+    const required = new Set(top.filter((s) => beatsEveryStandIn(s, outside)).map((s) => s.hrid));
 
     // Over the solver's limit: the weakest lines that are not required go first
     let kept = pool;
@@ -775,6 +774,20 @@ export function planAnyKTarget(rows, { grade, k, own, maxPool = ANY_K_MAX_POOL, 
         leftOut: pool.length - kept.length + specialsOut,
         poolSize: kept.length,
     };
+}
+
+/**
+ * Whether a line stays required against a set of alternatives: it must clearly beat even the weakest of them (the
+ * easiest stand-in), so it is optional only when some alternative could replace it within noise. Against the
+ * strongest alternative instead, a single strong one (a Special at 1000) would free every line, and any K would
+ * then accept a set that swaps a strong line for a weak one. No alternatives: required.
+ * @param {{gain: number, noise: number}} line
+ * @param {Array<{gain: number, noise: number}>} alternatives
+ * @returns {boolean}
+ */
+function beatsEveryStandIn(line, alternatives) {
+    if (alternatives.length === 0) return true;
+    return line.gain - line.noise > Math.min(...alternatives.map((a) => a.gain + a.noise));
 }
 
 /** A row's gain at a grade and its noise scaled with it (a relative error; none when the row has no figure) */
@@ -860,10 +873,9 @@ function planAnchoredTarget(rows, { grade, own, maxPool, fits }) {
         cut++;
     }
     if (!fits(need)) return { ...ownAll(), leftOut: candidates };
-    const bar = added.length ? Math.max(...added.map((e) => e.gain + e.noise)) : -Infinity;
     const requiredOwn = new Set([
         ...ownUnknown,
-        ...ownScored.filter((e) => added.length === 0 || e.gain - e.noise > bar).map((e) => e.hrid),
+        ...ownScored.filter((e) => beatsEveryStandIn(e, added)).map((e) => e.hrid),
     ]);
     const targets = [
         ...[...ownSet].map((hrid) => ({ hrid, minGrade: grade, ...(requiredOwn.has(hrid) ? { required: true } : {}) })),
