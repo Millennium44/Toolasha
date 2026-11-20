@@ -26,7 +26,7 @@ import { alchemyProfitCalculator, expectedValueCalculator } from './bundle-bridg
 import { runningAction } from './combat-actions.js';
 import { expectedProcessedItems } from './gathering-processing.js';
 import { getCommunityGatheringQuantity } from './community-buffs.js';
-import { drinkEffectConcentration, drinkOutcomes } from './talisman-bonuses.js';
+import { SKILLING_SPECIAL_STATS, drinkEffectConcentration, drinkOutcomes, talismanStat } from './talisman-bonuses.js';
 
 /**
  * Skill name to action type mapping.
@@ -324,6 +324,8 @@ function parseTeaBuffsAt(teaHrids, itemDetailMap, drinkConcentration, equipment)
     if (equipment) {
         buffs.processing += parseEquipmentTalismanBuff(equipment, '/buff_types/processing');
         buffs.gourmet += parseEquipmentTalismanBuff(equipment, '/buff_types/gourmet');
+        // Abundance (talisman Special): a chance to triple the resources a gathering action gathers
+        buffs.abundance = talismanStat(equipment, SKILLING_SPECIAL_STATS.abundance);
     }
 
     return buffs;
@@ -493,7 +495,9 @@ function calculateGatheringGoldPerHour(actionDetails, buffs, playerLevel, otherE
         const avgCount = (minCount + maxCount) / 2;
 
         // Apply gathering bonus to quantity
-        const avgAmountPerAction = avgCount * gatheringBonus;
+        // Abundance triples the amount with its chance: (1 + 2 x chance) times in expectation, as gathering-profit reads it
+        const abundance = buffs.abundance || 0;
+        const avgAmountPerAction = avgCount * gatheringBonus * (1 + 2 * abundance);
 
         // Get item price (use 'sell' side for output items to match tile calculation)
         const rawPrice = sellPrice(drop.itemHrid);
@@ -506,14 +510,21 @@ function calculateGatheringGoldPerHour(actionDetails, buffs, playerLevel, otherE
                 const conversionRatio = processedData.conversionRatio;
 
                 // Processing converts the whole stack after efficiency repeats.
+                // With Abundance the stack is tripled with its chance: whole conversions worked out on each stack, weighted
+                const stackDrop = { ...drop, dropRate, minCount, maxCount };
                 const processedPerCompletion =
                     buffs.processing *
-                    expectedProcessedItems(
-                        { ...drop, dropRate, minCount, maxCount },
-                        conversionRatio,
-                        gatheringBonus - 1,
-                        efficiencyMultiplier
-                    );
+                    ((1 - abundance) *
+                        expectedProcessedItems(stackDrop, conversionRatio, gatheringBonus - 1, efficiencyMultiplier) +
+                        (abundance > 0
+                            ? abundance *
+                              expectedProcessedItems(
+                                  stackDrop,
+                                  conversionRatio,
+                                  3 * gatheringBonus - 1,
+                                  efficiencyMultiplier
+                              )
+                            : 0));
 
                 // Net processing bonus = processed value - cost of raw converted
                 const processingNetValue =
