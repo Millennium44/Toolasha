@@ -19,6 +19,7 @@
 import { isTestServer } from './game-server.js';
 import { parseWearable } from './loadout-equipment.js';
 import { BELT_LOCATION, deadSpecialLines } from './talisman-bonuses.js';
+import { talismanMarkerNote } from './talisman-appearance.js';
 
 export const COMBAT_ACTION_TYPE = '/action_types/combat';
 const TYPE_COMBAT = '/talisman_types/combat';
@@ -57,6 +58,9 @@ export function checkLoadoutTalismans({ loadout, ownedTalismans, itemDetailMap, 
     const out = [];
     // The talismans that will be worn and apply to this loadout: the duplicate check looks only at these
     const applying = [];
+    const ownedBySlot = new Map();
+    // " (marker 3)" after the slot, so a warning names the talisman the player marked; the game's icon cannot go in a tooltip
+    const noteOf = (row) => (talismanMarkerNote(row) ? ` (${talismanMarkerNote(row)})` : '');
     for (const [slotKey, id] of Object.entries(idMap)) {
         const slot = Number(slotKey);
         if (!Number.isInteger(slot) || slot < 1 || !id) continue;
@@ -69,7 +73,7 @@ export function checkLoadoutTalismans({ loadout, ownedTalismans, itemDetailMap, 
             out.push({
                 code: 'slot',
                 slot,
-                text: `Slot ${slot}: this loadout's belt has ${beltSlots} slot${beltSlots === 1 ? '' : 's'}, so this talisman does nothing.`,
+                text: `Slot ${slot}${noteOf(owned)}: this loadout's belt has ${beltSlots} slot${beltSlots === 1 ? '' : 's'}, so this talisman does nothing.`,
             });
         }
         const type = owned.talismanTypeHrid;
@@ -77,12 +81,13 @@ export function checkLoadoutTalismans({ loadout, ownedTalismans, itemDetailMap, 
             out.push({
                 code: 'type',
                 slot,
-                text: `Slot ${slot}: a ${otherName} talisman does nothing in a ${wantedName} loadout.`,
+                text: `Slot ${slot}${noteOf(owned)}: a ${otherName} talisman does nothing in a ${wantedName} loadout.`,
             });
         }
         const beltHasSlot = beltSlots === null || slot <= beltSlots;
         if (beltHasSlot && (type === wantedType || (type !== TYPE_COMBAT && type !== TYPE_SKILLING))) {
             applying.push({ slotIndex: slot, modifiers: owned.modifiers });
+            ownedBySlot.set(slot, owned);
         }
     }
     for (const dead of deadSpecialLines(applying, modifierDetailMap)) {
@@ -90,7 +95,7 @@ export function checkLoadoutTalismans({ loadout, ownedTalismans, itemDetailMap, 
         out.push({
             code: 'duplicate',
             slot: dead.slotIndex,
-            text: `Slot ${dead.slotIndex}: ${name} does nothing here, since slot ${dead.winnerSlot} already carries it at an equal or higher grade (a second copy of a Special line adds nothing).`,
+            text: `Slot ${dead.slotIndex}${noteOf(ownedBySlot.get(dead.slotIndex))}: ${name} does nothing here, since slot ${dead.winnerSlot} already carries it at an equal or higher grade (a second copy of a Special line adds nothing).`,
         });
     }
     return out.sort((a, b) => a.slot - b.slot);

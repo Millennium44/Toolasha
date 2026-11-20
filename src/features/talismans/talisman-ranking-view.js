@@ -20,6 +20,7 @@ import dataManager from '../../core/data-manager.js';
 import { isTestServer } from '../../utils/game-server.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { escapeHtml } from '../../utils/html-escape.js';
+import { talismanBadgeHTML } from '../../utils/talisman-appearance.js';
 import { GAME_COLORS } from '../../utils/game-look.js';
 import { GATHERING_TYPES } from '../../utils/profit-constants.js';
 import { INVIGORATION_ACTION_TYPES, drinkOutcomes, mixOutcomes } from '../../utils/talisman-bonuses.js';
@@ -1301,7 +1302,7 @@ export class TalismanRankingSectionBase {
             const noise = !this.exact && option.withinNoise ? ` (${option.withinNoise} within noise)` : '';
             parts.push(
                 `<div style="font-size:11px; color:#ddd; margin-top:4px; padding:4px 6px; border:1px solid #333; border-radius:4px;">` +
-                    `<div><b>Talisman #${escapeHtml(String(option.talisman.id))}</b> <span style="color:#888;">(${escapeHtml(lines)}${option.talisman.slotIndex ? `, slot ${option.talisman.slotIndex}` : ', in the bag'})</span></div>` +
+                    `<div>${talismanBadgeHTML(option.talisman)}<b>Talisman #${escapeHtml(String(option.talisman.id))}</b> <span style="color:#888;">(${escapeHtml(lines)}${option.talisman.slotIndex ? `, slot ${option.talisman.slotIndex}` : ', in the bag'})</span></div>` +
                     `<div>Aim for ${escapeHtml(targets)}${escapeHtml(noise)}: ${this._formatValue(option.gain, metric)} ${escapeHtml(metric.label)} for ~${option.cost.upperBound ? '≤' : ''}${orbsText(option.cost.orbs)} orbs (${this._formatValue(option.perOrb, metric)} per orb)` +
                     (option.cost.upperBound
                         ? ` <span style="color:#888;">(${escapeHtml(costLimitNote(option.cost.limits))})</span>`
@@ -1791,7 +1792,7 @@ export class TalismanRankingSectionBase {
                     : '<span style="color:#777;">—</span>';
                 return (
                     `<tr><td style="padding:2px 6px; color:#888;">${index + 1}</td>` +
-                    `<td style="padding:2px 6px; color:${dim ? '#999' : '#ddd'};" title="${escapeHtml(lines)}">${escapeHtml(`${row.id != null ? `#${row.id} ` : ''}slot ${row.slotIndex}`)} <span style="color:#777;">(${row.lines.length} line${row.lines.length === 1 ? '' : 's'})</span></td>` +
+                    `<td style="padding:2px 6px; color:${dim ? '#999' : '#ddd'};" title="${escapeHtml(lines)}">${talismanBadgeHTML(row)}${escapeHtml(`${row.id != null ? `#${row.id} ` : ''}slot ${row.slotIndex}`)} <span style="color:#777;">(${row.lines.length} line${row.lines.length === 1 ? '' : 's'})</span></td>` +
                     `<td style="text-align:right; padding:2px 6px; color:#ccc;">line ${row.lineNumber}</td>` +
                     `<td style="text-align:right; padding:2px 6px; color:${color};" title="${escapeHtml(TIP_CORE_GAIN)}">${floor}${this._formatValue(row.value, metric)}</td>` +
                     `<td style="text-align:right; padding:2px 6px; color:#ccc;" title="${escapeHtml(TIP_CORE_USEFUL)}">${pct(row.pUseful)}</td>` +
