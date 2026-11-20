@@ -13,6 +13,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { attachTalismanBonuses } from '../../utils/talisman-bonuses.js';
 
 const game = vi.hoisted(() => ({
     initClientData: null,
@@ -28,6 +29,9 @@ const market = vi.hoisted(() => ({
 
 const buffs = vi.hoisted(() => ({
     artisanBonus: 0,
+    /** Scale the bonus with the concentration it is read with, as the real parser does */
+    scaleWithConcentration: false,
+    equipment: null,
     actionStats: { actionTime: 10, totalEfficiency: 100 },
 }));
 
@@ -65,7 +69,7 @@ vi.mock('../../utils/game-lookups.js', () => ({
 }));
 
 vi.mock('../../utils/tea-parser.js', () => ({
-    parseArtisanBonus: () => buffs.artisanBonus,
+    parseArtisanBonus: (_drinks, _map, dc = 0) => buffs.artisanBonus * (buffs.scaleWithConcentration ? 1 + dc : 1),
     getDrinkConcentration: () => 0,
 }));
 
@@ -75,7 +79,7 @@ vi.mock('../../utils/tea-parser.js', () => ({
 // never mocks).
 vi.mock('../../utils/action-context.js', () => {
     const mod = {
-        resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
+        resolveActionContext: () => ({ equipment: buffs.equipment ?? new Map(), drinks: [] }),
     };
     return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
 });
@@ -94,6 +98,8 @@ beforeEach(() => {
     game.blockedActions.clear();
     settings.values = {};
     buffs.artisanBonus = 0;
+    buffs.scaleWithConcentration = false;
+    buffs.equipment = null;
     buffs.actionStats = { actionTime: 10, totalEfficiency: 100 };
     market.prices = { [COWHIDE]: 10, [LEATHER]: 50, [BOOTS]: 500 };
     market.shopCosts = {};
@@ -517,6 +523,43 @@ describe('artisan requirement mode', () => {
         // 5 leather crafts at 2.7 hides can take 3 each: 15. Billing ceil(13.5) = 14
         // leaves the fifth craft one hide short.
         expect(computeBestCraftingPlan(LEATHER, 5).children[0].quantity).toBe(15);
+    });
+
+    describe('with Invigoration (a chance to double the Artisan Tea)', () => {
+        // LEATHER takes 3 hides a craft: 33% Artisan is 2.01 a craft as it is (bills 3), 1.02 doubled, and the
+        // weighted reduction at G6 (12%) is 1.89 (bills 2). A craft without a proc needs 3, so worst-case buys 3.
+        beforeEach(() => {
+            buffs.artisanBonus = 0.33;
+            buffs.scaleWithConcentration = true;
+            // Invigoration is for cooking and brewing only
+            for (const action of Object.values(game.initClientData.actionDetailMap)) {
+                action.type = '/action_types/cooking';
+            }
+            buffs.equipment = attachTalismanBonuses(new Map(), {
+                noncombat: { invigoration: 0.12 },
+                buffs: {},
+                combat: {},
+            });
+        });
+
+        test('worst-case bills the no-proc outcome, so a craft without a proc is not short', () => {
+            settings.values.actions_artisanMaterialMode = 'worst-case';
+            const plan = computeBestCraftingPlan(LEATHER, 5);
+            expect(plan.children[0].quantity).toBe(15); // ceil(2.01) x 5; the mix would have bought ceil(1.89) x 5 = 10
+        });
+
+        test('expected value keeps the mix: ceil(5 x 3 x (1 - 0.3696))', () => {
+            expect(computeBestCraftingPlan(LEATHER, 5).children[0].quantity).toBe(10);
+        });
+
+        test('a memoised intermediate rebuilt for a remainder bills the same way', () => {
+            settings.values.actions_artisanMaterialMode = 'worst-case';
+            const plan = computeBestCraftingPlan(BOOTS, 1);
+            const leather = plan.children[0];
+            const rebuilt = collectMissingMaterials(plan, []).find((m) => m.itemHrid === COWHIDE);
+            // every leather craft bills 3 hides, never 2
+            expect(rebuilt.required).toBe(leather.quantity * 3);
+        });
     });
 
     test('worst-case holds through a memoised intermediate, so the last leather craft is not short', () => {
