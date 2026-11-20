@@ -34,6 +34,8 @@ function chainOf(params, itemLevel) {
         blessedTea: Boolean(params.teas?.blessed),
         guzzlingBonus: params.guzzlingBonus ?? 1,
         ...(params.blessedTeaBonus > 0 ? { blessedTeaBonus: params.blessedTeaBonus } : {}),
+        // Conservation keeps a protection item the run would consume (the one priced here is never a Philosopher's Mirror)
+        conservation: params.conservation,
     };
 }
 

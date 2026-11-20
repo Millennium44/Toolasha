@@ -254,6 +254,8 @@ class EnhanceProfitColumn {
             params?.speedBonus,
             params?.guzzlingBonus,
             params?.blessedTeaBonus,
+            params?.conservation,
+            params?.epiphany,
             params?.teas,
             config.getSetting('enhanceSim_baseItemCraftingCost'),
             // The pricing modes, Iron Cow valuation, patient-buy tick and custom prices move every input

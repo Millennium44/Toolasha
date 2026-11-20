@@ -1508,6 +1508,7 @@ function enhancementPlan(itemHrid, targetLevel, startLevel = 0) {
         params.teas?.blessed ? 1 : 0,
         params.guzzlingBonus || 1,
         params.blessedTeaBonus ?? '',
+        params.conservation || 0,
         materials.cost,
         unpricedMaterials ? 1 : 0,
         protection.itemHrid || '',
@@ -1541,6 +1542,8 @@ function enhancementPlan(itemHrid, targetLevel, startLevel = 0) {
                 // fell back to the stock 1% double-jump chance rather than the
                 // character's real one
                 blessedTeaBonus: params.blessedTeaBonus,
+                // Conservation keeps a protection item (the one priced here is never a Philosopher's Mirror)
+                conservation: params.conservation,
             },
             targetLevel,
             startLevel,

@@ -178,6 +178,8 @@ export function computeEnhancingSummary(run, deps) {
             blessedTea: params.teas?.blessed,
             guzzlingBonus: params.guzzlingBonus,
             blessedTeaBonus: params.blessedTeaBonus,
+            // Conservation keeps a protection item the run would consume (the one priced here is never a Philosopher's Mirror)
+            conservation: params.conservation,
         });
 
     // Best protect-from by expected total cost — the run's protect-from is not

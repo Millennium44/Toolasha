@@ -578,6 +578,30 @@ export function calculatePerActionTime(enhancingLevel, itemLevel, speedBonus = 0
 }
 
 /**
+ * A Conservation chance clamped to [0, 1]; anything that is not a positive number is 0.
+ * @param {*} value
+ * @returns {number}
+ */
+function keptShare(value) {
+    const chance = Number(value);
+    return chance > 0 ? Math.min(1, chance) : 0;
+}
+
+/** The Philosopher's Mirror: guarantees an attempt rather than protecting a fall, and Conservation never keeps it */
+const MIRROR_HRID = '/items/philosophers_mirror';
+
+/**
+ * The chance a protection item is kept, for the item actually used as protection. Conservation keeps "a catalyst or
+ * protection item, not the Philosopher's Mirror", so a Mirror in the protection slot is never kept.
+ * @param {number} [conservation] - The character's Conservation, as a decimal (0 without the talisman line)
+ * @param {string|null} [protectionItemHrid] - The item spent as protection, when known
+ * @returns {number} Chance in [0, 1]
+ */
+export function protectionKeepChance(conservation, protectionItemHrid) {
+    return protectionItemHrid === MIRROR_HRID ? 0 : keptShare(conservation);
+}
+
+/**
  * Calculate enhancement statistics using Markov Chain matrix inversion
  * @param {Object} params - Enhancement parameters
  * @param {number} params.enhancingLevel - Effective enhancing level (includes tea bonus)
@@ -591,6 +615,9 @@ export function calculatePerActionTime(enhancingLevel, itemLevel, speedBonus = 0
  * @param {boolean} params.blessedTea - Whether Blessed Tea is active (1% double jump)
  * @param {number} params.guzzlingBonus - Drink concentration multiplier (1.0 = no bonus, scales blessed tea)
  * @param {number} [params.blessedTeaBonus] - Blessed Tea double-jump chance as a decimal (default 1%)
+ * @param {number} [params.conservation] - Conservation (talisman Special): chance, as a decimal, that a protection item
+ *   a failure would consume is kept. Thins `protectionCount` only; the chain and the attempts are unchanged. Callers
+ *   pass it through {@link protectionKeepChance}, which is 0 for a Philosopher's Mirror
  * @param {number} [params.perActionTimeOverride] - Per-action time in seconds measured from the
  *   game's buff maps. When supplied it replaces the formula below, so a tracker reading the live
  *   buff maps and a prediction built here share one time base.
@@ -633,6 +660,7 @@ function enhancementMemoKey(params) {
         p.guzzlingBonus ?? 1.0,
         p.blessedTeaBonus ?? BLESSED_TEA_BASE_CHANCE,
         p.perActionTimeOverride ?? 0,
+        keptShare(p.conservation),
     ].join('|');
 }
 
@@ -668,6 +696,7 @@ function solveEnhancement(params) {
         guzzlingBonus = 1.0,
         blessedTeaBonus = BLESSED_TEA_BASE_CHANCE,
         perActionTimeOverride = 0,
+        conservation = 0,
     } = params;
 
     // Validate inputs
@@ -724,6 +753,9 @@ function solveEnhancement(params) {
             const failureChance = markov.get([i, i - 1]);
             protects += timesAtLevel * failureChance;
         }
+        // Conservation keeps a protection item that a failure would have consumed. The item still
+        // protects (the fall is the same), so only the count that is spent thins out
+        protects *= 1 - keptShare(conservation);
     }
 
     // Action time calculation

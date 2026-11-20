@@ -178,6 +178,8 @@ export function quoteDirectEnhancement(
                 blessedTea: enhancingParams.teas?.blessed || false,
                 guzzlingBonus: enhancingParams.guzzlingBonus || 1.0,
                 blessedTeaBonus: enhancingParams.blessedTeaBonus,
+                // Conservation keeps a protection item; the options priced here are never a Philosopher's Mirror
+                conservation: enhancingParams.conservation,
             },
             targetLevel,
             startLevel,
@@ -185,6 +187,7 @@ export function quoteDirectEnhancement(
             // The XP formula keys on the item's own level, the same reading the enhancing panel takes
             xpBaseLevel: itemDetails.itemLevel || 0,
             wisdomDecimal: (enhancingParams.experienceBonus || 0) / 100,
+            epiphany: enhancingParams.epiphany || 0,
             protectionOptions,
             hasMissingPrices: materials.hasMissingPrices || materials.hasPartialPrices,
         });

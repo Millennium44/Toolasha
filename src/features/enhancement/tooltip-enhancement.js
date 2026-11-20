@@ -14,6 +14,7 @@ import {
     blessedMirrorChance,
     calculateEnhancement,
     expandMirrorPlan,
+    protectionKeepChance,
 } from '../../utils/enhancement-calculator.js';
 import config from '../../core/config.js';
 const toolashaConfig = config;
@@ -348,6 +349,9 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
             totalXP = expectedXPFromRun(xpCalc, itemHrid, benchWisdom);
         }
 
+        // Epiphany (talisman): a chance of double XP on an action, on every action of the route
+        totalXP *= 1 + (config.epiphany || 0);
+
         if (optimalStrategy.totalTime > 0) {
             xpPerHour = Math.round((totalXP / optimalStrategy.totalTime) * 3600);
             totalExpectedXP = Math.round(totalXP);
@@ -411,6 +415,8 @@ function sweepStrategiesForLevel(targetLevel, itemLevel, config, prices) {
                 blessedTea: config.teas.blessed,
                 guzzlingBonus: config.guzzlingBonus,
                 blessedTeaBonus: config.blessedTeaBonus,
+                // Conservation keeps a protection item; the options priced here are never a Philosopher's Mirror
+                conservation: protectionKeepChance(config.conservation, null),
             },
             targetLevel,
             materialCostPerAttempt: prices.materialCostPerAttempt,

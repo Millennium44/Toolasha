@@ -15,6 +15,7 @@ import {
 } from './enhancement-gear-detector.js';
 import { getEnhancementMultiplier } from './enhancement-multipliers.js';
 import { resolveActionContext } from './action-context.js';
+import { SKILLING_SPECIAL_STATS, talismanStat } from './talisman-bonuses.js';
 import { BLESSED_TEA_BASE_CHANCE } from './enhancement-calculator.js';
 
 /**
@@ -361,6 +362,9 @@ export function getAutoDetectedParams(actionContext = null) {
         experienceBonus: totalExperienceBonus, // Experience (equipment + house + tea + community wisdom)
         guzzlingBonus: guzzlingBonus, // Drink concentration multiplier for blessed tea
         blessedTeaBonus: getBlessedTeaBonus(itemDetailMap), // Double-jump chance from item data
+        // Talisman Specials (test server): the share of this gear's talisman lines, as decimals
+        conservation: talismanStat(equipment, SKILLING_SPECIAL_STATS.conservation),
+        epiphany: talismanStat(equipment, SKILLING_SPECIAL_STATS.epiphany),
         teas: teas,
 
         // Display info (for UI) - show best item per slot
@@ -934,6 +938,9 @@ function getManualParams({ useShippedDefaults = false } = {}) {
         experienceBonus: totalExperienceBonus,
         guzzlingBonus: guzzlingBonus,
         blessedTeaBonus: getBlessedTeaBonus(itemDetailMap), // Double-jump chance from item data
+        // Talisman Specials are worn, not typed into the simulator: a manual bench takes the character's own, and the
+        // Pro kit takes none (it describes a professional's bench, not this character's belt)
+        ...(useShippedDefaults ? { conservation: 0, epiphany: 0 } : ownEnhancingSpecials()),
         teas: teas,
 
         // Display info for manual mode
@@ -990,4 +997,21 @@ function getGearSlotBonus(itemHrid, enhancementLevel, itemDetailMap) {
         experience: ((stats.enhancingExperience || 0) + (stats.skillingExperience || 0)) * 100 * multiplier,
         drinkConc: (stats.drinkConcentration || 0) * 100 * multiplier,
     };
+}
+
+/**
+ * The character's own enhancing Specials (talisman lines), read from the gear its enhancing loadout puts on.
+ * @returns {{conservation: number, epiphany: number}} Chances as decimals; 0 with no talisman line (or off the test
+ *   server, where there are no talismans)
+ */
+function ownEnhancingSpecials() {
+    try {
+        const { equipment } = resolveActionContext('/action_types/enhancing');
+        return {
+            conservation: talismanStat(equipment, SKILLING_SPECIAL_STATS.conservation),
+            epiphany: talismanStat(equipment, SKILLING_SPECIAL_STATS.epiphany),
+        };
+    } catch {
+        return { conservation: 0, epiphany: 0 };
+    }
 }

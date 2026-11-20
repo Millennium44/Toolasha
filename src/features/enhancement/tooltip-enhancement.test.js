@@ -1109,3 +1109,58 @@ describe('an untradable cape whose base nothing prices', () => {
         expect(path.pricesPartialOnlyByAssumedBase).toBe(false);
     });
 });
+
+describe('calculateEnhancementPath with the Conservation and Epiphany talisman Specials', () => {
+    const route = (config, level) => calculateEnhancementPath(ITEM, level, config);
+    const saved = { ...prices };
+    afterEach(() => Object.assign(prices, saved));
+    // A level whose cheapest plan is traditional and spends protections, so there is something to keep: protection
+    // cheap and the mirror dear, so a traditional route that protects is the cheapest
+    const protectedLevel = () => {
+        prices[PROTECTION] = { ask: 3000, bid: 2800 };
+        prices[MIRROR] = { ask: 900000000, bid: 800000000 };
+        for (let level = 2; level <= 14; level++) {
+            const strategy = route(enhancingConfig, level)?.optimalStrategy;
+            if (strategy && !strategy.usedMirror && strategy.protectionCount > 0) return level;
+        }
+        return null;
+    };
+
+    test('Conservation thins the protection bill; the attempts, materials and base are unchanged', () => {
+        const level = protectedLevel();
+        expect(level).not.toBeNull();
+        const plain = route(enhancingConfig, level).optimalStrategy;
+        const kept = route({ ...enhancingConfig, conservation: 0.1 }, level).optimalStrategy;
+        expect(kept.protectFrom).toBe(plain.protectFrom);
+        expect(kept.protectionCount).toBeCloseTo(plain.protectionCount * 0.9, 9);
+        expect(kept.protectionCost).toBeCloseTo(plain.protectionCost * 0.9, 4);
+        expect(kept.expectedAttempts).toBe(plain.expectedAttempts);
+        expect(kept.materialCost).toBe(plain.materialCost);
+        expect(kept.baseCost).toBe(plain.baseCost);
+        expect(kept.totalCost).toBeLessThan(plain.totalCost);
+    });
+
+    test('no talisman (0 or absent) quotes exactly what it quoted before', () => {
+        const level = protectedLevel();
+        const plain = route(enhancingConfig, level).optimalStrategy;
+        expect(route({ ...enhancingConfig, conservation: 0, epiphany: 0 }, level).optimalStrategy).toEqual(plain);
+    });
+
+    test('Epiphany scales the route XP, and not the cost', () => {
+        const level = protectedLevel();
+        const plain = route(enhancingConfig, level);
+        const lucky = route({ ...enhancingConfig, epiphany: 0.04 }, level);
+        expect(lucky.totalExpectedXP).toBeCloseTo(plain.totalExpectedXP * 1.04, -1);
+        expect(lucky.xpPerHour / plain.xpPerHour).toBeCloseTo(1.04, 3);
+        expect(lucky.optimalStrategy.totalCost).toBe(plain.optimalStrategy.totalCost);
+    });
+
+    test('a mirror plan spends no protections for Conservation to keep and still gets the Epiphany XP', () => {
+        Object.assign(prices, saved);
+        const plain = route(enhancingConfig, 8);
+        const lucky = route({ ...enhancingConfig, conservation: 0.08, epiphany: 0.02 }, 8);
+        expect(plain.optimalStrategy.usedMirror).toBe(true);
+        expect(lucky.xpPerHour / plain.xpPerHour).toBeCloseTo(1.02, 3);
+        expect(lucky.optimalStrategy.mirrorCount).toBe(plain.optimalStrategy.mirrorCount);
+    });
+});
