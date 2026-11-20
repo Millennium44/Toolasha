@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reroll advisor states large cost gaps as a multiple
+
+When locking a line first, or keeping a lock, costs more than ten times the advised plan, the advisor now says "about 530× as much" instead of a figure like "52845% more".
+
 ### Talisman lists show the game icon and marker
 
 Improve mine, the core advisor and the loadout talisman check now show each talisman's icon and the marker you set in the game, so two talismans of the same type are easy to tell apart.

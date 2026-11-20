@@ -350,6 +350,29 @@ describe('describeAdvice', () => {
         expect(lock.move).toBe('Next: lock Armor with a Binding Orb.');
     });
 
+    test('a huge lock-first gap reads as a multiple, not a five-digit percentage', () => {
+        const advise = (lockValue) =>
+            describeAdvice(
+                {
+                    build: ok,
+                    scale: 'market',
+                    prices: {},
+                    advice: {
+                        status: 'move',
+                        move: { kind: 'orb', itemHrid: '/items/reshaping_orb' },
+                        value: 1000,
+                        lockFirst: { modifierHrid: M('armor'), value: lockValue },
+                        counts: {},
+                    },
+                },
+                names
+            ).detail[0];
+        // Live: Binding Orb ~510M against a 963.5K plan showed "52845% more"
+        expect(advise(529450)).toBe('Locking Armor first is expected to cost about 530× as much.');
+        expect(advise(1500)).toBe('Locking Armor first is expected to cost 50% more.');
+        expect(advise(11000)).toBe('Locking Armor first is expected to cost 1000% more.');
+    });
+
     test('a focus move names its picks', () => {
         const focus = describeAdvice(
             {

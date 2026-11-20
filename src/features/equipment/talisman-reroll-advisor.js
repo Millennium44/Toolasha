@@ -175,13 +175,18 @@ export function describeAdvice(result, names) {
     }
 
     const detail = [];
-    const more = (other) => Math.round(((other - advice.value) / advice.value) * 100);
+    // "cost 50% more" reads well; past 10x a percentage ("52845% more") does not, so say the multiple instead
+    const more = (other) => {
+        const ratio = other / advice.value;
+        if (ratio > 11) return `about ${formatOdds(ratio)}× as much`;
+        return `${Math.round((ratio - 1) * 100)}% more`;
+    };
     if (advice.status === 'move' && advice.move.kind === 'unlock' && advice.stayLockedValue > advice.value) {
-        detail.push(`Keeping the lock is expected to cost ${more(advice.stayLockedValue)}% more.`);
+        detail.push(`Keeping the lock is expected to cost ${more(advice.stayLockedValue)}.`);
     }
     if (advice.status === 'move' && advice.lockFirst?.value > advice.value) {
         detail.push(
-            `Locking ${mod(advice.lockFirst.modifierHrid)} first is expected to cost ${more(advice.lockFirst.value)}% more.`
+            `Locking ${mod(advice.lockFirst.modifierHrid)} first is expected to cost ${more(advice.lockFirst.value)}.`
         );
     }
     // Say so when most rolls of the advised orb are thrown away, so a long streak of discards is expected
