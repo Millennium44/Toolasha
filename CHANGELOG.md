@@ -12,7 +12,7 @@ Improve mine, the core advisor and the loadout talisman check now show each tali
 
 ### Reroll advisor can aim for any K of your wanted lines
 
-The talisman window's reroll advisor has a new "Need any K of these" pick: list up to four lines you would accept and how many of them you need, and it plans the cheapest route to any such set instead of all of them.
+The talisman window's reroll advisor takes up to six wanted lines, a "required" mark on each and a "Need any K of these" count, and plans the cheapest route to any such set. In Improve mine, "Aim for any K" sends the ranking's near-best lines with the clear winners marked required.
 
 ### Skilling talisman Specials valued
 
