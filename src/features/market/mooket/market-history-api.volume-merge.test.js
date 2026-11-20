@@ -7,6 +7,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { computeAllWindows } from '../../../utils/market-volume-stats-math.js';
 
 const settings = vi.hoisted(() => ({
     market_pooledHistory: true,
@@ -172,6 +173,26 @@ describe('setting on, mooket II answers', () => {
         // each hour's volume is counted exactly once overall
         expect(rows.reduce((sum, row) => sum + (row.v || 0), 0)).toBe(12);
         expect(rowsHaveVolume(rows)).toBe(true);
+    });
+
+    test.each([10, 30])('uses the volume timestamps at a rolling cutoff with a price at +%is', (priceSecond) => {
+        const priceRows = [
+            { a: 60, b: 40, p: 50, v: 0, time: HOUR_100 + priceSecond },
+            { a: 70, b: 50, p: 60, v: 0, time: HOUR_100 + H },
+        ];
+        const volumeRows = [
+            { a: 99, b: 98, p: 98, v: 11, time: HOUR_100 + 5 },
+            { a: 99, b: 98, p: 98, v: 4, time: HOUR_100 + 20 },
+            { a: 99, b: 98, p: 98, v: 3, time: HOUR_100 + 20 },
+            { a: 99, b: 98, p: 98, v: 2, time: HOUR_100 + H },
+        ];
+        const now = (HOUR_100 + 20 + 24 * H) * 1000;
+        const rows = mergeMooket1Volume(priceRows, volumeRows);
+        const windows = computeAllWindows(rows, now, 0, { volumeMerged: true });
+
+        expect(windows.map(({ stats }) => stats.volume)).toEqual([9, 20, 20]);
+        expect(windows[0].stats.avgPrice).toBe(priceSecond < 20 ? 60 : 55);
+        expect(rows[0].v).toBe(18); // the chart still uses a single total per hour
     });
 
     test('a mooket II hour with no volume reading never becomes a zero', () => {

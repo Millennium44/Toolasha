@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Merged market volume uses its own timestamps
+
+When mooket I prices are paired with mooket II volume, the 1d/3d/5d totals use the times from the volume feed. The open item's trade stats refresh when you change the history source or toggle merged volume for mooket I.
+
 ### Volume with mooket I market history
 
 A new opt-in setting fetches trade volume from mooket II (q7.nainai.eu.org) while your market history source is mooket I, which has none. Prices still come from mooket I; an hour without a volume reading shows a dash, never zero trades.

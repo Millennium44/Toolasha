@@ -103,7 +103,8 @@ export const VOLUME_MERGE_SETTING = 'market_historyVolumeFromMooket2';
  * hour, the latest, so a day or 3-hour grouping that sums `v` counts it once; the hour's other rows get
  * `v: null` ("no reading"). An hour mooket II has volume for and mooket I has no row in becomes a
  * volume-only row (`a`, `b`, `p` all -1, so it draws no price). An hour only mooket I has stays `v: null`:
- * "no reading" is not "no trades". Prices are never taken from mooket II.
+ * "no reading" is not "no trades". Keep each volume reading's timestamp for rolling stats, which can
+ * cut through an hour. Prices are never taken from mooket II.
  *
  * Pure: two row lists in, rows out (oldest first).
  *
@@ -121,8 +122,10 @@ export function mergeMooket1Volume(priceRows, volumeRows) {
         const time = rowTime(row);
         if (!(time > 0)) continue;
         const hour = Math.floor(time / 3600);
-        const held = hours.get(hour) || { sum: 0, time: 0 };
-        held.sum += Math.max(0, Number(row.v));
+        const held = hours.get(hour) || { sum: 0, time: 0, readings: [] };
+        const v = Math.max(0, Number(row.v));
+        held.readings.push({ time, v });
+        held.sum += v;
         held.time = Math.max(held.time, time);
         hours.set(hour, held);
     }
@@ -140,8 +143,9 @@ export function mergeMooket1Volume(priceRows, volumeRows) {
     const extra = [];
     for (const [hour, held] of hours) {
         const index = latestInHour.get(hour);
-        if (index !== undefined) base[index].v = held.sum;
-        else extra.push({ a: -1, b: -1, p: -1, v: held.sum, time: held.time });
+        const volume = { v: held.sum, volumeReadings: held.readings };
+        if (index !== undefined) Object.assign(base[index], volume);
+        else extra.push({ a: -1, b: -1, p: -1, time: held.time, ...volume });
     }
     return [...base, ...extra].sort((x, y) => rowTime(x) - rowTime(y));
 }
