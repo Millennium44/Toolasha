@@ -248,3 +248,13 @@ describe('describeAdvice for required lines', () => {
         expect(text.move).toContain('at most 6');
     });
 });
+
+describe('describeAdvice for a pool over the state ceiling', () => {
+    test('says to drop a line or lower a grade', () => {
+        const text = describeAdvice(
+            { build: { status: 'impossible', reason: 'tooManyStates', rollable: 6, states: 289290, max: 150000 } },
+            { item: (h) => h, modifier: (h) => h, lineCount: 4 }
+        );
+        expect(text.move).toBe('Not reachable. Too many lines at this grade (6 lines): drop a line or lower a grade.');
+    });
+});

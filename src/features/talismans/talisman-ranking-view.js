@@ -30,6 +30,7 @@ import { gatheringProfit, productionProfit } from '../../utils/bundle-bridge.js'
 import { fiberFor } from '../../utils/react-click.js';
 import { orbWeights } from '../../utils/talisman-orb-weights.js';
 import { OrbCostSolver, freshCores, referenceOrb } from '../../utils/talisman-orb-costs.js';
+import { MAX_STATES, effectiveStates } from '../../utils/talisman-reroll-solver.js';
 import { parseShorthandAmount } from '../../utils/number-parser.js';
 import {
     DEFAULT_CAP_GRADE,
@@ -991,9 +992,14 @@ export class TalismanRankingSectionBase {
         let need;
         let anyNote = '';
         if (any) {
+            const grade = option.targets[0]?.minGrade || 1;
+            const lines = option.talisman.modifiers?.length || option.targets.length;
+            const { maxGrade } = talismanLimits(dataManager.getInitClientData?.()?.talismanInfo);
             const plan = planAnyKTarget(this._improve.rows, {
-                grade: option.targets[0]?.minGrade || 1,
+                grade,
                 k: option.targets.length,
+                // The solver's state ceiling: a pool it would refuse is cut down here instead
+                fits: (size) => effectiveStates(lines, size, grade, maxGrade).states <= MAX_STATES,
             });
             if (!plan) {
                 note.textContent = 'No line has a gain to aim for here.';

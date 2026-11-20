@@ -133,6 +133,7 @@ export function describeAdvice(result, names) {
                 build.cause === 'gradeAboveCap'
                     ? `${mod(build.hrid)} is marked required, but grades only go up to G6.`
                     : `${mod(build.hrid)} is marked required, but it cannot roll on this talisman type.`,
+            tooManyStates: `Too many lines at this grade (${build.rollable} lines): drop a line or lower a grade.`,
             poolTooLarge: `The pool has ${build.rollable} lines that can roll here; at most ${build.max} can be solved at once.`,
             tooFewRollable: `Only ${build.rollable} of the picked lines can roll on this talisman type at a grade the game offers, and you need ${build.need}.`,
             notInPool: `${mod(build.hrid)} cannot roll on this talisman type.`,
