@@ -42,6 +42,11 @@ describe('the calculators the tiles arm around', () => {
         expect(text).not.toMatch(/\bawait\b/);
     });
 
+    test('and so does the outcome it works out, which holds the arithmetic', () => {
+        const text = body(read('../market/profit-calculator.js'), '    async calculateProfitOutcome(', '\n    /**');
+        expect(text).not.toMatch(/\bawait\b/);
+    });
+
     test('calculateExpPerHour is synchronous', () => {
         const text = body(
             read('../../utils/experience-calculator.js'),

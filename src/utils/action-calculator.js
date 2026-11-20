@@ -19,7 +19,7 @@ import { getCommunityProductionEfficiency } from './community-buffs.js';
 import { stackAdditive } from './efficiency.js';
 import { MIN_ACTION_TIME_SECONDS } from './profit-constants.js';
 import { resolveActionContext } from './action-context.js';
-import { drinkEffectConcentration } from './talisman-bonuses.js';
+import { INVIGORATION_ACTION_TYPES, drinkEffectConcentration, drinkOutcomes, mixOutcomes } from './talisman-bonuses.js';
 
 /**
  * Calculate complete action statistics (time + efficiency)
@@ -36,6 +36,20 @@ import { drinkEffectConcentration } from './talisman-bonuses.js';
  * @returns {Object} { actionTime, totalEfficiency, breakdown? }
  */
 export function calculateActionStats(actionDetails, options = {}) {
+    // Invigoration is two outcomes, each worked out whole and weighted (the level-efficiency clamp is not linear)
+    if (!options.actionContext?.drinkOutcome && INVIGORATION_ACTION_TYPES.includes(actionDetails?.type)) {
+        const outcomes = drinkOutcomes(options.equipment, actionDetails.type);
+        if (outcomes.length > 1) {
+            const parts = outcomes.map(({ outcome, weight }) => ({
+                weight,
+                value: calculateActionStats(actionDetails, {
+                    ...options,
+                    actionContext: { ...(options.actionContext ?? {}), drinkOutcome: outcome },
+                }),
+            }));
+            return parts.some((part) => !part.value) ? null : mixOutcomes(parts);
+        }
+    }
     const {
         skills,
         equipment,
@@ -92,7 +106,12 @@ export function calculateActionStats(actionDetails, options = {}) {
         // Get drink concentration
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
         // Invigoration (talisman) makes the drinks' effects stronger on cooking and brewing; the plain figure stays for costs
-        const effectConcentration = drinkEffectConcentration(equipment, actionDetails.type, drinkConcentration);
+        const effectConcentration = drinkEffectConcentration(
+            equipment,
+            actionDetails.type,
+            drinkConcentration,
+            actionContext?.drinkOutcome ?? 'normal'
+        );
 
         // Get active drinks for this action type (loadout-snapshot aware)
         const activeDrinks = actionContext?.drinks ?? resolveActionContext(actionDetails.type).drinks;

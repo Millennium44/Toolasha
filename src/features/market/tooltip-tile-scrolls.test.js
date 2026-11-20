@@ -68,6 +68,9 @@ vi.mock('../actions/scroll-chips.js', () => ({
     shortScrollName: (b) => b.split('/').pop(),
 }));
 // The efficiency context is where scrolls act: read the armed simulation the way the real one does
+vi.mock('../../utils/action-context.js', () => ({
+    resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
+}));
 vi.mock('../../utils/efficiency.js', () => ({
     getActionEfficiencyContext: () => {
         const armed = mocks.simulation[TYPE];
