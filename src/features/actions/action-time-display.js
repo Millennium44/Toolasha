@@ -73,7 +73,12 @@ import {
     zoneSimRateKey,
 } from '../../utils/all-zones-snapshot.js';
 import { characterKey } from '../../utils/character-key.js';
-import { resolveLoadoutTalismans, SKILLING_SPECIAL_STATS, talismanStat } from '../../utils/talisman-bonuses.js';
+import {
+    drinkEffectConcentration,
+    resolveLoadoutTalismans,
+    SKILLING_SPECIAL_STATS,
+    talismanStat,
+} from '../../utils/talisman-bonuses.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { loadoutSnapshot, combatSimUI } from '../../utils/bundle-bridge.js';
 
@@ -3121,8 +3126,11 @@ class ActionTimeDisplay {
             if (PRODUCTION_TYPES.includes(actionDetails.type)) {
                 const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
                 const gourmetBonus =
-                    parseGourmetBonus(runningDrinks, itemDetailMap, drinkConcentration) +
-                    parseEquipmentTalismanBuff(equipment, '/buff_types/gourmet');
+                    parseGourmetBonus(
+                        runningDrinks,
+                        itemDetailMap,
+                        drinkEffectConcentration(equipment, actionDetails.type, drinkConcentration)
+                    ) + parseEquipmentTalismanBuff(equipment, '/buff_types/gourmet');
 
                 // Gourmet gives a chance for extra items (e.g., 0.1344 = 13.44% more items)
                 const gourmetBonusItems = itemsPerHour * gourmetBonus;
@@ -4518,7 +4526,11 @@ class ActionTimeDisplay {
             this.queuedActionContext(actionDetails, actionObj) ??
             resolveActionContext(actionDetails.type);
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-        return parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
+        return parseArtisanBonus(
+            activeDrinks,
+            itemDetailMap,
+            drinkEffectConcentration(equipment, actionDetails.type, drinkConcentration)
+        );
     }
 
     /**

@@ -25,7 +25,12 @@ import {
 import { calculateHouseEfficiency } from './house-efficiency.js';
 import { getCommunityGatheringQuantity } from './community-buffs.js';
 import { GATHERING_TYPES, PRODUCTION_TYPES } from './profit-constants.js';
-import { INVIGORATION_ACTION_TYPES, SKILLING_SPECIAL_STATS, talismanStat } from './talisman-bonuses.js';
+import {
+    INVIGORATION_ACTION_TYPES,
+    SKILLING_SPECIAL_STATS,
+    drinkEffectConcentration,
+    talismanStat,
+} from './talisman-bonuses.js';
 
 /**
  * Stack additive bonuses (most game bonuses)
@@ -224,23 +229,23 @@ export function getActionEfficiencyContext(actionDetails, options = {}) {
     const invigoration = INVIGORATION_ACTION_TYPES.includes(actionDetails.type)
         ? talismanStat(equipment, SKILLING_SPECIAL_STATS.invigoration)
         : 0;
-    const drinkEffectConcentration = (1 + drinkConcentration) * (1 + invigoration) - 1;
+    const effectConcentration = drinkEffectConcentration(equipment, actionDetails.type, drinkConcentration);
 
     // Tea bonuses (shared by both paths)
     const teaSkillLevelBonus = parseTeaSkillLevelBonus(
         actionDetails.type,
         drinkSlots,
         itemDetailMap,
-        drinkEffectConcentration
+        effectConcentration
     );
-    const teaEfficiency = parseTeaEfficiency(actionDetails.type, drinkSlots, itemDetailMap, drinkEffectConcentration);
+    const teaEfficiency = parseTeaEfficiency(actionDetails.type, drinkSlots, itemDetailMap, effectConcentration);
     const processingBonus = GATHERING_TYPES.includes(actionDetails.type)
         ? parseProcessingBonus(drinkSlots, itemDetailMap, drinkConcentration) +
           dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/processing') +
           parseEquipmentTalismanBuff(equipment, '/buff_types/processing')
         : 0;
     const gourmetBonus = PRODUCTION_TYPES.includes(actionDetails.type)
-        ? parseGourmetBonus(drinkSlots, itemDetailMap, drinkEffectConcentration) +
+        ? parseGourmetBonus(drinkSlots, itemDetailMap, effectConcentration) +
           dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/gourmet') +
           parseEquipmentTalismanBuff(equipment, '/buff_types/gourmet')
         : 0;
@@ -263,8 +268,8 @@ export function getActionEfficiencyContext(actionDetails, options = {}) {
     houseEfficiency = calculateHouseEfficiency(actionDetails.type, { gameData });
 
     if (isProduction) {
-        artisanBonus = parseArtisanBonus(drinkSlots, itemDetailMap, drinkEffectConcentration);
-        actionLevelBonus = parseActionLevelBonus(drinkSlots, itemDetailMap, drinkEffectConcentration);
+        artisanBonus = parseArtisanBonus(drinkSlots, itemDetailMap, effectConcentration);
+        actionLevelBonus = parseActionLevelBonus(drinkSlots, itemDetailMap, effectConcentration);
     }
 
     // Gathering-only: gathering quantity bonuses
