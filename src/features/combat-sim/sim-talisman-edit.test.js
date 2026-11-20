@@ -93,6 +93,26 @@ describe('editing a sim talisman list', () => {
         const a = three();
         const b = [...three()].reverse().map((t) => ({ ...t, id: undefined }));
         expect(talismanListSignature(a)).toBe(talismanListSignature(b));
+        // The same lines in another order on one talisman are the same talisman
+        const x = [
+            {
+                slotIndex: 1,
+                modifiers: [
+                    { hrid: ARMOR, grade: 3 },
+                    { hrid: HASTE, grade: 2 },
+                ],
+            },
+        ];
+        const y = [
+            {
+                slotIndex: 1,
+                modifiers: [
+                    { hrid: HASTE, grade: 2 },
+                    { hrid: ARMOR, grade: 3 },
+                ],
+            },
+        ];
+        expect(talismanListSignature(x)).toBe(talismanListSignature(y));
         expect(talismanListSignature(a)).toBe(talismanListSignature(a.slice(0, 2)));
         expect(talismanListSignature(a)).not.toBe(talismanListSignature(setTalismanLineGrade(a, 2, 0, 3, 6)));
         expect(talismanListSignature(undefined)).toBe(talismanListSignature([]));

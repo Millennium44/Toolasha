@@ -327,7 +327,7 @@ describe('rebuildCombatLineRanking', () => {
 
     test('a fresh run keeps what a rebuild needs, and names the metric it ran under', async () => {
         const { result } = await ranked();
-        expect(result.rebuild.ranWith).toEqual({ metricKey: 'dps', balanceWeights: null });
+        expect(result.rebuild.ranWith).toMatchObject({ metricKey: 'dps', balanceWeights: null, setMode: 'practical' });
         expect(result.rebuild.priceCache).toBeInstanceOf(Map);
         expect(result.rebuild.baselineResult).toBeTruthy();
         expect(result.rows.every((r) => r.baselineMetrics)).toBe(true);
@@ -515,7 +515,7 @@ describe('rebuildCombatLineRanking', () => {
             deps
         );
         expect(twice.status).toBe('done');
-        expect(twice.rebuild.ranWith).toEqual({ metricKey: 'dps', balanceWeights: null });
+        expect(twice.rebuild.ranWith).toMatchObject({ metricKey: 'dps', balanceWeights: null, setMode: 'practical' });
         expect(twice.rows.map((r) => r.hrid).sort()).toEqual(result.rows.map((r) => r.hrid).sort());
         // The byGrade list is still the row's scaled figures
         const row = twice.rows[0];

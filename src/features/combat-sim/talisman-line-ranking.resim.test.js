@@ -11,7 +11,7 @@ vi.mock('../../utils/game-server.js', async (importOriginal) => ({
     isTestServer: () => true,
 }));
 
-const { runCombatLineRanking, noiseSummary } = await import('./talisman-line-ranking.js');
+const { rebuildCombatLineRanking, runCombatLineRanking, noiseSummary } = await import('./talisman-line-ranking.js');
 const { resimCloseCallRows } = await import('./upgrade-advisor.js');
 
 const LARGE_10 = { hrid: '/items/large_talisman_belt', enhancementLevel: 10 };
@@ -106,6 +106,51 @@ describe('close-call re-sims', () => {
             { significant: false, noEffect: true },
         ];
         expect(noiseSummary(rows)).toEqual({ measured: 3, withinNoise: 2, mostlyNoise: true });
+    });
+});
+
+describe('rebuilding a ranking that went through close-call re-sims', () => {
+    const controls = (overrides = {}) => ({
+        metricKey: 'dps',
+        balanceWeights: { xp: 0, profit: 0, dps: 1 },
+        setMode: 'practical',
+        capGrade: 3,
+        budget: 0,
+        ...overrides,
+    });
+
+    test('re-simmed rows keep their longer baseline and are scored against it', async () => {
+        const calls = [];
+        const d = deps(calls);
+        const result = await runCombatLineRanking(params(true), null, d);
+        const resimmed = result.rows.filter((r) => r.resim);
+        expect(resimmed.length).toBeGreaterThan(0);
+        // A re-simmed row was set against its round's baseline, not the first pass's
+        for (const row of resimmed) expect(row.baselineMetrics).not.toBe(result.baseline);
+        const rebuilt = await rebuildCombatLineRanking(
+            result,
+            controls({ metricKey: 'balanced', setMode: 'ideal' }),
+            null,
+            d
+        );
+        expect(rebuilt.status).toBe('done');
+        for (const row of rebuilt.rows.filter((r) => r.resim)) {
+            const old = result.rows.find((r) => r.hrid === row.hrid);
+            // Balanced with only DPS weighted is the DPS % and its error bar, at the round's hours (1/sqrt(h) noise)
+            expect(row.baselineMetrics).toBe(old.baselineMetrics);
+            expect(row.valuePct).toBeCloseTo(old.valuePct, 9);
+            expect(row.errPct).toBeCloseTo(old.errPct, 9);
+            expect(row.errPct).toBeLessThan(1.96 * 2);
+            expect(row.resim).toEqual(old.resim);
+        }
+        // Only the new set could have needed a sim
+        expect(calls.length - result.sims).toBeLessThanOrEqual(1);
+        // The set settings changed and re-sims ran: said
+        expect(rebuilt.rebuilt.setDiffers).toBe(true);
+        expect(rebuilt.rebuilt.metricDiffers).toBe(true);
+        const same = await rebuildCombatLineRanking(result, controls(), null, d);
+        expect(same.rebuilt.setDiffers).toBe(false);
+        expect(same.rebuilt.metricDiffers).toBe(false);
     });
 });
 

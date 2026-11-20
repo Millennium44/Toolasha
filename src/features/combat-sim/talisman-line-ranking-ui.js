@@ -100,21 +100,17 @@ export function storedBalanceWeights() {
 }
 
 /**
- * What the whole roster wears, for telling a ranking's fight from the fight now: each player's gear, talismans, food,
- * drinks and abilities (party members change the fight, so the rows measured against it).
+ * What the whole roster is, for telling a ranking's fight from the fight now: each player's whole build (gear and the
+ * triggers on it, talismans, food, drinks, abilities, levels, house rooms, buffs; party members change the fight, so
+ * the rows measured against it). `ignoreTalismansOf` leaves one player's talismans out: the ranking measures a line
+ * against that player with their talismans off, so only the rest of the roster must match.
  * @param {Array<Object>|null} dtos
+ * @param {string|null} [ignoreTalismansOf] - A player hrid
  * @returns {string}
  */
-function rosterFingerprint(dtos) {
+function rosterFingerprint(dtos, ignoreTalismansOf = null) {
     return JSON.stringify(
-        (dtos || []).map((dto) => [
-            dto?.hrid ?? null,
-            dto?.equipment ?? null,
-            dto?.talismans ?? null,
-            dto?.food ?? null,
-            dto?.drinks ?? null,
-            dto?.abilities ?? null,
-        ])
+        (dtos || []).map((dto) => (dto?.hrid === ignoreTalismansOf ? { ...dto, talismans: null } : (dto ?? null)))
     );
 }
 
@@ -231,7 +227,17 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             difficultyTier,
             hours,
             build: dto ? JSON.stringify(dto) : null,
+            buffs: this._buffsNow(),
         };
+    }
+
+    /** @returns {string|null} The community buffs the sims would run with, as text */
+    _buffsNow() {
+        try {
+            return JSON.stringify(getCommunityBuffs() ?? null);
+        } catch {
+            return null;
+        }
     }
 
     /**
@@ -247,12 +253,14 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         if (!was) return [];
         const now = this._currentInputs();
         const changed = [];
+        if (was.characterId !== undefined && now.characterId !== was.characterId) changed.push('character');
         if (now.playerIndex !== was.playerIndex || now.playerHrid !== was.playerHrid) changed.push('player');
         if (now.zoneHrid !== was.zoneHrid) changed.push('zone');
         if (now.difficultyTier !== was.difficultyTier) changed.push('tier');
         if (now.hours !== was.hours) changed.push('hours');
         // A build read live (no editor yet) has nothing to compare
         if (was.build && now.build && now.build !== was.build) changed.push('build');
+        if (was.buffs !== undefined && was.buffs !== null && now.buffs !== was.buffs) changed.push('community buffs');
         // The other players of the roster are part of the fight too
         const roster = this._rosterNow();
         if (result.buildFingerprint && roster && roster !== result.buildFingerprint && !changed.includes('build')) {
@@ -280,7 +288,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             rescore = true;
         } else if (result.balanceWeights) {
             const w = storedBalanceWeights();
-            if (['xp', 'profit', 'dps'].some((k) => w[k] !== result.balanceWeights[k])) {
+            if (Object.keys(w).some((k) => w[k] !== result.balanceWeights[k])) {
                 changed.push('Balanced weights');
                 rescore = true;
             }
@@ -296,11 +304,30 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         return { changed, rescore };
     }
 
+    /**
+     * For a result that cannot be rebuilt (stopped, refused): the weights and budget it was made with, which only a
+     * new Rank can follow.
+     * @param {Object|null} result
+     * @returns {string[]}
+     */
+    _unrebuildableStale(result) {
+        if (!result || (result.status === 'done' && result.rebuild)) return [];
+        const changed = [];
+        if (result.balanceWeights) {
+            const w = storedBalanceWeights();
+            if (Object.keys(w).some((k) => w[k] !== result.balanceWeights[k])) changed.push('Balanced weights');
+        }
+        if (this._budgetStale()) changed.push('budget');
+        return changed;
+    }
+
     _refreshStale() {
         this._refreshBeltStale();
         const note = this._q('stale');
         if (!note) return;
-        const forced = this._running ? [] : this._staleInputs(this._result);
+        const forced = this._running
+            ? []
+            : [...this._staleInputs(this._result), ...this._unrebuildableStale(this._result)];
         const { changed, rescore } =
             this._running || forced.length ? { changed: [], rescore: false } : this._rebuildInputs(this._result);
         note.textContent = '';
@@ -406,6 +433,8 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
                     delete next.budgetOrbName;
                 }
                 next.rankingId = ++this._rankSeq;
+                // The core advisor reads the rows: only a re-score changes what they say
+                next.rowsId = next.rebuilt?.rescored ? next.rankingId : (previous.rowsId ?? previous.rankingId);
                 this._result = next;
                 // Improve mine's options were worked out from the old rows and set mode; the cores from the old scores
                 this._improve = null;
@@ -425,15 +454,49 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         if (!result.set) return '';
         const who = result.playerName || 'this player';
         const title =
-            `Writes this set into ${who}'s Belt rows in the Configure tab, replacing the talismans in every belt slot ` +
-            '(a slot the set leaves empty is emptied). Nothing is changed in the game.';
+            `Writes this set into the Belt rows of ${who}'s seat in the Configure tab, replacing the talismans in every ` +
+            'belt slot (a slot the set leaves empty is emptied). Refused when the seat now holds someone else, or the ' +
+            'zone, tier, hours, grade, party or gear changed since the ranking ran. Nothing is changed in the game.';
         return (
             `<button data-role="use-configure" style="${CHIP_BUTTON_STYLE} margin-top:4px;" title="${escapeHtml(title)}">Use in Configure</button> ` +
             '<span data-role="use-configure-note" style="color:#ff9800; font-size:11px;"></span> '
         );
     }
 
-    /** Put the set in the Configure editor, for the player the ranking was run for */
+    /**
+     * Whether the build in Configure is still the one ranked, apart from the ranked player's own talismans (writing a
+     * set over them is the point, and doing it twice is fine).
+     * @param {Object} result
+     * @returns {string[]} What changed, empty when the set may be written
+     */
+    _configureBlockers(result) {
+        const stale = this._staleInputs(result);
+        const blockers = stale.filter((k) => k !== 'build');
+        if (stale.includes('build')) {
+            const strip = (text) => {
+                try {
+                    const dto = JSON.parse(text);
+                    delete dto.talismans;
+                    return JSON.stringify(dto);
+                } catch {
+                    return null;
+                }
+            };
+            const now = this._currentInputs().build;
+            const was = result.inputs?.build;
+            const dtos = this.host._editor?.getEditedDTOs?.();
+            const sameBuild = strip(now) !== null && strip(now) === strip(was);
+            const sameParty =
+                !result.rosterWithoutTalismans ||
+                !dtos ||
+                rosterFingerprint(Object.values(dtos), result.playerHrid) === result.rosterWithoutTalismans;
+            if (!sameBuild) blockers.push('gear or build');
+            if (!sameParty) blockers.push('party');
+        }
+        return blockers;
+    }
+
+    /** Put the set in the Configure editor, for the seat the ranking was run for */
     _onUseInConfigure(button) {
         const note = button.parentElement?.querySelector('[data-role="use-configure-note"]');
         const say = (text) => {
@@ -445,19 +508,26 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             say('Wait for the run to finish.');
             return;
         }
-        if (result.inputs?.characterId && result.inputs.characterId !== dataManager.getCurrentCharacterId()) {
-            say('This ranking was run for another character. Rank again.');
-            return;
-        }
         const editor = this.host._editor;
         if (typeof editor?.applyTalismans !== 'function' || !editor.getEditedDTOs?.()) {
             say('The Configure tab has no build loaded to write to. Open it first.');
             return;
         }
         const who = result.playerName || 'The ranked player';
-        // By hrid, never by position: the roster may have been reordered, or the player removed
+        // A seat label (`player2`) is not a person: Configure can load someone else into it, so the seat must still
+        // exist, hold the same name, and every other input of the ranking must still match
         if (!result.playerHrid || !editor.getEditedDTOs()[result.playerHrid]) {
             say(`${who} is no longer in the Configure roster, so nothing was written.`);
+            return;
+        }
+        const seatName = editor.getPlayerInfo?.()?.find((p) => p.hrid === result.playerHrid)?.name;
+        if (seatName && result.playerName && seatName !== result.playerName) {
+            say(`That seat in Configure now holds ${seatName}, not ${who}, so nothing was written. Rank again.`);
+            return;
+        }
+        const blockers = this._configureBlockers(result);
+        if (blockers.length) {
+            say(`The ${blockers.join(', ')} changed since the ranking ran, so nothing was written. Rank again.`);
             return;
         }
         const outcome = editor.applyTalismans(result.playerHrid, structuredClone(result.set.talismans));
@@ -726,6 +796,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         result.difficultyTier = difficultyTier;
         result.inputs = inputs;
         result.buildFingerprint = buildNow;
+        result.rosterWithoutTalismans = rosterFingerprint(playerDTOs, playerDTOs[playerIndex]?.hrid ?? null);
         result.hours = hours;
         result.dungeon = Boolean(gameData?.actionDetailMap?.[zoneHrid]?.combatZoneInfo?.isDungeon);
         result.playerName =
@@ -775,6 +846,11 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
                 line +=
                     ` The lines near the set's cut line were re-simmed, and the leading lines ran with a copy in every slot, ` +
                     `under ${ranBy}, so another metric may have chosen others. Rank again for the exact picture.`;
+            }
+            if (!r.metricDiffers && r.setDiffers && result.resim?.rounds > 0) {
+                line +=
+                    " The lines near the set's cut line were re-simmed around the set settings of the run (mode and cap), " +
+                    'so a different set may have chosen others. Rank again for the exact picture.';
             }
             parts.push(`<div style="color:#bbb; font-size:11px; margin-bottom:4px;">${escapeHtml(line)}</div>`);
         }
