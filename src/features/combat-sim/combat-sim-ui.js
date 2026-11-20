@@ -1588,6 +1588,13 @@ export function historyEntryPlayer(entry) {
 export const SOLO_VS_PARTY_MODE = 'soloVsParty';
 
 /**
+ * `_allZonesMode` while two or three of Sim All Zones / Solo / Dungeons are
+ * ticked together; `_allZonesKinds` then holds which. One or none ticked keeps
+ * the old single value ('group' | 'solo' | 'dungeons' | null).
+ */
+export const COMBINED_ZONES_MODE = 'combined';
+
+/**
  * The two player sets a Solo zones + party dungeons sweep simulates: the
  * selected player alone (without the party's level-gap penalty), and the
  * full party they are part of.
@@ -3913,7 +3920,8 @@ class CombatSimUI {
         this._runChartHidden = new Set();
         this._activeMainTab = 'configure';
         // All Zones state
-        this._allZonesMode = null; // null = off, 'group', 'solo', or 'dungeons'
+        this._allZonesMode = null; // null = off, 'group', 'solo', 'dungeons', COMBINED_ZONES_MODE, or SOLO_VS_PARTY_MODE
+        this._allZonesKinds = new Set(); // which of group/solo/dungeons are ticked while the mode is COMBINED_ZONES_MODE
         this._allZonesResults = null; // Array of {zone, simResult, revenue}
         this._allZonesSortCol = 'score'; // default the Results table to score, descending
         this._allZonesSortAsc = false;
@@ -4922,44 +4930,24 @@ class CombatSimUI {
             const box = this.panel.querySelector('#mwi-csim-allzones-soloparty');
             if (box) box.checked = false;
         };
-        this.panel.querySelector('#mwi-csim-allzones-group').addEventListener('change', (e) => {
-            if (e.target.checked) {
-                this.panel.querySelector('#mwi-csim-allzones-solo').checked = false;
-                this.panel.querySelector('#mwi-csim-allzones-dungeons').checked = false;
+        // Sim All Zones / Solo / Dungeons combine: any of them can be ticked together and run as one
+        // sweep. Solo zones + party dungeons is a different player rule per row set, so it stays apart.
+        for (const kind of ['group', 'solo', 'dungeons']) {
+            this.panel.querySelector(`#mwi-csim-allzones-${kind}`).addEventListener('change', (e) => {
+                const kinds = this._allZonesKindSet();
+                if (e.target.checked) kinds.add(kind);
+                else kinds.delete(kind);
                 uncheckSoloParty();
-                this._allZonesMode = 'group';
-            } else {
-                this._allZonesMode = null;
-            }
-            this._updateAllZonesUI();
-        });
-        this.panel.querySelector('#mwi-csim-allzones-solo').addEventListener('change', (e) => {
-            if (e.target.checked) {
-                this.panel.querySelector('#mwi-csim-allzones-group').checked = false;
-                this.panel.querySelector('#mwi-csim-allzones-dungeons').checked = false;
-                uncheckSoloParty();
-                this._allZonesMode = 'solo';
-            } else {
-                this._allZonesMode = null;
-            }
-            this._updateAllZonesUI();
-        });
-        this.panel.querySelector('#mwi-csim-allzones-dungeons').addEventListener('change', (e) => {
-            if (e.target.checked) {
-                this.panel.querySelector('#mwi-csim-allzones-group').checked = false;
-                this.panel.querySelector('#mwi-csim-allzones-solo').checked = false;
-                uncheckSoloParty();
-                this._allZonesMode = 'dungeons';
-            } else {
-                this._allZonesMode = null;
-            }
-            this._updateAllZonesUI();
-        });
+                this._setAllZonesKinds(kinds);
+                this._updateAllZonesUI();
+            });
+        }
         this.panel.querySelector('#mwi-csim-allzones-soloparty').addEventListener('change', (e) => {
             if (e.target.checked) {
                 this.panel.querySelector('#mwi-csim-allzones-group').checked = false;
                 this.panel.querySelector('#mwi-csim-allzones-solo').checked = false;
                 this.panel.querySelector('#mwi-csim-allzones-dungeons').checked = false;
+                this._allZonesKinds = new Set();
                 this._allZonesMode = SOLO_VS_PARTY_MODE;
             } else {
                 this._allZonesMode = null;
@@ -5294,6 +5282,29 @@ class CombatSimUI {
     }
 
     /**
+     * Which of the Sim All Zones / Solo / Dungeons boxes are ticked, as a copy.
+     * Empty when none is, and for Solo zones + party dungeons (its own rule).
+     * @returns {Set<string>} Some of 'group', 'solo', 'dungeons'
+     * @private
+     */
+    _allZonesKindSet() {
+        if (this._allZonesMode === COMBINED_ZONES_MODE) return new Set(this._allZonesKinds);
+        if (['group', 'solo', 'dungeons'].includes(this._allZonesMode)) return new Set([this._allZonesMode]);
+        return new Set();
+    }
+
+    /**
+     * Store a ticked-boxes set: one kind keeps the old single mode value, none
+     * turns the mode off, more than one is COMBINED_ZONES_MODE.
+     * @param {Set<string>} kinds
+     * @private
+     */
+    _setAllZonesKinds(kinds) {
+        this._allZonesKinds = new Set(kinds);
+        this._allZonesMode = kinds.size === 0 ? null : kinds.size === 1 ? [...kinds][0] : COMBINED_ZONES_MODE;
+    }
+
+    /**
      * Update UI visibility when All Zones mode changes.
      * Shows/hides zone checklist, hides single-zone controls.
      * @private
@@ -5489,6 +5500,7 @@ class CombatSimUI {
         if (!checklist) return;
 
         const soloVsParty = this._allZonesMode === SOLO_VS_PARTY_MODE;
+        const kinds = this._allZonesKindSet();
         const zones = getCombatZones().filter((z) => {
             // Every real multi-enemy combat zone (run solo) and every dungeon
             // (run as the party) — the same "real zone" test 'group' mode uses
@@ -5497,10 +5509,10 @@ class CombatSimUI {
             // spawns (maxSpawnCount 1, non-dungeon) under "Solo — zones", which
             // are what 'solo' mode (Sim All Solo) is for on purpose.
             if (soloVsParty) return z.isDungeon || z.maxSpawnCount > 1;
-            if (this._allZonesMode === 'dungeons') return z.isDungeon;
-            if (z.isDungeon) return false;
-            if (this._allZonesMode === 'group') return z.maxSpawnCount > 1;
-            if (this._allZonesMode === 'solo') return z.maxSpawnCount === 1;
+            // Ticked boxes add their zones together (a single box is the old filter)
+            if (z.isDungeon) return kinds.has('dungeons');
+            if (kinds.has('group') && z.maxSpawnCount > 1) return true;
+            if (kinds.has('solo') && z.maxSpawnCount === 1) return true;
             return false;
         });
 
@@ -5513,7 +5525,9 @@ class CombatSimUI {
         `;
 
         // Ordinary zones first, then dungeons, each under the set it runs as
-        if (soloVsParty) zones.sort((a, b) => Number(Boolean(a.isDungeon)) - Number(Boolean(b.isDungeon)));
+        // (a combined sweep lists its dungeons last too)
+        if (soloVsParty || kinds.has('dungeons'))
+            zones.sort((a, b) => Number(Boolean(a.isDungeon)) - Number(Boolean(b.isDungeon)));
         let heading = null;
         for (const zone of zones) {
             if (soloVsParty) {
@@ -5568,7 +5582,11 @@ class CombatSimUI {
         // The Bestiary planner can still add every dungeon to an ordinary zone
         // sweep. Append those last so the ordinary rows keep their old order;
         // dungeon-only mode already gets its selected dungeons from the checklist.
-        if (this._includeDungeons && this._allZonesMode !== 'dungeons' && this._allZonesMode !== SOLO_VS_PARTY_MODE) {
+        if (
+            this._includeDungeons &&
+            !this._allZonesKindSet().has('dungeons') &&
+            this._allZonesMode !== SOLO_VS_PARTY_MODE
+        ) {
             for (const zone of allZones.filter((z) => z.isDungeon)) {
                 // T0-T2, the same range the Configure tier dropdown offers
                 for (let t = 0; t <= DUNGEON_MAX_TIER; t++) {
@@ -6677,7 +6695,7 @@ class CombatSimUI {
                     // dungeon to the next run. A Dungeons run is nothing but
                     // dungeons already, so there it would be a switch that
                     // changes nothing — and it never filtered the plan.
-                    this._allZonesMode === 'dungeons' || this._allZonesMode === SOLO_VS_PARTY_MODE
+                    this._allZonesKindSet().has('dungeons') || this._allZonesMode === SOLO_VS_PARTY_MODE
                         ? ''
                         : `<label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own runs at that tier and party size measured, where there are any. One the sim wipes in is planned from those runs and its spawn tables, less any failed attempts you have recorded; a row marked no wipes counted has none on record to charge. With no runs it stays a sim estimate that includes failed attempts, and the row says so. Runs recorded with no tier are not used, unless your Bestiary shows the dungeon's final boss at one tier only. A dungeon timed from your clears alone is also lengthened to its expected attempts per clear, time / (1 - wipe share) (shown on the row), and one below Min clear % is left out of the route and listed with the reason. Takes effect on the next All Zones run.">
                     <input id="mwi-csim-bestiary-plan-dungeons" type="checkbox"${this._includeDungeons ? ' checked' : ''} style="margin:0; cursor:pointer;">
@@ -7400,6 +7418,7 @@ class CombatSimUI {
      */
     _leaveAllZonesMode() {
         this._allZonesMode = null;
+        this._allZonesKinds = new Set();
         const groupBox = this.panel.querySelector('#mwi-csim-allzones-group');
         const soloBox = this.panel.querySelector('#mwi-csim-allzones-solo');
         const dungeonBox = this.panel.querySelector('#mwi-csim-allzones-dungeons');

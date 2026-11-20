@@ -12367,6 +12367,8 @@ describe('dungeons in the all-zones run and in the plan', () => {
         ui._bestiaryPlanMode = 'hours';
         ui._bestiaryPlanHours = 24;
         ui._includeDungeons = false;
+        // The mode outlives the panel; a leftover one would now join the box clicked here
+        ui._allZonesMode = null;
         mocks.monsters = null;
     });
 
@@ -12434,9 +12436,13 @@ describe('dungeons in the all-zones run and in the plan', () => {
             { zoneHrid: '/actions/combat/cove', difficultyTier: 2, name: 'Cove' },
         ]);
 
+        // Ticking another box adds to the sweep rather than replacing it
         ui.panel.querySelector('#mwi-csim-allzones-group').click();
+        expect(ui._allZonesMode).toBe('combined');
+        expect(dungeonBox.checked).toBe(true);
+        // Unticking Dungeons leaves the single Sim All Zones mode
+        dungeonBox.click();
         expect(ui._allZonesMode).toBe('group');
-        expect(dungeonBox.checked).toBe(false);
     });
 
     test('a dungeon-only sweep accepts a full five-player party', async () => {
@@ -14783,6 +14789,121 @@ describe('Solo zones + party dungeons: one ranked table', () => {
             expect(mocks.allZonesArgsLog).toHaveLength(1);
             expect(mocks.allZonesArgsLog[0].playerDTOs).toHaveLength(3);
             expect(headers()).not.toContain('set');
+        });
+    });
+
+    describe('ticking Sim All Zones / Solo / Dungeons together', () => {
+        const single = {
+            hrid: '/actions/combat/ant',
+            name: 'Ant',
+            maxSpawnCount: 1,
+            maxDifficulty: 1,
+            isDungeon: false,
+        };
+        const box = (kind) => ui.panel.querySelector(`#mwi-csim-allzones-${kind}`);
+        const listed = () => [...ui.panel.querySelectorAll('.mwi-csim-zone-cb')].map((cb) => cb.dataset.hrid);
+
+        beforeEach(() => {
+            mocks.zones = [fly, single, den];
+        });
+
+        test('none ticked is off; each single box keeps its own mode and list', () => {
+            expect(ui._allZonesMode).toBeNull();
+            box('group').click();
+            expect([ui._allZonesMode, listed()]).toEqual(['group', [fly.hrid]]);
+            box('group').click();
+            expect(ui._allZonesMode).toBeNull();
+            box('solo').click();
+            expect([ui._allZonesMode, listed()]).toEqual(['solo', [single.hrid]]);
+            box('solo').click();
+            box('dungeons').click();
+            expect([ui._allZonesMode, listed()]).toEqual(['dungeons', [den.hrid]]);
+        });
+
+        test('each pair and all three list the union, dungeons last', () => {
+            box('group').click();
+            box('solo').click();
+            expect(ui._allZonesMode).toBe('combined');
+            expect(listed()).toEqual([fly.hrid, single.hrid]);
+            box('solo').click();
+            box('dungeons').click();
+            expect(listed()).toEqual([fly.hrid, den.hrid]);
+            box('solo').click();
+            expect(listed()).toEqual([fly.hrid, single.hrid, den.hrid]);
+            expect(['group', 'solo', 'dungeons'].every((kind) => box(kind).checked)).toBe(true);
+            // Dropping one box keeps the other two
+            box('solo').click();
+            expect(ui._allZonesMode).toBe('combined');
+            expect(listed()).toEqual([fly.hrid, den.hrid]);
+        });
+
+        test('Solo zones + party dungeons stays exclusive with them', () => {
+            box('group').click();
+            box('dungeons').click();
+            ui.panel.querySelector('#mwi-csim-allzones-soloparty').click();
+            expect(ui._allZonesMode).toBe(SOLO_VS_PARTY_MODE);
+            expect(['group', 'solo', 'dungeons'].some((kind) => box(kind).checked)).toBe(false);
+            box('solo').click();
+            expect(ui._allZonesMode).toBe('solo');
+            expect(ui.panel.querySelector('#mwi-csim-allzones-soloparty').checked).toBe(false);
+        });
+
+        test('a combined sweep is one sweep over every ticked zone, for the one party, with no Set column', async () => {
+            box('group').click();
+            box('solo').click();
+            box('dungeons').click();
+
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesArgsLog).toHaveLength(1);
+            const hrids = new Set(mocks.allZonesArgsLog[0].zones.map((z) => z.zoneHrid));
+            expect(hrids).toEqual(new Set([fly.hrid, single.hrid, den.hrid]));
+            expect(mocks.allZonesArgsLog[0].playerDTOs).toHaveLength(3);
+            expect(headers()).not.toContain('set');
+            expect(ui._allZonesSnapshotMeta).not.toBeNull();
+        });
+
+        test('with one player loaded, Solo + Dungeons runs the dungeons with that player in the same table', async () => {
+            mocks.editedDTOs = null;
+            box('solo').click();
+            box('dungeons').click();
+
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesArgsLog).toHaveLength(1);
+            expect(mocks.allZonesArgsLog[0].playerDTOs).toHaveLength(1);
+            expect(new Set(mocks.allZonesArgsLog[0].zones.map((z) => z.zoneHrid))).toEqual(
+                new Set([single.hrid, den.hrid])
+            );
+            expect(headers()).not.toContain('set');
+        });
+
+        test('a combination with no matching zones says so and runs nothing', async () => {
+            mocks.zones = [fly];
+            box('solo').click();
+            box('dungeons').click();
+            expect(listed()).toEqual([]);
+
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesRuns).toBe(0);
+        });
+
+        test('with dungeons ticked, the planner switch is not offered and adds no second copy', () => {
+            box('group').click();
+            box('dungeons').click();
+            ui._includeDungeons = true;
+            expect(ui._getSelectedAllZones().filter((z) => z.zoneHrid === den.hrid)).toHaveLength(3);
+            ui._includeDungeons = false;
+        });
+
+        test('leaving all-zones mode clears the combination', () => {
+            box('group').click();
+            box('solo').click();
+            ui._leaveAllZonesMode();
+            expect(ui._allZonesKindSet().size).toBe(0);
+            box('dungeons').click();
+            expect([ui._allZonesMode, listed()]).toEqual(['dungeons', [den.hrid]]);
         });
     });
 });

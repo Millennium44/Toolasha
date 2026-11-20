@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 An orb with no market listing now counts at its crafting cost (inputs at their market buy price, artisan tea applied), so the reroll advisor can give a coin cost once every orb has a listing or a priced recipe. The coin line names the orbs priced this way.
 
+### Combat Sim: tick several Sim All boxes at once
+
+Sim All Zones, Sim All Solo and Sim All Dungeons can now be ticked together. The chosen kinds run as one sweep into one results table, for example solo zones and dungeons ranked side by side.
+
 ### Merged market volume uses its own timestamps
 
 When mooket I prices are paired with mooket II volume, the 1d/3d/5d totals use the times from the volume feed. The open item's trade stats refresh when you change the history source or toggle merged volume for mooket I.
