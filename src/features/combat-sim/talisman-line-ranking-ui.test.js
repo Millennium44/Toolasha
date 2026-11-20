@@ -160,7 +160,8 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
 }));
 
 const { talismanBonusesOf } = await import('../../utils/talisman-bonuses.js');
-const { TalismanLineRankingSection, talismanRankingAvailable } = await import('./talisman-line-ranking-ui.js');
+const { TalismanLineRankingSection, talismanRankingAvailable, etaLeftText, durationText } =
+    await import('./talisman-line-ranking-ui.js');
 
 let host;
 let section;
@@ -1137,5 +1138,59 @@ describe('Use in Configure', () => {
         useButton().click();
         const written = editor.applyTalismans.mock.calls[0][1];
         expect(written.flatMap((t) => t.modifiers).every((m) => m.grade === 6)).toBe(true);
+    });
+});
+
+describe('time left while ranking', () => {
+    test('durations: seconds under a minute, whole minutes above', () => {
+        expect(durationText(0.2)).toBe('1 s');
+        expect(durationText(44.1)).toBe('45 s');
+        expect(durationText(60)).toBe('1 min');
+        expect(durationText(61)).toBe('2 min');
+    });
+
+    test('nothing until a line sim has finished after the baseline', () => {
+        const base = { total: 50, baseDone: 1, sinceBaseMs: 10000, lanes: 2 };
+        expect(etaLeftText({ ...base, done: 0 })).toBe('');
+        expect(etaLeftText({ ...base, done: 1 })).toBe('');
+        expect(etaLeftText({ ...base, done: 50 })).toBe('');
+        expect(etaLeftText({ ...base, done: 2, sinceBaseMs: 0 })).toBe('');
+    });
+
+    test('lanes count: the first wave is not read as one lane, and a longer total lengthens it', () => {
+        // One line done in 10 s with 2 lanes: 48 left at 2 per 10 s = 240 s
+        expect(etaLeftText({ done: 2, total: 50, baseDone: 1, sinceBaseMs: 10000, lanes: 2 })).toBe('about 4 min left');
+        // One lane: 48 per 10 s each = 480 s
+        expect(etaLeftText({ done: 2, total: 50, baseDone: 1, sinceBaseMs: 10000, lanes: 1 })).toBe('about 8 min left');
+        // Steady state: 11 sims after the baseline in 55 s = 5 s a sim; 4 left = 20 s
+        expect(etaLeftText({ done: 12, total: 16, baseDone: 1, sinceBaseMs: 55000, lanes: 2 })).toBe('about 20 s left');
+        // Close-call rounds raised the total
+        expect(etaLeftText({ done: 12, total: 24, baseDone: 1, sinceBaseMs: 55000, lanes: 2 })).toBe(
+            'about 1 min left'
+        );
+    });
+
+    test('the progress line gains the time left from the second report, and the next estimate line a rough time', async () => {
+        host._editor = { getEditedDTOs: () => ({ '/players/1': structuredClone(mocks.roster[0]) }) };
+        let t = 0;
+        const spy = vi.spyOn(Date, 'now').mockImplementation(() => (t += 1000));
+        const lines = [];
+        const original = section._progress.bind(section);
+        section._progress = (text) => {
+            lines.push(text);
+            original(text);
+        };
+        try {
+            await run();
+        } finally {
+            spy.mockRestore();
+        }
+        const withEta = lines.filter((l) => /left/.test(l));
+        expect(withEta.length).toBeGreaterThan(0);
+        expect(lines.find((l) => l.startsWith('0 /'))).not.toMatch(/left/);
+        expect(lines.find((l) => l.startsWith('1 /'))).not.toMatch(/left/);
+        expect(withEta[0]).toMatch(/^\d+ \/ \d+ · .* · about \d+ (s|min) left$/);
+        section._updateEstimate();
+        expect(q('estimate').textContent).toMatch(/Up to \d+ sims.*roughly \d+ (s|min) \(from the last run\)/);
     });
 });

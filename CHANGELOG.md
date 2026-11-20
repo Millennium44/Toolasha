@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Talisman lines ranking shows the time left
+
+While the ranking runs, its progress line says about how many minutes are left, and the line before Rank gives a rough time from your last run.
+
 ### Talisman lines: re-rank and rebuild without new sims, and Use in Configure
 
 Changing Rank by or the Balanced weights re-scores the saved line sims, and changing Set, Cap or Budget rebuilds only the set, each with at most one new sim instead of a whole new ranking. A new Use in Configure button puts the recommended set on that player's Belt rows.
