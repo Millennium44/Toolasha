@@ -16,7 +16,7 @@ The talisman window's reroll advisor takes up to six wanted lines, a "required" 
 
 ### Skilling talisman Specials valued
 
-The five new skilling Special lines (Abundance, Conservation, Epiphany, Invigoration, Prosperity) now count in the Skilling Optimizer's talisman ranking and in gathering, production and alchemy profit, XP/hr and action times where they apply; Conservation is counted for alchemy catalysts only so far.
+The five new skilling Special lines (Abundance, Conservation, Epiphany, Invigoration, Prosperity) now count in the Skilling Optimizer's talisman ranking, gathering, production, alchemy and enhancing figures, the tea optimizer, material and crafting plans, the philo and alchemy-instead-of-buying calculators, loot log expectations and networth. Conservation keeps catalysts and protection items (never the Philosopher's Mirror); shopping lists still cover the case where nothing is kept.
 
 ### Combat Sim models the Consistency talisman line
 
