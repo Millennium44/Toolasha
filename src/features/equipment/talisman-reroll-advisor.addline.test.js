@@ -313,6 +313,14 @@ describe('describeAdvice for an add', () => {
         expect(text.detail[0]).toBe('With the lock kept, no orb can reach the target.');
     });
 
+    test('the lines to add are over the state ceiling: said as such, not as too many lines at this grade', () => {
+        const text = describeAdvice(
+            { build: { status: 'impossible', reason: 'addsTooMany', rollable: 6, need: 4, max: 150000 } },
+            names
+        );
+        expect(text.move).toBe('Not reachable. Too many states to plan the lines this target needs added.');
+    });
+
     test('the solve left out the largest line counts', () => {
         const text = describeAdvice(
             { build, scale: 'market', addLeftOut: true, advice: { status: 'move', move: add, value: 1, counts: {} } },

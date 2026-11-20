@@ -236,6 +236,34 @@ describe('a line count over the state ceiling', () => {
     });
 
     test('a target needing a line count that was left out is refused as too large', () => {
-        expect(build(SIX, 4, 2, addLine)).toMatchObject({ status: 'impossible', reason: 'tooManyStates' });
+        // Its own reason: the talisman's own line count fits, only the lines to add do not
+        expect(build(SIX, 4, 2, addLine)).toMatchObject({ status: 'impossible', reason: 'addsTooMany', need: 4 });
+    });
+});
+
+describe('a pending roll judged on one basis', () => {
+    test('one side only reachable through unpriced adds: the side that reaches the target without them wins', () => {
+        const solution = solutionFor(POOL3, 3, 1, { coreWeights: {} });
+        const pending = talismanRow(1, [line('ability_haste', 2)], { pendingModifiers: [line('armor', 1)] });
+        const current = solution.indexOf(-1, [solution.codeOf(0, 2)]);
+        const next = solution.indexOf(-1, [solution.codeOf(1, 1)]);
+        // Keeping needs unpriced adds (cores left out: cheap-looking); taking reaches it at a finite, all-in cost
+        const V = Float64Array.from(solution.V);
+        const U = Float64Array.from(solution.U);
+        V[current] = Infinity;
+        U[current] = 1;
+        V[next] = 1000;
+        U[next] = 1000;
+        const advice = advise({ ...solution, V, U }, pending, POOL3, 3);
+        expect(advice.status).toBe('accept');
+        expect(advice.value).toBe(1000);
+        // And the other way round
+        const V2 = Float64Array.from(V);
+        const U2 = Float64Array.from(U);
+        V2[current] = 1000;
+        U2[current] = 1000;
+        V2[next] = Infinity;
+        U2[next] = 1;
+        expect(advise({ ...solution, V: V2, U: U2 }, pending, POOL3, 3).status).toBe('discard');
     });
 });

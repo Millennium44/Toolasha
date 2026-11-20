@@ -448,13 +448,8 @@ export function buildProblem({
     const kept = adds.slice(0, layers.length);
     const addLeftOut = layers.length < adds.length;
     if (need > n + kept.length) {
-        return {
-            status: 'impossible',
-            reason: 'tooManyStates',
-            rollable: wanted.length,
-            states: null,
-            max: MAX_STATES,
-        };
+        // The talisman's own line count fits; a line count the target needs added does not
+        return { status: 'impossible', reason: 'addsTooMany', rollable: wanted.length, need, max: MAX_STATES };
     }
     if (kept.length === 0) return { status: 'ok', problem: { ...problem, addLeftOut } };
     return {
@@ -1504,8 +1499,11 @@ export function advise(solution, talisman, targets, need) {
         const current = encodeLines(solution, modifiers, locked).index;
         const next = encodeLines(solution, pending, locked).index;
         if (current === undefined || next === undefined) return { status: 'unknownState' };
-        // U is V wherever V is finite; past it, the value of adding the lines the target needs (unpriced cores)
-        const values = solution.U || solution.V;
+        // Both sides on one basis: V where either is finite (a side with V infinite needs an unpriced add, so it loses
+        // to one that reaches the target without; its cores never count as free), else U, the value of adding the
+        // lines the target needs with their unpriced cores left out on both sides
+        const finite = Number.isFinite(solution.V[current]) || Number.isFinite(solution.V[next]);
+        const values = finite || !solution.U ? solution.V : solution.U;
         const keep = values[current];
         const take = values[next];
         if (!Number.isFinite(keep) && !Number.isFinite(take)) return { status: 'unreachable' };
