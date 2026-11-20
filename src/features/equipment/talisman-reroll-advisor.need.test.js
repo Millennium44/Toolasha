@@ -247,7 +247,7 @@ describe('what each outcome shows', () => {
         pick(0, M('armor'), 3);
         pick(1, M('melee_evasion'), 3);
         pick(2, M('melee_accuracy'), 3);
-        // The cores have no market price here: the add is named as required, not "not reachable"
+        // The cores are not priced on the orbs' scale here: the add is named as required, not "not reachable"
         expect(moveText()).toBe('Next: add line 3 with 1 /items/advanced_talisman_core. The target needs 3 lines.');
         chooseNeed(2);
         expect(moveText()).toMatch(/^Next: /);

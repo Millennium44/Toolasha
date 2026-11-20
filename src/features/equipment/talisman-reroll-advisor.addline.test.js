@@ -207,7 +207,7 @@ describe('in the window', () => {
         aim(SMITE);
         expect(moveText()).toBe('Next: Reshaping Orb.');
         expect(detailText()).toMatch(
-            /Add a line first \(5 Basic Talisman Core\): about [\d.]+ fewer orbs expected \(Reforging Orb equivalents\)\. The cores have no market price/
+            /Add a line first \(5 Basic Talisman Core\): about [\d.]+ fewer orbs expected \(Reforging Orb equivalents\)\. The cores are not priced on the orbs' scale/
         );
     });
 
@@ -276,6 +276,18 @@ describe('describeAdvice for an add', () => {
         expect(text.detail).toContain('About 605.0K coins at market prices.');
     });
 
+    test('a one-line locked talisman: keeping the lock is never shown as Infinity', () => {
+        const text = describeAdvice(
+            {
+                build,
+                scale: 'market',
+                advice: { status: 'move', move: { kind: 'unlock' }, value: 10, stayLockedValue: Infinity, counts: {} },
+            },
+            names
+        );
+        expect(text.detail[0]).toBe('With the lock kept, no orb can reach the target.');
+    });
+
     test('the solve left out the largest line counts', () => {
         const text = describeAdvice(
             { build, scale: 'market', addLeftOut: true, advice: { status: 'move', move: add, value: 1, counts: {} } },
@@ -304,7 +316,7 @@ describe('describeAdvice for an add', () => {
         );
         expect(text.detail[0]).toBe(
             'Unlock and add a line first (1 Advanced Talisman Core): about 5 fewer orbs expected (Reforging Orb ' +
-                'equivalents). The cores have no market price, so they are not weighed against the orbs.'
+                "equivalents). The cores are not priced on the orbs' scale, so they are not weighed against the orbs."
         );
     });
 

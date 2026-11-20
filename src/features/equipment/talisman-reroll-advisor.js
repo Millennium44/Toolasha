@@ -77,7 +77,7 @@ export const ADVISOR_HELP = [
     'Measured: lines from creating a talisman and from cores roll G1-G3 only, whatever the core (396 lines: 57 / 28 / ' +
         '15%, the Reforging curve cut at G3), types by weight among the types the talisman does not hold. A talisman ' +
         'with fewer than four lines may be told to add a line with cores first: when the cores have a market price ' +
-        '(or your own), adding competes with rerolling on cost; when they have none, the advice rerolls and says how ' +
+        '(or your own) and every orb is priced, adding competes with rerolling on cost; otherwise the advice rerolls and says how ' +
         'many orbs adding first would save, or says the add is required when the target needs more lines. Adds are ' +
         'planned on an unlocked talisman only (whether the game adds while a line is locked is not checked), and Do ' +
         'next step never presses the add: do it in the game window. ' +
@@ -201,7 +201,12 @@ export function describeAdvice(result, names) {
         return `${Math.round((ratio - 1) * 100)}% more`;
     };
     if (advice.status === 'move' && advice.move.kind === 'unlock' && advice.stayLockedValue > advice.value) {
-        detail.push(`Keeping the lock is expected to cost ${more(advice.stayLockedValue)}.`);
+        // Infinity: with the lock kept no orb applies (a one-line talisman has nothing unlocked to roll)
+        detail.push(
+            Number.isFinite(advice.stayLockedValue)
+                ? `Keeping the lock is expected to cost ${more(advice.stayLockedValue)}.`
+                : 'With the lock kept, no orb can reach the target.'
+        );
     }
     if (advice.status === 'move' && advice.lockFirst?.value > advice.value) {
         detail.push(
@@ -218,8 +223,8 @@ export function describeAdvice(result, names) {
     }
     if (advice.status === 'move' && advice.addRequired?.unpriced) {
         detail.push(
-            'Lines are added only where the target needs them: the cores have no market price, so they are not ' +
-                'weighed against orbs.'
+            "Lines are added only where the target needs them: the cores are not priced on the orbs' scale (a " +
+                'market listing or your own price, with every orb priced), so they are not weighed against orbs.'
         );
     }
     if (advice.status === 'move' && advice.addSuggestion) {
@@ -231,7 +236,7 @@ export function describeAdvice(result, names) {
                 : ' fewer orbs expected';
         detail.push(
             `${sg.unlockFirst ? 'Unlock and add' : 'Add'} a line first (${sg.move.count} ${item(sg.move.itemHrid)}):` +
-                `${fewer}. The cores have no market price, so they are not weighed against the orbs.`
+                `${fewer}. The cores are not priced on the orbs' scale, so they are not weighed against the orbs.`
         );
     }
     const counts = advice.counts || {};

@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest';
 import { ORB_ITEMS, REROLL_MODIFIERS, TALISMAN_INFO, talismanRow } from '../__fixtures__/talisman-reroll.js';
-import { addLinePlan, advise, buildProblem, solve } from './talisman-reroll-solver.js';
+import { MAX_STATES, addLinePlan, advise, buildProblem, effectiveStates, solve } from './talisman-reroll-solver.js';
 
 // Adding lines with cores before rerolling (the `addLine` opt-in)
 
@@ -183,5 +183,38 @@ describe('a talisman with every line', () => {
         const plain = advise(solutionFor(targets, null, 4), four, targets);
         const opt = advise(solutionFor(targets, null, 4, { coreWeights: CHEAP_CORES }), four, targets);
         expect(opt).toEqual(plain);
+    });
+});
+
+describe('a line count over the state ceiling', () => {
+    // Six lines wanted at G6 cannot clamp: 4 lines are over MAX_STATES, 3 lines are not (checked below)
+    const SIX = ['armor', 'melee_evasion', 'ranged_evasion', 'melee_accuracy', 'ability_damage', 'critical_rate'].map(
+        (name) => want(name, 6)
+    );
+    const addLine = { coreWeights: CHEAP_CORES };
+
+    test('the preconditions hold', () => {
+        expect(effectiveStates(4, 6, 6, 6).states).toBeGreaterThan(MAX_STATES);
+        expect(effectiveStates(3, 6, 6, 6).states).toBeLessThanOrEqual(MAX_STATES);
+        expect(effectiveStates(2, 6, 6, 6).states).toBeLessThanOrEqual(MAX_STATES);
+    });
+
+    test('a 3-line talisman: the add is left out and the rest is the plain problem', () => {
+        const plain = build(SIX, 1, 3);
+        const opt = build(SIX, 1, 3, addLine);
+        expect(opt.status).toBe('ok');
+        expect(opt.problem).toEqual({ ...plain.problem, addLeftOut: true });
+    });
+
+    test('a 2-line talisman: the add to line 3 is kept, the one to line 4 left out', () => {
+        const opt = build(SIX, 1, 2, addLine);
+        expect(opt.status).toBe('ok');
+        expect(opt.problem.adds.map((a) => a.line)).toEqual([3]);
+        expect(opt.problem.layers.map((l) => l.n)).toEqual([3]);
+        expect(opt.problem.addLeftOut).toBe(true);
+    });
+
+    test('a target needing a line count that was left out is refused as too large', () => {
+        expect(build(SIX, 4, 2, addLine)).toMatchObject({ status: 'impossible', reason: 'tooManyStates' });
     });
 });
