@@ -109,3 +109,26 @@ export function talismanListSignature(talismans) {
         .sort((a, b) => (a[0] || 0) - (b[0] || 0));
     return JSON.stringify(rows);
 }
+
+/**
+ * Put a whole set of talismans on the belt: every record in the belt's slots (1..slots) is replaced by the set's, so a
+ * slot the set leaves empty is emptied. Records past the belt's slot count stay (swapping the belt back restores
+ * them), as the module header says. Only `{slotIndex, modifiers: [{hrid, grade}]}` is written: whatever else the set's
+ * records carry (an orb cost the planner stamped on them) never reaches the sim player.
+ * @param {Array<Object>|null|undefined} talismans - The player's list now
+ * @param {Array<Object>} set - Records of the set, `{slotIndex, modifiers: [{hrid, grade}]}`
+ * @param {number} slots - The belt's slot count
+ * @returns {Array<Object>} A new list; the inputs are not mutated
+ */
+export function replaceBeltTalismans(talismans, set, slots) {
+    const kept = (Array.isArray(talismans) ? talismans : [])
+        .filter((t) => t && typeof t === 'object' && !(t.slotIndex >= 1 && t.slotIndex <= slots))
+        .map((t) => structuredClone(t));
+    const placed = (Array.isArray(set) ? set : [])
+        .filter((t) => Number.isInteger(t?.slotIndex) && t.slotIndex >= 1 && t.slotIndex <= slots)
+        .map((t) => ({
+            slotIndex: t.slotIndex,
+            modifiers: (t.modifiers || []).map((m) => ({ hrid: m.hrid, grade: m.grade })),
+        }));
+    return [...kept, ...placed].sort((a, b) => (a.slotIndex || 0) - (b.slotIndex || 0));
+}

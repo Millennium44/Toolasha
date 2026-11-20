@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Talisman lines: re-rank and rebuild without new sims, and Use in Configure
+
+Changing Rank by or the Balanced weights re-scores the saved line sims, and changing Set, Cap or Budget rebuilds only the set, each with at most one new sim instead of a whole new ranking. A new Use in Configure button puts the recommended set on that player's Belt rows.
+
 ### Reroll advisor says when most rolls are thrown away
 
 When the advised orb rarely gives a roll worth keeping, the advisor now says so ("About 1 roll in 160 is worth keeping (one with Overkill)"), so a long run of discards no longer looks broken. Its help also says a locked line is not changed by any orb.

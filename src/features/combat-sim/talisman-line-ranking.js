@@ -436,6 +436,126 @@ export async function mapLanes(items, run, limit) {
 }
 
 /**
+ * The metric-free half of a measurement: one sim against a baseline of the same length. Everything here is the same
+ * whatever the ranking is ranked by, so a ranking can be scored again under another metric without a new sim.
+ * `baselineMetrics` is the baseline this sim was set against (a close-call round's is longer than the first pass's),
+ * which the score reads for the profit scale.
+ *
+ * @param {Object} params
+ * @param {Object} params.deps - `{computeDeltas, rateDeltaNoisePct, significantDeltas}`
+ * @param {string} params.playerHrid
+ * @param {number|null} params.seed
+ * @param {Object} result - The sim result
+ * @param {Object} metrics - `computeMetrics` of `result`
+ * @param {{result: Object, metrics: Object}} against - The baseline sim and its metrics
+ * @returns {Object} `{metrics, deltas, noise, significantBy, change, costUnpriced?, deathsRise, noEffect, baselineMetrics}`
+ */
+export function measureRaw({ deps, playerHrid, seed }, result, metrics, against) {
+    const deltas = deps.computeDeltas(against.metrics, metrics);
+    const noise = deps.rateDeltaNoisePct(against.result, result, playerHrid);
+    const significantBy = deps.significantDeltas(deltas, noise, {
+        baseline: against.metrics,
+        upgraded: metrics,
+        deathCounts: { baseline: against.result?.deaths?.[playerHrid], upgraded: result?.deaths?.[playerHrid] },
+    });
+    const change = {};
+    for (const m of COMBAT_RANKING_METRICS) {
+        change[m.key] = (m.rate(metrics) || 0) - (m.rate(against.metrics) || 0);
+    }
+    // A profit gain (alone or inside Balanced) that rests on a running cost counted as free is a ceiling, so it is
+    // never "significant": the row says so, and the set marks it
+    const costUnpriced = newlyUnpricedLineCosts(against.metrics, metrics);
+    // A significant rise in deaths/hr flags the line whatever it is ranked by
+    const deathsRise = Boolean(significantBy?.deaths) && Number(deltas?.deaths) > 0;
+    return {
+        metrics,
+        deltas,
+        noise,
+        significantBy,
+        change,
+        ...(costUnpriced.length ? { costUnpriced } : {}),
+        deathsRise,
+        // Same seed and nothing moved: the line does nothing for this build here
+        noEffect: seed != null && COMBAT_RANKING_METRICS.every((m) => change[m.key] === 0),
+        baselineMetrics: against.metrics,
+    };
+}
+
+/**
+ * The metric-dependent half: what a measurement is worth by a metric (and the Balanced weights).
+ *
+ * @param {Object} measured - {@link measureRaw}'s record (a ranking row, a combined or current record keeps it)
+ * @param {Object} metric - A COMBAT_RANKING_METRICS entry
+ * @param {Object} [balanceWeights]
+ * @returns {{value: number, valuePct: number, errPct: number, significant: boolean}}
+ */
+export function scoreMeasurement(measured, metric, balanceWeights) {
+    const { deltas, noise, change, significantBy, costUnpriced } = measured;
+    const baseline = measured.baselineMetrics;
+    const profitDriven =
+        Boolean(costUnpriced?.length) &&
+        (metric.balanced ? normalizeBalanceWeights(balanceWeights).profit > 0 : metric.key === 'profit');
+    if (metric.balanced) {
+        const score = balancedScore({ deltas, noise, change, baseline, significantBy }, balanceWeights);
+        return {
+            value: score.valuePct,
+            valuePct: score.valuePct,
+            errPct: score.errPct,
+            significant: score.significant && !profitDriven,
+        };
+    }
+    const good = metric.lowerIsBetter ? -change[metric.key] : change[metric.key];
+    const goodPct = metric.lowerIsBetter ? -deltas[metric.key] : deltas[metric.key];
+    return {
+        value: good,
+        valuePct: goodPct,
+        errPct:
+            metric.key === 'profit'
+                ? Z * profitNoiseOfNetPct(noise?.profit, baseline)
+                : Z * (Number(noise?.[metric.key]) || 0),
+        significant: Boolean(significantBy?.[metric.key]) && !profitDriven,
+    };
+}
+
+/**
+ * A measurement scored again under another metric (a new record; the input is not touched).
+ * @param {Object} measured
+ * @param {Object} metric
+ * @param {Object} [balanceWeights]
+ * @returns {Object}
+ */
+export function rescoreMeasurement(measured, metric, balanceWeights) {
+    return { ...measured, ...scoreMeasurement(measured, metric, balanceWeights) };
+}
+
+/**
+ * A ranking row scored again under another metric: its score, its per-grade figures and its copies run. The orb figures
+ * (`orbCost`, `perOrb`, `orbLimits`) were worked out from the old values and are dropped, to be stamped again.
+ *
+ * @param {Object} row - A row from a finished ranking
+ * @param {Object} metric
+ * @param {Object} balanceWeights
+ * @param {number} grade - The grade the ranking simulated
+ * @returns {Object} A new row
+ */
+export function rescoreRow(row, metric, balanceWeights, grade) {
+    const scored = rescoreMeasurement(row, metric, balanceWeights);
+    const out = {
+        ...scored,
+        byGrade: scaleAcrossGrades(scored.value, row.detail, grade),
+        byGradePct: scaleAcrossGrades(scored.valuePct, row.detail, grade),
+    };
+    delete out.orbCost;
+    delete out.perOrb;
+    delete out.orbLimits;
+    if (row.copies) {
+        out.copies = rescoreMeasurement(row.copies, metric, balanceWeights);
+        out.copiesValue = out.copies.value;
+    }
+    return out;
+}
+
+/**
  * The measuring rules of a paired comparison, shared by the ranking and the belt advisor: a sim's metrics at the run's
  * prices and sale tax, and one sim against a baseline of the same length (changes per hour, error bars, verdicts, the
  * Balanced score, profit that rests on a cost counted as free).
@@ -462,72 +582,279 @@ export function createMeasurer({ deps, gameData, playerHrid, priceCache, saleTax
     /**
      * One sim against a bare baseline of the same length (the first pass's, or a close-call round's): per-metric
      * changes per hour, error bars and verdicts. Rates per hour from runs of different lengths estimate the same
-     * change, so a re-measured row replaces its first figures as they are.
+     * change, so a re-measured row replaces its first figures as they are. Two steps: what the fight measured
+     * ({@link measureRaw}, independent of the metric) and what it is worth by the metric ({@link scoreMeasurement}).
      */
     const measureAgainst = (result, against) => {
         const metrics = metricsOf(result, against.hours);
-        const deltas = deps.computeDeltas(against.metrics, metrics);
-        const noise = deps.rateDeltaNoisePct(against.result, result, playerHrid);
-        const significantBy = deps.significantDeltas(deltas, noise, {
-            baseline: against.metrics,
-            upgraded: metrics,
-            deathCounts: { baseline: against.result?.deaths?.[playerHrid], upgraded: result?.deaths?.[playerHrid] },
-        });
-        const change = {};
-        for (const m of COMBAT_RANKING_METRICS) {
-            change[m.key] = (m.rate(metrics) || 0) - (m.rate(against.metrics) || 0);
-        }
-        // A profit gain (alone or inside Balanced) that rests on a running cost counted as free is a ceiling, so it is
-        // never "significant": the row says so, and the set marks it
-        const costUnpriced = newlyUnpricedLineCosts(against.metrics, metrics);
-        const profitDriven =
-            costUnpriced.length > 0 &&
-            (metric.balanced ? normalizeBalanceWeights(balanceWeights).profit > 0 : metric.key === 'profit');
-        const unpricedFields = costUnpriced.length ? { costUnpriced } : {};
-        // A significant rise in deaths/hr flags the line whatever it is ranked by
-        const deathsRise = Boolean(significantBy?.deaths) && Number(deltas?.deaths) > 0;
-        if (metric.balanced) {
-            const score = balancedScore(
-                { deltas, noise, change, baseline: against.metrics, significantBy },
-                balanceWeights
-            );
-            return {
-                metrics,
-                deltas,
-                noise,
-                significantBy,
-                change,
-                value: score.valuePct,
-                valuePct: score.valuePct,
-                errPct: score.errPct,
-                significant: score.significant && !profitDriven,
-                ...unpricedFields,
-                deathsRise,
-                noEffect: seed != null && COMBAT_RANKING_METRICS.every((m) => change[m.key] === 0),
-            };
-        }
-        const good = metric.lowerIsBetter ? -change[metric.key] : change[metric.key];
-        const goodPct = metric.lowerIsBetter ? -deltas[metric.key] : deltas[metric.key];
-        return {
-            metrics,
-            deltas,
-            noise,
-            significantBy,
-            change,
-            value: good,
-            valuePct: goodPct,
-            errPct:
-                metric.key === 'profit'
-                    ? Z * profitNoiseOfNetPct(noise?.profit, against.metrics)
-                    : Z * (Number(noise?.[metric.key]) || 0),
-            significant: Boolean(significantBy?.[metric.key]) && !profitDriven,
-            ...unpricedFields,
-            deathsRise,
-            // Same seed and nothing moved: the line does nothing for this build here
-            noEffect: seed != null && COMBAT_RANKING_METRICS.every((m) => change[m.key] === 0),
-        };
+        const raw = measureRaw({ deps, playerHrid, seed }, result, metrics, against);
+        return { ...raw, ...scoreMeasurement(raw, metric, balanceWeights) };
     };
     return { metricsOf, measureAgainst };
+}
+
+/**
+ * A sim runner for one ranking: the roster as the ranking read it, with one player's talismans replaced.
+ *
+ * @param {Object} context - `{deps, gameData, playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, seed}`
+ * @param {Object} flags
+ * @param {Function} flags.stopped - `() => boolean`: Stop was pressed
+ * @param {Function} flags.onCancelled - Another simulation cancelled this one
+ * @returns {Function} `async (talismans, simHours = hours) => result|null` (null: stopped or cancelled)
+ */
+function createSimulator(
+    { deps, gameData, playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, seed },
+    { stopped, onCancelled }
+) {
+    /** The roster with this player's talismans replaced (a fresh copy each call) */
+    const rosterWith = (talismans) => {
+        const roster = JSON.parse(JSON.stringify(playerDTOs));
+        roster[playerIndex].talismans = talismans;
+        return roster;
+    };
+    return async (talismans, simHours = hours) => {
+        try {
+            return await deps.runSimulation(
+                {
+                    gameData,
+                    playerDTOs: rosterWith(talismans),
+                    zoneHrid,
+                    difficultyTier,
+                    hours: simHours,
+                    communityBuffs,
+                    seed,
+                    taskDamageMode: TASK_DAMAGE_OFF,
+                },
+                null,
+                // Never preempt: nothing else may run while this does, and a preempt would stop whatever runs
+                // in another panel
+                { preempt: false, workers: 1 }
+            );
+        } catch (error) {
+            if (stopped()) return null;
+            if (/cancel/i.test(String(error?.message))) {
+                onCancelled();
+                return null;
+            }
+            throw error;
+        }
+    };
+}
+
+/**
+ * A set as a comparable text: the slots, and each slot's lines and grades (order of the lines does not matter, the
+ * sim sums them).
+ * @param {{talismans: Array<Object>}|null} set
+ * @returns {string}
+ */
+export function setSignature(set) {
+    const rows = (set?.talismans || [])
+        .map((t) => [t.slotIndex, (t.modifiers || []).map((m) => `${m.hrid}@${m.grade}`).sort()])
+        .sort((a, b) => a[0] - b[0]);
+    return JSON.stringify(rows);
+}
+
+/**
+ * The stage a ranking and a rebuild share: plan the set from the rows, work out the orb figures, and check the set with
+ * a combined measurement. The caller decides what "check" is (a new sim, or a stored measurement scored again).
+ *
+ * `rows` are stamped in place (`orbCost`, `perOrb`, `orbLimits`): the caller hands rows it owns.
+ *
+ * @param {Array<Object>} rows
+ * @param {Object} o
+ * @param {number} o.slots
+ * @param {number} o.grade - The grade simulated
+ * @param {Object} o.setOptions - `setOptionsFor`
+ * @param {number} o.budget
+ * @param {number} o.linesPerTalisman
+ * @param {Object|null} o.orbs - The orb solver
+ * @param {Function} o.report - `(description)`
+ * @param {Function} o.stopped - `() => boolean`
+ * @param {Function} o.check - `async (set) => measurement|null` (null: stopped)
+ * @returns {Promise<{stopped: Object}|{plan: Object, set: Object|null, combined: Object|null}>} `stopped` is what a
+ *   stopped result carries (`set`, `stage`)
+ */
+async function planAndCheckSet(rows, o) {
+    const { slots, grade, setOptions, budget, linesPerTalisman, orbs, report, stopped, check } = o;
+    report('Talisman lines: building the set');
+    const plan = await planSet(rows, {
+        mode: setOptions.mode,
+        slots,
+        simGrade: grade,
+        capGrade: setOptions.grade,
+        budget,
+        typeHrid: COMBAT_TALISMAN_TYPE,
+        orbs,
+        linesPerTalisman,
+    });
+    if (plan.reason === 'cancelled' || stopped()) return { stopped: { stage: 'orbs' } };
+    const set = plan.set;
+    if (orbs) {
+        report('Talisman lines: expected orbs');
+        const perOrb = await stampValuePerOrb(rows, { grade: setOptions.grade, typeHrid: COMBAT_TALISMAN_TYPE, orbs });
+        if (!perOrb || !(await stampSetCosts(set, { typeHrid: COMBAT_TALISMAN_TYPE, orbs })) || stopped()) {
+            return { stopped: { set, stage: 'orbs' } };
+        }
+    }
+    let combined = null;
+    if (set) {
+        report('Talisman lines: checking the recommended set');
+        combined = await check(set);
+        if (!combined || stopped()) return { stopped: { set } };
+    }
+    return { plan, set, combined };
+}
+
+/**
+ * Score a finished ranking again, and build its set again, without simulating the lines: the rows keep what the sims
+ * measured (see {@link measureRaw}), so a new metric or Balanced weights re-score them, and a new set mode, cap or budget
+ * plans another set from them. The set is then checked: with one combined sim when it differs from the one that was
+ * simulated, else by scoring the stored combined measurement again. The talismans worn now are scored again from their
+ * stored measurement. Never touches `previous`: it returns a new result, or says why it did not.
+ *
+ * What is NOT redone: the close-call re-sims and the copies shortlist were chosen under the metric the ranking ran
+ * with (`rebuilt.ranWith`), so a different metric may have chosen others. Grade, zone, tier, hours, build and roster
+ * need a new ranking.
+ *
+ * @param {Object} previous - A finished result of {@link runCombatLineRanking} (or of a rebuild)
+ * @param {Object} controls - `{metricKey, balanceWeights, setMode, capGrade, budget}`
+ * @param {Function} onProgress - `{current, total, description}`
+ * @param {Object} deps - As {@link runCombatLineRanking}'s, with `orbs`
+ * @param {Object} [options] - `{abortSignal: () => boolean}`
+ * @returns {Promise<Object>} `{status: 'done', ...result}`, `{status: 'stopped', stage?, cancelledElsewhere}` or
+ *   `{status: 'refused', message}`
+ */
+export async function rebuildCombatLineRanking(previous, controls, onProgress, deps, options = {}) {
+    const ctx = previous?.rebuild;
+    if (previous?.status !== 'done' || !ctx || !Array.isArray(previous.rows) || !previous.baseline) {
+        return {
+            status: 'refused',
+            ok: false,
+            reason: 'no_context',
+            message: 'This ranking cannot be rebuilt. Rank again.',
+        };
+    }
+    if (previous.rows.some((r) => !r.baselineMetrics) || (previous.current && !previous.current.baselineMetrics)) {
+        return {
+            status: 'refused',
+            ok: false,
+            reason: 'no_context',
+            message: 'This ranking cannot be rebuilt. Rank again.',
+        };
+    }
+    const { abortSignal } = options;
+    let cancelledElsewhere = false;
+    const stopped = () => cancelledElsewhere || Boolean(abortSignal?.());
+    const {
+        metricKey,
+        balanceWeights = DEFAULT_BALANCE_WEIGHTS,
+        setMode = 'practical',
+        capGrade = 3,
+        budget = 0,
+    } = controls;
+    const metric = rankingMetric(metricKey);
+    const weights = metric.balanced ? normalizeBalanceWeights(balanceWeights) : null;
+    const { maxGrade } = talismanLimits(ctx.gameData?.talismanInfo);
+    const setOptions = setOptionsFor(setMode, { simGrade: previous.grade, capGrade: Math.min(maxGrade, capGrade) });
+    const sameWeights =
+        Boolean(weights) &&
+        Boolean(previous.balanceWeights) &&
+        ['xp', 'profit', 'dps'].every((k) => weights[k] === previous.balanceWeights[k]);
+    const rescored = metric.key !== previous.metricKey || (Boolean(metric.balanced) && !sameWeights);
+
+    // New rows: the previous ones are never touched, so a stopped rebuild leaves the ranking as it was
+    const rows = previous.rows.map((row) => {
+        if (rescored) return rescoreRow(row, metric, weights, previous.grade);
+        const copy = { ...row };
+        delete copy.orbCost;
+        delete copy.perOrb;
+        delete copy.orbLimits;
+        return copy;
+    });
+
+    let current = 0;
+    const total = 1;
+    const report = (description) => onProgress?.({ current, total, description });
+    const simulate = createSimulator(
+        { deps, ...ctx, hours: previous.hours },
+        {
+            stopped,
+            onCancelled: () => {
+                cancelledElsewhere = true;
+            },
+        }
+    );
+    const { measureAgainst } = createMeasurer({
+        deps,
+        gameData: ctx.gameData,
+        playerHrid: previous.playerHrid,
+        priceCache: ctx.priceCache,
+        saleTaxRate: ctx.saleTaxRate,
+        metric,
+        balanceWeights: weights,
+        seed: ctx.seed,
+    });
+    const againstBaseline = { result: ctx.baselineResult, metrics: previous.baseline, hours: previous.hours };
+    const sameAsSimmed = (set) =>
+        Boolean(previous.set && previous.combined) && setSignature(set) === setSignature(previous.set);
+    let simmed = false;
+    const outcome = await planAndCheckSet(rows, {
+        slots: previous.slots,
+        grade: previous.grade,
+        setOptions,
+        budget,
+        linesPerTalisman: ctx.linesPerTalisman,
+        orbs: deps.orbs || null,
+        report,
+        stopped,
+        check: async (set) => {
+            // The same set as the one that was simulated: its measurement stands, scored by the new metric
+            if (sameAsSimmed(set)) return rescoreMeasurement(previous.combined, metric, weights);
+            report('Talisman lines: checking the new set (1 sim)');
+            const result = await simulate(set.talismans);
+            if (!result || stopped()) return null;
+            current++;
+            simmed = true;
+            return measureAgainst(result, againstBaseline);
+        },
+    });
+    if (outcome.stopped) {
+        return { status: 'stopped', stage: outcome.stopped.stage || 'check', cancelledElsewhere };
+    }
+    const { plan, set, combined } = outcome;
+    const currentSet = previous.current ? rescoreMeasurement(previous.current, metric, weights) : null;
+    report('Talisman lines: done');
+    return {
+        ...previous,
+        status: 'done',
+        metricKey: metric.key,
+        balanceWeights: weights,
+        setMode: setOptions.mode,
+        setGrade: setOptions.grade,
+        budget,
+        rows: sortRows(rows),
+        set,
+        combined,
+        current: currentSet,
+        sims: previous.sims + (simmed ? 1 : 0),
+        noise: noiseSummary(rows),
+        setReason: plan.reason ?? null,
+        cheapest: plan.cheapest ?? null,
+        rerollTargets: toRerollTargets(set),
+        // Said in the header: what this result is, and what it could not redo
+        rebuilt: {
+            rescored,
+            simmed,
+            setChanged: setSignature(set) !== setSignature(previous.set),
+            // The metric (and weights) the line sims, close-call re-sims and copies shortlist were chosen under
+            ranWith: ctx.ranWith,
+            metricDiffers: Boolean(
+                metric.key !== ctx.ranWith.metricKey ||
+                (metric.balanced &&
+                    ['xp', 'profit', 'dps'].some((k) => weights[k] !== (ctx.ranWith.balanceWeights?.[k] ?? NaN)))
+            ),
+        },
+    };
 }
 
 /**
@@ -621,39 +948,15 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
     let current = 0;
     const report = (description) => onProgress?.({ current, total, description });
 
-    /** The roster with this player's talismans replaced (a fresh copy each call) */
-    const rosterWith = (talismans) => {
-        const roster = JSON.parse(JSON.stringify(playerDTOs));
-        roster[playerIndex].talismans = talismans;
-        return roster;
-    };
-    const simulate = async (talismans, simHours = hours) => {
-        try {
-            return await deps.runSimulation(
-                {
-                    gameData,
-                    playerDTOs: rosterWith(talismans),
-                    zoneHrid,
-                    difficultyTier,
-                    hours: simHours,
-                    communityBuffs,
-                    seed,
-                    taskDamageMode: TASK_DAMAGE_OFF,
-                },
-                null,
-                // Never preempt: nothing else may run while this does, and a preempt would stop whatever runs
-                // in another panel
-                { preempt: false, workers: 1 }
-            );
-        } catch (error) {
-            if (stopped()) return null;
-            if (/cancel/i.test(String(error?.message))) {
+    const simulate = createSimulator(
+        { deps, gameData, playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, seed },
+        {
+            stopped,
+            onCancelled: () => {
                 cancelledElsewhere = true;
-                return null;
-            }
-            throw error;
+            },
         }
-    };
+    );
 
     // What every ending carries, so a run stopped at any point draws its belt, power and slots
     const base = {
@@ -810,37 +1113,25 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
     }
 
     // The set the mode asks for; Budget, value per orb and the set's orb costs need the orb solver
-    const orbs = deps.orbs || null;
-    report('Talisman lines: building the set');
-    const plan = await planSet(rows, {
-        mode: setOptions.mode,
+    const outcome = await planAndCheckSet(rows, {
         slots: ready.slots,
-        simGrade: grade,
-        capGrade: setOptions.grade,
+        grade,
+        setOptions,
         budget,
-        typeHrid: COMBAT_TALISMAN_TYPE,
-        orbs,
         linesPerTalisman,
+        orbs: deps.orbs || null,
+        report,
+        stopped,
+        check: async (set) => {
+            const result = await simulate(set.talismans);
+            if (!result || stopped()) return null;
+            current++;
+            return measure(result);
+        },
     });
-    if (plan.reason === 'cancelled' || stopped()) return stoppedResult(rows, { stage: 'orbs' });
-    const set = plan.set;
-    if (orbs) {
-        report('Talisman lines: expected orbs');
-        const perOrb = await stampValuePerOrb(rows, { grade: setOptions.grade, typeHrid: COMBAT_TALISMAN_TYPE, orbs });
-        if (!perOrb || !(await stampSetCosts(set, { typeHrid: COMBAT_TALISMAN_TYPE, orbs })) || stopped()) {
-            return stoppedResult(rows, { set, stage: 'orbs' });
-        }
-    }
-    let combined = null;
-    if (set) {
-        report('Talisman lines: checking the recommended set');
-        const result = await simulate(set.talismans);
-        if (!result || stopped()) return stoppedResult(rows, { set });
-        current++;
-        combined = measure(result);
-    } else {
-        total--;
-    }
+    if (outcome.stopped) return stoppedResult(rows, outcome.stopped);
+    const { plan, set, combined } = outcome;
+    if (!set) total--;
     let currentSet = null;
     if (worn.length > 0) {
         report('Talisman lines: your talismans now');
@@ -865,5 +1156,21 @@ export async function runCombatLineRanking(params, onProgress, deps, options = {
         setReason: plan.reason ?? null,
         cheapest: plan.cheapest ?? null,
         rerollTargets: toRerollTargets(set),
+        // What a rebuild from these rows (a new metric, a new set mode) needs and the result does not carry
+        rebuild: {
+            gameData,
+            playerDTOs,
+            playerIndex,
+            zoneHrid,
+            difficultyTier,
+            communityBuffs,
+            seed,
+            priceCache,
+            saleTaxRate,
+            baselineResult,
+            linesPerTalisman,
+            // The metric the line sims, close-call re-sims and copies shortlist were chosen under
+            ranWith: { metricKey: metric.key, balanceWeights: base.balanceWeights },
+        },
     };
 }

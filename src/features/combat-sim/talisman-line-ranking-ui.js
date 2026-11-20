@@ -13,12 +13,15 @@ import dataManager from '../../core/data-manager.js';
 import { isTestServer } from '../../utils/game-server.js';
 import { escapeHtml } from '../../utils/html-escape.js';
 import {
+    CHIP_BUTTON_STYLE,
     SELECT_STYLE,
     TalismanRankingSectionBase,
+    makeOrbSolver,
     signedPct,
     solverOrbReference,
     talismanRankingAvailableFor,
 } from '../talismans/talisman-ranking-view.js';
+import { setOptionsFor, talismanLimits } from '../../utils/talisman-line-sets.js';
 import {
     buildAllPlayerDTOs,
     buildGameDataPayload,
@@ -44,6 +47,8 @@ import {
     estimateCombatRankingSims,
     isSpecialLine,
     normalizeBalanceWeights,
+    rankingMetric,
+    rebuildCombatLineRanking,
     runCombatLineRanking,
     talismanLines,
     wornTalismans,
@@ -149,6 +154,13 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
                 this._refreshStale();
             });
         }
+        // The controls a drawn result was made with: it says which of them a rebuild covers and which need a new Rank
+        for (const role of ['metric', 'grade', 'set-mode', 'cap']) {
+            this._on(this._q(role), 'change', () => this._refreshStale());
+        }
+        this._on(this._q('stale'), 'click', (e) => {
+            if (e.target.closest?.('[data-role="rebuild"]')) this._onRebuild();
+        });
         // The Upgrade tab's own inputs: a result drawn for other ones says so
         for (const id of ['#mwi-csim-upgrade-hours', '#mwi-csim-upgrade-player', '#mwi-csim-upgrade-resim']) {
             this._on(this.host.panel?.querySelector(id), 'change', () => {
@@ -223,7 +235,10 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
     }
 
     /**
-     * Which of a result's inputs no longer match the controls.
+     * Which of a result's inputs no longer match the controls AND need a new ranking: the fights it simulated (player,
+     * zone, tier, hours, the build and the party) and the grade it simulated at. The Rank by, Balanced weights, Set,
+     * Cap and Budget controls are not here: a finished ranking is scored and planned again from its saved
+     * measurements (see `_rebuildInputs`).
      * @param {Object} result
      * @returns {string[]}
      */
@@ -238,24 +253,228 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         if (now.hours !== was.hours) changed.push('hours');
         // A build read live (no editor yet) has nothing to compare
         if (was.build && now.build && now.build !== was.build) changed.push('build');
-        if (result.balanceWeights) {
-            const w = storedBalanceWeights();
-            if (['xp', 'profit', 'dps'].some((k) => w[k] !== result.balanceWeights[k]))
-                changed.push('Balanced weights');
+        // The other players of the roster are part of the fight too
+        const roster = this._rosterNow();
+        if (result.buildFingerprint && roster && roster !== result.buildFingerprint && !changed.includes('build')) {
+            changed.push('party');
         }
+        const grade = this._readControls().grade;
+        if (result.grade && grade > 0 && grade !== result.grade) changed.push('grade');
         return changed;
+    }
+
+    /**
+     * Which controls a finished ranking can follow without new line sims: Rank by and the Balanced weights (the rows
+     * are scored again), Set, Cap and Budget (the set is planned again). Only for a finished ranking that kept its
+     * measurements.
+     * @param {Object} result
+     * @returns {{changed: string[], rescore: boolean}} `rescore`: the metric or the weights are among them
+     */
+    _rebuildInputs(result) {
+        if (!result || result.status !== 'done' || !result.rebuild) return { changed: [], rescore: false };
+        const controls = this._readControls();
+        const changed = [];
+        let rescore = false;
+        if (controls.metricKey && controls.metricKey !== result.metricKey) {
+            changed.push('Rank by');
+            rescore = true;
+        } else if (result.balanceWeights) {
+            const w = storedBalanceWeights();
+            if (['xp', 'profit', 'dps'].some((k) => w[k] !== result.balanceWeights[k])) {
+                changed.push('Balanced weights');
+                rescore = true;
+            }
+        }
+        const { maxGrade } = talismanLimits(dataManager.getInitClientData?.()?.talismanInfo);
+        const want = setOptionsFor(controls.setMode, {
+            simGrade: result.grade,
+            capGrade: Math.min(maxGrade, controls.capGrade),
+        });
+        if (want.mode !== result.setMode) changed.push('Set');
+        else if (want.mode !== 'ideal' && want.grade !== result.setGrade) changed.push('Cap');
+        if (this._budgetStale()) changed.push('Budget');
+        return { changed, rescore };
     }
 
     _refreshStale() {
         this._refreshBeltStale();
         const note = this._q('stale');
         if (!note) return;
-        const changed = this._running ? [] : this._staleInputs(this._result);
-        if (!this._running && this._budgetStale()) changed.push('budget');
-        note.style.display = changed.length ? 'block' : 'none';
-        note.textContent = changed.length
-            ? `These figures are out of date: the ${changed.join(', ')} changed since the ranking ran. Rank again.`
-            : '';
+        const forced = this._running ? [] : this._staleInputs(this._result);
+        const { changed, rescore } =
+            this._running || forced.length ? { changed: [], rescore: false } : this._rebuildInputs(this._result);
+        note.textContent = '';
+        note.style.display = forced.length || changed.length ? 'block' : 'none';
+        if (forced.length) {
+            note.textContent =
+                `These figures are out of date: the ${forced.join(', ')} changed since the ranking ran. Rank again.` +
+                (forced.includes('build')
+                    ? ' (The build includes the worn talismans, so a set applied in Configure counts.)'
+                    : '');
+        } else if (changed.length) {
+            note.append(
+                `The ${changed.join(', ')} changed since the ranking ran. ` +
+                    (rescore
+                        ? 'The saved line measurements can be scored again and the set rebuilt, with no new line sims '
+                        : 'The set can be rebuilt from the saved line measurements, with no new line sims ') +
+                    '(one sim if the set comes out different). Rank again for the exact picture. '
+            );
+            const button = document.createElement('button');
+            button.dataset.role = 'rebuild';
+            button.style.cssText = CHIP_BUTTON_STYLE;
+            button.textContent = rescore ? 'Re-score and rebuild set' : 'Rebuild set';
+            button.title = rescore
+                ? 'Scores every measured line again by the new metric (or weights), plans the set again, and checks it with one combined sim if it differs from the one simulated. The close-call re-sims and the copies shortlist stay as the first run chose them.'
+                : 'Plans the set again from the measured lines for the new Set, Cap or Budget, and checks it with one combined sim if it differs from the one simulated.';
+            note.appendChild(button);
+        }
+    }
+
+    /**
+     * Score the finished ranking again and rebuild its set from the saved line measurements, for the controls as they
+     * stand. A run like any other (one at a time, Stop works); a stopped or refused rebuild keeps the previous ranking.
+     */
+    _onRebuild() {
+        if (this._running) return;
+        const previous = this._result;
+        if (!previous || previous.status !== 'done' || !previous.rebuild) return;
+        const forced = this._staleInputs(previous);
+        if (forced.length) {
+            this._notice(`The ${forced.join(', ')} changed since the ranking ran: Rank again.`);
+            return;
+        }
+        const typed = this._readControls();
+        if (typed.setMode === 'budget' && typed.budgetError) {
+            this._syncBudget();
+            this._notice(typed.budgetError);
+            return;
+        }
+        return this._guardedRun(
+            async (current) => {
+                if (!this._orbs) this._orbs = makeOrbSolver(() => this._aborted || !current());
+                const orbs = this._orbs;
+                if (orbs) {
+                    // The solver kept the previous run's stop test, which reads as stopped now
+                    orbs.abortSignal = () => this._aborted || !current();
+                    orbs.cancelled = false;
+                    orbs.solves = 0;
+                    orbs.limited = false;
+                    orbs.onSolve = (solves, max) => {
+                        if (current()) this._progress(`Rebuild: orb solve ${solves} (at most ${max})`);
+                    };
+                }
+                const ref = solverOrbReference(orbs);
+                const started = this._budgetState(ref);
+                const controls = this._readControls(ref);
+                this._progress('Rebuild: scoring the saved measurements…');
+                const next = await rebuildCombatLineRanking(
+                    previous,
+                    {
+                        metricKey: controls.metricKey,
+                        balanceWeights: storedBalanceWeights(),
+                        setMode: controls.setMode,
+                        capGrade: controls.capGrade,
+                        budget: controls.budget,
+                    },
+                    ({ description }) => {
+                        if (current() && !this._aborted) this._progress(description);
+                    },
+                    { ...this._simDeps(), orbs },
+                    { abortSignal: () => this._aborted || !current() }
+                );
+                if (orbs) orbs.onSolve = null;
+                if (!current()) return;
+                if (this._result !== previous) {
+                    this._notice('The ranking changed while rebuilding. Press the button again.');
+                    return;
+                }
+                if (next.status === 'refused') {
+                    this._notice(next.message);
+                    return;
+                }
+                if (next.status === 'stopped') {
+                    this._notice(
+                        `Rebuild stopped${next.cancelledElsewhere ? ' (another simulation cancelled it)' : ''}: the ranking above is unchanged.`
+                    );
+                    return;
+                }
+                if (next.setMode === 'budget') {
+                    next.budgetCoins = started.ok ? started.coins : typed.budgetCoins;
+                    next.budgetOrbName = ref?.name || 'Reforging Orb';
+                } else {
+                    delete next.budgetCoins;
+                    delete next.budgetOrbName;
+                }
+                next.rankingId = ++this._rankSeq;
+                this._result = next;
+                // Improve mine's options were worked out from the old rows and set mode; the cores from the old scores
+                this._improve = null;
+                this._renderImprove();
+                if (next.rebuilt?.rescored) {
+                    this._core = null;
+                    this._renderCores();
+                }
+                this._render(next);
+            },
+            { refuse: (text) => this._notice(text) }
+        );
+    }
+
+    /** The Recommended set box's "Use in Configure" button */
+    _setButtonsHtml(result) {
+        if (!result.set) return '';
+        const who = result.playerName || 'this player';
+        const title =
+            `Writes this set into ${who}'s Belt rows in the Configure tab, replacing the talismans in every belt slot ` +
+            '(a slot the set leaves empty is emptied). Nothing is changed in the game.';
+        return (
+            `<button data-role="use-configure" style="${CHIP_BUTTON_STYLE} margin-top:4px;" title="${escapeHtml(title)}">Use in Configure</button> ` +
+            '<span data-role="use-configure-note" style="color:#ff9800; font-size:11px;"></span> '
+        );
+    }
+
+    /** Put the set in the Configure editor, for the player the ranking was run for */
+    _onUseInConfigure(button) {
+        const note = button.parentElement?.querySelector('[data-role="use-configure-note"]');
+        const say = (text) => {
+            if (note) note.textContent = text;
+        };
+        const result = this._result;
+        if (!result?.set) return;
+        if (this._running) {
+            say('Wait for the run to finish.');
+            return;
+        }
+        if (result.inputs?.characterId && result.inputs.characterId !== dataManager.getCurrentCharacterId()) {
+            say('This ranking was run for another character. Rank again.');
+            return;
+        }
+        const editor = this.host._editor;
+        if (typeof editor?.applyTalismans !== 'function' || !editor.getEditedDTOs?.()) {
+            say('The Configure tab has no build loaded to write to. Open it first.');
+            return;
+        }
+        const who = result.playerName || 'The ranked player';
+        // By hrid, never by position: the roster may have been reordered, or the player removed
+        if (!result.playerHrid || !editor.getEditedDTOs()[result.playerHrid]) {
+            say(`${who} is no longer in the Configure roster, so nothing was written.`);
+            return;
+        }
+        const outcome = editor.applyTalismans(result.playerHrid, structuredClone(result.set.talismans));
+        if (!outcome.ok) {
+            say(
+                outcome.reason === 'no_belt'
+                    ? `${who} wears no Talisman Belt in Configure now, so nothing was written.`
+                    : outcome.reason === 'too_many_slots'
+                      ? `${who}'s belt has ${outcome.slots} slot${outcome.slots === 1 ? '' : 's'}, fewer than this set uses. Rank again.`
+                      : `${who} is no longer in the Configure roster, so nothing was written.`
+            );
+            return;
+        }
+        this._refreshStale();
+        say(
+            `Written to ${who}'s Belt rows in Configure. The ranking now reads as out of date: the worn talismans are part of the build it measured, so Rank again to compare "Your talismans now".`
+        );
     }
 
     /** @returns {boolean} The Upgrade tab's "Re-sim close calls" is checked */
@@ -546,6 +765,19 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
                 'Its error bar adds the parts as if fully correlated, so it can only be wider than the truth.';
         }
         const parts = [`<div style="color:#bbb; font-size:11px; margin:2px 0 6px;">${header}</div>`];
+        if (result.rebuilt) {
+            const r = result.rebuilt;
+            const ranBy = rankingMetric(r.ranWith?.metricKey).label;
+            let line =
+                `Rebuilt from the saved line measurements${r.rescored ? ` (scored again by ${metric.label})` : ''}: ` +
+                (r.simmed ? 'the new set was checked with one more sim.' : 'no new sims.');
+            if (r.metricDiffers) {
+                line +=
+                    ` The lines near the set's cut line were re-simmed, and the leading lines ran with a copy in every slot, ` +
+                    `under ${ranBy}, so another metric may have chosen others. Rank again for the exact picture.`;
+            }
+            parts.push(`<div style="color:#bbb; font-size:11px; margin-bottom:4px;">${escapeHtml(line)}</div>`);
+        }
         if (result.noise?.mostlyNoise) {
             const fix = result.dungeon
                 ? 'More hours, or a zone instead of a dungeon (many more fights per hour), would separate them.'
