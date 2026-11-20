@@ -93,6 +93,29 @@ describe('generated worker sources', () => {
         expect(calculateEnhancement(fast).perActionTime).toBeCloseTo(mainThread(fast).perActionTime, 9);
     });
 
+    test('the enhancement worker thins protections by Conservation exactly as the calculator does', async () => {
+        const { calculateEnhancementAsync } = await import('./enhancement-worker-manager.js');
+        const source = await captureWorkerScript(() =>
+            calculateEnhancementAsync({ enhancingLevel: 100, toolBonus: 0, itemLevel: 50, targetLevel: 5 })
+        );
+        const calculateEnhancement = new Function('self', `${source}\n; return calculateEnhancement;`)({
+            postMessage: () => {},
+            onmessage: null,
+        });
+        const { calculateEnhancement: mainThread } = await import('./enhancement-calculator.js');
+
+        const params = { enhancingLevel: 100, toolBonus: 5, itemLevel: 60, targetLevel: 10, protectFrom: 5 };
+        for (const conservation of [0, 0.05, 0.1006, 3]) {
+            const fromWorker = calculateEnhancement({ ...params, conservation });
+            const fromMain = mainThread({ ...params, conservation });
+            expect(fromWorker.protectionCount).toBeCloseTo(fromMain.protectionCount, 9);
+            expect(fromWorker.attempts).toBeCloseTo(fromMain.attempts, 9);
+        }
+        expect(calculateEnhancement({ ...params, conservation: 0.1 }).protectionCount).toBeLessThan(
+            calculateEnhancement(params).protectionCount
+        );
+    });
+
     test('the networth worker parses and pulls in no CDN library', async () => {
         const { calculateItemValueBatch } = await import('./networth-worker-manager.js');
         const source = await captureWorkerScript(() =>

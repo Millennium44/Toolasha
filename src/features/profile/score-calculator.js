@@ -684,6 +684,8 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
                             // worker fall back to the stock 1% while every main-thread sweep
                             // (tooltip, savings card) runs on the real figure
                             blessedTeaBonus: enhancementParams.blessedTeaBonus,
+                            // The viewer's own Conservation: the bench is the viewer's, and the protections priced are never a Mirror
+                            conservation: enhancementParams.conservation,
                         });
                     }
                     subLevelTasks.push({ workerStartIndex: levelStartIndex, strategies });
@@ -712,6 +714,7 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
                                 guzzlingBonus: enhancementParams.guzzlingBonus,
                                 // Same live double-jump chance as the main-thread sweeps
                                 blessedTeaBonus: enhancementParams.blessedTeaBonus,
+                                conservation: enhancementParams.conservation,
                             });
                         }
                         subLevelTasks.push({ workerStartIndex: levelStartIndex, strategies });

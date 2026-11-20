@@ -38,8 +38,8 @@ const MIN_ACTION_TIME_SECONDS = ${MIN_ACTION_TIME_SECONDS};
 const buildEnhancementMarkov = ${buildEnhancementMarkov.toString()};
 
 function getCacheKey(params) {
-    const {enhancingLevel,toolBonus,itemLevel,targetLevel,protectFrom,blessedTea,guzzlingBonus,blessedTeaBonus,speedBonus} = params;
-    return \`\${enhancingLevel}|\${toolBonus}|\${itemLevel}|\${targetLevel}|\${protectFrom}|\${blessedTea}|\${guzzlingBonus}|\${blessedTeaBonus}|\${speedBonus}\`;
+    const {enhancingLevel,toolBonus,itemLevel,targetLevel,protectFrom,blessedTea,guzzlingBonus,blessedTeaBonus,speedBonus,conservation} = params;
+    return \`\${enhancingLevel}|\${toolBonus}|\${itemLevel}|\${targetLevel}|\${protectFrom}|\${blessedTea}|\${guzzlingBonus}|\${blessedTeaBonus}|\${speedBonus}|\${conservation || 0}\`;
 }
 
 function calculateSuccessMultiplier(params) {
@@ -55,7 +55,7 @@ function calculateSuccessMultiplier(params) {
 }
 
 function calculateEnhancement(params) {
-    const {enhancingLevel,toolBonus,speedBonus=0,itemLevel,targetLevel,protectFrom=0,blessedTea=false,guzzlingBonus=1.0,blessedTeaBonus=DEFAULT_BLESSED_TEA_CHANCE} = params;
+    const {enhancingLevel,toolBonus,speedBonus=0,itemLevel,targetLevel,protectFrom=0,blessedTea=false,guzzlingBonus=1.0,blessedTeaBonus=DEFAULT_BLESSED_TEA_CHANCE,conservation=0} = params;
 
     if (targetLevel < 1 || targetLevel > 20) throw new Error('Target level must be between 1 and 20');
     if (protectFrom < 0 || protectFrom > targetLevel) throw new Error('Protection level must be between 0 and target level');
@@ -87,6 +87,8 @@ function calculateEnhancement(params) {
             const failureChance = markov.get([i, i - 1]);
             protects += timesAtLevel * failureChance;
         }
+        // Conservation keeps a protection item a failure would consume
+        protects *= 1 - (Number(conservation) > 0 ? Math.min(1, Number(conservation)) : 0);
     }
 
     const baseActionTime = 12;

@@ -113,9 +113,15 @@ export function scorePricingStamp() {
     let bench = '';
     try {
         const p = getEnhancingParams() || {};
-        bench = [p.enhancingLevel, p.toolBonus, p.speedBonus, p.teas?.blessed, p.guzzlingBonus, p.blessedTeaBonus].join(
-            ','
-        );
+        bench = [
+            p.enhancingLevel,
+            p.toolBonus,
+            p.speedBonus,
+            p.teas?.blessed,
+            p.guzzlingBonus,
+            p.blessedTeaBonus,
+            p.conservation || 0,
+        ].join(',');
     } catch {
         bench = '?';
     }

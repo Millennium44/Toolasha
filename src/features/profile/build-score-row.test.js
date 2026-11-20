@@ -399,9 +399,9 @@ describe('ensureOwnScore', () => {
     });
 
     test('the stamp is the pricing inputs plus the order-book version', () => {
-        expect(scorePricingStamp()).toBe('a|1|market|13|100,5,0,false,1,0');
+        expect(scorePricingStamp()).toBe('a|1|market|13|100,5,0,false,1,0,0');
         game.priceVersion = 2;
-        expect(scorePricingStamp()).toBe('a|2|market|13|100,5,0,false,1,0');
+        expect(scorePricingStamp()).toBe('a|2|market|13|100,5,0,false,1,0,0');
     });
 
     test('the enhancing bench the score costs pieces on is in the stamp', () => {
@@ -480,6 +480,6 @@ describe('ensureOwnScore', () => {
         game.stamp = 'b';
         game.scoreResult = { total: 99 };
         expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 99 });
-        expect(buildScore.stamp).toBe('b|1|market|13|100,5,0,false,1,0');
+        expect(buildScore.stamp).toBe('b|1|market|13|100,5,0,false,1,0,0');
     });
 });
