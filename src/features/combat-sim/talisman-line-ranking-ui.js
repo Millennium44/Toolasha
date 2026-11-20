@@ -61,6 +61,8 @@ export const BALANCE_WEIGHT_SETTINGS = {
     xp: 'combatSim_talismanBalanceXp',
     profit: 'combatSim_talismanBalanceProfit',
     dps: 'combatSim_talismanBalanceDps',
+    encounters: 'combatSim_talismanBalanceEncounters',
+    deaths: 'combatSim_talismanBalanceDeaths',
 };
 
 const WEIGHTS_TIP =
@@ -69,6 +71,8 @@ const WEIGHT_TIPS = {
     xp: 'Weight of the EXP/hr % gain in the Balanced score.',
     profit: 'Weight of the Profit/hr % gain in the Balanced score.',
     dps: 'Weight of the DPS % gain in the Balanced score.',
+    encounters: 'Weight of the Encounters/hr % gain in the Balanced score. 0 leaves it out.',
+    deaths: 'Weight of the Deaths/hr % change in the Balanced score: a rise counts against, a fall counts for. 0 leaves it out and keeps the automatic penalty for a clear rise in deaths; above 0 it replaces that penalty. From a baseline of zero deaths, any deaths count as +100%.',
 };
 
 const SECTION_HELP =
@@ -175,7 +179,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         const input = (key, label) =>
             `<label style="color:#888; font-size:11px;" title="${escapeHtml(WEIGHT_TIPS[key])}">${label}</label><input data-role="weight-${key}" type="number" min="0" step="0.5" value="${weights[key]}" style="${SELECT_STYLE} width:44px;" title="${escapeHtml(WEIGHT_TIPS[key])}">`;
         return `<span data-role="weights" style="display:none; align-items:center; gap:4px;" title="${escapeHtml(WEIGHTS_TIP)}">
-                ${input('xp', 'XP')} ${input('profit', 'Profit')} ${input('dps', 'DPS')}
+                ${input('xp', 'XP')} ${input('profit', 'Profit')} ${input('dps', 'DPS')} ${input('encounters', 'Enc.')} ${input('deaths', 'Deaths')}
             </span>`;
     }
 
@@ -355,7 +359,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
             rescore = true;
         } else if (result.balanceWeights) {
             const w = storedBalanceWeights();
-            if (Object.keys(w).some((k) => w[k] !== result.balanceWeights[k])) {
+            if (Object.keys(w).some((k) => w[k] !== (result.balanceWeights[k] ?? 0))) {
                 changed.push('Balanced weights');
                 rescore = true;
             }
@@ -382,7 +386,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         const changed = [];
         if (result.balanceWeights) {
             const w = storedBalanceWeights();
-            if (Object.keys(w).some((k) => w[k] !== result.balanceWeights[k])) changed.push('Balanced weights');
+            if (Object.keys(w).some((k) => w[k] !== (result.balanceWeights[k] ?? 0))) changed.push('Balanced weights');
         }
         if (this._budgetStale()) changed.push('budget');
         return changed;
@@ -913,8 +917,14 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         }
         if (metric.balanced && result.balanceWeights) {
             const w = result.balanceWeights;
+            const extra =
+                (w.encounters > 0 ? ` : Encounters ${w.encounters}` : '') +
+                (w.deaths > 0 ? ` : Deaths ${w.deaths}` : '');
             header +=
-                ` Balanced = weighted average of the % gains (XP ${w.xp} : Profit ${w.profit} : DPS ${w.dps}; profit as a share of the gold moving through the fight), less a third of a significant rise in deaths/hr (⚠). ` +
+                ` Balanced = weighted average of the % gains (XP ${w.xp} : Profit ${w.profit} : DPS ${w.dps}${extra}; profit as a share of the gold moving through the fight)` +
+                (w.deaths > 0
+                    ? ', less the % rise in deaths/hr at its weight (a fall adds; from zero deaths any deaths count +100%). '
+                    : ', less a third of a significant rise in deaths/hr (⚠). ') +
                 'Its error bar adds the parts as if fully correlated, so it can only be wider than the truth.';
         }
         const parts = [`<div style="color:#bbb; font-size:11px; margin:2px 0 6px;">${header}</div>`];

@@ -848,6 +848,27 @@ describe('rebuilding a finished ranking without new line sims', () => {
         expect(section._result.balanceWeights.xp).toBe(4);
     });
 
+    test('Encounters and Deaths weights: stored, default 0, noticed by the stale note, re-scored without line sims', async () => {
+        expect(q('weight-encounters').value).toBe('0');
+        expect(q('weight-deaths').value).toBe('0');
+        expect(q('weight-deaths').title).toContain('replaces that penalty');
+        pick('metric', 'balanced');
+        await run();
+        expect(text()).toContain('less a third of a significant rise in deaths/hr');
+        const ranked = mocks.simCalls;
+        q('weight-deaths').value = '2';
+        q('weight-deaths').dispatchEvent(new Event('change'));
+        expect(mocks.settings.combatSim_talismanBalanceDeaths).toBe(2);
+        expect(q('stale').textContent).toContain('Balanced weights changed');
+        expect(rebuildButton().textContent).toBe('Re-score and rebuild set');
+        await section._onRebuild();
+        expect(mocks.simCalls - ranked).toBeLessThanOrEqual(1);
+        expect(section._result.balanceWeights.deaths).toBe(2);
+        expect(text()).toContain('Deaths 2');
+        expect(text()).toContain('less the % rise in deaths/hr at its weight');
+        expect(q('stale').style.display).toBe('none');
+    });
+
     test('Set mode: rebuilds the set from the same rows with one combined sim', async () => {
         await run();
         const ranked = mocks.simCalls;

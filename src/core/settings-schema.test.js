@@ -437,6 +437,8 @@ describe('Major Patch 1 settings stay off the live settings UI', () => {
         'combatSim_talismanBalanceXp',
         'combatSim_talismanBalanceProfit',
         'combatSim_talismanBalanceDps',
+        'combatSim_talismanBalanceEncounters',
+        'combatSim_talismanBalanceDeaths',
     ];
 
     test.each(ids)('%s is hidden exactly when this is not the test server, with its default kept', (id) => {

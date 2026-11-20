@@ -390,7 +390,39 @@ describe('rebuildCombatLineRanking', () => {
         expect(rebuilt.sims).toBe(result.sims);
         // The stored combined measurement stands, re-scored in percent
         expect(rebuilt.combined.valuePct).toBeCloseTo(result.combined.valuePct, 9);
-        expect(rebuilt.balanceWeights).toEqual({ xp: 0, profit: 0, dps: 1 });
+        expect(rebuilt.balanceWeights).toEqual({ xp: 0, profit: 0, dps: 1, encounters: 0, deaths: 0 });
+    });
+
+    test('a new Encounters or Deaths weight is a re-score with no line sims, and weights stored without them read as 0', async () => {
+        const sim = fakeDeps();
+        const result = await runCombatLineRanking(
+            params({ metricKey: 'balanced', balanceWeights: { xp: 1, profit: 1, dps: 1 } }),
+            null,
+            sim.deps
+        );
+        expect(result.balanceWeights).toEqual({ xp: 1, profit: 1, dps: 1, encounters: 0, deaths: 0 });
+        const calls = sim.deps.runSimulation.mock.calls.length;
+        // The previous result's weights carry no new keys at all (an older build's): the same weights are no change
+        const old = { ...result, balanceWeights: { xp: 1, profit: 1, dps: 1 } };
+        const same = await rebuildCombatLineRanking(
+            old,
+            controls({ metricKey: 'balanced', balanceWeights: { xp: 1, profit: 1, dps: 1 } }),
+            null,
+            sim.deps
+        );
+        expect(same.rebuilt.rescored).toBe(false);
+        const rebuilt = await rebuildCombatLineRanking(
+            result,
+            controls({ metricKey: 'balanced', balanceWeights: { xp: 1, profit: 1, dps: 1, encounters: 2, deaths: 1 } }),
+            null,
+            sim.deps
+        );
+        expect(rebuilt.rebuilt.rescored).toBe(true);
+        expect(rebuilt.balanceWeights).toEqual({ xp: 1, profit: 1, dps: 1, encounters: 2, deaths: 1 });
+        // The fake sim leaves encounters and deaths alone, so the scores shrink by the new weights' share only
+        const was = result.rows.find((r) => r.hrid === CRIT).valuePct;
+        expect(rebuilt.rows.find((r) => r.hrid === CRIT).valuePct).toBeCloseTo((was * 3) / 6, 9);
+        expect(sim.deps.runSimulation.mock.calls.length).toBe(calls);
     });
 
     test('a set-mode change replans from the same rows with at most one sim, and leaves the previous result alone', async () => {
