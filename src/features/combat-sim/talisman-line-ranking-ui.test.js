@@ -160,8 +160,14 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
 }));
 
 const { talismanBonusesOf } = await import('../../utils/talisman-bonuses.js');
-const { TalismanLineRankingSection, talismanRankingAvailable, etaLeftText, durationText } =
-    await import('./talisman-line-ranking-ui.js');
+const {
+    TalismanLineRankingSection,
+    talismanRankingAvailable,
+    etaLeftText,
+    durationText,
+    estimatedSecPerSim,
+    resetSessionRate,
+} = await import('./talisman-line-ranking-ui.js');
 
 let host;
 let section;
@@ -1213,5 +1219,65 @@ describe('time left while ranking', () => {
         expect(withEta[0]).toMatch(/^\d+ \/ \d+ · .* · about \d+ (s|min) left$/);
         section._updateEstimate();
         expect(q('estimate').textContent).toMatch(/Up to \d+ sims.*roughly \d+ (s|min) \(from the last run\)/);
+    });
+});
+
+describe('header caveat and the estimate rate', () => {
+    const headerText = (rebuilt, resim) => {
+        const result = { ...section._result, resim, rebuilt: { ranWith: { metricKey: 'xp' }, ...rebuilt } };
+        return section
+            ._headerParts(result, { key: 'xp', label: 'XP/hr' })
+            .join(' ')
+            .replace(/<[^>]+>/g, '')
+            .replace(/&#39;/g, "'");
+    };
+
+    test('another metric: the re-sims are mentioned only when the run re-measured rows', async () => {
+        await run();
+        const none = headerText({ metricDiffers: true }, { ran: true, rounds: 0, rows: 0, hours: 10 });
+        expect(none).not.toContain('re-simmed');
+        expect(none).toContain('with a copy in every slot');
+        expect(headerText({ metricDiffers: true }, null)).not.toContain('re-simmed');
+        const some = headerText({ metricDiffers: true }, { ran: true, rounds: 1, rows: 3, hours: 20 });
+        expect(some).toContain("near the set's cut line were re-simmed");
+    });
+
+    test('another set mode: the set-only caveat needs re-measured rows too', async () => {
+        await run();
+        const none = headerText({ setDiffers: true }, { ran: true, rounds: 0, rows: 0, hours: 10 });
+        expect(none).not.toContain('around the set settings');
+        const some = headerText({ setDiffers: true }, { ran: true, rounds: 2, rows: 3, hours: 40 });
+        expect(some).toContain('around the set settings');
+    });
+
+    test('the rate: per sim at its hours, not corrupted by re-sim runs or a 2 h run', () => {
+        resetSessionRate();
+        let t = 0;
+        const spy = vi.spyOn(Date, 'now').mockImplementation(() => t);
+        try {
+            const timed = (seconds, result, hours) => {
+                t = 0;
+                section._etaStart();
+                t = seconds * 1000;
+                section._etaRemember(result, hours);
+            };
+            timed(112, { sims: 56, resim: { rounds: 0 } }, 10); // 2 s per sim at 10 h
+            expect(estimatedSecPerSim(10) * 56).toBeCloseTo(112);
+            // A run with close-call re-sims (sims at 2x and 4x hours inside the count) is not a rate
+            timed(900, { sims: 80, resim: { rounds: 2 } }, 10);
+            expect(estimatedSecPerSim(10)).toBeCloseTo(2);
+            // A 2 h run keeps its own entry; it does not reprice 10 h by scaling
+            timed(56, { sims: 56, resim: null }, 2);
+            expect(estimatedSecPerSim(2)).toBeCloseTo(1);
+            expect(estimatedSecPerSim(10)).toBeCloseTo(2);
+            // An unseen length scales from the nearest
+            expect(estimatedSecPerSim(4)).toBeCloseTo(2);
+            // A stopped or empty run records nothing
+            timed(0, { sims: 0 }, 6);
+            expect(estimatedSecPerSim(6)).toBeCloseTo(1.2);
+        } finally {
+            spy.mockRestore();
+            resetSessionRate();
+        }
     });
 });
