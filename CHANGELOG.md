@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Talisman orbs priced at crafting cost
 
-An orb with no market listing now counts at its crafting cost (inputs at your Buy pricing, artisan tea applied), so the reroll advisor can give a coin cost once every orb has a listing or a priced recipe. The coin line names the orbs priced this way.
+An orb with no market listing now counts at its crafting cost (inputs at their market buy price, artisan tea applied), so the reroll advisor can give a coin cost once every orb has a listing or a priced recipe. The coin line names the orbs priced this way.
 
 ### Merged market volume uses its own timestamps
 

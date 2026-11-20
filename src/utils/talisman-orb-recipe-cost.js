@@ -2,7 +2,7 @@
  * Talisman orb crafting cost
  *
  * What one talisman orb costs to craft from its recipe, so an orb with no market listing can still carry a coin
- * price. Inputs are priced at the player's Buy pricing mode and the artisan tea reduction is applied the way
+ * price. Inputs are priced at their buy-side market quote (as the orbs are) and the artisan tea reduction is applied the way
  * refined-item-cost.js does. Essence and rare-crate drops and crafting time are ignored.
  *
  * Never a partial sum: an input with no price (or only an estimate) means the orb has no recipe price.
@@ -10,7 +10,7 @@
 
 import dataManager from '../core/data-manager.js';
 import { calculateArtisanBonus } from './material-calculator.js';
-import { resolveItemPrice } from './profit-helpers.js';
+import { getItemPriceInfo } from './market-data.js';
 
 /** Cached output-hrid → actions map, rebuilt when game data changes */
 let actionsByOutput = null;
@@ -38,13 +38,22 @@ export function findActionsOutputting(itemHrid) {
 }
 
 /**
+ * A recipe input's buy-side market price, read the same way `orbWeights` reads the orbs (`marketQuote: true`,
+ * only a live listing or the player's own override), so crafted orbs and market orbs share one scale. A vendor,
+ * coinify or other liquidation value (an Iron Cow's valuation) and any estimate are not market prices.
  * @param {string} hrid
- * @returns {number|null} Buy-side unit price at the player's pricing mode, or null when unpriced or only estimated
+ * @param {Function} [priceInfo] - getItemPriceInfo-shaped; injectable for tests
+ * @returns {number|null}
  */
-function defaultPriceInput(hrid) {
-    const resolved = resolveItemPrice(hrid, { context: 'profit', side: 'buy' });
-    if (!resolved || resolved.missing || resolved.estimated) return null;
-    return resolved.price > 0 ? resolved.price : null;
+export function marketInputPrice(hrid, priceInfo = getItemPriceInfo) {
+    let quote = null;
+    try {
+        quote = priceInfo(hrid, { context: 'profit', side: 'buy', marketQuote: true });
+    } catch (error) {
+        console.error('[TalismanOrbRecipeCost] Pricing a recipe input failed:', error);
+    }
+    if (!quote || (quote.source !== 'book' && quote.source !== 'custom')) return null;
+    return quote.price > 0 ? quote.price : null;
 }
 
 /**
@@ -61,7 +70,7 @@ function defaultPriceInput(hrid) {
 export function orbRecipeCost(orbHrid, options = {}) {
     const {
         orbHrids = new Set(),
-        priceInput = defaultPriceInput,
+        priceInput = marketInputPrice,
         priceOrb = () => null,
         artisanBonus = calculateArtisanBonus,
     } = options;

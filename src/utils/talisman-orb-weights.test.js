@@ -6,16 +6,16 @@ const game = vi.hoisted(() => ({ actions: {}, inputPrices: {}, artisan: 0 }));
 vi.mock('../core/data-manager.js', () => ({
     default: { getInitClientData: () => ({ actionDetailMap: game.actions }) },
 }));
-vi.mock('./market-data.js', () => ({ getItemPriceInfo: () => ({ price: null, source: null }) }));
-vi.mock('./material-calculator.js', () => ({ calculateArtisanBonus: () => game.artisan }));
-vi.mock('./profit-helpers.js', () => ({
-    resolveItemPrice: (hrid) => {
+// Recipe inputs are read like the orbs: a market quote, where only a live listing ('book') or an override counts
+vi.mock('./market-data.js', () => ({
+    getItemPriceInfo: (hrid) => {
         const price = game.inputPrices[hrid];
-        return price === undefined
-            ? { price: null, custom: false, missing: true, estimated: false }
-            : { price: price.value ?? price, custom: false, missing: false, estimated: !!price.estimated };
+        if (price === undefined) return { price: null, source: null };
+        const source = price.source ?? (price.estimated ? 'estimate' : 'book');
+        return { price: price.value ?? price, source };
     },
 }));
+vi.mock('./material-calculator.js', () => ({ calculateArtisanBonus: () => game.artisan }));
 
 const { orbWeights, coinCost, roundWeights } = await import('./talisman-orb-weights.js');
 const { orbRecipeCost } = await import('./talisman-orb-recipe-cost.js');
@@ -56,6 +56,13 @@ describe('orb recipe cost', () => {
         expect(orbRecipeCost(RESHAPING)).toBe(20 * 10 + 20 * 40);
         delete game.inputPrices['/items/dragon_leather'];
         expect(orbRecipeCost(RESHAPING)).toBeNull();
+    });
+
+    test('an input valued off-market (vendor or coinify, as an Iron Cow values it) is not priced', () => {
+        game.inputPrices['/items/dragon_leather'] = { value: 40, source: 'vendor' };
+        expect(orbRecipeCost(RESHAPING)).toBeNull();
+        game.inputPrices['/items/dragon_leather'] = { value: 40, source: 'custom' };
+        expect(orbRecipeCost(RESHAPING)).toBe(20 * 10 + 20 * 40);
     });
 
     test('an estimated or zero input price is not a price', () => {
