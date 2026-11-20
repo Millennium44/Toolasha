@@ -1206,7 +1206,13 @@ describe('a protected failure under the Conservation talisman', () => {
     };
 
     test('a same-type protection absent from the changed stacks was kept', async () => {
-        const kinds = await run([row('/items/cheese', 957), row(BOOTS, 1), row(BOOTS, 3), row('/items/coin', 9)]);
+        const kinds = await run([
+            row('/items/cheese', 957),
+            row(BOOTS, 1),
+            row(BOOTS, 2),
+            row(BOOTS, 3),
+            row('/items/coin', 9),
+        ]);
         expect(kinds).toContain('kept');
         expect(kinds).not.toContain('prot');
         expect(kinds).toContain('failure');
@@ -1235,6 +1241,21 @@ describe('a protected failure under the Conservation talisman', () => {
     test("the Philosopher's Mirror is never kept", async () => {
         const mirror = '32030::/item_locations/inventory::/items/philosophers_mirror::0';
         expect(await run([row(BOOTS, 2)], mirror)).not.toContain('kept');
+    });
+
+    test('(A) a protection that is the stack the item lands on counts as consumed, even if absent', async () => {
+        const plusOne = `32030::/item_locations/inventory::${BOOTS}::2`;
+        expect(await run([row(BOOTS, 3), row('/items/coin', 9)], plusOne)).toContain('prot');
+    });
+
+    test('(B) a protection hash with no level matches the item at any level', async () => {
+        const bare = '32030::/item_locations/inventory::/items/mirror_of_protection';
+        const enhanced = row('/items/mirror_of_protection', 3);
+        expect(await run([row(BOOTS, 2), enhanced], bare)).toContain('prot');
+    });
+
+    test('(C) no row for the failed items new stack means the list is not evidence: consumed', async () => {
+        expect(await run([row('/items/cheese', 957), row('/items/coin', 9)])).toContain('prot');
     });
 
     test('a protected success uses nothing either way', async () => {

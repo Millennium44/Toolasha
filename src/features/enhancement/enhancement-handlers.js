@@ -388,19 +388,38 @@ function getProtectionItemHrid(action) {
  * @param {Object} action - Enhance action
  * @param {string} protectionItemHrid - The protection item
  * @param {Array|undefined} changedItems - The message's endCharacterItems
+ * @param {string} enhancedItemHrid - The item being enhanced
+ * @param {number} newLevel - Level the failed attempt ended at
  * @returns {boolean}
  */
-function protectionWasKept(action, protectionItemHrid, changedItems) {
+function protectionWasKept(action, protectionItemHrid, changedItems, enhancedItemHrid, newLevel) {
     if (protectionItemHrid === PHILOSOPHERS_MIRROR_HRID) return false;
     if (!Array.isArray(changedItems) || changedItems.length === 0) return false;
     const hash = action.secondaryItemHash;
     const { level } = parseItemHash(hash);
+    // A hash without an explicit level names the item only: its stack may be at any level
+    const lastPart = typeof hash === 'string' ? hash.split('::').pop() : '';
+    const explicitLevel = Number.isFinite(Number.parseInt(lastPart, 10)) && !lastPart.startsWith('/');
+    // The protection is the very stack the failed item lands on: that stack loses one copy and
+    // gains one, so it may be absent from the list whether or not the protection was spent
+    if (protectionItemHrid === enhancedItemHrid && (!explicitLevel || level === newLevel)) return false;
+    const inInventory = (row) => row.itemLocationHrid == null || row.itemLocationHrid === '/item_locations/inventory';
+    // Evidence the list covers this attempt: the failed item's new stack always changes
+    const covered = changedItems.some(
+        (row) =>
+            row &&
+            typeof row === 'object' &&
+            row.itemHrid === enhancedItemHrid &&
+            (row.enhancementLevel || 0) === newLevel &&
+            inInventory(row)
+    );
+    if (!covered) return false;
     const touched = changedItems.some((row) => {
         if (!row || typeof row !== 'object') return true;
         if (typeof hash === 'string' && row.hash === hash) return true;
         if (row.itemHrid !== protectionItemHrid) return false;
-        if ((row.enhancementLevel || 0) !== level) return false;
-        return row.itemLocationHrid == null || row.itemLocationHrid === '/item_locations/inventory';
+        if (explicitLevel && (row.enhancementLevel || 0) !== level) return false;
+        return inInventory(row);
     });
     return !touched;
 }
@@ -617,7 +636,7 @@ async function applyAttempt({ session, action, itemHrid, previousLevel, newLevel
 
     if (wasProtectedFailure && !mirror) {
         const protectionItemHrid = getProtectionItemHrid(action);
-        if (protectionItemHrid && protectionWasKept(action, protectionItemHrid, changedItems)) {
+        if (protectionItemHrid && protectionWasKept(action, protectionItemHrid, changedItems, itemHrid, newLevel)) {
             await enhancementTracker.trackKeptProtection();
         } else if (protectionItemHrid) {
             await enhancementTracker.trackProtectionCost(
