@@ -156,7 +156,8 @@ export function effectiveStates(n, m, highestMin, maxGrade) {
  * reroll redraws the type of every unlocked line (grades kept), so a held unlocked line can be lost and never counts:
  * only the locked line survives it. A slot is left out when it is the locked line's own, or when it is optional and the
  * locked line is itself a satisfied optional line that already fills the optional part of K (K less the required
- * lines is at most one): no optional type can then advance the goal.
+ * lines is at most one): no optional type can then advance the goal. If that leaves nothing to boost, the unpruned
+ * set stands (see below).
  * @param {Object} problem
  * @param {number} lockLabel - Wanted slot of the locked line, 0 for a junk line, -1 for no lock
  * @param {number} lockGrade
@@ -172,12 +173,18 @@ export function focusLabels(problem, lockLabel, lockGrade) {
         lockGrade >= wanted[lockLabel - 1].minGrade &&
         need - requiredCount <= 1;
     const labels = new Set();
+    const fallback = new Set();
     wanted.forEach((w, i) => {
         if (!w.focusable || i + 1 === lockLabel) return;
+        fallback.add(i + 1);
         if (optionalFilled && !w.required) return;
         labels.add(i + 1);
     });
-    return labels;
+    // The pruned set is used only when it is not empty. A required line that cannot be focused (a Special) still
+    // changes with a Focus reroll, which redraws the types of the unlocked lines, so a Focus on the optional picks
+    // stays legal (and may be the cheapest move): the solver values these same picks and advise emits them.
+    // Chosen over valuing both sets per state: no extra states or nodes.
+    return labels.size > 0 ? labels : fallback;
 }
 
 function choose(n, k) {
