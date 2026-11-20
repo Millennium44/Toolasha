@@ -1,5 +1,5 @@
 /**
- * Every combat-stat talisman modifier of the test server talismanModifierDetailMap (survey 2026-11-12, 48 lines),
+ * Every combat-stat talisman modifier of the test server talismanModifierDetailMap (survey 2026-11-12, 48 lines, plus Consistency from the 2026-11-20 patch),
  * unchanged but for the fields the sim does not read.
  *
  * This is the 2026-11-12 table: the 2026-11-20 test patch removed Threat Reduction and changed four values
@@ -104,6 +104,18 @@ export const COMBAT_MODIFIER_DETAILS = {
         targetHrid: '/talisman_modifier_targets/combat_stat',
         keys: ['CombatRareFind'],
         isPercent: true,
+        gradeValues: [0.03, 0.045, 0.06, 0.075, 0.09, 0.12],
+    },
+    // Added with the 2026-11-20 test patch (after the survey above)
+    '/talisman_modifiers/consistency': {
+        hrid: '/talisman_modifiers/consistency',
+        name: 'Consistency',
+        talismanTypeHrid: '/talisman_types/combat',
+        targetHrid: '/talisman_modifier_targets/combat_stat',
+        groupHrid: '/talisman_modifier_groups/special',
+        keys: ['Consistency'],
+        isPercent: true,
+        weight: 0.1,
         gradeValues: [0.03, 0.045, 0.06, 0.075, 0.09, 0.12],
     },
     '/talisman_modifiers/critical_damage': {

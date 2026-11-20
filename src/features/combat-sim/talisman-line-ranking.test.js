@@ -32,7 +32,7 @@ const { BELT_LOCATION, talismanBonusesOf } = await import('../../utils/talisman-
 const LARGE_10 = { hrid: '/items/large_talisman_belt', enhancementLevel: 10 };
 const POWER = 0.258;
 
-/** A payload with the real 48 combat lines, the real belts and the real enhancement table */
+/** A payload with the real 49 combat lines, the real belts and the real enhancement table */
 function gameData(overrides = {}) {
     return {
         talismansEnabled: true,
@@ -161,14 +161,14 @@ describe('scaleAcrossGrades', () => {
 });
 
 describe('checkCombatLines', () => {
-    test('every one of the 48 combat lines is read by the engine at gradeValue × (1 + power) on a Large +10', () => {
+    test('every one of the 49 combat lines is read by the engine at gradeValue × (1 + power) on a Large +10', () => {
         const data = gameData();
         const lines = talismanLines(data.talismanModifierDetailMap, '/talisman_types/combat');
-        expect(lines).toHaveLength(48);
+        expect(lines).toHaveLength(49);
         const { valued, notValued, power } = checkCombatLines(lines, LARGE_10, data, 6);
         expect(power).toBeCloseTo(POWER, 10);
         expect(notValued).toEqual([]);
-        expect(valued).toHaveLength(48);
+        expect(valued).toHaveLength(49);
     });
 
     test('a line on a stat the engine does not model is not valued (never shown as zero)', () => {
@@ -354,7 +354,7 @@ describe('runCombatLineRanking', () => {
         // The estimate the section shows before it starts is a ceiling: only 5 lines gain, so 5 copy sims, not 6
         expect(result.sims).toBe(calls.length);
         // Smite is a Special and gets no copies run, so one fewer sim than before
-        expect(calls.length).toBe(estimateCombatRankingSims({ lineCount: 48, slots: 3, hasCurrent: true }) - 2);
+        expect(calls.length).toBe(estimateCombatRankingSims({ lineCount: 49, slots: 3, hasCurrent: true }) - 2);
         // Practical by default: capped at G3, at most one Special per talisman
         expect(result.setMode).toBe('practical');
         expect(result.rerollTargets.flat().every((t) => t.minGrade === 3)).toBe(true);
@@ -423,7 +423,7 @@ describe('runCombatLineRanking', () => {
         expect(result.set.talismans[0].modifiers).toHaveLength(4);
         // The worn talisman sits in slot 2, which a Small belt does not have: nothing worn counts
         expect(result.current).toBeNull();
-        expect(calls.length).toBe(estimateCombatRankingSims({ lineCount: 48, slots: 1, hasCurrent: false }));
+        expect(calls.length).toBe(estimateCombatRankingSims({ lineCount: 49, slots: 1, hasCurrent: false }));
     });
 
     test('no belt: refused, nothing simulated', async () => {
@@ -453,8 +453,8 @@ describe('runCombatLineRanking', () => {
         expect(result.status).toBe('stopped');
         expect(result.set).toBeUndefined();
         expect(result.rows.length).toBeGreaterThan(0);
-        expect(result.rows.length).toBeLessThan(48);
-        expect(result.of).toBe(48);
+        expect(result.rows.length).toBeLessThan(49);
+        expect(result.of).toBe(49);
     });
 
     test('Stop during the baseline still carries the belt, power and slots', async () => {
@@ -462,7 +462,7 @@ describe('runCombatLineRanking', () => {
         const abort = { flag: false };
         const { deps } = fakeDeps(data, { gains, abortAfter: 0, abort });
         const result = await runCombatLineRanking(params(data), null, deps, { abortSignal: () => abort.flag });
-        expect(result).toMatchObject({ status: 'stopped', slots: 3, measured: 0, of: 48 });
+        expect(result).toMatchObject({ status: 'stopped', slots: 3, measured: 0, of: 49 });
         expect(result.power).toBeCloseTo(POWER, 10);
         expect(result.belt).toEqual(LARGE_10);
     });

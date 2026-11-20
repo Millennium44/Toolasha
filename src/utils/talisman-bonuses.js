@@ -34,8 +34,8 @@ const TARGET_BUFF = '/talisman_modifier_targets/buff';
  */
 export const SPECIAL_GROUP = '/talisman_modifier_groups/special';
 
-/** The stat names of the older combat Special lines (what their `keys` feed, first letter lowercased) */
-export const SPECIAL_MECHANIC_STATS = Object.freeze(['echo', 'smite', 'shatter', 'fortify', 'overkill']);
+/** The stat names of the combat Special lines (what their `keys` feed, first letter lowercased) */
+export const SPECIAL_MECHANIC_STATS = Object.freeze(['echo', 'smite', 'shatter', 'fortify', 'overkill', 'consistency']);
 
 /**
  * The skilling Special lines (test patch 2026-11-20), as the stat names their `keys` feed. Each rides on the equipment

@@ -116,7 +116,7 @@ describe('Budget sets with the real solver', () => {
             predicted: plan.set.predicted,
         }).toMatchInlineSnapshot(`
           {
-            "cheapest": 0.330409092933863,
+            "cheapest": 0.33145921925627264,
             "overUpperBound": 0,
             "predicted": 25,
             "solves": 4,
@@ -133,7 +133,7 @@ describe('Budget sets with the real solver', () => {
                   },
                 ],
                 12.5,
-                2.2170021786381047,
+                2.218994734833871,
               ],
               [
                 [
@@ -147,7 +147,7 @@ describe('Budget sets with the real solver', () => {
                   },
                 ],
                 12.5,
-                2.2170021786381047,
+                2.218994734833871,
               ],
             ],
           }

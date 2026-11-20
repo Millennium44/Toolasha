@@ -278,6 +278,12 @@ class CombatUtilities {
             sourceMaxDamage = sourceMaxDamage * (1 + bonusCritDamage);
             sourceMinDamage = sourceMaxDamage;
             isCrit = true;
+        } else if (!abilityEffect) {
+            // Consistency (talisman): a non-crit auto attack (a parry counter is one) rolls uniformly from this
+            // share of its maximum up to the maximum instead of its normal range. Measured live 2026-11-20: a
+            // rescaled roll, not a clamp (no spike at the floor); crits and abilities are untouched. Still one draw.
+            const consistency = source.talismanMechanics?.consistency;
+            if (consistency > 0) sourceMinDamage = Math.max(sourceMinDamage, consistency * sourceMaxDamage);
         }
 
         let damageRoll = CombatUtilities.randomInt(sourceMinDamage, sourceMaxDamage);

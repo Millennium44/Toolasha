@@ -292,7 +292,7 @@ describe('combat ranking', () => {
         mocks.onStop = () => section.stop();
         await run();
         expect(mocks.cancelled).toBe(1);
-        expect(text()).toContain('Stopped early: 7 of 48 lines measured');
+        expect(text()).toContain('Stopped early: 7 of 49 lines measured');
         expect(text()).toContain('Talisman Power 25.8%');
         expect(text()).not.toContain('Recommended set');
         expect(text()).not.toMatch(/undefined|NaN/);
@@ -302,7 +302,7 @@ describe('combat ranking', () => {
         mocks.stopAfter = 0;
         mocks.onStop = () => section.stop();
         await run();
-        expect(text()).toContain('Stopped early: 0 of 48 lines measured');
+        expect(text()).toContain('Stopped early: 0 of 49 lines measured');
         expect(text()).toContain('3 slots');
         expect(text()).not.toMatch(/undefined|NaN/);
     });
@@ -311,7 +311,7 @@ describe('combat ranking', () => {
         mocks.stopAfter = 5;
         await run();
         expect(text()).toContain('another simulation cancelled this run');
-        expect(text()).toContain('4 of 48');
+        expect(text()).toContain('4 of 49');
         expect(text()).not.toContain('Ranking failed');
     });
 
@@ -360,7 +360,7 @@ describe('combat ranking', () => {
         q('estimate').textContent = '';
         q('grade').value = '3';
         q('grade').dispatchEvent(new Event('change'));
-        expect(q('estimate').textContent).toContain('Up to 56 sims');
+        expect(q('estimate').textContent).toContain('Up to 57 sims');
     });
 
     test('refuses while another Combat Sim run is going', async () => {

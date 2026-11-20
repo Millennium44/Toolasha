@@ -217,7 +217,7 @@ describe('the ways it can end', () => {
 });
 
 describe('every combat modifier the game describes', () => {
-    test('each one is either modeled or one of the five talisman-only mechanics', () => {
+    test('each one is either modeled or one of the six talisman-only mechanics', () => {
         const keys = Object.values(COMBAT_MODIFIER_DETAILS).flatMap((d) => d.keys);
         const names = keys.map((k) => k.charAt(0).toLowerCase() + k.slice(1));
         const mechanics = names.filter((n) => TALISMAN_MECHANICS.includes(n));
