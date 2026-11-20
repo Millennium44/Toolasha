@@ -62,6 +62,7 @@ describe('special lines come from the game data group', () => {
         expect(specials).toEqual([
             'Abundance',
             'Conservation',
+            'Consistency',
             'Echo',
             'Epiphany',
             'Fortify',

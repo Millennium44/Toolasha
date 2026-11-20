@@ -15,7 +15,7 @@ const TARGET_COMBAT = '/talisman_modifier_targets/combat_stat';
  * (`player.talismanMechanics`) and the fight models them: Smite and Shatter and Overkill in
  * `CombatUtilities.processAttack`, Echo and Fortify in the simulator.
  */
-export const TALISMAN_MECHANICS = Object.freeze(['echo', 'smite', 'shatter', 'fortify', 'overkill']);
+export const TALISMAN_MECHANICS = Object.freeze(['echo', 'smite', 'shatter', 'fortify', 'overkill', 'consistency']);
 
 /**
  * The combat lines of a sim player's talismans, scaled by the belt it wears.
@@ -35,7 +35,7 @@ export const TALISMAN_MECHANICS = Object.freeze(['echo', 'smite', 'shatter', 'fo
  * @param {Object} params.gameData - The engine's game data (itemDetailMap, talismanModifierDetailMap, ...)
  * @param {Set<string>} params.modeledStats - The stat names the engine reads
  * @returns {{stats: Object, mechanics: Object, unmodeled: Object}} Stat name to total. `stats` holds the
- *   modeled stats, `mechanics` the five talisman-only ones, `unmodeled` any other name (none today)
+ *   modeled stats, `mechanics` the six talisman-only ones, `unmodeled` any other name (none today)
  */
 export function computeTalismanCombat({ talismans, belt, gameData, modeledStats }) {
     const result = { stats: {}, mechanics: {}, unmodeled: {} };

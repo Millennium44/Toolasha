@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 The five new skilling Special lines (Abundance, Conservation, Epiphany, Invigoration, Prosperity) now count in the Skilling Optimizer's talisman ranking and in gathering, production and alchemy profit, XP/hr and action times where they apply; Conservation is counted for alchemy catalysts only so far.
 
+### Combat Sim models the Consistency talisman line
+
+The new Consistency Special now works in the Combat Sim and the talisman ranking: non-crit auto attacks and parry counters roll between its floor (3-12% of max damage) and max, as measured on the test server, while crits and abilities are unchanged.
+
 ### Balanced ranking can weigh encounters and deaths
 
 Balanced has two more weights, Encounters/hr and Deaths/hr (both 0 by default, so existing scores don't change). A Deaths weight above 0 replaces the automatic penalty for a clear rise in deaths.
