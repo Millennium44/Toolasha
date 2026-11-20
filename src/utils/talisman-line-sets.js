@@ -707,6 +707,8 @@ export const ANY_K_MAX_POOL = 6;
  * @param {Object} params
  * @param {number} params.grade - The minimum grade every pool line is wanted at
  * @param {number} params.k - How many lines the target talisman holds
+ * @param {Array<string>} [params.own] - The lines of the option being aimed for. When given, the pool is anchored on
+ *   them (see {@link planAnchoredTarget}) and `k` is their count
  * @param {number} [params.maxPool] - The most lines in the pool (default {@link ANY_K_MAX_POOL})
  * @param {function(number): boolean} [params.fits] - Whether a pool of that many lines can be solved at this grade
  *   (the solver's state ceiling); the weakest optional lines go until it does
@@ -714,7 +716,8 @@ export const ANY_K_MAX_POOL = 6;
  *   poolSize: number}|null} Null when no line has a gain. `leftOut`: pool lines cut to fit `maxPool` and `fits`, and a second Special within noise of the K-th line (never a required
  *   one). `need` is K, or fewer when fewer lines have a gain.
  */
-export function planAnyKTarget(rows, { grade, k, maxPool = ANY_K_MAX_POOL, fits = () => true }) {
+export function planAnyKTarget(rows, { grade, k, own, maxPool = ANY_K_MAX_POOL, fits = () => true }) {
+    if (Array.isArray(own) && own.length > 0) return planAnchoredTarget(rows, { grade, own, maxPool, fits });
     const scored = [];
     let special = null;
     const ignored = [];
@@ -772,6 +775,101 @@ export function planAnyKTarget(rows, { grade, k, maxPool = ANY_K_MAX_POOL, fits 
         leftOut: pool.length - kept.length + specialsOut,
         poolSize: kept.length,
     };
+}
+
+/** A row's gain at a grade and its noise scaled with it (a relative error; none when the row has no figure) */
+function scoreRow(row, grade) {
+    if (!row || row.noEffect || !row.hrid) return null;
+    const gain = valueAtGrade(row, grade);
+    if (!(gain > 0)) return null;
+    const rel =
+        Number.isFinite(row.errPct) && Number.isFinite(row.valuePct) && row.valuePct !== 0
+            ? Math.abs(row.errPct / row.valuePct)
+            : 0;
+    return { hrid: row.hrid, gain, noise: gain * rel };
+}
+
+/**
+ * The "any K" target for one Improve mine option: its own lines (the lines the option asks the talisman to hold) are
+ * always in the pool, K is their count, and the weakest of them is the anchor. Other ranking lines whose gain plus
+ * noise reaches the anchor's gain less its noise are as good as the weakest line asked for, within noise, and join the
+ * pool as optional alternatives. An own line is required when it beats every added line beyond noise; with nothing
+ * added every own line is required (what "Aim for this" sends). An own line the ranking has no gain for stays
+ * required and the anchor is taken from the rest. Same exclusions as the unanchored plan: lines with no effect or an
+ * unreal gain, and only the best Special among the added lines (none when an own line is a Special: a talisman holds
+ * one). When the pool is over `maxPool` or the solver's ceiling (`fits`) the weakest added lines go first; if the own
+ * lines alone do not fit, they are sent as they are, all required.
+ *
+ * @param {Array<Object>} rows
+ * @param {Object} params
+ * @param {number} params.grade
+ * @param {Array<string>} params.own - hrids of the option's lines
+ * @param {number} params.maxPool
+ * @param {function(number): boolean} params.fits
+ * @returns {{targets: Array<Object>, need: number, leftOut: number, poolSize: number}}
+ */
+function planAnchoredTarget(rows, { grade, own, maxPool, fits }) {
+    const ownSet = new Set(own);
+    const byHrid = new Map((rows || []).map((r) => [r?.hrid, r]));
+    const ownScored = [];
+    const ownUnknown = [];
+    for (const hrid of ownSet) {
+        const entry = scoreRow(byHrid.get(hrid), grade);
+        if (entry) ownScored.push(entry);
+        else ownUnknown.push(hrid);
+    }
+    const need = ownSet.size;
+    const ownSpecial = ownScored.some((e) => byHrid.get(e.hrid)?.special);
+    const ownAll = () => ({
+        targets: [...ownSet].map((hrid) => ({ hrid, minGrade: grade, required: true })),
+        need,
+        leftOut: 0,
+        poolSize: need,
+    });
+    if (ownScored.length === 0) return ownAll();
+    const anchor = ownScored.reduce((a, b) => (b.gain < a.gain ? b : a));
+    const floor = anchor.gain - anchor.noise;
+
+    const plain = [];
+    let special = null;
+    const ignored = [];
+    for (const row of rows || []) {
+        if (!row || ownSet.has(row.hrid)) continue;
+        const entry = scoreRow(row, grade);
+        if (!entry || entry.gain + entry.noise < floor) continue;
+        if (!row.special) plain.push(entry);
+        else if (ownSpecial) ignored.push(entry);
+        else if (!special) special = entry;
+        else if (entry.gain > special.gain) {
+            ignored.push(special);
+            special = entry;
+        } else ignored.push(entry);
+    }
+    let added = [...plain, ...(special ? [special] : [])].sort(
+        (a, b) => b.gain - a.gain || String(a.hrid).localeCompare(String(b.hrid))
+    );
+    const candidates = added.length + ignored.length;
+    // Over the limits: the weakest added lines go first, never an own line
+    let cut = 0;
+    while (added.length > 0 && need + added.length > Math.max(maxPool, need)) {
+        added = added.slice(0, -1);
+        cut++;
+    }
+    while (added.length > 0 && !fits(need + added.length)) {
+        added = added.slice(0, -1);
+        cut++;
+    }
+    if (!fits(need)) return { ...ownAll(), leftOut: candidates };
+    const bar = added.length ? Math.max(...added.map((e) => e.gain + e.noise)) : -Infinity;
+    const requiredOwn = new Set([
+        ...ownUnknown,
+        ...ownScored.filter((e) => added.length === 0 || e.gain - e.noise > bar).map((e) => e.hrid),
+    ]);
+    const targets = [
+        ...[...ownSet].map((hrid) => ({ hrid, minGrade: grade, ...(requiredOwn.has(hrid) ? { required: true } : {}) })),
+        ...added.map((e) => ({ hrid: e.hrid, minGrade: grade })),
+    ];
+    return { targets, need, leftOut: cut + ignored.length, poolSize: targets.length };
 }
 
 /**
