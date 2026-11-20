@@ -29,9 +29,11 @@ import {
     specialPrice,
     pruneStale,
     depthFromBook,
+    appendDepthSnapshot,
     foldDepth,
     hasDepth,
     mergeDepth,
+    mergeDepthHistory,
     PRICE_MAX_AGE_MS,
 } from './market-prices.js';
 
@@ -43,6 +45,13 @@ const STORAGE_KEY = 'mooketPrices';
  * keep the shape every build reads.
  */
 const DEPTH_KEY = 'mooketDepth';
+/**
+ * A short series of depth snapshots per item (HISTORY_MAX), so a reader can measure how fast a queue
+ * drains. Device-only like {@link DEPTH_KEY}: the key shares its prefix, so one entry in
+ * `DEVICE_ONLY_STORE_KEY_PREFIXES` covers both. Worst case stored: items x 12 snapshots x (5 ask +
+ * 5 bid levels), about 50 bytes a level, so ~6 KB an item-level and ~3 MB for 500 of them.
+ */
+const DEPTH_HISTORY_KEY = 'mooketDepthHistory';
 const SAVE_INTERVAL_MS = 60 * 1000;
 
 /**
@@ -73,6 +82,17 @@ function mergeDepths(stored, memory) {
     return mergeDepth(stored, memory, now - PRICE_MAX_AGE_MS, now);
 }
 
+/**
+ * Fold a stored depth history under the one in memory (see mergeDepthHistory).
+ * @param {Object} stored - key -> snapshots, as read back
+ * @param {Object} memory - key -> snapshots, as held
+ * @returns {Object} The merged map
+ */
+function mergeHistories(stored, memory) {
+    const now = Date.now();
+    return mergeDepthHistory(stored, memory, now - PRICE_MAX_AGE_MS, now);
+}
+
 class MarketPriceStore {
     constructor() {
         this.record = createPersistedRecord({
@@ -90,6 +110,14 @@ class MarketPriceStore {
             empty: () => ({}),
             merge: mergeDepths,
             label: 'MooketDepth',
+        });
+        this.depthHistoryRecord = createPersistedRecord({
+            base: DEPTH_HISTORY_KEY,
+            store: 'marketListings',
+            scoped: false,
+            empty: () => ({}),
+            merge: mergeHistories,
+            label: 'MooketDepthHistory',
         });
         this.depthDirty = false;
         /**
@@ -131,6 +159,15 @@ class MarketPriceStore {
         this.depthRecord.set(value);
     }
 
+    /** @returns {Object} key -> snapshots (oldest first), the live in-memory depth history */
+    get depthHistory() {
+        return this.depthHistoryRecord.get();
+    }
+
+    set depthHistory(value) {
+        this.depthHistoryRecord.set(value);
+    }
+
     async initialize() {
         if (this.bookHandler) return;
 
@@ -145,12 +182,13 @@ class MarketPriceStore {
         const generation = this.generation;
 
         // An unreadable store keeps the cache in hand rather than starting empty
-        await Promise.all([this.record.load(), this.depthRecord.load()]);
+        await Promise.all([this.record.load(), this.depthRecord.load(), this.depthHistoryRecord.load()]);
         // Torn down while the read was in flight, or another run got there
         // first — either way this one registers nothing
         if (generation !== this.generation || this.bookHandler) return;
         this.entries = pruneStale(this.entries, Date.now() - PRICE_MAX_AGE_MS);
         this.depth = mergeDepths({}, this.depth);
+        this.depthHistory = mergeHistories({}, this.depthHistory);
         this.loaded = true;
 
         this.bookHandler = (data) => this.onOrderBooks(data);
@@ -203,6 +241,8 @@ class MarketPriceStore {
             const nextDepth = foldDepth(this.depth[key], depthFromBook(book, at), at);
             if (nextDepth) {
                 this.depth[key] = nextDepth;
+                const series = appendDepthSnapshot(this.depthHistory[key], nextDepth);
+                if (series) this.depthHistory[key] = series;
                 depthChanged = true;
             }
 
@@ -307,6 +347,27 @@ class MarketPriceStore {
     }
 
     /**
+     * The saved snapshots of one item's order book, oldest first, each shaped as {@link depthFor}
+     * returns it. Asking counts as a reader wanting depth ({@link MarketPriceStore#keepDepth}).
+     * @param {string} itemHrid - Item
+     * @param {number} [enhancementLevel=0] - Enhancement level
+     * @returns {Array<{asks: Array, bids: Array, depthAt: number}>} Empty when none
+     */
+    depthHistoryFor(itemHrid, enhancementLevel = 0) {
+        this.keepDepth();
+        const series = this.depthHistory[priceKey(itemHrid, enhancementLevel)];
+        if (!Array.isArray(series)) return [];
+        const now = Date.now();
+        return series
+            .filter((snap) => hasDepth(snap, now))
+            .map((snap) => ({
+                asks: snap.askLevels.map((level) => ({ price: level.price, quantity: level.quantity })),
+                bids: snap.bidLevels.map((level) => ({ price: level.price, quantity: level.quantity })),
+                depthAt: snap.depthAt,
+            }));
+    }
+
+    /**
      * Say that a reader wants depth saved, so saving starts at page load rather than at its first
      * {@link MarketPriceStore#depthFor}. Until this or depthFor is called, depth is recorded in memory
      * only. Safe to call repeatedly; lasts until the store's next teardown.
@@ -342,8 +403,12 @@ class MarketPriceStore {
         this.depthDirty = false;
         try {
             this.depth = mergeDepths({}, this.depth);
-            const landed = await this.depthRecord.save();
-            if (!landed) this.depthDirty = true;
+            this.depthHistory = mergeHistories({}, this.depthHistory);
+            const [landed, historyLanded] = await Promise.all([
+                this.depthRecord.save(),
+                this.depthHistoryRecord.save(),
+            ]);
+            if (!landed || !historyLanded) this.depthDirty = true;
         } catch (error) {
             console.error('[MooketPrices] Saving depth failed:', error);
             this.depthDirty = true;

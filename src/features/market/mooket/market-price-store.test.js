@@ -64,6 +64,7 @@ beforeEach(async () => {
     marketPriceStore.cleanup();
     await marketPriceStore.record.flushed();
     await marketPriceStore.depthRecord.flushed();
+    await marketPriceStore.depthHistoryRecord.flushed();
     storageMock.saved = {};
     storageMock.unavailable = false;
     storageMock.gate = null;
@@ -74,6 +75,7 @@ beforeEach(async () => {
     dataManagerMock.off.mockClear();
     marketPriceStore.record.reset();
     marketPriceStore.depthRecord.reset();
+    marketPriceStore.depthHistoryRecord.reset();
     marketPriceStore.depthDirty = false;
     marketPriceStore.depthWanted = false;
     marketPriceStore.dirty = false;
@@ -479,5 +481,73 @@ describe('depthFor', () => {
         expect(marketPriceStore.depthFor('/items/coin', 0)).toBeNull();
         expect(marketPriceStore.depthFor('/items/cowbell', 0)).toBeNull();
         expect(marketPriceStore.get('/items/cowbell', 0).askLevels).toBeUndefined();
+    });
+});
+
+describe('depthHistoryFor', () => {
+    const send = (itemHrid, orderBooks) =>
+        dataManagerMock.handlers['market_item_order_books_updated']({ marketItemOrderBooks: { itemHrid, orderBooks } });
+    const book = (price, quantity = 1) => [{ asks: [{ price, quantity }], bids: [] }];
+    const MIN = 60 * 1000;
+    const savedHistory = (key) => storageMock.saved.mooketDepthHistory?.[key];
+
+    test('nothing is written before a reader asks; asking saves the series seen so far', async () => {
+        await marketPriceStore.initialize();
+        send('/items/cheese', book(100));
+        await marketPriceStore.flush();
+        expect(storageMock.saved.mooketDepthHistory).toBeUndefined();
+        marketPriceStore.keepDepth();
+        await marketPriceStore.flush();
+        expect(savedHistory('/items/cheese:0')).toHaveLength(1);
+    });
+
+    test('a book re-sent within 10 minutes is skipped, a changed one or one 10 minutes newer is appended', () => {
+        send('/items/cheese', book(100));
+        vi.setSystemTime(Date.now() + 5_000);
+        send('/items/cheese', book(100));
+        expect(marketPriceStore.depthHistoryFor('/items/cheese')).toHaveLength(1);
+        vi.setSystemTime(Date.now() + 5_000);
+        send('/items/cheese', book(100, 2));
+        expect(marketPriceStore.depthHistoryFor('/items/cheese')).toHaveLength(2);
+        vi.setSystemTime(Date.now() + 10 * MIN);
+        send('/items/cheese', book(100, 2));
+        expect(marketPriceStore.depthHistoryFor('/items/cheese')).toHaveLength(3);
+    });
+
+    test('shape matches depthFor, oldest first; the newest equals depthFor; depthFor is unchanged', () => {
+        send('/items/cheese', book(100, 4));
+        const first = marketPriceStore.depthFor('/items/cheese');
+        vi.setSystemTime(Date.now() + MIN);
+        send('/items/cheese', book(99, 3));
+        const history = marketPriceStore.depthHistoryFor('/items/cheese');
+        expect(history[0]).toEqual(first);
+        expect(history[1]).toEqual(marketPriceStore.depthFor('/items/cheese'));
+        expect(history[1].asks).toEqual([{ price: 99, quantity: 3 }]);
+        expect(marketPriceStore.depthHistoryFor('/items/never-seen')).toEqual([]);
+    });
+
+    test('at most 12 snapshots stay, the newest', () => {
+        for (let i = 1; i <= 15; i++) {
+            send('/items/cheese', book(100, i));
+            vi.setSystemTime(Date.now() + MIN);
+        }
+        const history = marketPriceStore.depthHistoryFor('/items/cheese');
+        expect(history).toHaveLength(12);
+        expect(history[0].asks[0].quantity).toBe(4);
+        expect(history[11].asks[0].quantity).toBe(15);
+    });
+
+    test('a flush keeps the union of a stored series and the one in memory, and drops 30-day-old snapshots', async () => {
+        const now = Date.now();
+        const snap = (depthAt, quantity) => ({ askLevels: [{ price: 100, quantity }], bidLevels: [], depthAt });
+        storageMock.saved.mooketDepthHistory = {
+            '/items/cheese:0': [snap(now - 31 * 24 * 60 * MIN, 1), snap(now - 3 * MIN, 2), snap(now - 1 * MIN, 3)],
+        };
+        marketPriceStore.depthHistory['/items/cheese:0'] = [snap(now - 2 * MIN, 5), snap(now - 1 * MIN, 7)];
+        send('/items/cheese', book(100, 9));
+        marketPriceStore.keepDepth();
+        await marketPriceStore.flush();
+        const saved = savedHistory('/items/cheese:0');
+        expect(saved.map((s) => s.askLevels[0].quantity)).toEqual([2, 5, 7, 9]);
     });
 });

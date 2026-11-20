@@ -54,6 +54,7 @@ describe('the declared store list', () => {
         expect(ownsKey('combatExport', 'spawnCensus')).toBe(false);
         // order-book depth stays on the device; the prices beside it in the same store sync
         expect(ownsKey('marketListings', 'mooketDepth')).toBe(false);
+        expect(ownsKey('marketListings', 'mooketDepthHistory')).toBe(false);
         expect(ownsKey('marketListings', 'mooketPrices')).toBe(true);
         const entries = { latestCombatRun_1: { a: 1 }, kept: 2 };
         const result = partitionOwnedKeys('combatStats', entries);

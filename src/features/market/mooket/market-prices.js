@@ -264,3 +264,68 @@ export function mergeDepth(stored, memory, cutoff, now) {
     }
     return merged;
 }
+
+/** Snapshots kept per item and enhancement level in the depth history */
+export const HISTORY_MAX = 12;
+/** A book equal to the last snapshot is only added again once it is this much newer (ms) */
+export const HISTORY_MIN_GAP_MS = 10 * 60 * 1000;
+
+function sameLevels(a, b) {
+    return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Add a depth snapshot to an item's series (oldest first, newest last). Skipped when it is not newer
+ * than the last one, or when it shows the same book as the last one and is less than
+ * {@link HISTORY_MIN_GAP_MS} newer, so a book the game re-sends seconds apart is stored once.
+ * Never mutates the series it is given.
+ * @param {Array|undefined} series - Held snapshots
+ * @param {Object} snapshot - { askLevels, bidLevels, depthAt }
+ * @returns {Array|null} The new series, or null when nothing was added
+ */
+export function appendDepthSnapshot(series, snapshot) {
+    const held = Array.isArray(series) ? series : [];
+    const last = held[held.length - 1];
+    if (last && snapshot.depthAt <= last.depthAt) return null;
+    if (
+        last &&
+        snapshot.depthAt - last.depthAt < HISTORY_MIN_GAP_MS &&
+        sameLevels(last.askLevels, snapshot.askLevels) &&
+        sameLevels(last.bidLevels, snapshot.bidLevels)
+    ) {
+        return null;
+    }
+    return [...held, snapshot].slice(-HISTORY_MAX);
+}
+
+/**
+ * Fold a stored depth history under the one in memory: per item the union of both series by depthAt
+ * (memory wins an equal depthAt), unusable snapshots and those older than the cutoff go, and only the
+ * newest {@link HISTORY_MAX} stay. Neither side loses a snapshot the other lacks unless it is past
+ * the cap or the cutoff.
+ * @param {Object} stored - key -> snapshots, as read back
+ * @param {Object} memory - key -> snapshots, as held
+ * @param {number} cutoff - Timestamp (ms); a snapshot older than this goes
+ * @param {number} now - Current time (ms)
+ * @returns {Object} A new object
+ */
+export function mergeDepthHistory(stored, memory, cutoff, now) {
+    const byKey = {};
+    for (const source of [stored, memory]) {
+        if (!source || typeof source !== 'object') continue;
+        for (const [key, series] of Object.entries(source)) {
+            if (!Array.isArray(series)) continue;
+            const at = (byKey[key] ||= new Map());
+            for (const snap of series) {
+                if (!hasDepth(snap, now) || snap.depthAt < cutoff) continue;
+                at.set(snap.depthAt, snap);
+            }
+        }
+    }
+    const merged = {};
+    for (const [key, at] of Object.entries(byKey)) {
+        const sorted = [...at.values()].sort((a, b) => a.depthAt - b.depthAt).slice(-HISTORY_MAX);
+        if (sorted.length) merged[key] = sorted;
+    }
+    return merged;
+}
