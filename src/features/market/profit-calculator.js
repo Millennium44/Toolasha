@@ -329,7 +329,8 @@ class ProfitCalculator {
         const prosperity = PROSPERITY_ACTION_TYPES.includes(actionDetails.type)
             ? talismanStat(characterEquipment, SKILLING_SPECIAL_STATS.prosperity)
             : 0;
-        const prosperityCoinsPerHour = prosperity * (Number(itemDetails.sellPrice) || 0) * itemsPerHour;
+        const prosperityCoinsPerAction = prosperity * (Number(itemDetails.sellPrice) || 0) * outputAmount;
+        const prosperityCoinsPerHour = prosperityCoinsPerAction * actionsPerHour * efficiencyMultiplier;
 
         // Profit per hour (revenue + bonus revenue + Prosperity coins - total costs)
         const profitPerHour =
@@ -375,6 +376,7 @@ class ProfitCalculator {
             profitPerDay: calculateProfitPerDay(profitPerHour), // Profit per day
             bonusRevenue, // Bonus revenue from essences and rare finds
             prosperity, // Talisman Prosperity chance (coins equal to the vendor value of the output)
+            prosperityCoinsPerAction, // Untaxed coins per action from Prosperity
             prosperityCoinsPerHour, // Untaxed coins per hour from Prosperity (already inside profitPerHour)
             hasMissingPrices,
             totalEfficiency, // Total efficiency percentage

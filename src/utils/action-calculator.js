@@ -19,6 +19,7 @@ import { getCommunityProductionEfficiency } from './community-buffs.js';
 import { stackAdditive } from './efficiency.js';
 import { MIN_ACTION_TIME_SECONDS } from './profit-constants.js';
 import { resolveActionContext } from './action-context.js';
+import { drinkEffectConcentration } from './talisman-bonuses.js';
 
 /**
  * Calculate complete action statistics (time + efficiency)
@@ -90,17 +91,19 @@ export function calculateActionStats(actionDetails, options = {}) {
 
         // Get drink concentration
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
+        // Invigoration (talisman) makes the drinks' effects stronger on cooking and brewing; the plain figure stays for costs
+        const effectConcentration = drinkEffectConcentration(equipment, actionDetails.type, drinkConcentration);
 
         // Get active drinks for this action type (loadout-snapshot aware)
         const activeDrinks = actionContext?.drinks ?? resolveActionContext(actionDetails.type).drinks;
 
         // Calculate Action Level bonus from teas
-        const actionLevelBonus = parseActionLevelBonus(activeDrinks, itemDetailMap, drinkConcentration);
+        const actionLevelBonus = parseActionLevelBonus(activeDrinks, itemDetailMap, effectConcentration);
 
         // Get Action Level bonus breakdown (if requested)
         let actionLevelBreakdown = null;
         if (includeBreakdown) {
-            actionLevelBreakdown = parseActionLevelBonusBreakdown(activeDrinks, itemDetailMap, drinkConcentration);
+            actionLevelBreakdown = parseActionLevelBonusBreakdown(activeDrinks, itemDetailMap, effectConcentration);
         }
 
         // Calculate effective requirement
@@ -112,7 +115,7 @@ export function calculateActionStats(actionDetails, options = {}) {
             actionDetails.type,
             activeDrinks,
             itemDetailMap,
-            drinkConcentration
+            effectConcentration
         );
 
         // Calculate efficiency components
@@ -135,12 +138,12 @@ export function calculateActionStats(actionDetails, options = {}) {
                 actionDetails.type,
                 activeDrinks,
                 itemDetailMap,
-                drinkConcentration
+                effectConcentration
             );
             teaEfficiency = teaBreakdown.reduce((sum, tea) => sum + tea.efficiency, 0);
         } else {
             // Simple total
-            teaEfficiency = parseTeaEfficiency(actionDetails.type, activeDrinks, itemDetailMap, drinkConcentration);
+            teaEfficiency = parseTeaEfficiency(actionDetails.type, activeDrinks, itemDetailMap, effectConcentration);
         }
 
         // Get community buff efficiency (if requested). Which skills it covers and how

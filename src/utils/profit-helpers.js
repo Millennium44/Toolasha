@@ -297,6 +297,7 @@ export function createPriceCache(getItemPriceFn) {
  * @param {number} params.totalTeaCostPerHour - Tea cost per hour
  * @param {number} [params.efficiencyMultiplier=1] - Efficiency multiplier for time scaling
  * @param {boolean} [params.excludeSellTax=false] - Personal-use mode: charge no market tax
+ * @param {number} [params.prosperityCoinsPerAction=0] - Talisman Prosperity coins per action (untaxed; not revenue)
  * @returns {Object} Totals and time values
  */
 export function calculateProductionActionTotalsFromBase({
@@ -310,10 +311,12 @@ export function calculateProductionActionTotalsFromBase({
     totalTeaCostPerHour,
     efficiencyMultiplier = 1,
     excludeSellTax = false,
+    prosperityCoinsPerAction = 0,
 }) {
     const effectiveActionsPerHour = calculateEffectiveActionsPerHour(actionsPerHour, efficiencyMultiplier);
     if (!effectiveActionsPerHour || effectiveActionsPerHour <= 0) {
         return {
+            totalProsperityCoins: 0,
             totalBaseItems: 0,
             totalGourmetItems: 0,
             totalBaseRevenue: 0,
@@ -346,9 +349,12 @@ export function calculateProductionActionTotalsFromBase({
     const hoursNeeded = calculateHoursForActions(actionsCount, effectiveActionsPerHour);
     const totalTeaCost = totalTeaCostPerHour * hoursNeeded;
     const totalCosts = totalMaterialCost + totalTeaCost + totalMarketTax;
-    const totalProfit = totalRevenue - totalCosts;
+    // Prosperity coins are paid, not sold: they add to profit but are not taxed revenue
+    const totalProsperityCoins = (prosperityCoinsPerAction || 0) * actionsCount;
+    const totalProfit = totalRevenue + totalProsperityCoins - totalCosts;
 
     return {
+        totalProsperityCoins,
         totalBaseItems,
         totalGourmetItems,
         totalBaseRevenue,

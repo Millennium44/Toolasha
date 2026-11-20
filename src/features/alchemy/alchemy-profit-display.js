@@ -1803,6 +1803,11 @@ class AlchemyProfitDisplay {
                 );
             }
 
+            // Epiphany (talisman): a chance of double XP, already inside the multiplier above
+            if (xpData.epiphany > 0) {
+                lines.push(`  Epiphany (talisman): x${(1 + xpData.epiphany).toFixed(4)} on the total (expected)`);
+            }
+
             // XP breakdown (if any bonuses exist)
             if (xpData.totalWisdom > 0 || xpData.charmExperience > 0) {
                 const totalXPBonus = xpData.totalWisdom + xpData.charmExperience;

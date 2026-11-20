@@ -5961,6 +5961,7 @@ class ActionTimeDisplay {
             totalTeaCostPerHour: profitData.totalTeaCostPerHour,
             efficiencyMultiplier: profitData.efficiencyMultiplier || 1,
             excludeSellTax: profitData.excludeSellTax,
+            prosperityCoinsPerAction: profitData.prosperityCoinsPerAction || 0,
         });
 
         return valueMode === 'estimated_value' ? totals.totalRevenue : totals.totalProfit;

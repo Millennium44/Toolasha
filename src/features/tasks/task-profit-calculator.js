@@ -471,6 +471,7 @@ async function calculateProductionTaskProfit(actionHrid, quantity, remainingQuan
         materialCosts: profitData.materialCosts,
         totalTeaCostPerHour: profitData.totalTeaCostPerHour,
         efficiencyMultiplier: profitData.efficiencyMultiplier || 1,
+        prosperityCoinsPerAction: profitData.prosperityCoinsPerAction || 0,
     };
 
     const totals = calculateProductionActionTotalsFromBase({ ...baseParams, actionsCount: remainingQuantity });
