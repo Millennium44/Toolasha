@@ -106,24 +106,48 @@ export function drinkOutcomes(equipment, actionTypeHrid) {
     ];
 }
 
+const isPlainObject = (value) =>
+    Boolean(value) && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
+
+/** How an array entry is matched across outcomes: by item or name when it has one, else by position */
+const entryKey = (entry, index) =>
+    isPlainObject(entry) ? (entry.itemHrid ?? entry.hrid ?? entry.itemName ?? entry.name ?? index) : index;
+
 /**
- * Weight the results of several outcomes: numbers are averaged by weight, plain objects field by field, and anything
- * else (arrays, Maps, strings, flags) is taken from the first outcome. The results must have the same shape.
+ * Weight the results of several outcomes: numbers are averaged by weight, plain objects field by field, arrays of
+ * plain objects entry by entry (matched by itemHrid, hrid, itemName or name, else by position; an entry an outcome
+ * lacks counts 0 there), and anything else (arrays of strings, Maps, strings, flags) is taken from the first outcome.
+ * The results must have the same shape.
  * @param {Array<{weight: number, value: *}>} parts
  * @returns {*}
  */
 export function mixOutcomes(parts) {
     if (parts.length === 1) return parts[0].value;
-    const first = parts[0].value;
+    const first = parts.find((part) => part.value !== undefined)?.value;
     if (typeof first === 'number') {
         return parts.reduce((sum, part) => sum + part.weight * (Number.isFinite(part.value) ? part.value : 0), 0);
     }
-    if (first && typeof first === 'object' && Object.getPrototypeOf(first) === Object.prototype) {
+    if (isPlainObject(first)) {
         const out = {};
         for (const key of Object.keys(first)) {
             out[key] = mixOutcomes(parts.map((part) => ({ weight: part.weight, value: part.value?.[key] })));
         }
         return out;
+    }
+    if (Array.isArray(first) && first.some(isPlainObject)) {
+        const keys = [];
+        const byPart = parts.map((part) => {
+            const map = new Map();
+            (Array.isArray(part.value) ? part.value : []).forEach((entry, index) => {
+                const key = entryKey(entry, index);
+                if (!map.has(key)) map.set(key, entry);
+                if (!keys.includes(key)) keys.push(key);
+            });
+            return map;
+        });
+        return keys.map((key) =>
+            mixOutcomes(parts.map((part, i) => ({ weight: part.weight, value: byPart[i].get(key) })))
+        );
     }
     return first;
 }

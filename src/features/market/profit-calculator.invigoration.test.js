@@ -73,7 +73,7 @@ function outcomeContext(equipment, outcome) {
         drinkConcentration: 0,
         itemDetailMap: {},
         actionTime: 10, // 360 actions an hour
-        artisanBonus: 0,
+        artisanBonus: doubled ? 0.2 : 0.1,
         gourmetBonus: doubled ? 0.5 : 0,
         processingBonus: 0,
         equipmentEfficiency: 0,
@@ -131,5 +131,33 @@ describe('calculateProfit with Invigoration', () => {
             actionContext: { equipment, drinks: [] },
         });
         expect(result.revenuePerHour).toBeCloseTo(36000, 6);
+    });
+
+    test('Artisan: the material lines are mixed entry by entry, so the queue totals read the same total (90 vs 80)', async () => {
+        const { calculateProductionActionTotalsFromBase } = await vi.importActual('../../utils/profit-helpers.js');
+        const equipment = wearing({ invigoration: 0.12 });
+        mocks.efficiencyContext = (outcome) => outcomeContext(equipment, outcome);
+        mocks.initData.actionDetailMap['/actions/cooking/cheese'].inputItems = [{ itemHrid: '/items/milk', count: 10 }];
+        mocks.marketPrices['/items/milk'] = 10;
+
+        const result = await profitCalculator.calculateProfit('/items/cooking_cheese', {
+            actionContext: { equipment, drinks: [] },
+        });
+
+        // normal: 10 milk x (1 - 0.1) x 10 = 90; doubled: 10 x (1 - 0.2) x 10 = 80; 0.88 x 90 + 0.12 x 80 = 88.8
+        expect(result.totalMaterialCost).toBeCloseTo(88.8, 9);
+        expect(result.materialCosts).toHaveLength(1);
+        expect(result.materialCosts[0].totalCost).toBeCloseTo(88.8, 9);
+        expect(result.materialCosts[0].amount).toBeCloseTo(0.88 * 9 + 0.12 * 8, 9);
+        const totals = calculateProductionActionTotalsFromBase({
+            actionsCount: 1,
+            actionsPerHour: result.actionsPerHour,
+            outputAmount: 1,
+            outputPrice: result.outputPrice,
+            gourmetBonus: 0,
+            materialCosts: result.materialCosts,
+            totalTeaCostPerHour: 0,
+        });
+        expect(totals.totalMaterialCost).toBeCloseTo(88.8, 9);
     });
 });
