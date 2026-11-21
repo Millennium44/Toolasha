@@ -3471,7 +3471,8 @@ ${NATIVE_PANEL_SEL} { padding-left: 0; padding-right: 0; }`
                 valueBadge.style.marginLeft = 'auto';
                 valueBadge.textContent = `${unpriced.length > 0 ? UNPRICED_MARK : ''}${formatKMB(total, 2)}`;
                 valueBadge.title = tabValueTooltip(valueKey, unorgTiles.length);
-                if (unpriced.length > 0) valueBadge.title += `
+                if (unpriced.length > 0)
+                    valueBadge.title += `
 ${unpricedTitle(unpriced)}`;
                 headerEl.appendChild(valueBadge);
             }

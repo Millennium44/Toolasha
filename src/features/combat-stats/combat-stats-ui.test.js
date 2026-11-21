@@ -100,7 +100,11 @@ vi.mock('../../utils/character-key.js', () => ({
     },
 }));
 vi.mock('../../utils/toast.js', () => ({ showToast: vi.fn() }));
-vi.mock('../combat/damage-tracker.js', () => ({ HIT_TAPE_MS: 60_000, recentHits: () => [], damageBreakdown: () => mocks.damage }));
+vi.mock('../combat/damage-tracker.js', () => ({
+    HIT_TAPE_MS: 60_000,
+    recentHits: () => [],
+    damageBreakdown: () => mocks.damage,
+}));
 vi.mock('../combat/combat-drop-luck.js', () => ({
     default: {
         get lastResult() {

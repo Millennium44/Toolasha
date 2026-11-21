@@ -79,7 +79,8 @@ export function hitTapeSVG(model, width = TAPE_WIDTH, height = TAPE_HEIGHT) {
             );
             continue;
         }
-        const fill = bar.kind === 'dot' ? TAPE_COLORS.dot : bar.kind === 'reflect' ? TAPE_COLORS.reflect : TAPE_COLORS.hit;
+        const fill =
+            bar.kind === 'dot' ? TAPE_COLORS.dot : bar.kind === 'reflect' ? TAPE_COLORS.reflect : TAPE_COLORS.hit;
         parts.push(`<rect x="${left}" y="${top}" width="${BAR_WIDTH}" height="${barHeight}" fill="${fill}"/>`);
         if (bar.kind === 'crit') {
             parts.push(

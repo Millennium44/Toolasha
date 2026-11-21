@@ -9,7 +9,10 @@
 import { describe, test, expect, vi, afterEach } from 'vitest';
 import { buildCharacterPanel, buildNewInventory } from './custom-tabs-inventory.fixture.js';
 
-const cfg = vi.hoisted(() => ({ settings: { invCategoryTotals: true, inventoryTabs_showUnorganized: true }, listeners: new Map() }));
+const cfg = vi.hoisted(() => ({
+    settings: { invCategoryTotals: true, inventoryTabs_showUnorganized: true },
+    listeners: new Map(),
+}));
 const badgeMock = vi.hoisted(() => ({ renderAllBadges: vi.fn(async () => {}) }));
 
 const storageMock = vi.hoisted(() => ({

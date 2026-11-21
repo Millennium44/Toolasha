@@ -383,7 +383,8 @@ export default {
             // `new_battle` lists the kit in server order; the slots come from the character's own equipped list
             const abilitySlots = {};
             for (const row of dataManager.getEquippedAbilities?.() || []) {
-                if (row?.abilityHrid && Number(row.slotNumber) > 0) abilitySlots[row.abilityHrid] = Number(row.slotNumber);
+                if (row?.abilityHrid && Number(row.slotNumber) > 0)
+                    abilitySlots[row.abilityHrid] = Number(row.slotNumber);
             }
             noteRefusalBattle(refusals, self, { slots: abilitySlots });
             refusalBattleId = self ? (data?.battleId ?? null) : null;
@@ -702,8 +703,10 @@ export const manaPanel = createPanel({
                         ? 'The game states no mana cost for this ability, so its casts are counted and its mana is not.'
                         : `${formatWithSeparator(ability.casts)} casts` +
                           (ability.perFight === null ? '' : `, ${ability.perFight.toFixed(2)} per fight`)) +
-                        (times > 0 ? `
-${formatWithSeparator(times)} casts refused for lack of mana (estimate).` : '')
+                        (times > 0
+                            ? `
+${formatWithSeparator(times)} casts refused for lack of mana (estimate).`
+                            : '')
                 )
             );
         }

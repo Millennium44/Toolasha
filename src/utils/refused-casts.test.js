@@ -48,7 +48,9 @@ function tick({ counter, mana, ability = '' }) {
 
 /** Feed ticks `[at, counter, mana, ability?]` and return what each counted */
 function feed(state, ticks) {
-    return ticks.map(([at, counter, mana, ability]) => foldRefusalTick(state, tick({ counter, mana, ability }), { at, abilityInfo }));
+    return ticks.map(([at, counter, mana, ability]) =>
+        foldRefusalTick(state, tick({ counter, mana, ability }), { at, abilityInfo })
+    );
 }
 
 describe('casts refused for lack of mana', () => {
@@ -153,7 +155,10 @@ describe('casts refused for lack of mana', () => {
 
     test('an ability the game data does not know, or one never cast, is skipped', () => {
         const state = newRefusalState();
-        noteRefusalBattle(state, battlePlayer({ kit: ['/abilities/unknown', ENTANGLE, DRAIN], preparing: '/abilities/unknown' }));
+        noteRefusalBattle(
+            state,
+            battlePlayer({ kit: ['/abilities/unknown', ENTANGLE, DRAIN], preparing: '/abilities/unknown' })
+        );
         feed(state, [
             // The unknown one runs, then autos only: Drain and Entangle were never cast
             [0, 11, 0],

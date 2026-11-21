@@ -126,7 +126,9 @@ vi.mock('../../features/combat/combat-drop-luck.js', () => ({
 vi.mock('../../features/combat-stats/combat-stats-data-collector.js', () => ({
     default: { getLatestData: () => state.stats },
 }));
-vi.mock('../../features/combat/damage-tracker.js', () => ({ HIT_TAPE_MS: 60_000, recentHits: () => [],
+vi.mock('../../features/combat/damage-tracker.js', () => ({
+    HIT_TAPE_MS: 60_000,
+    recentHits: () => [],
     default: {},
     damageBreakdown: () => state.breakdown,
     actionLabel: (action) => (action === 'auto' ? 'Auto attack' : action),

@@ -1831,7 +1831,15 @@ describe('savings vs buying', () => {
         actionsNeeded: 2,
         outputCount: 15,
         children: [
-            { strategy: 'buy', itemHrid: '/items/wood', itemName: 'Wood', quantity: 5, unitCost: 5, totalCost: 25, children: [] },
+            {
+                strategy: 'buy',
+                itemHrid: '/items/wood',
+                itemName: 'Wood',
+                quantity: 5,
+                unitCost: 5,
+                totalCost: 25,
+                children: [],
+            },
         ],
         ...overrides,
     });

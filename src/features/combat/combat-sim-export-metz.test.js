@@ -927,7 +927,10 @@ describe('partymates in their stored View Loadout', () => {
         await constructMetzTeamExport('self-1', { warnings });
 
         expect(builtFor('party-1').profile.profile.wearableItemMap).toEqual({});
-        expect(warnings[0]).toMatchObject({ level: 'gearless', text: expect.stringContaining('older than their profile') });
+        expect(warnings[0]).toMatchObject({
+            level: 'gearless',
+            text: expect.stringContaining('older than their profile'),
+        });
     });
 
     test('a newer loadout over a day-old profile keeps the stale warning for the levels', async () => {

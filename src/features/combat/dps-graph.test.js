@@ -27,7 +27,11 @@ vi.mock('../../core/websocket.js', () => ({
         off: (type) => opts.ws.delete(type),
     },
 }));
-vi.mock('./damage-tracker.js', () => ({ HIT_TAPE_MS: 60_000, recentHits: () => [], damageBreakdown: () => opts.breakdown }));
+vi.mock('./damage-tracker.js', () => ({
+    HIT_TAPE_MS: 60_000,
+    recentHits: () => [],
+    damageBreakdown: () => opts.breakdown,
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: { isBossMonster: (hrid) => hrid === '/monsters/crystal_colossus' },
 }));

@@ -257,13 +257,13 @@ class ShopTokenValues {
               `${line.partial ? ', a floor: some drops have no price and count as nothing' : ''}.` +
               `${isBest ? ' Best value for this token.' : ''}`
             : line.assumed
-            ? line.assumedValue > 0
-                ? `Not on the market. Assumed worth ${formatKMB(line.assumedValue)} from the untradable-cape setting` +
-                  `${line.partial ? ' (a floor: the base cape counts as nothing)' : ''}, never taxed and never marked best.`
-                : 'Not on the market, and the untradable-cape setting values the base cape at nothing. Never marked best.'
-            : isBest
-              ? `Best value for this token: market value of what it buys, after market tax, per token (${badgeSide()} price).`
-              : `Market value of what it buys, after market tax, per token (${badgeSide()} price).`;
+              ? line.assumedValue > 0
+                  ? `Not on the market. Assumed worth ${formatKMB(line.assumedValue)} from the untradable-cape setting` +
+                    `${line.partial ? ' (a floor: the base cape counts as nothing)' : ''}, never taxed and never marked best.`
+                  : 'Not on the market, and the untradable-cape setting values the base cape at nothing. Never marked best.'
+              : isBest
+                ? `Best value for this token: market value of what it buys, after market tax, per token (${badgeSide()} price).`
+                : `Market value of what it buys, after market tax, per token (${badgeSide()} price).`;
     }
 }
 

@@ -876,7 +876,10 @@ class InventoryBadgeManager {
             // Labyrinth tokens and seal scrolls have no listing either: valued through the Labyrinth shop at the
             // best gold per token (a seal at the tokens it costs), behind the same switch Net Worth uses. Off,
             // they fall through to ordinary pricing as before.
-            if (LABYRINTH_VALUED_HRIDS.has(itemHrid) && config.getSetting('networth_includeLabyrinthTokens') !== false) {
+            if (
+                LABYRINTH_VALUED_HRIDS.has(itemHrid) &&
+                config.getSetting('networth_includeLabyrinthTokens') !== false
+            ) {
                 let perItem = calculateLabyrinthItemValue(itemHrid)?.value ?? 0;
                 // Gross shop-item market price: net-of-tax mode takes the same cut as the dungeon tokens
                 if (netOfTax) perItem *= 1 - MARKET_TAX;

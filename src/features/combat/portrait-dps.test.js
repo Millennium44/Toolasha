@@ -29,7 +29,9 @@ vi.mock('../../core/config.js', () => ({
         getSettingValue: () => opts.position,
     },
 }));
-vi.mock('./damage-tracker.js', () => ({ HIT_TAPE_MS: 60_000, recentHits: () => [],
+vi.mock('./damage-tracker.js', () => ({
+    HIT_TAPE_MS: 60_000,
+    recentHits: () => [],
     damageBreakdown: () => ({ players: opts.players }),
     battleBreakdown: () => opts.fight,
     manaSamples: () => opts.mana,

@@ -1676,7 +1676,10 @@ function buildTokenBreakdown(entries, itemDetailMap = {}) {
             name: entry.name,
             kind: tokenKind(entry.itemHrid),
             // What `rate` is per: a seal scroll is priced per scroll (its tokens' worth), the rest per token
-            unit: entry.itemHrid !== LABYRINTH_TOKEN_HRID && LABYRINTH_VALUED_HRIDS.has(entry.itemHrid) ? 'scroll' : 'token',
+            unit:
+                entry.itemHrid !== LABYRINTH_TOKEN_HRID && LABYRINTH_VALUED_HRIDS.has(entry.itemHrid)
+                    ? 'scroll'
+                    : 'token',
             count: entry.count,
             rate: rate > 0 ? rate : null,
             value,

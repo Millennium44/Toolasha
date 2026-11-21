@@ -232,7 +232,13 @@ describe('Task shop lines', () => {
             a: taskLine('/items/essence', 10, 2),
             b: taskLine('/items/chest', 30),
             c: taskLine('/items/crystal', 50),
-            d: { itemHrid: '/items/rare', costs: [{ itemHrid: TASK_TOKEN_HRID, count: 5 }, { itemHrid: '/items/coin', count: 9 }] },
+            d: {
+                itemHrid: '/items/rare',
+                costs: [
+                    { itemHrid: TASK_TOKEN_HRID, count: 5 },
+                    { itemHrid: '/items/coin', count: 9 },
+                ],
+            },
         };
     });
 

@@ -57,7 +57,8 @@ const SEPARABLE = {
     networth_includeTaskTokens: (hrid) => hrid === '/items/task_token',
     // The token and the seal scrolls valued through it (same test as LABYRINTH_VALUED_HRIDS in token-valuation.js,
     // kept here so the history does not load the valuation module)
-    networth_includeLabyrinthTokens: (hrid) => hrid === '/items/labyrinth_token' || /^\/items\/seal_of_/.test(String(hrid || '')),
+    networth_includeLabyrinthTokens: (hrid) =>
+        hrid === '/items/labyrinth_token' || /^\/items\/seal_of_/.test(String(hrid || '')),
     // Same test as isGuildTokenHrid (guild-token-value.js), kept here so the history does not load the guild feature
     networth_includeGuildTokens: (hrid) => /guild_token/.test(String(hrid || '')),
     networth_includeGuildCredits: (hrid) => GUILD_CREDIT_HRIDS.has(hrid),

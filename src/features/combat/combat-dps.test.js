@@ -14,7 +14,11 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 const tracker = vi.hoisted(() => ({ breakdown: { seconds: 0, startedAt: 0, players: [] } }));
 const registered = vi.hoisted(() => ({ row: null }));
 
-vi.mock('./damage-tracker.js', () => ({ HIT_TAPE_MS: 60_000, recentHits: () => [], damageBreakdown: () => tracker.breakdown }));
+vi.mock('./damage-tracker.js', () => ({
+    HIT_TAPE_MS: 60_000,
+    recentHits: () => [],
+    damageBreakdown: () => tracker.breakdown,
+}));
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: () => true,

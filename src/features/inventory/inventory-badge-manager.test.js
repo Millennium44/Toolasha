@@ -96,7 +96,9 @@ vi.mock('../../utils/token-valuation.js', () => ({
     calculateDungeonTokenValue: (hrid) => mocks.tokenValues[hrid] ?? null,
     LABYRINTH_VALUED_HRIDS: new Set(['/items/labyrinth_token', '/items/seal_of_gathering']),
     calculateLabyrinthItemValue: (hrid) =>
-        mocks.labyrinthValues[hrid] > 0 ? { value: mocks.labyrinthValues[hrid], itemHrid: '/items/x', tokens: 1 } : null,
+        mocks.labyrinthValues[hrid] > 0
+            ? { value: mocks.labyrinthValues[hrid], itemHrid: '/items/x', tokens: 1 }
+            : null,
 }));
 vi.mock('../../utils/guild-credit-pricing.js', () => ({
     buildGoldPerCredit: (mode) => {

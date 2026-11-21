@@ -191,7 +191,10 @@ class InstantOrderGap {
         const level = modalEnhancementLevel(modal);
         const cached = itemHrid ? this.orderBooks.get(itemHrid) : null;
         const books = cached && Date.now() - cached.receivedAt <= MAX_BOOK_AGE_MS ? cached.books : null;
-        const gap = kind && books && books.itemHrid === itemHrid ? measureGap(bookAtLevel(books.orderBooks, level), level) : null;
+        const gap =
+            kind && books && books.itemHrid === itemHrid
+                ? measureGap(bookAtLevel(books.orderBooks, level), level)
+                : null;
 
         if (!gap || gap.steps < MIN_STEPS_TO_WARN) {
             existing?.remove();
