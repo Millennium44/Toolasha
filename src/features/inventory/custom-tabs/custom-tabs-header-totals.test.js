@@ -9,6 +9,7 @@
 import { describe, test, expect, vi, afterEach } from 'vitest';
 import { buildCharacterPanel, buildNewInventory } from './custom-tabs-inventory.fixture.js';
 
+const cfg = vi.hoisted(() => ({ settings: { invCategoryTotals: true, inventoryTabs_showUnorganized: true }, listeners: new Map() }));
 const badgeMock = vi.hoisted(() => ({ renderAllBadges: vi.fn(async () => {}) }));
 
 const storageMock = vi.hoisted(() => ({
@@ -33,9 +34,12 @@ vi.mock('../../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../../core/data-manager.js', () => ({ default: dm }));
 vi.mock('../../../core/config.js', () => ({
     default: {
-        getSetting: () => false,
+        getSetting: (key) => cfg.settings[key] ?? false,
         getSettingValue: (_key, fallback) => fallback,
-        onSettingChange: () => () => {},
+        onSettingChange: (key, fn) => {
+            cfg.listeners.set(key, fn);
+            return () => cfg.listeners.delete(key);
+        },
     },
 }));
 vi.mock('../../../core/dom-observer.js', () => ({
@@ -76,6 +80,7 @@ const { default: CustomTabsUI } = await import('./custom-tabs-ui.js');
 let ui;
 
 afterEach(() => {
+    cfg.settings.invCategoryTotals = true;
     ui?.cleanup();
     ui = null;
 });
@@ -267,5 +272,52 @@ describe('section totals mark unpriced items', () => {
         ]);
         const result = CustomTabsUI.prototype._peekTileValue.call({}, tab, map, 'askValue');
         expect(result).toEqual({ total: 2000, unpriced: ['Rare Thing'] });
+    });
+});
+
+describe('Unorganized total and the category totals setting', () => {
+    const unorgTotal = (container) => container.querySelector('.toolasha-ct-unorg-header .toolasha-ct-section-value');
+    const coinTile = (container) =>
+        [...container.querySelectorAll('[class*="Item_itemContainer"]')].find(
+            (tile) => tile.querySelector('use').getAttribute('href').split('#')[1] === 'coin'
+        );
+
+    test('the Unorganized header carries a value total in the section style', async () => {
+        const { container, tiles } = await setup();
+        tiles[0].dataset.askValue = '1000';
+        coinTile(container).dataset.askValue = '4000';
+        await ui._applyLayout();
+
+        expect(unorgTotal(container)?.textContent).toBe('4.00K');
+        expect(container.querySelector('.toolasha-ct-unorg-header').textContent).toContain('Unorganized (');
+    });
+
+    test('an unpriced Unorganized item marks the total as a floor and names the item', async () => {
+        const { container, tiles } = await setup();
+        // Only cheese stays in the tab, so milk and coin are both Unorganized
+        ui._config.tabs[0].items = ['/items/cheese'];
+        tiles[1].dataset.askValue = '500';
+        const coin = coinTile(container);
+        coin.dataset.askValue = '0';
+        coin.dataset.expectPrice = 'Rare Thing';
+        await ui._applyLayout();
+
+        expect(unorgTotal(container).textContent).toBe('≥500');
+        expect(unorgTotal(container).title).toContain('Rare Thing');
+    });
+
+    test('the totals vanish when "Show category totals" is off, and a live change redraws them', async () => {
+        const { container, tiles } = await setup();
+        tiles[0].dataset.askValue = '1000';
+        coinTile(container).dataset.askValue = '4000';
+        cfg.settings.invCategoryTotals = false;
+        await ui._applyLayout();
+        expect(container.querySelector('.toolasha-ct-section-value')).toBeNull();
+
+        cfg.settings.invCategoryTotals = true;
+        await ui._onCategoryTotalsChange();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(container.querySelector('.toolasha-ct-section-value')?.textContent).toBe('1.00K');
+        expect(unorgTotal(container)?.textContent).toBe('4.00K');
     });
 });

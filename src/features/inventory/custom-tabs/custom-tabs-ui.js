@@ -826,6 +826,12 @@ export default class CustomTabsUI {
         });
         this._unregisterHandlers.push(unregisterPlacement);
 
+        // Live setting change for the section totals (they are only drawn on a full rebuild)
+        const unregisterCategoryTotals = config.onSettingChange('invCategoryTotals', () =>
+            this._onCategoryTotalsChange()
+        );
+        this._unregisterHandlers.push(unregisterCategoryTotals);
+
         // Live setting change for tile gap
         const unregisterTileGap = config.onSettingChange('inventoryTabs_tileGap', () => {
             if (this._isActive) this._applyTileGap();
@@ -2235,6 +2241,27 @@ ${NATIVE_PANEL_SEL} { padding-left: 0; padding-right: 0; }`
     }
 
     /**
+     * "Show category totals in inventory" changed: the headers carry the totals and are only drawn on a
+     * full rebuild, so drop them and lay out again.
+     */
+    _onCategoryTotalsChange() {
+        if (!this._isActive) return;
+        this._removeInjectedEls();
+        this._applyLayout();
+    }
+
+    /**
+     * Which tile value the section totals add up, or null when "Show category totals in inventory" is
+     * off. A summary total is not a per-item badge, so the badge settings do not decide it: the sorted
+     * side when a sort is live, ask otherwise.
+     * @returns {?string} dataset key ('askValue' | 'bidValue'), or null when totals are off
+     */
+    _sectionTotalKey() {
+        if (!config.getSetting('invCategoryTotals')) return null;
+        return totalValueKey(inventorySort.currentMode);
+    }
+
+    /**
      * Fingerprint of the values the section header totals are summed from: the sorted side's key plus
      * every tile's ask and bid value. Headers are summed from tile datasets at layout time, and the
      * badge render that writes those datasets runs after the layout, so a header built before it
@@ -2252,7 +2279,7 @@ ${NATIVE_PANEL_SEL} { padding-left: 0; padding-right: 0; }`
                 `${this._tileBaseHrid(tile) ?? ''}${level},${tile.dataset.askValue ?? ''},${tile.dataset.bidValue ?? ''},${tile.dataset.expectPrice ? 'p' : ''}`
             );
         }
-        return `${totalValueKey(inventorySort.currentMode)}|${values.join(';')}`;
+        return `${this._sectionTotalKey() ?? 'off'}|${values.join(';')}`;
     }
 
     /**
@@ -3147,11 +3174,12 @@ ${NATIVE_PANEL_SEL} { padding-left: 0; padding-right: 0; }`
             }
 
             // Sum totals across all tiles in this section. This is a summary
-            // total, not a per-item badge — it always shows, following the
-            // sorted side when a sort is live and falling back to ask otherwise.
-            const valueKey = totalValueKey(inventorySort.currentMode);
-            const { total, unpriced } = summarizeTileValues(sectionTiles, valueKey);
-            if (total > 0) {
+            // total, not a per-item badge: it follows "Show category totals in
+            // inventory", not the badge settings, and uses the sorted side when a
+            // sort is live and ask otherwise.
+            const valueKey = this._sectionTotalKey();
+            const { total, unpriced } = valueKey ? summarizeTileValues(sectionTiles, valueKey) : { total: 0 };
+            if (valueKey && total > 0) {
                 const valueBadge = document.createElement('span');
                 valueBadge.className = 'toolasha-ct-section-value';
                 valueBadge.textContent = `${unpriced.length > 0 ? UNPRICED_MARK : ''}${formatKMB(total, 2)}`;
@@ -3186,9 +3214,9 @@ ${NATIVE_PANEL_SEL} { padding-left: 0; padding-right: 0; }`
 
             // Show rolled-up value on the collapsed header (own items + all descendants)
             // Must peek BEFORE claiming tiles so values are still in the map.
-            const valueKey = totalValueKey(inventorySort.currentMode);
-            const { total, unpriced } = this._peekTileValue(tab, tileMap, valueKey);
-            if (total > 0) {
+            const valueKey = this._sectionTotalKey();
+            const { total, unpriced } = valueKey ? this._peekTileValue(tab, tileMap, valueKey) : { total: 0 };
+            if (valueKey && total > 0) {
                 const valueBadge = document.createElement('span');
                 valueBadge.className = 'toolasha-ct-section-value';
                 valueBadge.textContent = `${unpriced.length > 0 ? UNPRICED_MARK : ''}${formatKMB(total, 2)}`;
@@ -3433,6 +3461,21 @@ ${NATIVE_PANEL_SEL} { padding-left: 0; padding-right: 0; }`
         const headerEl = document.createElement('div');
         headerEl.className = 'toolasha-ct-unorg-header';
         headerEl.innerHTML = `<span>${this._unorgOpen ? '▼' : '▶'}</span> <span>Unorganized (${totalTiles})</span>`;
+        const valueKey = this._sectionTotalKey();
+        if (valueKey) {
+            const unorgTiles = remainingEntries.flatMap(({ tiles }) => tiles);
+            const { total, unpriced } = summarizeTileValues(unorgTiles, valueKey);
+            if (total > 0) {
+                const valueBadge = document.createElement('span');
+                valueBadge.className = 'toolasha-ct-section-value';
+                valueBadge.style.marginLeft = 'auto';
+                valueBadge.textContent = `${unpriced.length > 0 ? UNPRICED_MARK : ''}${formatKMB(total, 2)}`;
+                valueBadge.title = tabValueTooltip(valueKey, unorgTiles.length);
+                if (unpriced.length > 0) valueBadge.title += `
+${unpricedTitle(unpriced)}`;
+                headerEl.appendChild(valueBadge);
+            }
+        }
         headerEl.style.order = orderCounter++;
         headerEl.addEventListener('click', () => {
             this._unorgOpen = !this._unorgOpen;

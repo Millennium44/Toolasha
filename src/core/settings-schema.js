@@ -2477,7 +2477,7 @@ export const settingsGroups = {
                 label: 'Show category totals in inventory',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays the total market value of all items in each inventory category',
+                help: 'Displays the total market value of all items in each inventory category, and on each custom-tab section and the Unorganized bucket',
             },
             networth_valueSource: {
                 id: 'networth_valueSource',
