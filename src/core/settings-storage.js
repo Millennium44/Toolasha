@@ -2162,6 +2162,21 @@ class SettingsStorage {
                 }
             }
 
+            // A character removed from the roster can still have its settings map
+            // here. Its id is as much "another character" as a listed one, and
+            // short game ids miss the digit-run pattern below.
+            const localKeys = (await storage.tryGetAllKeys(this.storageArea)) || [];
+            const mapPrefix = `${this.storageKey}_`;
+            for (const localKey of localKeys) {
+                if (
+                    typeof localKey === 'string' &&
+                    localKey.startsWith(mapPrefix) &&
+                    localKey.length > mapPrefix.length
+                ) {
+                    knownCharacters.add(localKey.slice(mapPrefix.length));
+                }
+            }
+
             for (const [key, value] of Object.entries(data)) {
                 // Excluded on the way out and just as much on the way in; see
                 // DEVICE_LOCAL_KEY_PREFIXES. Not counted as skipped — skipped is

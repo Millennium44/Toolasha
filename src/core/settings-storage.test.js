@@ -136,6 +136,18 @@ describe('SettingsStorage.importSettings known-character matching', () => {
         expect(stored.has('json:globalKey')).toBe(true);
     });
 
+    test('skips a removed character whose settings map is still stored locally', async () => {
+        stored.set('json:known_character_ids', [{ id: 'alice', name: 'Alice' }]);
+        stored.set('json:script_settingsMap_30404', { newer: 'setting' });
+
+        const result = await settingsStorage.importSettings(
+            JSON.stringify({ script_settingsMap_30404: { stale: 'setting' } })
+        );
+
+        expect(result).toEqual({ imported: 0, skipped: 1 });
+        expect(stored.get('json:script_settingsMap_30404')).toEqual({ newer: 'setting' });
+    });
+
     test('recognises known characters listed in the imported payload itself', async () => {
         const result = await settingsStorage.importSettings(
             JSON.stringify({
