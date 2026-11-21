@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     manaTracker: true,
@@ -40,7 +40,9 @@ vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: () => ({ pri
 const { buildBattleConsumableAbilityUpdated } =
     await import('../../__fixtures__/wire/battle-consumable-ability-updated.js');
 const manaTracker = (await import('./mana-tracker.js')).default;
-const { resetManaTally, manaSpend, abilityLabel } = await import('./mana-tracker.js');
+const { resetManaTally, manaSpend, abilityLabel, manaRefusals } = await import('./mana-tracker.js');
+const { buildNewBattle } = await import('../../__fixtures__/wire/new-battle.js');
+const { buildBattleUpdated } = await import('../../__fixtures__/wire/battle-updated.js');
 
 describe('mana tracker wiring', () => {
     beforeEach(() => {
@@ -197,5 +199,85 @@ describe('abilityLabel', () => {
     test('an empty hrid does not throw', () => {
         expect(abilityLabel('')).toBe('');
         expect(abilityLabel(undefined)).toBe('');
+    });
+});
+
+describe('refused casts on the mana tracker', () => {
+    const DRAIN = '/abilities/life_drain';
+
+    /** The fixture battle, this character in slot 0 preparing Life Drain with 500 mana */
+    function battle() {
+        const data = buildNewBattle();
+        const player = data.players[0];
+        player.combatAbilities = [{ abilityHrid: DRAIN, level: 1 }];
+        player.combatDetails.combatStats.abilityHaste = 0;
+        player.currentManapoints = 500;
+        player.attackAttemptCounter = 10;
+        player.isPreparingAutoAttack = false;
+        player.preparingAbilityHrid = DRAIN;
+        return data;
+    }
+
+    /** A tick for slot 0: the counter, the bar, and an auto attack being prepared */
+    function tick(counter, mana, extra = {}) {
+        const data = buildBattleUpdated(1, extra);
+        const entry = data.pMap[0];
+        entry.atkCounter = counter;
+        entry.cMP = mana;
+        delete entry.abilityHrid;
+        entry.isAutoAtk = true;
+        return data;
+    }
+
+    beforeEach(() => {
+        game.manaTracker = true;
+        game.abilityDetailMap = { [DRAIN]: { manaCost: 100, cooldownDuration: 10e9, name: 'Life Drain' } };
+        game.handlers = {};
+        game.dataManagerHandlers = {};
+        game.characterId = 900001;
+        resetManaTally();
+        manaTracker.cleanup();
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+    });
+
+    afterEach(() => {
+        manaTracker.cleanup();
+        vi.useRealTimers();
+    });
+
+    test('an auto attack while Life Drain is ready and unaffordable is counted, and Reset clears it', () => {
+        manaTracker.initialize();
+        game.handlers['new_battle'](battle());
+        game.handlers['battle_updated'](tick(11, 30));
+        vi.setSystemTime(11_000);
+        game.handlers['battle_updated'](tick(12, 30));
+
+        expect(manaRefusals()).toEqual({ turns: 1, abilities: [{ abilityHrid: DRAIN, refused: 1 }] });
+        resetManaTally();
+        expect(manaRefusals().turns).toBe(0);
+    });
+
+    test('a watched guild trial and a battle nothing announced count nothing', () => {
+        manaTracker.initialize();
+        game.handlers['new_battle'](battle());
+        game.handlers['battle_updated'](tick(11, 30));
+        vi.setSystemTime(11_000);
+        game.handlers['battle_updated'](tick(12, 30, { isGuildBattle: true }));
+        // Another battle's ticks: the first is only a baseline
+        game.handlers['battle_updated'](tick(500, 30, { battleId: 99 }));
+        expect(manaRefusals().turns).toBe(0);
+    });
+
+    test('a character switch starts the count again', () => {
+        manaTracker.initialize();
+        game.handlers['new_battle'](battle());
+        game.handlers['battle_updated'](tick(11, 30));
+        vi.setSystemTime(11_000);
+        game.handlers['battle_updated'](tick(12, 30));
+        expect(manaRefusals().turns).toBe(1);
+
+        game.dataManagerHandlers['character_switching']();
+        expect(manaRefusals().turns).toBe(0);
     });
 });

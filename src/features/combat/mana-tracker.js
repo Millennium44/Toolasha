@@ -33,6 +33,13 @@ import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple
 import { styleGameButton } from '../../utils/game-look.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { newManaTally, recordCast, recordFight, manaSummary } from '../../utils/mana-spend.js';
+import {
+    foldRefusalTick,
+    forgetRefusalBaseline,
+    newRefusalState,
+    noteRefusalBattle,
+    refusalSummary,
+} from '../../utils/refused-casts.js';
 import { buildMpCandidates, findBestOptimAllocation, findMaxMpAllocation } from '../../utils/mp-optimizer.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
 
@@ -111,6 +118,15 @@ let optimTargetDraft = null;
 let tally = newManaTally();
 
 /**
+ * Casts the bar refused, an estimate (see `utils/refused-casts.js`). Kept and reset with the tally: the same
+ * run, the same character.
+ */
+let refusals = newRefusalState();
+
+/** The battle the refusal baseline was read from; a tick from another battle has no baseline to compare with */
+let refusalBattleId = null;
+
+/**
  * The character the tally, typed target, haste and slots belong to. While the feature is disabled its
  * `character_switching` handler is unregistered, so a switch then resets nothing; `initialize()` compares
  * this against the current character instead. Null until something is written.
@@ -151,6 +167,8 @@ export function naturalRegenPerMinute() {
 /** Start the count again from here */
 export function resetManaTally() {
     tally = newManaTally();
+    refusals = newRefusalState();
+    refusalBattleId = null;
     firstEventAt = null;
     lastEventAt = null;
     bankedMs = 0;
@@ -270,6 +288,21 @@ export function mpSupplyPlan(targetMpPerMinute) {
     };
 }
 
+/** @returns {{turns: number, abilities: Array<{abilityHrid: string, refused: number}>}} From `refusalSummary` */
+export function manaRefusals() {
+    return refusalSummary(refusals);
+}
+
+/**
+ * @param {string} abilityHrid - The ability
+ * @returns {?{manaCost: number, cooldownMs: number}} Its stated cost and base cooldown, null when unknown
+ */
+function abilityTiming(abilityHrid) {
+    const detail = dataManager.getInitClientData?.()?.abilityDetailMap?.[abilityHrid];
+    if (!detail) return null;
+    return { manaCost: detail.manaCost || 0, cooldownMs: (Number(detail.cooldownDuration) || 0) / 1e6 };
+}
+
 /** @returns {Object} From `manaSummary` */
 export function manaSpend() {
     return manaSummary(tally);
@@ -298,6 +331,13 @@ function manaCostOf(abilityHrid) {
     return dataManager.getInitClientData?.()?.abilityDetailMap?.[abilityHrid]?.manaCost || 0;
 }
 
+/** What the refused-cast figure is, said where it is shown */
+const REFUSED_HELP =
+    'An estimate. Auto attacks made while an ability you have cast was off cooldown (base cooldown with your ' +
+    'ability haste) but cost more mana than you had: the game takes the first ready ability and, when it cannot ' +
+    'pay for it, auto attacks rather than casting a cheaper one. Ability triggers are not on the wire, so a ' +
+    'ready ability whose trigger was false still counts.';
+
 let onNewBattle = null;
 let onAbility = null;
 let onBattleUpdated = null;
@@ -322,6 +362,8 @@ export default {
             resetMpPlanner();
             ownerCharacterId = null;
         }
+        // Ticks missed while disabled: the last reading no longer describes the bar
+        forgetRefusalBaseline(refusals);
 
         onNewBattle = (data) => {
             claimState();
@@ -337,6 +379,8 @@ export default {
             if (startHp <= 0) markDead();
             else markAlive();
             ownSlot = self ? (Object.entries(data?.players || {}).find(([, p]) => p === self)?.[0] ?? null) : null;
+            noteRefusalBattle(refusals, self);
+            refusalBattleId = self ? (data?.battleId ?? null) : null;
             const stats = self?.combatDetails?.combatStats;
             // A live new_battle player carries max MP at the top level; combatDetails only has combatStats
             const max = Number(self?.maxManapoints ?? self?.combatDetails?.maxManapoints);
@@ -376,7 +420,18 @@ export default {
         // Only a state change matters: the player's HP reaching 0, and rising above it again
         onBattleUpdated = (data) => {
             if (ownSlot === null) return;
-            const hp = Number(data?.pMap?.[ownSlot]?.cHP);
+            // A watched guild trial's ticks are not this character's fight
+            if (data?.isGuildBattle) return;
+            const entry = data?.pMap?.[ownSlot];
+            if (entry) {
+                // A slot is a seat in one battle: another battle's ticks have no baseline here until it is announced
+                if (data?.battleId !== refusalBattleId) {
+                    forgetRefusalBaseline(refusals);
+                    refusalBattleId = data?.battleId ?? null;
+                }
+                foldRefusalTick(refusals, entry, { at: Date.now(), abilityInfo: abilityTiming });
+            }
+            const hp = Number(entry?.cHP);
             if (!Number.isFinite(hp)) return;
             if (hp <= 0) markDead();
             else markAlive();
@@ -597,6 +652,16 @@ export const manaPanel = createPanel({
             ),
             panelLine('Casts per fight', summary.castsPerFight === null ? '—' : summary.castsPerFight.toFixed(2))
         );
+        const refused = manaRefusals();
+        const refusedOf = new Map(refused.abilities.map((row) => [row.abilityHrid, row.refused]));
+        run.appendChild(
+            panelLine(
+                'Refused casts (est.)',
+                formatWithSeparator(refused.turns),
+                refused.turns > 0 ? ROW_COLORS.bad : ROW_COLORS.dim,
+                REFUSED_HELP
+            )
+        );
 
         const reset = document.createElement('button');
         reset.textContent = 'Reset';
@@ -619,15 +684,31 @@ export const manaPanel = createPanel({
         const byAbility = panelCard(body, 'Where it goes');
         for (const ability of summary.abilities) {
             const share = summary.mana > 0 ? (ability.mana / summary.mana) * 100 : 0;
+            const times = refusedOf.get(ability.abilityHrid) || 0;
+            refusedOf.delete(ability.abilityHrid);
             byAbility.appendChild(
                 panelLine(
                     abilityLabel(ability.abilityHrid),
-                    `${formatWithSeparator(Math.round(ability.mana))}  ·  ${share.toFixed(0)}%`,
+                    `${formatWithSeparator(Math.round(ability.mana))}  ·  ${share.toFixed(0)}%` +
+                        (times > 0 ? `  ·  ${formatWithSeparator(times)} refused` : ''),
                     ability.unknownCost ? ROW_COLORS.bad : ROW_COLORS.gold,
-                    ability.unknownCost
+                    (ability.unknownCost
                         ? 'The game states no mana cost for this ability, so its casts are counted and its mana is not.'
                         : `${formatWithSeparator(ability.casts)} casts` +
-                              (ability.perFight === null ? '' : `, ${ability.perFight.toFixed(2)} per fight`)
+                          (ability.perFight === null ? '' : `, ${ability.perFight.toFixed(2)} per fight`)) +
+                        (times > 0 ? `
+${formatWithSeparator(times)} casts refused for lack of mana (estimate).` : '')
+                )
+            );
+        }
+        // Refused, but no cast announced in this tally (the announcement and the tick stream disagree)
+        for (const [abilityHrid, times] of refusedOf) {
+            byAbility.appendChild(
+                panelLine(
+                    abilityLabel(abilityHrid),
+                    `${formatWithSeparator(times)} refused`,
+                    ROW_COLORS.bad,
+                    `${formatWithSeparator(times)} casts refused for lack of mana (estimate).`
                 )
             );
         }

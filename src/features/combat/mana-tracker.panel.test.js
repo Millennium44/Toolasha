@@ -2,12 +2,13 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ characterId: 'char1', handlers: {} }));
+const state = vi.hoisted(() => ({ characterId: 'char1', handlers: {}, ws: {}, self: null, detailMap: {} }));
 
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1000, getSetting: () => true } }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => state.characterId,
+        getInitClientData: () => ({ abilityDetailMap: state.detailMap }),
         on: (event, handler) => {
             state.handlers[event] = handler;
         },
@@ -16,8 +17,15 @@ vi.mock('../../core/data-manager.js', () => ({
         },
     },
 }));
-vi.mock('../../core/websocket.js', () => ({ default: { on: vi.fn(), off: vi.fn() } }));
-vi.mock('../../core/character-abilities.js', () => ({ findOwnBattlePlayer: () => null }));
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: vi.fn((event, handler) => {
+            state.ws[event] = handler;
+        }),
+        off: vi.fn(),
+    },
+}));
+vi.mock('../../core/character-abilities.js', () => ({ findOwnBattlePlayer: () => state.self }));
 vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: () => ({ price: null }) }));
 vi.mock('../../utils/mp-optimizer.js', () => ({
     buildMpCandidates: () => [],
@@ -49,7 +57,7 @@ vi.mock('../../utils/panel-minimize.js', () => ({
 vi.mock('../../utils/panel-escape.js', () => ({ registerEscapeClose: () => ({ raise: vi.fn(), release: vi.fn() }) }));
 
 const manaTracker = (await import('./mana-tracker.js')).default;
-const { manaPanel, resetMpPlanner } = await import('./mana-tracker.js');
+const { manaPanel, resetMpPlanner, resetManaTally } = await import('./mana-tracker.js');
 
 describe('Mana target input', () => {
     beforeEach(() => {
@@ -138,5 +146,53 @@ describe('Mana target input', () => {
         manaPanel.render();
 
         expect(document.querySelector('[data-mp-target="true"]').value).toBe('400');
+    });
+});
+
+describe('the refused-casts figure on the mana panel', () => {
+    const DRAIN = '/abilities/life_drain';
+
+    afterEach(() => {
+        manaTracker.cleanup();
+        manaPanel.hide({ remember: false });
+        resetManaTally();
+        state.self = null;
+        state.detailMap = {};
+        vi.useRealTimers();
+        document.body.replaceChildren();
+    });
+
+    const text = () => document.body.textContent;
+
+    test('shows zero before anything is refused, and says it is an estimate', () => {
+        manaPanel.show({ remember: false });
+        expect(text()).toContain('Refused casts (est.)');
+        expect(text()).not.toContain('could not be drawn');
+        const line = [...document.querySelectorAll('[title]')].find((el) => el.title.startsWith('An estimate.'));
+        expect(line).toBeTruthy();
+    });
+
+    test('a refused Life Drain is counted on the run and on its own row', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        state.detailMap = { [DRAIN]: { manaCost: 100, cooldownDuration: 10e9, name: 'Life Drain' } };
+        state.self = {
+            combatAbilities: [{ abilityHrid: DRAIN }],
+            combatDetails: { combatStats: {} },
+            currentManapoints: 500,
+            attackAttemptCounter: 10,
+            isPreparingAutoAttack: false,
+            preparingAbilityHrid: DRAIN,
+        };
+        manaTracker.initialize();
+        state.ws.new_battle({ battleId: 7, players: [state.self] });
+        state.ws.battle_consumable_ability_updated({ ability: { abilityHrid: DRAIN } });
+        state.ws.battle_updated({ battleId: 7, pMap: { 0: { atkCounter: 11, cMP: 30, isAutoAtk: true } } });
+        vi.setSystemTime(11_000);
+        state.ws.battle_updated({ battleId: 7, pMap: { 0: { atkCounter: 12, cMP: 30, isAutoAtk: true } } });
+
+        manaPanel.show({ remember: false });
+        expect(text()).toContain('1 refused');
+        expect(text()).not.toContain('could not be drawn');
     });
 });
