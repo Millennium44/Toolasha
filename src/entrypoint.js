@@ -963,6 +963,15 @@ function registerFeatures() {
             customCheck: () => config.getSetting('market_depthCapEnabled'),
         },
         {
+            key: 'instantOrderGap',
+            name: 'Instant Order Gap',
+            category: 'Market',
+            module: Market.instantOrderGap,
+            async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_instantOrderGap'),
+        },
+        {
             key: 'market_enhanceProfitPerHour',
             name: 'Enhance-to-sell Profit/h Column',
             category: 'Market',

@@ -1802,6 +1802,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays how many of the item you currently own in Buy Now and Buy Listing modals',
             },
+            market_instantOrderGap: {
+                id: 'market_instantOrderGap',
+                label: 'Marketplace: Warn when Buy Now / Sell Now is more than one price step from the best listing',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a line to the Buy Now and Sell Now dialogs when the best sell offer and the best buy offer for the item and enhancement level shown are two or more price steps apart, with what the gap costs per item and for the quantity entered. It stays silent when they are one step apart, and when no recent order book for the item has been seen. Only text: it never changes the dialog or presses anything. Read from English dialog titles.',
+            },
             market_marketplaceShortcuts: {
                 id: 'market_marketplaceShortcuts',
                 label: 'Marketplace: Show "Marketplace Action" button on item menus',

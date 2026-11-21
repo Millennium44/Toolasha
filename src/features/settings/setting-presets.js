@@ -175,6 +175,7 @@ const MARKET_EXTRAS = [
     'market_quickInputButtons',
     'market_multiplierButtons',
     'market_showOwnedInBuyModal',
+    'market_instantOrderGap',
     'market_marketplaceShortcuts',
     'market_visibleItemCount',
     'market_visibleItemCountIncludeEquipped',
