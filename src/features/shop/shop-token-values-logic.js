@@ -84,28 +84,33 @@ function unitPriceOf(priceOf, itemHrid) {
  *   null when the item has no price and is neither an untradable cape nor an openable with an expected value
  */
 function valueLine({ itemHrid, cost, outputCount, isOpenable }, unitPrice, side) {
-    if (unitPrice > 0) {
-        return {
-            perToken: (calculatePriceAfterTax(unitPrice) * outputCount) / cost,
-            assumed: false,
-            assumedValue: 0,
-            partial: false,
-        };
-    }
-    // An openable with no market price is worth what opening it yields. The expected value already
-    // counts only what the drops sell for, so it is not taxed again; unpriced drops make it a floor.
+    const market =
+        unitPrice > 0
+            ? {
+                  perToken: (calculatePriceAfterTax(unitPrice) * outputCount) / cost,
+                  assumed: false,
+                  assumedValue: 0,
+                  partial: false,
+              }
+            : null;
+    // An openable is worth the better of its after-tax market price and what opening it yields: the
+    // rule the task token tooltip, net worth and task profit read through findBestTaskShopValue. The
+    // expected value already counts only what the drops sell for, so it is not taxed again; unpriced
+    // drops make it a floor.
     if (isOpenable) {
         const container = containerValueOf(itemHrid);
         if (container) {
-            return {
+            const opened = {
                 perToken: (container.value * outputCount) / cost,
                 assumed: false,
                 assumedValue: 0,
                 partial: container.partial,
                 isContainer: true,
             };
+            return !market || opened.perToken > market.perToken ? opened : market;
         }
     }
+    if (market) return market;
     if (!isUntradableCape(itemHrid)) return null;
     // A cape cannot be sold, so its assumed value is not taxed
     // The mirror stand-in is read on the badge's own side

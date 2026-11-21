@@ -253,7 +253,7 @@ class ShopTokenValues {
         element.dataset.mwiBest = isBest ? 'true' : 'false';
         element.dataset.mwiAssumed = line.assumed ? 'true' : 'false';
         element.title = line.isContainer
-            ? 'Not on the market. Worth what opening it yields (expected value of its drops)' +
+            ? 'Worth what opening it yields (expected value of its drops), which beats its market price or has none' +
               `${line.partial ? ', a floor: some drops have no price and count as nothing' : ''}.` +
               `${isBest ? ' Best value for this token.' : ''}`
             : line.assumed

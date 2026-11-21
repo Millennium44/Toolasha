@@ -258,12 +258,29 @@ describe('Task shop lines', () => {
         expect(hrids).toEqual(['/items/essence']);
     });
 
-    test('a market price beats the expected value and the chest can be the best line', () => {
-        mocks.evs['/items/chest'] = { expectedValue: 90_000, isPartial: false };
-        expect(bestLine(shopLineValues(TASK_TOKEN_HRID))).toEqual({ itemHrid: '/items/chest', cost: 30 });
+    test('a listed chest takes the expected value when it beats the market, like findBestTaskShopValue', () => {
+        mocks.evs['/items/chest'] = { expectedValue: 90_000, isPartial: true };
+        mocks.books['/items/chest'] = { ask: 3000, bid: 3000 };
+        const lines = shopLineValues(TASK_TOKEN_HRID);
+        const chest = lines.find((line) => line.itemHrid === '/items/chest');
+        expect(chest).toMatchObject({ perToken: 3000, isContainer: true, partial: true });
+        expect(bestLine(lines)).toEqual({ itemHrid: '/items/chest', cost: 30 });
+    });
+
+    test('a listed chest takes the after-tax market price when it beats the expected value', () => {
+        mocks.evs['/items/chest'] = { expectedValue: 30_000, isPartial: true };
+        mocks.books['/items/chest'] = { ask: 90_000, bid: 90_000 };
+        const lines = shopLineValues(TASK_TOKEN_HRID);
+        const chest = lines.find((line) => line.itemHrid === '/items/chest');
+        expect(chest.isContainer).toBeUndefined();
+        expect(chest.partial).toBe(false);
+        expect(chest.perToken).toBeCloseTo((90_000 * 0.96) / 30, 8);
+        expect(bestLine(lines)).toEqual({ itemHrid: '/items/chest', cost: 30 });
+    });
+
+    test('a listed chest with no expected value keeps its market price', () => {
         mocks.books['/items/chest'] = { ask: 3000, bid: 3000 };
         const chest = shopLineValues(TASK_TOKEN_HRID).find((line) => line.itemHrid === '/items/chest');
-        expect(chest.isContainer).toBeUndefined();
         expect(chest.perToken).toBeCloseTo((3000 * 0.96) / 30, 8);
     });
 });
