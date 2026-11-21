@@ -1153,6 +1153,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            itemTooltip_wheelScroll: {
+                id: 'itemTooltip_wheelScroll',
+                label: 'Scroll tall tooltips with the mouse wheel',
+                type: 'checkbox',
+                default: true,
+                help: 'When a tooltip is taller than the window, the mouse wheel over the item scrolls the tooltip instead of the page, so the lines cut off at the bottom (enhancement milestones and the like) can be read. At the top or bottom of the tooltip the wheel scrolls the page again, and a scroll that started on the page carries on scrolling it.',
+            },
             inventoryTooltipBeside: {
                 id: 'inventoryTooltipBeside',
                 label: 'Keep item tooltips off the hovered item',

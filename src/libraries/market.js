@@ -86,6 +86,7 @@ import inventorySort from '../features/inventory/inventory-sort.js';
 import inventoryBadgePrices from '../features/inventory/inventory-badge-prices.js';
 import dungeonTokenTooltips from '../features/inventory/dungeon-token-tooltips.js';
 import inventoryTooltipBeside from '../features/inventory/inventory-tooltip-beside.js';
+import tooltipWheelScroll from '../features/market/tooltip-wheel-scroll.js';
 import dungeonShopPlanner from '../features/inventory/dungeon-shop-planner.js';
 import treasureTracker from '../features/inventory/treasure-tracker.js';
 import tradeLedgerStore from '../features/market/trade-ledger-store.js';
@@ -171,6 +172,7 @@ toolashaRoot.Market = {
     inventoryBadgePrices,
     dungeonTokenTooltips,
     inventoryTooltipBeside,
+    tooltipWheelScroll,
     dungeonShopPlanner,
     treasureTracker,
     selfUseWanted,

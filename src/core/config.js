@@ -220,6 +220,14 @@ class Config {
                 description: 'Shows shop values for tokens, scrolls, and cowbells',
                 settingKey: 'dungeonTokenTooltips',
             },
+            itemTooltip_wheelScroll: {
+                enabled: true,
+                name: 'Scroll Tall Tooltips With the Wheel',
+                category: 'Inventory',
+                description:
+                    'The mouse wheel over an item scrolls its tooltip when the tooltip is taller than the window',
+                settingKey: 'itemTooltip_wheelScroll',
+            },
             inventoryTooltipBeside: {
                 enabled: true,
                 name: 'Keep Item Tooltips Off the Item',

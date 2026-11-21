@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Scroll tall tooltips with the mouse wheel
+
+When a tooltip is taller than the window, the mouse wheel over the item now scrolls the tooltip, so the lines cut off at the bottom (enhancement milestones and the like) can be read. At either end the wheel scrolls the page again.
+
 ### Craft-vs-sell line for materials you hold
 
 Craftable items' profit section adds a "Held materials" line: what crafting materials you already hold (dungeon drops, say) and selling the result earns per item over selling the materials, each valued at its after-tax sale price under your pricing mode.

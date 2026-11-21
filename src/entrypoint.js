@@ -847,6 +847,13 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'itemTooltip_wheelScroll',
+            name: 'Tooltip Wheel Scroll',
+            category: 'Inventory',
+            module: Market.tooltipWheelScroll,
+            async: true,
+        },
+        {
             key: 'inventoryTooltipBeside',
             name: 'Inventory Tooltip Beside',
             category: 'Inventory',
