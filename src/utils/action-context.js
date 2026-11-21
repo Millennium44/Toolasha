@@ -16,8 +16,8 @@
  *
  * One exception: while an action of the asked-for type is RUNNING, the answer is the loadout that
  * action was started with (its `characterLoadoutID`), because the game equipped that loadout when it
- * started. "No Loadout" (0) is the gear, talismans and drinks worn now. An id this build has no
- * loadout for falls back to the pick above.
+ * started. "No Loadout" (0) is the gear, talismans and drinks worn now, and so is an id this build
+ * has no loadout for (deleted, loadouts off, not loaded): the game equipped it, so it is what is worn.
  *
  * Equipment and drinks are resolved independently — it's valid to inherit the
  * snapshot's equipment while no snapshot drinks exist, in which case the
@@ -66,19 +66,22 @@ function runningLoadoutIdFor(actionTypeHrid) {
  * Which gear the three public readers below describe, picked once so context, talismans and label agree.
  *
  * - `{kind: 'worn'}`: the running action of this type was started with No Loadout (or a saved loadout that names
- *   no gear), so it runs on what is worn and slotted now.
+ *   no gear), so it runs on what is worn and slotted now. `unloaded` when its id is one this build has no loadout
+ *   for (deleted, loadouts off, not loaded): the game put it on at the start, so the worn kit is that loadout.
  * - `{kind: 'loadout', snapshot, id}`: the running action's own saved loadout.
- * - null: no action of this type runs, or its id is one this build has no loadout for: the per-skill pick.
+ * - null: no action of this type runs, or it carries no numeric id: the per-skill pick.
  *
  * @param {string} actionTypeHrid
- * @returns {{kind: 'worn', id: number}|{kind: 'loadout', id: number, snapshot: Object}|null}
+ * @returns {{kind: 'worn', id: number, unloaded?: boolean}|{kind: 'loadout', id: number, snapshot: Object}|null}
  */
 function runningPick(actionTypeHrid) {
     const id = runningLoadoutIdFor(actionTypeHrid);
     if (id === null) return null;
     if (id <= 0) return { kind: 'worn', id: 0 };
     const snapshot = loadouts().getSnapshotById?.(id) ?? null;
-    if (!snapshot) return null;
+    // Deleted, loadouts off, or not loaded yet: the game equipped it on start, so what is worn now is that loadout
+    // (as resolveRunningContext reads it), closer than the skill default
+    if (!snapshot) return { kind: 'worn', id, unloaded: true };
     if (!snapshot.equipment?.length) return { kind: 'worn', id };
     return { kind: 'loadout', id, snapshot };
 }
@@ -137,6 +140,12 @@ export function resolveActionTalismans(actionTypeHrid) {
  */
 export function describeActionContextSource(actionTypeHrid) {
     const pick = runningPick(actionTypeHrid);
+    if (pick?.kind === 'worn' && pick.unloaded) {
+        return {
+            key: `running:${actionTypeHrid}:${pick.id}:unloaded`,
+            label: "The gear you wear now (this run's loadout is not loaded)",
+        };
+    }
     if (pick?.kind === 'worn') {
         return { key: `running:${actionTypeHrid}:${pick.id}`, label: 'No loadout: the gear you wear now' };
     }

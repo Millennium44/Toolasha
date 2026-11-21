@@ -804,7 +804,9 @@ class AchievementFinisher {
         const key = `${dataManager.getCurrentCharacterId?.() ?? ''}|${hrid}`;
         // The pricing rule's own inputs (patient tick, base-item crafting, cape, Tester shop, custom prices,
         // the value map) can move with no event this module hears: a settings-panel change, then a redraw
-        const stamp = pricingStamp();
+        // The buff state version moves with the worn gear, the drink slots and the running action's loadout id, all of
+        // which change the gear rareFindFor reads off resolveActionContext
+        const stamp = `${pricingStamp()}|${dataManager.getBuffStateVersion?.() ?? ''}`;
         const hit = this.readinessCache.get(key);
         if (hit && hit.version === this.readinessVersion && hit.stamp === stamp) return hit.value;
         let value = null;

@@ -100,6 +100,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getHouseRooms: () => new Map(game.houseRooms || []),
         getEquipment: () => game.equipment,
         getLearnedAbilities: () => game.learned || [],
+        getBuffStateVersion: () => game.buffStateVersion ?? 0,
         on: (event, fn) => {
             (game.handlers[event] ||= []).push(fn);
         },
@@ -1047,6 +1048,24 @@ describe('hints on the game achievement cards', () => {
         game.pricingStamp = 'ask|tick';
         mountAgain();
         expect(lineOf('Dairy Chef').textContent).not.toContain('buy ~200');
+    });
+
+    test("a moved buff state version (gear, or the running action's loadout) recomputes on the next draw", () => {
+        game.buffStateVersion = 1;
+        try {
+            achievementsTab();
+            finisher.initialize();
+            expect(lineOf('Dairy Chef').textContent).toContain('buy ~200');
+            game.prices = { ...PRICES, '/items/peach': PRICES['/items/peach'] * 2 };
+            mountAgain();
+            expect(lineOf('Dairy Chef').textContent).toContain('buy ~200');
+            // A restart under another loadout: the Rare Find read off resolveActionContext can move
+            game.buffStateVersion = 2;
+            mountAgain();
+            expect(lineOf('Dairy Chef').textContent).not.toContain('buy ~200');
+        } finally {
+            game.buffStateVersion = 0;
+        }
     });
 
     test('a level gained mid-action (action_completed only, nothing dropped) redraws the level gate', () => {

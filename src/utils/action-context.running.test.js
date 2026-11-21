@@ -126,12 +126,16 @@ describe('a running action of the same type', () => {
         expect(source.label).toBe('Enhance Kit (the loadout the running action uses)');
     });
 
-    test('an id this build has no loadout for: the skill default, as before', () => {
+    test('an id this build has no loadout for: the worn gear the game equipped on start, with its own label', () => {
         queue(buildCharacterAction({ actionHrid: '/actions/enhancing/enhance', characterLoadoutID: 99999 }));
 
-        expect(resolveActionContext(ENHANCING).equipment).toBe(DEFAULT_EQ);
-        expect(resolveActionTalismans(ENHANCING)).toEqual([]);
-        expect(describeActionContextSource(ENHANCING).key).toBe(`skill:${ENHANCING}:All Skills`);
+        expect(resolveActionContext(ENHANCING).equipment).toBe(WORN_EQ);
+        expect(resolveActionContext(ENHANCING).drinks).toEqual(WORN_DRINKS);
+        expect(resolveActionTalismans(ENHANCING)).toBe(SLOTTED);
+        expect(describeActionContextSource(ENHANCING)).toEqual({
+            key: `running:${ENHANCING}:99999:unloaded`,
+            label: "The gear you wear now (this run's loadout is not loaded)",
+        });
     });
 
     test('a saved loadout that names no gear runs on the worn kit and its slotted talismans', () => {
