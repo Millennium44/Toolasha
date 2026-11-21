@@ -3369,7 +3369,7 @@ export const settingsGroups = {
                 label: 'DPS graph: Chart damage per second over time on the Per-player panel and trial damage board',
                 type: 'checkbox',
                 default: true,
-                help: 'A small line chart above the rows on the Damage tab: the party, and each player in their own color. On the Per-player panel it covers the same run as the table, with a five-minute and a whole-session view and boss fights shaded red; it reads the damage totals every two seconds and draws a 16-second average. On the trial damage board it draws the trial recorder’s readings, one every fifteen seconds, with the five leading players and a dashed line at each wave or tier change. Either board can hide it. Needs the Per-player panel on for normal fights',
+                help: 'A small line chart above the rows on the Damage tab: the party, and each player in their own color. On the Per-player panel it covers the same run as the table, with a five-minute and a whole-session view and boss fights shaded red; it reads the damage totals every two seconds and draws a 16-second average. On the trial damage board it draws the trial recorder’s readings, one every fifteen seconds, with the five leading players and a dashed line at each wave or tier change. Either board can hide it. It also feeds the small party DPS line in the Per-player panel’s header, which stays visible while the panel is minimized. Needs the Per-player panel on for normal fights',
             },
             combatDpsHitTape: {
                 id: 'combatDpsHitTape',

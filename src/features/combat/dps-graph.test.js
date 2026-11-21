@@ -193,19 +193,39 @@ describe('the header sparkline', () => {
     test('reads the sampler’s own series: the party line, its newest point and the session mean', () => {
         startDpsSampler();
         fight(20);
-        const spark = dpsSparkline({ now: T0 + 21 * BUCKET_MS });
+        // The run's totals over its fighting clock: 12,000 damage in 30 s of fighting, a break left out
+        const breakdown = {
+            startedAt: 1,
+            seconds: 30,
+            players: [
+                { index: '0', name: 'Abe', damage: 8000 },
+                { index: '1', name: 'Bo', damage: 4000 },
+            ],
+        };
+        const spark = dpsSparkline({ now: T0 + 21 * BUCKET_MS, breakdown });
         // 600 damage a bucket between the two players is 300 per second
         expect(spark.points.length).toBeGreaterThan(1);
         expect(spark.current).toBeCloseTo(300);
-        // The mean over every bucket, the baseline bucket included
-        expect(spark.average).toBeGreaterThan(250);
-        expect(spark.average).toBeLessThanOrEqual(300);
+        expect(spark.average).toBe(400);
 
         const slot = document.createElement('span');
-        drawDpsSparkline(slot, { now: T0 + 21 * BUCKET_MS });
+        drawDpsSparkline(slot, { now: T0 + 21 * BUCKET_MS, breakdown });
         expect(slot.querySelector('svg[data-dps-sparkline] polyline')).not.toBeNull();
         expect(slot.textContent).toContain('300');
         expect(slot.innerHTML).not.toContain('NaN');
+        expect(slot.querySelector('line')).not.toBeNull();
+        expect(slot.title).toContain('▼ 25% vs the average');
+    });
+
+    test('before any fighting time there is no average to draw or compare with', () => {
+        startDpsSampler();
+        fight(20);
+        const slot = document.createElement('span');
+        drawDpsSparkline(slot, { now: T0 + 21 * BUCKET_MS, breakdown: { seconds: 0, players: [] } });
+        expect(slot.querySelector('polyline')).not.toBeNull();
+        expect(slot.querySelector('line')).toBeNull();
+        expect(slot.innerHTML).not.toContain('NaN');
+        expect(slot.title).not.toContain('vs the average');
     });
 
     test('is nothing while nothing samples, with the graph off, or before two points', () => {

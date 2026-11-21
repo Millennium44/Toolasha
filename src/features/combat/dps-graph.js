@@ -314,20 +314,26 @@ export const SPARK_HEIGHT = 14;
  * The party's DPS over the last five minutes, for the panel header's sparkline: the same series and the same
  * 16-second average the graph draws, read rather than recorded again.
  *
+ * The average is the run's own: the tracker's damage over the tracker's fighting clock, which leaves out time
+ * between fights and out of combat. A mean of the series' buckets would not: they tick on the wall clock, so a
+ * break would drag the dashed line down and leave the line reading above it for the rest of the session.
+ *
  * @param {Object} [options] - For tests
  * @param {number} [options.now] - Clock
- * @returns {{points: number[], current: number, average: number}|null} The party line oldest first, its newest
- *   point, and the whole series' mean; null while nothing is sampling (the panel or the graph setting is off)
- *   or fewer than two points exist
+ * @param {Object} [options.breakdown] - `damageBreakdown()`, injectable
+ * @returns {{points: number[], current: number, average: number|null}|null} The party line oldest first, its
+ *   newest point, and the run's average (null before any fighting time); null while nothing is sampling (the
+ *   panel or the graph setting is off) or fewer than two points exist
  */
-export function dpsSparkline({ now = Date.now() } = {}) {
+export function dpsSparkline({ now = Date.now(), breakdown = null } = {}) {
     if (!onNewBattle || config.getSetting('combatDpsGraph') !== true) return null;
     const recent = seriesView(series, { now, window: 'recent' });
     if (!recent || recent.points.length < 2) return null;
     const points = recent.points.map((point) => point.party);
-    const session = seriesView(series, { now, window: 'session', smooth: 1 });
-    const all = session?.points.map((point) => point.party) ?? points;
-    const average = all.length ? all.reduce((sum, value) => sum + value, 0) / all.length : 0;
+    const run = breakdown ?? damageBreakdown();
+    const seconds = Number(run?.seconds) || 0;
+    const total = (run?.players || []).reduce((sum, player) => sum + (Number(player.damage) || 0), 0);
+    const average = seconds > 0 ? total / seconds : null;
     return { points, current: points[points.length - 1], average };
 }
 
@@ -339,16 +345,18 @@ export function dpsSparkline({ now = Date.now() } = {}) {
  * @returns {string} SVG markup
  */
 export function sparklineSVG({ points, average }, width = SPARK_WIDTH, height = SPARK_HEIGHT) {
-    const top = Math.max(1, average, ...points) * 1.05;
+    const top = Math.max(1, average ?? 0, ...points) * 1.05;
     const y = (value) => (height - 1 - (Math.max(0, value) / top) * (height - 2)).toFixed(1);
     const step = points.length > 1 ? width / (points.length - 1) : 0;
     const line = points.map((value, index) => `${(index * step).toFixed(1)},${y(value)}`).join(' ');
-    const averageY = y(average);
+    const averageY = average === null ? null : y(average);
     return (
         `<svg data-dps-sparkline width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" ` +
         `style="display:block;">` +
-        `<line x1="0" y1="${averageY}" x2="${width}" y2="${averageY}" stroke="#ffffff" stroke-opacity="0.35" ` +
-        `stroke-dasharray="2 2"></line>` +
+        (averageY === null
+            ? ''
+            : `<line x1="0" y1="${averageY}" x2="${width}" y2="${averageY}" stroke="#ffffff" stroke-opacity="0.35" ` +
+              `stroke-dasharray="2 2"></line>`) +
         `<polyline points="${line}" fill="none" stroke="${BOARD_COLORS.good}" stroke-width="1.5"></polyline></svg>`
     );
 }
@@ -358,16 +366,20 @@ export function sparklineSVG({ points, average }, width = SPARK_WIDTH, height = 
  * @param {HTMLElement} slot - The header slot (`createPanel`'s `header`)
  * @param {Object} [options] - For tests
  * @param {number} [options.now] - Clock
+ * @param {Object} [options.breakdown] - `damageBreakdown()`, injectable
  */
-export function drawDpsSparkline(slot, { now = Date.now() } = {}) {
+export function drawDpsSparkline(slot, { now = Date.now(), breakdown = null } = {}) {
     slot.title = '';
-    const spark = dpsSparkline({ now });
+    const spark = dpsSparkline({ now, breakdown });
     if (!spark) return;
     const pace = spark.average > 0 ? Math.round(((spark.current - spark.average) / spark.average) * 100) : 0;
     const arrow = Math.abs(pace) < 3 ? '•' : pace > 0 ? '▲' : '▼';
     slot.title =
-        `Party DPS over the last five minutes (a 16-second average), against the session average ` +
-        `(${formatKMB(Math.round(spark.average))}, dashed). ${arrow} ${Math.abs(pace)}% vs the average.`;
+        'Party DPS over the last five minutes (a 16-second average)' +
+        (spark.average === null
+            ? '.'
+            : `, against the run's average over its fighting time (${formatKMB(Math.round(spark.average))}, ` +
+              `dashed). ${arrow} ${Math.abs(pace)}% vs the average.`);
     slot.innerHTML =
         sparklineSVG(spark) +
         `<span style="color:${BOARD_COLORS.dim};">${formatKMB(Math.round(spark.current))} ${arrow}</span>`;
