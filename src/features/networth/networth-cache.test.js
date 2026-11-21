@@ -85,6 +85,23 @@ describe('the cache key', () => {
         // Same moment, so the memoised fingerprint still stands
         expect(networthCache.generateKey('/items/a', 1)).toBe(key);
     });
+
+    test("is read afresh inside the memo once the buff state version moves (the running action's loadout)", async () => {
+        const dm = (await import('../../core/data-manager.js')).default;
+        let version = 1;
+        dm.getBuffStateVersion = () => version;
+        try {
+            networthCache.clear();
+            const key = networthCache.generateKey('/items/a', 1);
+            // A restart with No Loadout: the worn kit's Conservation now counts, nothing worn changed
+            state.params = { level: 140, tea: 'blessed', conservation: 0.046 };
+            expect(networthCache.generateKey('/items/a', 1)).toBe(key);
+            version = 2;
+            expect(networthCache.generateKey('/items/a', 1)).not.toBe(key);
+        } finally {
+            delete dm.getBuffStateVersion;
+        }
+    });
 });
 
 describe('a character switch', () => {

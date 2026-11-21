@@ -59,6 +59,7 @@ class NetworthCache {
         this.marketDataHash = null;
         this._paramsFingerprint = null;
         this._paramsFingerprintAt = 0;
+        this._paramsFingerprintVersion = null;
         // Which cached costs read which item's price, so a patch to one book drops only the
         // costs built on it: input hrid -> cache keys. Costs whose reads were not recorded
         // (no recorder, or a memo that could not say) are kept in `_wide` and dropped on any move.
@@ -81,7 +82,14 @@ class NetworthCache {
      */
     contextKey() {
         const now = Date.now();
-        if (this._paramsFingerprint !== null && now - this._paramsFingerprintAt < PARAMS_FINGERPRINT_MS) {
+        // The buff state version moves with the worn gear, the drink slots and the running action's loadout id,
+        // any of which changes the bench getEnhancingParams reads
+        const version = dataManager?.getBuffStateVersion?.() ?? null;
+        if (
+            this._paramsFingerprint !== null &&
+            this._paramsFingerprintVersion === version &&
+            now - this._paramsFingerprintAt < PARAMS_FINGERPRINT_MS
+        ) {
             return this._paramsFingerprint;
         }
 
@@ -95,6 +103,7 @@ class NetworthCache {
 
         this._paramsFingerprint = fingerprint;
         this._paramsFingerprintAt = now;
+        this._paramsFingerprintVersion = version;
         return fingerprint;
     }
 

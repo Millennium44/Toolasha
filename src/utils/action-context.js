@@ -14,6 +14,11 @@
  *   4. All-skills non-default
  *   5. Fall back to currently-equipped gear / current drinks
  *
+ * One exception: while an action of the asked-for type is RUNNING, the answer is the loadout that
+ * action was started with (its `characterLoadoutID`), because the game equipped that loadout when it
+ * started. "No Loadout" (0) is the gear, talismans and drinks worn now. An id this build has no
+ * loadout for falls back to the pick above.
+ *
  * Equipment and drinks are resolved independently — it's valid to inherit the
  * snapshot's equipment while no snapshot drinks exist, in which case the
  * current drinks are used (and vice-versa).
@@ -23,6 +28,7 @@ import dataManager from '../core/data-manager.js';
 import bundledLoadoutSnapshot from '../features/combat/loadout-snapshot.js';
 import { loadoutSnapshot } from './bundle-bridge.js';
 import { resolveLoadoutTalismans } from './talisman-bonuses.js';
+import { runningAction } from './combat-actions.js';
 
 /**
  * The loadout store that actually has the loadouts in it.
@@ -41,10 +47,60 @@ function loadouts() {
 }
 
 /**
+ * The loadout id the running action carries, when that action is of this type.
+ *
+ * Through `runningAction`, never `actions[0]`, which may be queued behind it.
+ *
+ * @param {string} actionTypeHrid - e.g. "/action_types/enhancing"
+ * @returns {number|null} The id (0 for "No Loadout"), or null when no action of this type runs or it carries no id
+ */
+function runningLoadoutIdFor(actionTypeHrid) {
+    const running = runningAction(dataManager.getCurrentActions?.() || []);
+    if (!running?.actionHrid) return null;
+    if (dataManager.getActionDetails?.(running.actionHrid)?.type !== actionTypeHrid) return null;
+    const id = running.characterLoadoutID;
+    return typeof id === 'number' && Number.isFinite(id) ? id : null;
+}
+
+/**
+ * Which gear the three public readers below describe, picked once so context, talismans and label agree.
+ *
+ * - `{kind: 'worn'}`: the running action of this type was started with No Loadout (or a saved loadout that names
+ *   no gear), so it runs on what is worn and slotted now.
+ * - `{kind: 'loadout', snapshot, id}`: the running action's own saved loadout.
+ * - null: no action of this type runs, or its id is one this build has no loadout for: the per-skill pick.
+ *
+ * @param {string} actionTypeHrid
+ * @returns {{kind: 'worn', id: number}|{kind: 'loadout', id: number, snapshot: Object}|null}
+ */
+function runningPick(actionTypeHrid) {
+    const id = runningLoadoutIdFor(actionTypeHrid);
+    if (id === null) return null;
+    if (id <= 0) return { kind: 'worn', id: 0 };
+    const snapshot = loadouts().getSnapshotById?.(id) ?? null;
+    if (!snapshot) return null;
+    if (!snapshot.equipment?.length) return { kind: 'worn', id };
+    return { kind: 'loadout', id, snapshot };
+}
+
+/**
+ * The equipment and drinks to predict an action of this type with: the running action's own loadout while one of
+ * this type runs (see the file header), else the per-skill pick.
  * @param {string} actionTypeHrid - e.g. "/action_types/cooking"
  * @returns {{equipment: Map, drinks: Array}}
  */
 export function resolveActionContext(actionTypeHrid) {
+    const pick = runningPick(actionTypeHrid);
+    if (pick) return resolveLoadoutContext(actionTypeHrid, pick.kind === 'worn' ? 0 : pick.id);
+    return skillDefaultContext(actionTypeHrid);
+}
+
+/**
+ * The per-skill pick, ignoring any running action: what a fresh action of this type would start with.
+ * @param {string} actionTypeHrid - e.g. "/action_types/cooking"
+ * @returns {{equipment: Map, drinks: Array}}
+ */
+function skillDefaultContext(actionTypeHrid) {
     const loadoutSnapshot = loadouts();
     const rawDrinks =
         loadoutSnapshot.getSnapshotDrinksForSkill(actionTypeHrid) ?? dataManager.getActionDrinkSlots(actionTypeHrid);
@@ -65,7 +121,9 @@ export function resolveActionContext(actionTypeHrid) {
  * @returns {Array<Object>} `{id, talismanTypeHrid, modifiers, slotIndex}` records; empty for none
  */
 export function resolveActionTalismans(actionTypeHrid) {
-    const snapshot = loadouts().findSnapshotForSkill?.(actionTypeHrid) ?? null;
+    const pick = runningPick(actionTypeHrid);
+    if (pick?.kind === 'worn') return dataManager.getSlottedTalismans?.() || [];
+    const snapshot = pick ? pick.snapshot : (loadouts().findSnapshotForSkill?.(actionTypeHrid) ?? null);
     if (snapshot) return resolveLoadoutTalismans(snapshot.talismanIdMap, dataManager.getCharacterTalismans?.() || []);
     return dataManager.getSlottedTalismans?.() || [];
 }
@@ -78,6 +136,16 @@ export function resolveActionTalismans(actionTypeHrid) {
  * @returns {{key: string, label: string}}
  */
 export function describeActionContextSource(actionTypeHrid) {
+    const pick = runningPick(actionTypeHrid);
+    if (pick?.kind === 'worn') {
+        return { key: `running:${actionTypeHrid}:${pick.id}`, label: 'No loadout: the gear you wear now' };
+    }
+    if (pick) {
+        return {
+            key: `running:${actionTypeHrid}:${pick.id}:${pick.snapshot.name}`,
+            label: `${pick.snapshot.name}${pick.snapshot.isDefault ? ' ★' : ''} (the loadout the running action uses)`,
+        };
+    }
     const snapshot = loadouts().findSnapshotForSkill?.(actionTypeHrid) ?? null;
     if (!snapshot) return { key: `worn:${actionTypeHrid}`, label: 'The gear you wear now (no loadout for this skill)' };
     return {
@@ -123,7 +191,7 @@ esolveActionContext. A saved loadout with no equipment (or no drinks) inherits t
  */
 export function resolveLoadoutContext(actionTypeHrid, characterLoadoutID) {
     if (typeof characterLoadoutID !== 'number' || !Number.isFinite(characterLoadoutID)) {
-        return resolveActionContext(actionTypeHrid);
+        return skillDefaultContext(actionTypeHrid);
     }
     if (characterLoadoutID <= 0) {
         return {
@@ -133,7 +201,7 @@ export function resolveLoadoutContext(actionTypeHrid, characterLoadoutID) {
     }
     const store = loadouts();
     const snapshot = store.getSnapshotById?.(characterLoadoutID) ?? null;
-    if (!snapshot) return resolveActionContext(actionTypeHrid);
+    if (!snapshot) return skillDefaultContext(actionTypeHrid);
 
     const worn = snapshot.equipment?.length
         ? (store.equipmentMapOf?.(snapshot) ??
@@ -167,4 +235,10 @@ export function resolveRunningContext(actionTypeHrid, characterLoadoutID) {
     return resolveLoadoutContext(actionTypeHrid, characterLoadoutID);
 }
 
-export default { resolveActionContext, describeActionContextSource, resolveLoadoutContext, resolveRunningContext };
+export default {
+    resolveActionContext,
+    resolveActionTalismans,
+    describeActionContextSource,
+    resolveLoadoutContext,
+    resolveRunningContext,
+};

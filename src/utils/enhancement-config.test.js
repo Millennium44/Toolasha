@@ -489,4 +489,38 @@ describe('the enhancing talisman Specials (Conservation and Epiphany)', () => {
         expect(pro.epiphany).toBe(0);
         character.equipment = new Map();
     });
+
+    test("a manual bench given a row's gear reads the Specials off that gear, not the skill's pick", () => {
+        // The skill's pick has no talismans; the row's loadout (a No Loadout enhance) wears Conservation
+        character.equipment = new Map();
+        character.settings = { enhanceSim_autoDetect: false, ...SHIPPED };
+        resetDetectedSettingsCache();
+        const row = { equipment: worn({ conservation: 0.046, epiphany: 0 }), drinks: [] };
+        const manual = getEnhancingParams({ actionContext: row });
+        expect(manual.conservation).toBeCloseTo(0.046, 12);
+        expect(getEnhancingParams().conservation).toBe(0);
+    });
+});
+
+describe('the detection memo', () => {
+    test("misses when the buff state version moves (the running action's loadout id changed)", async () => {
+        let version = 1;
+        const dm = (await import('../core/data-manager.js')).default;
+        dm.getBuffStateVersion = () => version;
+        try {
+            character.settings = { enhanceSim_autoDetect: false };
+            character.skills = [{ skillHrid: '/skills/enhancing', level: 42 }];
+            resetDetectedSettingsCache();
+            expect(getEnhancingParams().enhancingLevel).toBe(42);
+            // Inside the memo's second: same version still serves the memo
+            character.skills = [{ skillHrid: '/skills/enhancing', level: 50 }];
+            expect(getEnhancingParams().enhancingLevel).toBe(42);
+            version = 2;
+            expect(getEnhancingParams().enhancingLevel).toBe(50);
+        } finally {
+            delete dm.getBuffStateVersion;
+            character.skills = [{ skillHrid: '/skills/enhancing', level: 42 }];
+            resetDetectedSettingsCache();
+        }
+    });
 });

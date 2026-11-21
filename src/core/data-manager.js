@@ -34,7 +34,7 @@ import { BELT_LOCATION, computeTalismanBonuses, attachTalismanBonuses } from '..
 
 /** Quiet time before a simulator snapshot refresh writes: a trailing debounce, restarted by every event */
 const SIM_SNAPSHOT_REFRESH_MS = 4000;
-import { compareActionQueueOrder, runningCombatAction } from '../utils/combat-actions.js';
+import { compareActionQueueOrder, runningAction, runningCombatAction } from '../utils/combat-actions.js';
 
 /**
  * Whether two plain hrid -> value maps hold the same entries.
@@ -223,6 +223,8 @@ class DataManager {
         // (enhancement-pricing's production-cost cache) compare against it so a
         // figure computed under old gear/drink buffs is not served after a change.
         this.buffStateVersion = 0;
+        // The running action and the loadout id it carries, as last seen: see _noteRunningLoadout
+        this._runningLoadoutSignature = null;
         this.characterGuildBuffMap = {}; // Guild buff HRID -> {guildBuffHrid, level}
         this.guildBuildingLevelMap = {}; // Building/shrine HRID -> level
         this.guildShrineCapturedAt = null; // When the shrine levels above were read off the wire
@@ -1284,6 +1286,7 @@ class DataManager {
             this.characterHouseRooms.clear();
             this.actionTypeDrinkSlotsMap.clear();
             this.buffStateVersion++;
+            this._runningLoadoutSignature = null;
             this.personalActionTypeBuffsMap = {};
             this.characterGuildBuffMap = {};
             this.guildBuildingLevelMap = {};
@@ -1363,6 +1366,7 @@ class DataManager {
         this._itemIndexById = null; // Rebuilt lazily against the new inventory
         this.characterActions = [...data.characterActions];
         this._sortActionsByOrdinal();
+        this._noteRunningLoadout();
         this.characterQuests = data.characterQuests || [];
 
         // Re-establish the current-unit timing boundary for whatever action is now
@@ -1523,6 +1527,7 @@ class DataManager {
 
             // A different action taking the front slot starts that action's first unit now
             this._syncActionUnitBoundary();
+            this._noteRunningLoadout();
 
             this.emit('actions_updated', data);
         });
@@ -1575,6 +1580,8 @@ class DataManager {
                 // A repeating action is requeued with a higher ordinal in place
                 this._sortActionsByOrdinal();
             }
+            // Before any emit below, so a listener reads figures for the action now running
+            this._noteRunningLoadout();
 
             // An `isDone: false` continuation is the server telling us one unit finished and
             // the next began — the one instant we can date a unit boundary from directly
@@ -3079,6 +3086,22 @@ class DataManager {
      */
     getBuffStateVersion() {
         return this.buffStateVersion;
+    }
+
+    /**
+     * Bump the buff state version when the running action, or the loadout id it carries, changed.
+     *
+     * While an action runs, `resolveActionContext` answers for its type with the loadout that action was started with
+     * (0, "No Loadout", is the worn kit), not the skill's default. A memo keyed on the version must miss when that
+     * pick moves, even though nothing worn changed (a restart with No Loadout over the same gear). Only a changed
+     * pair bumps: every `action_completed` continuation calls this, and a bump re-prices networth and the badges.
+     */
+    _noteRunningLoadout() {
+        const running = runningAction(this.characterActions);
+        const signature = running ? `${running.actionHrid || ''}|${running.characterLoadoutID ?? ''}` : null;
+        if (signature === this._runningLoadoutSignature) return;
+        this._runningLoadoutSignature = signature;
+        this.buffStateVersion++;
     }
 
     /**

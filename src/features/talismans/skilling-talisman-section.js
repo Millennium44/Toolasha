@@ -39,7 +39,7 @@ const ACTION_TIP =
 const SECTION_HELP =
     'Test server only. Ranks every skilling talisman line by what it adds to the chosen action, with the loadout ' +
     'picked in the Optimizer (its belt and talismans, its Equipment rows as shown; none picked: the loadout this ' +
-    'skill equips), from the profit and experience math (exact, no sim), and builds the set your belt can hold. ' +
+    'skill equips, or while an action of this skill runs, the loadout it was started with), from the profit and experience math (exact, no sim), and builds the set your belt can hold. ' +
     'Practical sets (the default) cap the grades; Budget sets fit an expected orb cost per talisman.';
 
 /**

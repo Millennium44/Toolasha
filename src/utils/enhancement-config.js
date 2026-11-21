@@ -94,8 +94,9 @@ function getLiveOnlyEnhancingBonuses({ includeAchievement = true } = {}) {
  *
  * @param {Object} [options]
  * @param {{equipment: Map, drinks: Array}|null} [options.actionContext=null] - Detect from this gear
- *   and these drinks (a queued row's loadout) instead of the per-skill default pick. Only the
- *   detected (auto) path reads it: manual parameters describe a bench the player typed in.
+ *   and these drinks (a queued row's loadout) instead of the per-skill default pick. The detected
+ *   (auto) path reads all of it; manual parameters describe a bench the player typed in, and take
+ *   only the talisman Specials (Conservation, Epiphany) off it, which are worn, never typed.
  * @returns {Object} Enhancement parameters for simulator, tagged with `paramsSource`
  *   ('auto' | 'manual') and `manualOverrides` (labels of edited fields)
  */
@@ -105,7 +106,7 @@ export function getEnhancingParams({ actionContext = null } = {}) {
     if (autoDetect) {
         return getAutoDetectedParams(actionContext);
     } else {
-        return getManualParams();
+        return getManualParams({ actionContext });
     }
 }
 
@@ -134,6 +135,7 @@ const DETECTION_CACHE_MS = 1000;
 let _detectionCache = null;
 let _detectionCacheAt = 0;
 let _detectionCacheFor = null;
+let _detectionCacheVersion = null;
 
 /**
  * Detected gear settings, memoised for a moment.
@@ -149,13 +151,22 @@ let _detectionCacheFor = null;
 function getDetectedSettingsCached() {
     const now = Date.now();
     const character = dataManager.getCurrentCharacterId?.() ?? null;
-    if (_detectionCache && _detectionCacheFor === character && now - _detectionCacheAt < DETECTION_CACHE_MS) {
+    // The buff state version moves with the worn gear, the drink slots and the running action's loadout id: each
+    // changes which gear detection reads (a running enhance started with No Loadout reads the worn kit)
+    const version = dataManager.getBuffStateVersion?.() ?? null;
+    if (
+        _detectionCache &&
+        _detectionCacheFor === character &&
+        _detectionCacheVersion === version &&
+        now - _detectionCacheAt < DETECTION_CACHE_MS
+    ) {
         return _detectionCache;
     }
 
     _detectionCache = getDetectedGearSettings();
     _detectionCacheAt = now;
     _detectionCacheFor = character;
+    _detectionCacheVersion = version;
     return _detectionCache;
 }
 
@@ -167,6 +178,7 @@ export function resetDetectedSettingsCache() {
     _detectionCache = null;
     _detectionCacheAt = 0;
     _detectionCacheFor = null;
+    _detectionCacheVersion = null;
 }
 
 /**
@@ -537,7 +549,7 @@ export function getDetectedGearSettings() {
  *   "pro rates" run: a fixed, top-end kit nobody's gear can change.
  * @returns {Object} Manual parameters
  */
-function getManualParams({ useShippedDefaults = false } = {}) {
+function getManualParams({ useShippedDefaults = false, actionContext = null } = {}) {
     const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
 
     // What this character actually has. Used to fill in every manual field the player never
@@ -940,7 +952,7 @@ function getManualParams({ useShippedDefaults = false } = {}) {
         blessedTeaBonus: getBlessedTeaBonus(itemDetailMap), // Double-jump chance from item data
         // Talisman Specials are worn, not typed into the simulator: a manual bench takes the character's own, and the
         // Pro kit takes none (it describes a professional's bench, not this character's belt)
-        ...(useShippedDefaults ? { conservation: 0, epiphany: 0 } : ownEnhancingSpecials()),
+        ...(useShippedDefaults ? { conservation: 0, epiphany: 0 } : ownEnhancingSpecials(actionContext)),
         teas: teas,
 
         // Display info for manual mode
@@ -1000,13 +1012,16 @@ function getGearSlotBonus(itemHrid, enhancementLevel, itemDetailMap) {
 }
 
 /**
- * The character's own enhancing Specials (talisman lines), read from the gear its enhancing loadout puts on.
+ * The character's own enhancing Specials (talisman lines), read off the given gear (a queued row's loadout), else
+ * off the gear resolveActionContext picks: the running enhance's own loadout (the worn kit for No Loadout), else
+ * the skill's default loadout.
+ * @param {{equipment: Map}|null} [actionContext=null] - The gear to read the lines off
  * @returns {{conservation: number, epiphany: number}} Chances as decimals; 0 with no talisman line (or off the test
  *   server, where there are no talismans)
  */
-function ownEnhancingSpecials() {
+function ownEnhancingSpecials(actionContext = null) {
     try {
-        const { equipment } = resolveActionContext('/action_types/enhancing');
+        const { equipment } = actionContext ?? resolveActionContext('/action_types/enhancing');
         return {
             conservation: talismanStat(equipment, SKILLING_SPECIAL_STATS.conservation),
             epiphany: talismanStat(equipment, SKILLING_SPECIAL_STATS.epiphany),
