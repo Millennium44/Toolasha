@@ -913,8 +913,11 @@ describe('the advisor ranks a supported row on the shared route', () => {
         expect(detail.sharedRoute).toMatchObject({ applied: false, reason: expect.stringContaining('Party') });
     });
 
-    test('an enhancement row on a worn +10: the worn copy is sold once, after tax, against the craft', () => {
+    test('a trade-in row on a worn +10: the worn copy is sold once, after tax, against the craft', () => {
         wearTarget();
+        // The advisor now takes the cheaper of the market trade and enhancing (80M here), so pin enhancing
+        // high to keep the advisor quote on the trade this test is about
+        game.enhanceCost = 500 * M;
         game.prices[TARGET + ':10'] = { ask: 60 * M, bid: 50 * M };
         expect(own(wornRow()).cost).toBe(180 * M - 48 * M);
         const { cost, detail } = priced(wornRow());
