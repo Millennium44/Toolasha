@@ -257,6 +257,69 @@ const MIN_BATTLE_SECONDS = 1;
 const MAX_TICK_GAP_MS = 2000;
 
 /** @returns {boolean} */
+/** How far back the hit tape reaches, and the most hits it keeps however busy the fight */
+export const HIT_TAPE_MS = 60_000;
+const HIT_TAPE_MAX = 600;
+
+/**
+ * The last minute of hits credited to one player alone, oldest first, for the Per-player panel's hit tape:
+ * `{at, playerIndex, name, amount, kind}` where kind is hit, crit, miss, dot or reflect. In memory only and
+ * cleared with the run; never saved with the session.
+ */
+let hitTape = [];
+
+/**
+ * Keep this tick's single-owner hits for the tape. Kills and heals are not hits, and a tick split between
+ * players (or credited to nobody) says nothing about whose bar it was.
+ * @param {Array<Object>} events - From `attributeTick`
+ * @param {number} now - Clock
+ */
+function noteHitTape(events, now) {
+    for (const event of events) {
+        if (event.isKill || event.isHeal || event.isUnattributed) continue;
+        if (event.playerIndex === null || event.playerIndex === undefined) continue;
+        if ((event.weight ?? 1) < 1) continue;
+        const kind = event.isMiss
+            ? 'miss'
+            : event.isDot
+              ? 'dot'
+              : event.isReflect
+                ? 'reflect'
+                : event.isCrit
+                  ? 'crit'
+                  : 'hit';
+        hitTape.push({
+            at: now,
+            playerIndex: event.playerIndex,
+            name: names[event.playerIndex] || null,
+            amount: Number(event.amount) || 0,
+            kind,
+        });
+    }
+    let drop = 0;
+    while (drop < hitTape.length && hitTape[drop].at <= now - HIT_TAPE_MS) drop++;
+    if (hitTape.length - drop > HIT_TAPE_MAX) drop = hitTape.length - HIT_TAPE_MAX;
+    if (drop) hitTape = hitTape.slice(drop);
+}
+
+/**
+ * This character's hits over the last minute, oldest first.
+ *
+ * Matched by name, as the portraits are: a slot is a seat in one fight. With no name to match (a reload
+ * before any battle named the party) a run with a single player is taken to be this character's.
+ *
+ * @param {number} [now] - Clock
+ * @returns {Array<{at: number, amount: number, kind: string}>}
+ */
+export function recentHits(now = Date.now()) {
+    const recent = hitTape.filter((hit) => hit.at > now - HIT_TAPE_MS && hit.at <= now);
+    const self = dataManager.getCurrentCharacterName?.() || null;
+    if (self && recent.some((hit) => hit.name === self)) return recent.filter((hit) => hit.name === self);
+    const slots = new Set(recent.map((hit) => hit.playerIndex));
+    if (slots.size === 1 && recent.every((hit) => !hit.name)) return recent;
+    return [];
+}
+
 export function isFilteringNonDamaging() {
     return filterNonDamaging;
 }
@@ -285,6 +348,7 @@ export function resetDamageTracker() {
 /** Start an empty run in memory, leaving any saved session alone */
 function beginRun() {
     state = newAttributionState();
+    hitTape = [];
     reflect = newReflectState();
     sessionKey = null;
     tally = {};
@@ -1137,6 +1201,7 @@ export default {
                 foldEvents(tally, events, { filterNonDamaging, nameOf });
                 foldEnemies(enemyTally, events, nameOf);
                 foldTeam(team, events);
+                noteHitTape(events, now);
 
                 // Credited only to a tick's sole owner, so a kill on a shared or
                 // ownerless tick stays a kill of the monster and nobody's

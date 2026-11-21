@@ -68,6 +68,7 @@ import { damageBreakdown, actionLabel } from './damage-tracker.js';
 import { takenBreakdown } from './damage-taken-tracker.js';
 import { rotationAudit, startRotationTracker, stopRotationTracker } from './rotation-tracker.js';
 import { dpsGraphHTML, startDpsSampler, stopDpsSampler, wireDpsGraph } from './dps-graph.js';
+import { hitTapeHTML } from './hit-tape.js';
 import { savedCombatGraphHTML, startCombatHistory, stopCombatHistory, wireSavedCombatGraph } from './combat-history.js';
 import {
     cachedHistoryIndex,
@@ -1051,6 +1052,8 @@ export function drawBoard(body, sources) {
         boardTabsHTML(TABS, tab) +
         // DPS-over-time graph — dps-graph.js, or the saved session's own
         (tab === 'damage' ? (sources?.graphHTML ? sources.graphHTML() : dpsGraphHTML()) : '') +
+        // The hit tape is the live run's only: a saved session keeps no hits
+        (tab === 'damage' && !sources?.graphHTML ? hitTapeHTML() : '') +
         notesHTML(note) +
         reconcile +
         partyNote +

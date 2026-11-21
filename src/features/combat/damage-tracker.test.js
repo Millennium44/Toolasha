@@ -1045,3 +1045,90 @@ describe('healing done', () => {
         expect(players.find((row) => row.name === 'Healer')).toBeUndefined();
     });
 });
+
+describe('the hit tape ring', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-03T01:00:00Z'));
+        tracker.default.initialize();
+    });
+
+    afterEach(() => {
+        tracker.default.cleanup();
+        OWN.name = null;
+        vi.useRealTimers();
+    });
+
+    const announce = (players) =>
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players,
+            monsters: {
+                0: { name: 'Eye', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 },
+                1: { name: 'Rat', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 },
+            },
+        });
+
+    test('keeps your own single-owner hits, a miss and a crit included, and not a kill or a teammate', () => {
+        OWN.name = 'Alice';
+        announce({
+            0: { name: 'Alice', isPreparingAutoAttack: true },
+            1: { name: 'Bob', isPreparingAutoAttack: true },
+        });
+        listeners.battle_updated({ battleId: 1, pMap: { 0: { atkCounter: 1 }, 1: { atkCounter: 1 } }, mMap: {} });
+        // Alice hits the Eye for 100
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 2 }, 1: { atkCounter: 1 } },
+            mMap: { 0: { cHP: 900, dmgCounter: 1, critCounter: 0, mHP: 1000 } },
+        });
+        // Alice misses
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 3 }, 1: { atkCounter: 1 } },
+            mMap: { 0: { cHP: 900, dmgCounter: 2, critCounter: 0, mHP: 1000 } },
+        });
+        // Bob crits the Rat
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 3 }, 1: { atkCounter: 2 } },
+            mMap: { 1: { cHP: 500, dmgCounter: 1, critCounter: 1, mHP: 1000 } },
+        });
+
+        const hits = tracker.recentHits(Date.now());
+        expect(hits.map((hit) => [hit.kind, hit.amount])).toEqual([
+            ['hit', 100],
+            ['miss', 0],
+        ]);
+    });
+
+    test('forgets hits older than a minute, and a new run forgets them all', () => {
+        OWN.name = 'Alice';
+        announce({ 0: { name: 'Alice', isPreparingAutoAttack: true } });
+        listeners.battle_updated({ battleId: 1, pMap: { 0: { atkCounter: 1 } }, mMap: {} });
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 2 } },
+            mMap: { 0: { cHP: 900, dmgCounter: 1, mHP: 1000 } },
+        });
+        expect(tracker.recentHits(Date.now())).toHaveLength(1);
+        expect(tracker.recentHits(Date.now() + 61_000)).toEqual([]);
+
+        tracker.resetDamageTracker();
+        expect(tracker.recentHits(Date.now())).toEqual([]);
+    });
+
+    test('a busy minute is capped rather than growing without bound', () => {
+        OWN.name = 'Alice';
+        announce({ 0: { name: 'Alice', isPreparingAutoAttack: true } });
+        listeners.battle_updated({ battleId: 1, pMap: { 0: { atkCounter: 0 } }, mMap: {} });
+        for (let i = 1; i <= 700; i++) {
+            listeners.battle_updated({
+                battleId: 1,
+                pMap: { 0: { atkCounter: i } },
+                mMap: { 0: { cHP: 1000 - i, dmgCounter: i, mHP: 100_000 } },
+            });
+        }
+        expect(tracker.recentHits(Date.now())).toHaveLength(600);
+    });
+});

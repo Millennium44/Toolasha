@@ -72,6 +72,8 @@ vi.mock('../../core/dom-observer.js', () => ({
     },
 }));
 vi.mock('./damage-tracker.js', () => ({
+    HIT_TAPE_MS: 60_000,
+    recentHits: () => opts.hits ?? [],
     damageBreakdown: () => opts.dealt,
     // Real ability names need game data; the shape of the label is all the
     // panel is responsible for
@@ -960,6 +962,46 @@ describe('the DPS graph', () => {
     });
 });
 
+describe('the hit tape', () => {
+    afterEach(() => {
+        opts.hits = [];
+    });
+
+    test('sits on the live Damage tab, one bar per hit, and is gone from the other tabs', () => {
+        const now = Date.now();
+        opts.dealt = { seconds: 100, players: [{ name: 'Abe', damage: 1000, dps: 10, classTag: null }] };
+        opts.hits = [
+            { at: now - 3000, amount: 100, kind: 'hit' },
+            { at: now - 2000, amount: 250, kind: 'crit' },
+            { at: now - 1000, amount: 0, kind: 'miss' },
+        ];
+        const body = board();
+        expect(body.querySelector('[data-hit-tape] svg')).not.toBeNull();
+        // Three bars, a crit cap and the two background strips
+        expect(body.querySelectorAll('[data-hit-tape] rect')).toHaveLength(6);
+        expect(body.textContent).not.toContain('could not be drawn');
+
+        feature._setTab('taken');
+        expect(board().querySelector('[data-hit-tape]')).toBeNull();
+    });
+
+    test('says so when you landed nothing in the last minute', () => {
+        opts.dealt = { seconds: 100, players: [{ name: 'Abe', damage: 1000, dps: 10, classTag: null }] };
+        expect(board().textContent).toContain('No hits of yours in the last minute.');
+    });
+
+    test('is turned off with its setting', () => {
+        const was = opts.enabled;
+        opts.dealt = { seconds: 100, players: [{ name: 'Abe', damage: 1000, dps: 10, classTag: null }] };
+        opts.enabled = false;
+        try {
+            expect(board().querySelector('[data-hit-tape]')).toBeNull();
+        } finally {
+            opts.enabled = was;
+        }
+    });
+});
+
 describe('the shell the panel is built from', () => {
     const switchListeners = () => dataManager.eventListeners.get('character_switched')?.length ?? 0;
 
@@ -1385,6 +1427,8 @@ describe('saved sessions', () => {
         expect(body.textContent).toContain('3 kills');
         expect(body.querySelector('[data-dps-graph] svg')).not.toBeNull();
         expect(body.querySelector('[data-dps-graph] rect[data-band]')).not.toBeNull();
+        // A saved session keeps no hits, so it draws no hit tape
+        expect(body.querySelector('[data-hit-tape]')).toBeNull();
 
         // The per-ability rows open from the snapshot
         click(body, '[data-expand="damage:Tank"]');

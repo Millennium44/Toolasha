@@ -52,7 +52,7 @@ vi.mock('../../core/dom-observer.js', () => ({
         },
     },
 }));
-vi.mock('./damage-tracker.js', () => ({ damageBreakdown: () => opts.run }));
+vi.mock('./damage-tracker.js', () => ({ HIT_TAPE_MS: 60_000, recentHits: () => [], damageBreakdown: () => opts.run }));
 vi.mock('../guild/guild-trial-damage.js', () => ({ liveTrialSplit: () => opts.trial }));
 vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({

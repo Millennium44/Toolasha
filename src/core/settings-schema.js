@@ -3371,6 +3371,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'A small line chart above the rows on the Damage tab: the party, and each player in their own color. On the Per-player panel it covers the same run as the table, with a five-minute and a whole-session view and boss fights shaded red; it reads the damage totals every two seconds and draws a 16-second average. On the trial damage board it draws the trial recorder’s readings, one every fifteen seconds, with the five leading players and a dashed line at each wave or tier change. Either board can hide it. Needs the Per-player panel on for normal fights',
             },
+            combatDpsHitTape: {
+                id: 'combatDpsHitTape',
+                label: 'Hit tape: Show your last minute of hits on the Per-player panel',
+                type: 'checkbox',
+                default: true,
+                help: 'A strip under the DPS graph on the Damage tab with one bar per hit you landed in the last minute: the height is the damage, a gold cap is a crit, a hollow stub is a miss, purple is damage over time and orange is reflected damage. Gaps are the time between waves. Only hits credited to you alone are drawn; a tick shared between party members is left out. Needs the Per-player panel on',
+            },
             combatMeterHistory: {
                 id: 'combatMeterHistory',
                 label: 'Meter history: Keep finished sessions on the Per-player panel and trial damage board',

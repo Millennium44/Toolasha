@@ -51,7 +51,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => null,
     },
 }));
-vi.mock('./damage-tracker.js', () => ({ damageBreakdown: () => opts.dealt }));
+vi.mock('./damage-tracker.js', () => ({ HIT_TAPE_MS: 60_000, recentHits: () => [], damageBreakdown: () => opts.dealt }));
 vi.mock('./damage-taken-tracker.js', () => ({ takenBreakdown: () => opts.taken }));
 vi.mock('./rotation-tracker.js', () => ({ rotationAudit: () => opts.audit }));
 
