@@ -1003,8 +1003,9 @@ class WebSocketHook {
      * @returns {boolean} True if the client data was written
      */
     bridgeClientData() {
-        const pending = this.pendingClientData;
-        if (!pending || typeof GM_setValue === 'undefined') return false;
+        if (typeof GM_setValue === 'undefined') return false;
+        const pending = this.pendingClientData || this.cachedClientDataForBridge();
+        if (!pending) return false;
         try {
             if (pending.fingerprint === null) {
                 let hash = 2166136261;
@@ -1020,11 +1021,14 @@ class WebSocketHook {
             if (
                 typeof GM_getValue !== 'undefined' &&
                 gmGetValue(CLIENT_DATA_FINGERPRINT_KEY, null) === pending.fingerprint &&
-                gmGetValue('toolasha_init_client_data', null) === pending.message
+                (pending.message === null
+                    ? !!gmGetValue('toolasha_init_client_data', null)
+                    : gmGetValue('toolasha_init_client_data', null) === pending.message)
             ) {
                 return false;
             }
-            gmSetValue('toolasha_init_client_data', pending.message);
+            const message = pending.message ?? JSON.stringify(pending.load());
+            gmSetValue('toolasha_init_client_data', message);
             // A failed meta stamp leaves the fingerprint unwritten so the next sim open retries
             if (!this.writeBridgeMeta('toolasha_init_client_data_meta')) return false;
             gmSetValue(CLIENT_DATA_FINGERPRINT_KEY, pending.fingerprint);
@@ -1032,6 +1036,32 @@ class WebSocketHook {
         } catch (error) {
             console.error('[WebSocket] Client data bridge write failed:', error);
             return false;
+        }
+    }
+
+    /**
+     * The game's own cached init client data, for a load that never received an init_client_data
+     * message: the game replays its cached copy from localStorage unless its data version changed,
+     * so nothing was pending and the simulator pages saw missing or stale data. Keyed by the data's
+     * version timestamp, so an unchanged copy is recognized without serializing it; only a copy with
+     * no version is hashed (which costs a serialize, once per sim open).
+     * @returns {{message: null, fingerprint: string, load: function(): Object}|{message: string, fingerprint: null}|null}
+     */
+    cachedClientDataForBridge() {
+        try {
+            if (typeof localStorageUtil === 'undefined' || typeof localStorageUtil.getInitClientData !== 'function') {
+                return null;
+            }
+            const data = localStorageUtil.getInitClientData();
+            if (!data || Object.keys(data).length === 0) return null;
+            const version = data.versionTimestamp;
+            if (version === undefined || version === null || version === '') {
+                return { message: JSON.stringify(data), fingerprint: null };
+            }
+            return { message: null, fingerprint: `v:${String(version)}`, load: () => data };
+        } catch (error) {
+            console.error('[WebSocket] Reading the cached client data failed:', error);
+            return null;
         }
     }
 

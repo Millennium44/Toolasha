@@ -965,6 +965,68 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         }
     });
 
+    describe('client data from the game cache when no init_client_data message arrived', () => {
+        let store;
+        const clientWrites = () => globalThis.GM_setValue.mock.calls.filter(([k]) => k === 'toolasha_init_client_data');
+        beforeEach(() => {
+            store = {};
+            globalThis.GM_setValue = vi.fn((k, v) => {
+                store[k] = v;
+            });
+            globalThis.GM_getValue = vi.fn((k, d) => (k in store ? store[k] : d));
+        });
+        afterEach(() => {
+            delete globalThis.GM_getValue;
+            delete globalThis.localStorageUtil;
+        });
+
+        test('writes the cached copy once on sim open, not on every open', () => {
+            const cached = { type: 'init_client_data', versionTimestamp: 'v1', levelExperienceTable: [1, 2] };
+            globalThis.localStorageUtil = { getInitClientData: vi.fn(() => cached) };
+
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+            expect(clientWrites().map(([, v]) => JSON.parse(v))).toEqual([cached]);
+            expect(metaWrite('toolasha_init_client_data_meta')).toBeTruthy();
+
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+            expect(clientWrites()).toHaveLength(1);
+        });
+
+        test('rewrites when the cached version changed or the stored payload went missing', () => {
+            const util = { getInitClientData: vi.fn(() => ({ versionTimestamp: 'v1', a: 1 })) };
+            globalThis.localStorageUtil = util;
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+
+            util.getInitClientData.mockReturnValue({ versionTimestamp: 'v2', a: 2 });
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+            expect(clientWrites()).toHaveLength(2);
+
+            delete store.toolasha_init_client_data;
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+            expect(clientWrites()).toHaveLength(3);
+        });
+
+        test('a copy without a version is fingerprinted by content', () => {
+            globalThis.localStorageUtil = { getInitClientData: () => ({ levelExperienceTable: [1] }) };
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+            expect(clientWrites()).toHaveLength(1);
+        });
+
+        test('an empty or missing cache writes nothing; a received message wins over the cache', () => {
+            globalThis.localStorageUtil = { getInitClientData: () => ({}) };
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+            expect(clientWrites()).toHaveLength(0);
+
+            globalThis.localStorageUtil = { getInitClientData: () => ({ versionTimestamp: 'cache' }) };
+            const received = msg('init_client_data', { levelExperienceTable: [9] });
+            webSocketHook.processMessage(received);
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+            expect(clientWrites().map(([, v]) => v)).toEqual([received]);
+            webSocketHook.pendingClientData = null;
+        });
+    });
+
     test('stamps toolasha_init_client_data and toolasha_new_battle with the last character seen on this tab', async () => {
         webSocketHook.processMessage(msg('init_character_data', { character: { id: 'char-7', name: 'Zog' } }));
         await new Promise((r) => setTimeout(r, 0));
