@@ -1015,6 +1015,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a line to the profit section comparing buying the item at the current ask against crafting it for your own consumption — materials and teas at your efficiency, with no sales tax on either side, since a dungeon key or a meal you use is never sold. The profit figures above it stay seller-priced.',
             },
+            itemTooltip_heldCraftCompare: {
+                id: 'itemTooltip_heldCraftCompare',
+                label: 'Show craft-vs-sell line for materials you already hold',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a line to the profit section for materials you already hold, such as dungeon drops: what crafting them and selling the result earns per item over selling the materials as they are. Each material is worth what selling it would bring under your pricing mode, after the sales tax; teas are still bought, and the output is priced as in the profit figure. Shown with the production cost and profit section. Not shown for recipes with several outputs, for an enhanced upgrade item, for Iron Cow characters, or when a material, a tea or the output has no market price.',
+            },
             itemTooltip_detailedProfit: {
                 id: 'itemTooltip_detailedProfit',
                 label: 'Show detailed materials breakdown in profit display',

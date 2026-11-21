@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Craft-vs-sell line for materials you hold
+
+Craftable items' profit section adds a "Held materials" line: what crafting materials you already hold (dungeon drops, say) and selling the result earns per item over selling the materials, each valued at its after-tax sale price under your pricing mode.
+
 ### Simulators load without a fresh game login
 
 The Combat Sim and other sim pages now fall back to the game data the game itself cached, so they work even when no new login data arrived in that tab.

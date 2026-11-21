@@ -347,6 +347,8 @@ const {
     default: tooltipPrices,
     ownUseCompare,
     ownUseLine,
+    heldCraftCompare,
+    heldCraftLine,
     loadoutSlotsItem,
     loadoutsContainingItem,
 } = await import('./tooltip-prices.js');
@@ -697,6 +699,121 @@ describe('gathering tooltip and the sell-tax exclusion', () => {
         tooltipPrices.injectGatheringDisplay(el, await tooltipPrices.findGatheringSources('/items/apple'));
         expect(el.textContent.match(/⚠/g)).toHaveLength(2);
         expect(el.innerHTML).not.toContain('title=');
+    });
+});
+
+describe('held materials: craft vs sell them', () => {
+    // A bracer-shaped recipe: an upgrade item plus two inputs at a fractional Artisan amount,
+    // two items a craft (Gourmet off), so per-action figures halve into per-item ones
+    const materials = () => [
+        { itemHrid: '/items/sighted_bracers', amount: 1, totalCost: 2_000_000, isUpgradeItem: true },
+        { itemHrid: '/items/marksman_brooch', amount: 0.9, totalCost: 4_500_000 },
+        { itemHrid: '/items/umbral_bracers', amount: 2.7, totalCost: 1_350_000 },
+    ];
+    const data = (overrides = {}) => ({
+        outputAmount: 2,
+        gourmetBonus: 0,
+        materialCosts: materials(),
+        teaCosts: [{ itemHrid: '/items/artisan_tea', missingPrice: false }],
+        // Bought materials 7.85M a craft = 3.925M an item
+        costPerItem: 3_925_000,
+        profitPerItem: 100_000,
+        ...overrides,
+    });
+    const bids = {
+        '/items/sighted_bracers': 1_800_000,
+        '/items/marksman_brooch': 4_000_000,
+        '/items/umbral_bracers': 400_000,
+    };
+    const sellOf = (hrid) => bids[hrid] ?? null;
+
+    test('swaps the bought material cost for the held materials sale value, after tax', () => {
+        taxState.rate = 0.04;
+        const compared = heldCraftCompare(data(), null, { sellOf });
+        // Held per craft: (1.8M×1 + 4M×0.9 + 400K×2.7) × 0.96 = 6.48M × 0.96 = 6,220,800 → per item 3,110,400
+        expect(compared.heldValue).toBeCloseTo(3_110_400, 0);
+        // 100K + 3.925M − 3,110,400
+        expect(compared.net).toBeCloseTo(914_600, 0);
+        expect(compared.partlyUnpriced).toBe(false);
+    });
+
+    test('no tax on the materials when the profit figure leaves the sale tax out', () => {
+        taxState.rate = 0.04;
+        const compared = heldCraftCompare(data({ excludeSellTax: true }), null, { sellOf });
+        expect(compared.heldValue).toBeCloseTo(3_240_000, 0);
+    });
+
+    test('Gourmet copies share the held materials like the bought ones', () => {
+        const compared = heldCraftCompare(data({ gourmetBonus: 0.25 }), null, { sellOf });
+        // 6.48M over 2 × 1.25 items
+        expect(compared.heldValue).toBeCloseTo(2_592_000, 0);
+    });
+
+    test('an unpriced held material hides the line instead of counting as free', () => {
+        const compared = heldCraftCompare(data(), null, {
+            sellOf: (hrid) => (hrid === '/items/umbral_bracers' ? null : sellOf(hrid)),
+        });
+        expect(compared).toBeNull();
+    });
+
+    test('only the held set is swapped; the rest stays bought', () => {
+        const compared = heldCraftCompare(data(), null, { sellOf, held: new Set(['/items/marksman_brooch']) });
+        // Held: 4M × 0.9 = 3.6M a craft; bought rest: 2M + 1.35M = 3.35M a craft
+        expect(compared.heldValue).toBeCloseTo(1_800_000, 0);
+        expect(compared.net).toBeCloseTo(100_000 + 3_925_000 - 1_675_000 - 1_800_000, 0);
+    });
+
+    test('coins are worth their face value, untaxed', () => {
+        taxState.rate = 0.04;
+        const compared = heldCraftCompare(
+            data({ materialCosts: [{ itemHrid: '/items/coin', amount: 1000, totalCost: 1000 }], costPerItem: 500 }),
+            null,
+            { sellOf }
+        );
+        expect(compared.heldValue).toBe(500);
+    });
+
+    test.each([
+        ['several outputs', data(), { outputItems: [{}, {}] }],
+        ['an enhanced upgrade input', data({ outputVariants: [{ enhancementLevel: 1 }] }), null],
+        ['an unpriced output', data({ outputPriceMissing: true }), null],
+        ['an unpriced tea', data({ teaCosts: [{ missingPrice: true }] }), null],
+        ['no materials', data({ materialCosts: [] }), null],
+    ])('says nothing for %s', (_label, profitData, action) => {
+        expect(heldCraftCompare(profitData, action, { sellOf })).toBeNull();
+    });
+
+    test('an unpriced bonus drop makes the figure a lower bound, drawn neutral', () => {
+        const compared = heldCraftCompare(data({ bonusRevenue: { hasMissingPrices: true } }), null, { sellOf });
+        expect(compared.partlyUnpriced).toBe(true);
+        const line = heldCraftLine(compared);
+        expect(line.text).toContain('≥+');
+        expect(line.color).toBe('#abc');
+    });
+
+    test('the line is green when crafting wins and red when selling them does', () => {
+        const win = heldCraftLine({ net: 2_100_000, heldValue: 74_300_000, partlyUnpriced: false });
+        expect(win.text).toBe(
+            `Held materials: craft +${formatKMB(2_100_000)}/item over selling them (they sell for ${formatKMB(74_300_000)})`
+        );
+        expect(win.color).toBe('#0f0');
+        const loss = heldCraftLine({ net: -500_000, heldValue: 1_000_000, partlyUnpriced: false });
+        expect(loss.text).toContain(`craft ${formatKMB(-500_000)}/item`);
+        expect(loss.color).toBe('#f00');
+    });
+
+    test('the profit section draws it from the held basis, not the chain-timed figure', () => {
+        const el = itemTooltip('Marksman Bracers');
+        const shown = {
+            ...data({ profitPerItem: -9_000_000 }),
+            itemPrice: { ask: 80_000_000, bid: 76_000_000 },
+            profitPerHour: -1,
+            profitPerDay: -24,
+        };
+        // Every material sells for 10 in this file's price mock: 1 + 0.9 + 2.7 = 4.6 a craft, 2.3 an item
+        tooltipPrices.injectProfitDisplay(el, shown, false, [], data({ profitPerItem: 50_000 }));
+        expect(el.textContent).toContain(`Held materials: craft +${formatKMB(50_000 + 3_925_000 - 2.3)}/item`);
+        expect(el.textContent).toContain('over selling them');
     });
 });
 

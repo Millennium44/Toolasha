@@ -34,6 +34,7 @@ import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { applyLoadoutLevelToGameLines } from '../../utils/loadout-tooltip-rewrite.js';
 import { getAlchemyOutputShopValue } from '../../utils/alchemy-shop-value.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { currentPricingSideChoice } from '../../utils/pricing-side-select.js';
 import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { resolveItemPrice, calculatePriceAfterTax } from '../../utils/profit-helpers.js';
@@ -123,6 +124,9 @@ const TOOLTIP_FEATURE_SETTINGS = [
 
 /** The setting that shows the Keep chip (and arms K) on tooltips */
 const KEEP_CHIP_SETTING = 'itemTooltip_selfUseKeepChip';
+
+/** The held-materials line in the profit section */
+const HELD_CRAFT_SETTING = 'itemTooltip_heldCraftCompare';
 
 /** Hover text on every self-use alchemy line. */
 function selfUseTitle() {
@@ -413,6 +417,89 @@ export function ownUseLine(comparison) {
     return {
         text: `Own use: make ≈${make} vs buy ${buy} — ${wins} saves ${formatKMB(comparison.saves)} (${pct}%)`,
         color: comparison.cheaper === 'make' ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS,
+    };
+}
+
+/**
+ * Crafting with materials you already hold (dungeon drops, say) and selling the result, versus
+ * selling those materials as they are.
+ *
+ * Every held input is worth what selling it would bring: its sell-side price under the pricing
+ * mode, after the sales tax (no tax when the profit figures leave it out, so both sides match).
+ * Coins are worth their face value. Teas are still bought. The output, bonus drops and Prosperity
+ * stay exactly as the profit line above prices them. Per finished item, from that line:
+ *   net = profitPerItem + costPerItem − held value per item
+ * which takes the bought material cost back out and puts the held materials' sale value in. Per
+ * item rather than per hour because a held upgrade input is not crafted, so its crafting time
+ * (inside the hour figures when the upgrade item is costed as crafted) does not apply; the caller
+ * passes a profit figure computed with the upgrade item owned for that case.
+ *
+ * @param {Object|null} profitData - From `profitCalculator.calculateProfit`
+ * @param {Object|null} [actionDetail] - The producing action's detail, for the multi-output gate
+ * @param {Object} opts
+ * @param {(hrid: string) => number|null} opts.sellOf - An input's sell-side price, before tax
+ * @param {Set<string>|null} [opts.held] - Inputs held; null means every input. The rest stay bought.
+ * @returns {{net: number, heldValue: number, partlyUnpriced: boolean}|null} Per finished item;
+ *   null when a held input, the output or a tea has no price, or the recipe has several outputs
+ */
+export function heldCraftCompare(profitData, actionDetail = null, { sellOf, held = null } = {}) {
+    if (!profitData || typeof sellOf !== 'function') return null;
+    if ((actionDetail?.outputItems?.length ?? 0) > 1) return null;
+    // An enhanced upgrade input: the line would need that level's sale price, which a +0
+    // tooltip does not know
+    if (profitData.outputVariants) return null;
+    // An output with no market price cannot be sold, which is the whole comparison
+    if (profitData.outputPriceMissing) return null;
+    if (Array.isArray(profitData.teaCosts) && profitData.teaCosts.some((entry) => entry.missingPrice)) return null;
+    const materials = profitData.materialCosts;
+    if (!Array.isArray(materials) || materials.length === 0) return null;
+
+    const perAction = Number(profitData.outputAmount) * (1 + (Number(profitData.gourmetBonus) || 0));
+    const profitPerItem = Number(profitData.profitPerItem);
+    const costPerItem = Number(profitData.costPerItem);
+    if (!(perAction > 0) || !Number.isFinite(profitPerItem) || !Number.isFinite(costPerItem)) return null;
+
+    // The character-aware tax (none for Iron Cow), unless the profit figure leaves tax out
+    const afterTax = (price) => (profitData.excludeSellTax ? price : calculatePriceAfterTax(price, MARKET_TAX));
+    let heldPerAction = 0;
+    let boughtPerAction = 0;
+    for (const material of materials) {
+        const amount = Number(material.amount) || 0;
+        if (held && !held.has(material.itemHrid)) {
+            boughtPerAction += Number(material.totalCost) || 0;
+            continue;
+        }
+        if (material.itemHrid === '/items/coin') {
+            heldPerAction += amount;
+            continue;
+        }
+        const price = Number(sellOf(material.itemHrid));
+        if (!(price > 0)) return null;
+        heldPerAction += amount * afterTax(price);
+    }
+    const heldValue = heldPerAction / perAction;
+    // Inputs left bought are still a cost; only the held ones are swapped for their sale value
+    const net = profitPerItem + costPerItem - boughtPerAction / perAction - heldValue;
+    return { net, heldValue, partlyUnpriced: Boolean(profitData.bonusRevenue?.hasMissingPrices) };
+}
+
+/**
+ * The held-materials line's text and color: profit green when crafting beats selling the
+ * materials, loss red when it does not, informational blue on a lower bound.
+ * @param {Object|null} comparison - From {@link heldCraftCompare}
+ * @returns {{text: string, color: string}|null}
+ */
+export function heldCraftLine(comparison) {
+    if (!comparison) return null;
+    const floor = comparison.partlyUnpriced ? '≥' : '';
+    const sign = comparison.net > 0 ? '+' : '';
+    let color = comparison.net >= 0 ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
+    if (comparison.partlyUnpriced) color = config.COLOR_TOOLTIP_INFO;
+    return {
+        text:
+            `Held materials: craft ${floor}${sign}${formatKMB(comparison.net)}/item over selling them ` +
+            `(they sell for ${formatKMB(comparison.heldValue)})`,
+        color,
     };
 }
 
@@ -943,8 +1030,15 @@ class TooltipPrices {
             // Self-use alchemy values a real bench, so it reads the figure with no scroll assumed
             craftProfitData = realProfitData ?? null;
             if (isStale()) return;
+            // A held upgrade item is not crafted first, so the held-materials line reads a figure
+            // without the upgrade item's crafting time in it
+            let heldBasis = profitData;
+            if (profitData?.upgradeChainCrafted && config.getSetting(HELD_CRAFT_SETTING) && !isIronCowCharacter()) {
+                heldBasis = (await calculateTooltipCraftProfit(itemHrid, { upgradeItemOwned: true })).profitData;
+                if (isStale()) return;
+            }
             if (profitData) {
-                this.injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip, simulated);
+                this.injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip, simulated, heldBasis);
             }
         }
 
@@ -1561,8 +1655,9 @@ class TooltipPrices {
      * @param {Object} profitData - Profit calculation data
      * @param {boolean} isCollectionTooltip - True if this is a collection tooltip
      * @param {string[]} [simulated] - Short names of the scrolls the figures assume (the tiles' simulation)
+     * @param {Object|null} [heldBasis] - The figure the held-materials line reads (see {@link heldCraftCompare})
      */
-    injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip = false, simulated = []) {
+    injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip = false, simulated = [], heldBasis = null) {
         const scrollMark = tileScrollMarker(simulated);
         const scrollTitle = tileScrollTitle(simulated);
         const tooltipText = isCollectionTooltip
@@ -1627,6 +1722,26 @@ class TooltipPrices {
                     'Buying vs crafting at your own bench cost per item (materials + teas, your efficiency and ' +
                     'Gourmet). Both sides use your profit pricing mode, so the buy figure is the ask or the bid ' +
                     'that mode would pay. No sales tax on either side — a consumed item is never sold.';
+                html += `<div style="color: ${line.color}; margin-top: 4px;" title="${escapeAttribute(title)}">${line.text}${scrollMark}</div>`;
+            }
+        }
+
+        // An Iron Cow character cannot sell the materials on the market, so there is no choice to show
+        if (config.getSetting(HELD_CRAFT_SETTING) && !isIronCowCharacter()) {
+            const basis = heldBasis ?? profitData;
+            const action = dataManager.getActionDetails?.(basis?.actionHrid) ?? null;
+            const line = heldCraftLine(
+                heldCraftCompare(basis, action, {
+                    sellOf: (hrid) => getItemPrice(hrid, { context: 'profit', side: 'sell' }),
+                })
+            );
+            if (line) {
+                const title =
+                    (scrollTitle ? `${scrollTitle} ` : '') +
+                    'For materials you already hold (dungeon drops, say): crafting them and selling the result, ' +
+                    'against selling the materials as they are. Each material is worth what selling it brings ' +
+                    'under your pricing mode, after the sales tax; teas are still bought; the output is priced ' +
+                    'as in the profit line.';
                 html += `<div style="color: ${line.color}; margin-top: 4px;" title="${escapeAttribute(title)}">${line.text}${scrollMark}</div>`;
             }
         }

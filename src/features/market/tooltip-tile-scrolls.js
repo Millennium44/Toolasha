@@ -38,14 +38,15 @@ export function tooltipScrollSignature(itemHrid) {
 /**
  * Craft profit for an item's tooltip, with the tiles' scrolls applied when they apply to its action.
  * @param {string} itemHrid
+ * @param {Object} [extra] - More `calculateProfit` options (`upgradeItemOwned` for the held-materials line)
  * @returns {Promise<{profitData: Object|null, realProfitData: Object|null, simulated: string[]}>}
  *   `profitData` is what the tooltip shows; `realProfitData` is the same craft with no scroll assumed (the
  *   same object when nothing is simulated) for readers that value a real bench, such as self-use alchemy;
  *   `simulated` is the short names of the scrolls assumed (empty: the figures are the real ones)
  */
-export async function calculateTooltipCraftProfit(itemHrid) {
+export async function calculateTooltipCraftProfit(itemHrid, extra = {}) {
     // No keepSellTax: the tile follows the personal-use sell-tax toggle, so the tooltip does too
-    const options = {};
+    const options = { ...extra };
     const producing = producingAction(itemHrid);
     if (!producing || getTileScrolls(producing.actionType).size === 0) {
         const profitData = await profitCalculator.calculateProfit(itemHrid, options);
