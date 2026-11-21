@@ -199,6 +199,61 @@ describe('a whole loadout at once', () => {
         const map = store.getSnapshotForSkill('/action_types/enhancing');
         expect(map.get('/item_locations/back').enhancementLevel).toBe(20);
     });
+
+    describe('which loadout a skill or combat starts from', () => {
+        const COMBAT = '/action_types/combat';
+        const FORAGING = '/action_types/foraging';
+        const gear = [{ itemLocationHrid: '/item_locations/back', itemHrid: CAPE, enhancementLevel: 0 }];
+        const entry = (name, actionTypeHrid, isDefault, ordinal) => ({
+            name,
+            actionTypeHrid,
+            isDefault,
+            ordinal,
+            equipment: gear,
+        });
+        const storeWith = (...list) => {
+            const store = new loadoutSnapshot.constructor();
+            store.snapshotsReady = true;
+            store.snapshots = Object.fromEntries(list.map((snapshot) => [snapshot.name, snapshot]));
+            return store;
+        };
+
+        test('combat takes the combat default, never an All Skills default with gear', () => {
+            const store = storeWith(
+                entry('Everything', '', true, 0),
+                entry('Spare', COMBAT, false, 1),
+                entry('Fighting', COMBAT, true, 2)
+            );
+            expect(store.findSnapshotForSkill(COMBAT).name).toBe('Fighting');
+        });
+
+        test('combat with only a non-default combat loadout takes it, over an All Skills default', () => {
+            const store = storeWith(entry('Everything', '', true, 0), entry('Spare', COMBAT, false, 1));
+            expect(store.findSnapshotForSkill(COMBAT).name).toBe('Spare');
+        });
+
+        test('combat with no combat loadout at all is the worn gear, never All Skills', () => {
+            const store = storeWith(entry('Everything', '', true, 0), entry('Other', '', false, 1));
+            expect(store.findSnapshotForSkill(COMBAT)).toBeNull();
+            expect(store.getSnapshotForSkill(COMBAT)).toBeNull();
+        });
+
+        test('a skill with only an All Skills default takes it', () => {
+            const store = storeWith(entry('Everything', '', true, 0), entry('Spare', COMBAT, true, 1));
+            expect(store.findSnapshotForSkill(FORAGING).name).toBe('Everything');
+        });
+
+        test('a skill default beats the All Skills default; a skill loadout that is not default does not', () => {
+            const store = storeWith(
+                entry('Everything', '', true, 0),
+                entry('Foraging B', FORAGING, false, 1),
+                entry('Foraging A', FORAGING, true, 2)
+            );
+            expect(store.findSnapshotForSkill(FORAGING).name).toBe('Foraging A');
+            const noDefault = storeWith(entry('Everything', '', true, 0), entry('Foraging B', FORAGING, false, 1));
+            expect(noDefault.findSnapshotForSkill(FORAGING).name).toBe('Everything');
+        });
+    });
 });
 
 /**

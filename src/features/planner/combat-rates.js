@@ -116,11 +116,10 @@ function loadouts() {
 /**
  * Every loadout the character keeps for fighting.
  *
- * An "All Skills" loadout counts, because a character with one loadout for
- * everything fights in it — but it sorts below a loadout filed under combat,
- * which is a deliberate statement about fighting and a general one is not.
+ * Only loadouts filed under combat count: an "All Skills" loadout is for
+ * skilling and the game never fights in it. Default first, then the game's order.
  *
- * @returns {Array<Object>} Combat-applicable loadouts, most specific first
+ * @returns {Array<Object>} Combat loadouts, default first
  */
 export function combatLoadouts() {
     let all = [];
@@ -132,10 +131,8 @@ export function combatLoadouts() {
     }
 
     return all
-        .filter((snapshot) => snapshot?.actionTypeHrid === COMBAT_ACTION_TYPE || snapshot?.actionTypeHrid === '')
+        .filter((snapshot) => snapshot?.actionTypeHrid === COMBAT_ACTION_TYPE)
         .sort((a, b) => {
-            const specific = (snapshot) => (snapshot.actionTypeHrid === COMBAT_ACTION_TYPE ? 0 : 1);
-            if (specific(a) !== specific(b)) return specific(a) - specific(b);
             if (Boolean(b.isDefault) !== Boolean(a.isDefault)) return b.isDefault ? 1 : -1;
             return (a.ordinal || 0) - (b.ordinal || 0);
         });
@@ -145,10 +142,10 @@ export function combatLoadouts() {
  * Which loadout the combat rates are judged against.
  *
  * The player's own pick wins when they have made one, because the resolution
- * order below is a guess and a choice is not. Otherwise: a loadout filed under
- * combat and marked default, then any combat loadout, then the all-skills one —
- * the same priority `loadout-snapshot.js` uses everywhere else, so the planner
- * and the profit calculators are looking at the same gear.
+ * order below is a guess and a choice is not. Otherwise: the combat default,
+ * then any other combat loadout; never an All Skills one (skilling only) —
+ * the same rule `loadout-snapshot.js` applies, so the planner and the profit
+ * calculators are looking at the same gear.
  *
  * @param {string|null} [preferred] - A loadout name the player chose
  * @returns {Object|null} The loadout, or null when the character keeps none

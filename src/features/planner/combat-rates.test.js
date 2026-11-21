@@ -316,14 +316,21 @@ describe('combatRatesFromSnapshot — a loadout that has moved on', () => {
 });
 
 describe('which loadout the rates are judged against', () => {
-    test('a combat loadout beats an all-skills one, and a default beats the rest', () => {
+    test('an All Skills loadout is never a combat loadout; the combat default leads, then the game order', () => {
         game.loadouts = [
             loadout('Everything', { actionTypeHrid: '', isDefault: true, ordinal: 0 }),
             loadout('Spare', { ordinal: 2 }),
             loadout('Fighting', { isDefault: true, ordinal: 1 }),
         ];
-        expect(combatLoadouts().map((entry) => entry.name)).toEqual(['Fighting', 'Spare', 'Everything']);
+        expect(combatLoadouts().map((entry) => entry.name)).toEqual(['Fighting', 'Spare']);
         expect(chooseCombatLoadout().name).toBe('Fighting');
+    });
+
+    test('with only an All Skills default and no combat loadout there is nothing to judge against', () => {
+        game.loadouts = [loadout('Everything', { actionTypeHrid: '', isDefault: true, equipment: [{}] })];
+        expect(combatLoadouts()).toEqual([]);
+        expect(chooseCombatLoadout()).toBeNull();
+        expect(chooseCombatLoadout('Everything')).toBeNull();
     });
 
     test('a loadout for a skill is not a combat loadout, however default it is', () => {

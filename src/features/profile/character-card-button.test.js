@@ -196,7 +196,17 @@ describe('character card button', () => {
     test('snapshot exports preserve the current character’s learned/loadout data for extra auras', async () => {
         game.characterData.characterAbilities = [{ abilityHrid: '/abilities/mystic_aura', level: 30 }];
         game.characterData.characterLoadoutMap = { 1: { abilityMap: { 1: '/abilities/mystic_aura' } } };
-        game.snapshots = [{ id: 1, name: 'Main', equipment: [], abilities: [], food: [], drinks: [] }];
+        game.snapshots = [
+            {
+                id: 1,
+                name: 'Main',
+                actionTypeHrid: '/action_types/combat',
+                equipment: [],
+                abilities: [],
+                food: [],
+                drinks: [],
+            },
+        ];
         const pending = handleViewCardFromSnapshot('Main', 1);
         game.resolveScore({ total: 1 });
         await pending;
@@ -210,7 +220,7 @@ describe('character card button', () => {
         ['/action_types/foraging', false],
         ['/action_types/brewing', false],
         ['/action_types/combat', true],
-        ['', true],
+        ['', false],
     ])('a %s loadout card gets extra auras: %s', async (actionTypeHrid, expected) => {
         game.snapshots = [
             { id: 1, name: 'Main', actionTypeHrid, equipment: [], abilities: [], food: [], drinks: [] },

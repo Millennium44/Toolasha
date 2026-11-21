@@ -11526,12 +11526,11 @@ class LabSimUI {
                 if (loadoutId && snapshots[loadoutId]?.name) {
                     this._skillLoadouts[skill.hrid] = snapshots[loadoutId].name;
                 } else {
-                    const match = nonCombatSnapshots.find((s) => s.actionTypeHrid === skill.actionType);
-                    if (match) {
-                        this._skillLoadouts[skill.hrid] = match.name;
-                    } else if (allSkillsSnapshots.length > 0) {
-                        this._skillLoadouts[skill.hrid] = allSkillsSnapshots[0].name;
-                    }
+                    // Rooms are skilling: the game's pick (the skill's default, else the All Skills default)
+                    const match = (loadoutSnapshot() || bundledLoadoutSnapshot).findSnapshotForSkill?.(
+                        skill.actionType
+                    );
+                    if (match?.name) this._skillLoadouts[skill.hrid] = match.name;
                 }
             }
         }

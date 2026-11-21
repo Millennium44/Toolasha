@@ -938,22 +938,22 @@ describe('a restock shows at once', () => {
         }
     });
 
-    test('an empty All Skills loadout keeps its selector and can switch back to food', async () => {
+    test('an empty combat loadout keeps its selector and can switch back to food', async () => {
         const previousBridge = globalThis.window.Toolasha;
         const previousLoadoutPin = consumablesPanel._idleLoadoutName;
         const previousZonePin = consumablesPanel._idleZoneKey;
         const combatLoadout = {
             name: 'Combat Donut',
-            isDefault: false,
+            isDefault: true,
             actionTypeHrid: '/action_types/combat',
             equipment: [],
             food: [{ itemHrid: '/items/blueberry_donut' }],
             drinks: [],
         };
         const allSkillsLoadout = {
-            name: 'All Skills',
-            isDefault: true,
-            actionTypeHrid: '',
+            name: 'Empty Kit',
+            isDefault: false,
+            actionTypeHrid: '/action_types/combat',
             equipment: [],
             food: [],
             drinks: [],
@@ -1005,14 +1005,14 @@ describe('a restock shows at once', () => {
             );
 
             let loadoutSelect = consumablesPanel.bodyEl.querySelector('select:not([data-skill-action-type])');
-            loadoutSelect.value = 'All Skills';
+            loadoutSelect.value = 'Empty Kit';
             loadoutSelect.dispatchEvent(new Event('change'));
 
             expect(consumablesPanel.bodyEl.textContent).toContain('No food or drinks in this loadout.');
             expect(consumablesPanel.bodyEl.textContent).not.toContain('Blueberry Donut');
             expect(consumablesPanel.bodyEl.textContent).not.toContain('HeldItemPer day');
             expect(consumablesPanel.bodyEl.querySelector('select:not([data-skill-action-type])')?.value).toBe(
-                'All Skills'
+                'Empty Kit'
             );
             expect(consumablesPanel._buyQueues.find((queue) => queue.label === 'Idle plan')).toBeUndefined();
 
@@ -1039,6 +1039,36 @@ describe('a restock shows at once', () => {
         try {
             expect(consumablesPanel._idleSection()).toBeNull();
         } finally {
+            if (previousBridge === undefined) delete globalThis.window.Toolasha;
+            else globalThis.window.Toolasha = previousBridge;
+        }
+    });
+
+    test('an All Skills default is never the idle plan loadout: a combat default wins, none means no plan', () => {
+        const previousBridge = globalThis.window.Toolasha;
+        const previousPin = consumablesPanel._idleLoadoutName;
+        const allSkills = { name: 'Everything', isDefault: true, ordinal: 0, actionTypeHrid: '', food: [], drinks: [] };
+        const spare = { name: 'Spare', isDefault: false, ordinal: 1, actionTypeHrid: '/action_types/combat' };
+        const fighting = { name: 'Fighting', isDefault: true, ordinal: 2, actionTypeHrid: '/action_types/combat' };
+        const withSnapshots = (list) => {
+            globalThis.window.Toolasha = {
+                Combat: {
+                    loadoutSnapshot: { getAllSnapshots: () => list, resolveEquipment: (snap) => snap.equipment || [] },
+                },
+            };
+        };
+        try {
+            consumablesPanel._idleLoadoutName = null;
+            withSnapshots([allSkills, spare, fighting]);
+            const options = [...(consumablesPanel._idleSection()?.querySelectorAll('select option') || [])].map(
+                (option) => option.value
+            );
+            expect(options).toEqual(expect.arrayContaining(['Fighting', 'Spare']));
+            expect(options).not.toContain('Everything');
+            withSnapshots([allSkills]);
+            expect(consumablesPanel._idleSection()).toBeNull();
+        } finally {
+            consumablesPanel._idleLoadoutName = previousPin;
             if (previousBridge === undefined) delete globalThis.window.Toolasha;
             else globalThis.window.Toolasha = previousBridge;
         }

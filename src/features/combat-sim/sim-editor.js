@@ -2121,7 +2121,7 @@ export class SimEditor {
         const loadoutId = this._partyLoadoutId();
         if (loadoutId > 0) {
             const snap = (loadoutSnapshot() || bundledLoadoutSnapshot).getSnapshotById?.(loadoutId) ?? null;
-            const combat = Boolean(snap) && (!snap.actionTypeHrid || snap.actionTypeHrid === '/action_types/combat');
+            const combat = Boolean(snap) && snap.actionTypeHrid === '/action_types/combat';
             if (!combat || !this.applyLoadoutByName(snap)) {
                 notes.push(
                     snap && !combat
@@ -2983,9 +2983,8 @@ export class SimEditor {
             // file's own copy of the store is never fed by the websocket, so a
             // direct getAllSnapshots() returns [] and the picker never renders.
             const allSnapshots = (loadoutSnapshot() || bundledLoadoutSnapshot).getAllSnapshots();
-            const filteredSnapshots = allSnapshots.filter(
-                (s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat'
-            );
+            // "All Skills" loadouts are skilling only; combat has its own loadouts
+            const filteredSnapshots = allSnapshots.filter((s) => s.actionTypeHrid === '/action_types/combat');
 
             html += `<div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">`;
             const shownLoadout = this._dropdownLoadoutName();
@@ -2997,7 +2996,7 @@ export class SimEditor {
                     border-radius:4px; padding:2px 6px; font-size:12px; font-family:inherit;">`;
                 html += `<option value=""${!shownLoadout ? ' selected' : ''}>— Current Gear —</option>`;
                 for (const snap of filteredSnapshots) {
-                    const label = snap.name + (snap.actionTypeHrid ? '' : ' (All Skills)');
+                    const label = snap.name;
                     const selected = shownLoadout === snap.name ? ' selected' : '';
                     html += `<option value="${escapeHtml(snap.name)}"${selected}>${escapeHtml(label)}</option>`;
                 }

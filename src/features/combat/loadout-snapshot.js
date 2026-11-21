@@ -30,6 +30,7 @@ import { attachTalismanBonuses, computeLoadoutTalismanBonuses } from '../../util
 // subscription across a bundle boundary.
 export { highestOwnedEnhancements, resolveEnhancementLevel };
 
+const COMBAT_ACTION_TYPE = '/action_types/combat';
 const STORAGE_KEY_PREFIX = 'loadout_snapshots';
 
 /**
@@ -428,7 +429,9 @@ class LoadoutSnapshot {
 
     /**
      * Find the best snapshot for a given action type.
-     * Priority: skill default > all skills default > skill non-default > all skills non-default
+     * Priority: skill default > all skills default > skill non-default > all skills non-default.
+     * Combat never uses an "All Skills" loadout (the game keeps those for skilling only): combat is its own
+     * combat default, then a non-default combat loadout, else null (the gear worn now).
      * @param {string} actionTypeHrid - e.g. "/action_types/brewing"
      * @returns {Object|null} snapshot entry or null
      */
@@ -448,7 +451,7 @@ class LoadoutSnapshot {
                 } else {
                     skillNonDefault = snapshot;
                 }
-            } else if (snapshot.actionTypeHrid === '') {
+            } else if (snapshot.actionTypeHrid === '' && actionTypeHrid !== COMBAT_ACTION_TYPE) {
                 if (snapshot.isDefault) {
                     allSkillsDefault = snapshot;
                 } else {

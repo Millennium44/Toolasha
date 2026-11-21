@@ -3340,20 +3340,14 @@ class ConsumablesPanel {
      * rate outside a fight or a sim. Food with no sim on record still lists,
      * held and priced, with its rate honestly blank.
      *
-     * @returns {HTMLElement|null} Null when no combat or All Skills loadout exists
+     * @returns {HTMLElement|null} Null when no combat loadout exists
      */
     _idleSection() {
         const bridge = window.Toolasha?.Combat?.loadoutSnapshot;
         const snapshots = bridge?.getAllSnapshots?.() || [];
-        const combat = snapshots.filter(
-            (snap) => snap.actionTypeHrid === '/action_types/combat' || snap.actionTypeHrid === ''
-        );
-        combat.sort(
-            (a, b) =>
-                (b.actionTypeHrid === '/action_types/combat') - (a.actionTypeHrid === '/action_types/combat') ||
-                Number(b.isDefault) - Number(a.isDefault) ||
-                (a.ordinal || 0) - (b.ordinal || 0)
-        );
+        // "All Skills" loadouts are skilling only; combat has its own default
+        const combat = snapshots.filter((snap) => snap.actionTypeHrid === '/action_types/combat');
+        combat.sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || (a.ordinal || 0) - (b.ordinal || 0));
         if (!combat.length) return null;
         // The pinned loadout when it still exists, the default otherwise
         const loadout = combat.find((snap) => snap.name === this._idleLoadoutName) || combat[0];

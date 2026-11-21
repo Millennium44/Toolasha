@@ -35,10 +35,7 @@ function savedLoadoutAuras(characterData, clientData, equippedAbilities) {
     const extras = [];
     const loadouts = Object.values(characterData.characterLoadoutMap || {})
         .filter(
-            (loadout) =>
-                loadout &&
-                belongsToCharacter(loadout) &&
-                (!loadout.actionTypeHrid || loadout.actionTypeHrid === '/action_types/combat')
+            (loadout) => loadout && belongsToCharacter(loadout) && loadout.actionTypeHrid === '/action_types/combat'
         )
         .sort((a, b) => (a.ordinal || 0) - (b.ordinal || 0));
     for (const loadout of loadouts) {

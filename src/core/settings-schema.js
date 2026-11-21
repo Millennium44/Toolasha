@@ -3602,9 +3602,7 @@ export const settingsGroups = {
                 options: () => {
                     const snapshot = loadoutSnapshot();
                     const loadouts = snapshot
-                        ? snapshot
-                              .getAllSnapshots()
-                              .filter((s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat')
+                        ? snapshot.getAllSnapshots().filter((s) => s.actionTypeHrid === '/action_types/combat')
                         : [];
                     return [
                         { value: '', label: 'Current Gear' },

@@ -133,11 +133,11 @@ describe('saved-loadout aura export', () => {
         ]);
     });
 
-    it('includes all-skills loadouts but not a skill-specific loadout', () => {
+    it('includes combat loadouts but neither a skill-specific nor an All Skills loadout', () => {
         const data = character();
         data.characterLoadoutMap[10].actionTypeHrid = '/action_types/milking';
         data.characterLoadoutMap[20].actionTypeHrid = '';
-        expect(slots(data).slice(5)).toEqual(['fierce_aura.45', 'mystic_aura.30', 'toughness_aura.90']);
+        expect(slots(data).slice(5)).toEqual(['mystic_aura.30', 'toughness_aura.90', '']);
     });
 
     it('rejects unknown, unlearned, non-aura, and invalid-level entries', () => {

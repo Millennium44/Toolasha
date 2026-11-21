@@ -5103,7 +5103,7 @@ class CombatSimUI {
 
     /**
      * The loadout names offered by the Solo zones + party dungeons pickers —
-     * the same filter (an "All Skills" snapshot, or one saved for combat) the
+     * the same filter (only loadouts saved for combat; "All Skills" is skilling) the
      * Configure tab's own Loadout dropdown applies. Reached through the
      * bridge the same way the other bundle reads do; a store that
      * has not loaded yet (no combat bundle has fed it) offers none, so the
@@ -5114,9 +5114,7 @@ class CombatSimUI {
     _soloPartyLoadoutOptions() {
         const store = loadoutSnapshot();
         if (!store) return [];
-        return (store.getAllSnapshots?.() || []).filter(
-            (s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat'
-        );
+        return (store.getAllSnapshots?.() || []).filter((s) => s.actionTypeHrid === '/action_types/combat');
     }
 
     /**

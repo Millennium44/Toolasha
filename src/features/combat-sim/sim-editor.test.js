@@ -1036,7 +1036,8 @@ describe('loadout picker reads the fed store, not this bundle', () => {
         const select = el.querySelector('#mwi-csim-loadout-select');
         expect(select).toBeTruthy();
         expect(select.textContent).toContain('Bruteforce');
-        expect(select.textContent).toContain('Everything (All Skills)');
+        // An All Skills loadout is skilling only; the combat picker does not offer it
+        expect(select.textContent).not.toContain('Everything');
     });
 
     test('a non-combat loadout is filtered out of the combat picker', () => {
@@ -3910,7 +3911,7 @@ describe('Reset to Party picks your party loadout and the party zone', () => {
     test('applies your slot loadout by id, picking the right one of two same-named loadouts', async () => {
         bridge.snapshots = [
             { id: 111, name: 'Same', actionTypeHrid: COMBAT },
-            { id: 900401, name: 'Same', actionTypeHrid: '' },
+            { id: 900401, name: 'Same', actionTypeHrid: COMBAT },
         ];
         const { el, editor, onResetToParty } = setup(partyInfo());
         await editor.resetToParty({ fromButton: true });

@@ -65,6 +65,7 @@ const game = vi.hoisted(() => ({
     loadoutByMonster: {},
     /** Loadout id → the name the game shows for it */
     loadoutNames: {},
+    skillPick: {},
     /** Loadout id → the abilities that loadout casts */
     loadoutAbilities: {},
     /** buffHrid → level, on every labyrinth loadout's DTO */
@@ -436,6 +437,9 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
         // filters them by — the shape the loadout table reads
         getAllSnapshots: () =>
             Object.values(game.loadoutNames).map((name) => ({ name, actionTypeHrid: '/action_types/woodcutting' })),
+        // The store's own default-first pick for a skill (skill default, else the All Skills default)
+        findSnapshotForSkill: (actionType) =>
+            game.skillPick[actionType] ? { name: game.skillPick[actionType] } : null,
     },
 }));
 
@@ -4704,6 +4708,21 @@ describe('the Skilling tab’s per-character loadout assignments', () => {
         await ui._renderSkillLoadoutTable();
 
         expect(ui._skillLoadouts['/skills/woodcutting']).toBe('Alt WC');
+    });
+
+    test('an unset skill takes the store’s default-first pick, not the first loadout filed for it', async () => {
+        // 'Main WC' is listed first (and is not the default); the game's pick is the default 'Alt WC'.
+        // A skill the store picks nothing for (no default, no All Skills default) stays on Current Gear.
+        storage.values = {};
+        game.skillPick = { '/action_types/woodcutting': 'Alt WC', '/action_types/foraging': 'Everything' };
+        try {
+            await ui._renderSkillLoadoutTable();
+            expect(ui._skillLoadouts['/skills/woodcutting']).toBe('Alt WC');
+            expect(ui._skillLoadouts['/skills/foraging']).toBe('Everything');
+            expect(ui._skillLoadouts['/skills/milking']).toBeUndefined();
+        } finally {
+            game.skillPick = {};
+        }
     });
 
     test('a loadout whose name holds a quote is offered, and saved, under its whole name', async () => {

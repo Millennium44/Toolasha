@@ -14243,7 +14243,9 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // on fresh with one already chosen.
                 mocks.editorLoadoutName = 'Everyday';
                 mocks.editorLoadoutNameFor = { player2: 'Everyday' };
-                mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: '/action_types/combat' }],
+                };
                 ui._soloZonesLoadoutName = null;
                 ui._dungeonsLoadoutName = null;
                 ui._updateSoloPartyLoadoutPickers();
@@ -14259,7 +14261,9 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // Gear: the panel-wide selection is '' but player2 still wears Alpha
                 mocks.editorLoadoutName = '';
                 mocks.editorLoadoutNameFor = { player2: 'Everyday' };
-                mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: '/action_types/combat' }],
+                };
                 ui._activePlayerTab = 'player1';
                 ui._soloZonesLoadoutName = null;
                 ui._dungeonsLoadoutName = null;
@@ -14276,8 +14280,8 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 mocks.editorLoadoutNameFor = { player1: 'Other', player2: 'Everyday' };
                 mocks.loadoutStore = {
                     getAllSnapshots: () => [
-                        { name: 'Other', actionTypeHrid: null },
-                        { name: 'Everyday', actionTypeHrid: null },
+                        { name: 'Other', actionTypeHrid: '/action_types/combat' },
+                        { name: 'Everyday', actionTypeHrid: '/action_types/combat' },
                     ],
                 };
                 ui._activePlayerTab = 'player1';
@@ -14295,10 +14299,21 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 expect(mocks.loadoutApplications).toEqual([]);
             });
 
+            test('the pickers never list an All Skills or a skilling loadout', () => {
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [
+                        { name: 'Everything', actionTypeHrid: '', isDefault: true },
+                        { name: 'Foraging', actionTypeHrid: '/action_types/foraging' },
+                        { name: 'Fighting', actionTypeHrid: '/action_types/combat' },
+                    ],
+                };
+                expect(ui._soloPartyLoadoutOptions().map((s) => s.name)).toEqual(['Fighting']);
+            });
+
             test('each picker applies to only the simulated player, in only its own sweep', async () => {
                 mocks.loadoutStore = {
                     getAllSnapshots: () => [
-                        { name: 'Solo Build', actionTypeHrid: null },
+                        { name: 'Solo Build', actionTypeHrid: '/action_types/combat' },
                         { name: 'Dungeon Build', actionTypeHrid: '/action_types/combat' },
                     ],
                 };
@@ -14420,8 +14435,8 @@ describe('Solo zones + party dungeons: one ranked table', () => {
             test('two loadouts sharing a name resolve to the one actually picked, not always the first', async () => {
                 mocks.loadoutStore = {
                     getAllSnapshots: () => [
-                        { name: 'Build', actionTypeHrid: null, marker: 'first' },
-                        { name: 'Build', actionTypeHrid: null, marker: 'second' },
+                        { name: 'Build', actionTypeHrid: '/action_types/combat', marker: 'first' },
+                        { name: 'Build', actionTypeHrid: '/action_types/combat', marker: 'second' },
                     ],
                 };
                 ui._updateSoloPartyLoadoutPickers();
@@ -14441,8 +14456,8 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // survives another loadout vanishing out from under it.
                 mocks.loadoutStore = {
                     getAllSnapshots: () => [
-                        { id: 'L1', name: 'First', actionTypeHrid: null },
-                        { id: 'L2', name: 'Second', actionTypeHrid: null },
+                        { id: 'L1', name: 'First', actionTypeHrid: '/action_types/combat' },
+                        { id: 'L2', name: 'Second', actionTypeHrid: '/action_types/combat' },
                     ],
                 };
                 ui._updateSoloPartyLoadoutPickers();
@@ -14451,7 +14466,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // "First" is deleted elsewhere (another tab, say) while this
                 // panel stays open — "Second" shifts down to index 0
                 mocks.loadoutStore = {
-                    getAllSnapshots: () => [{ id: 'L2', name: 'Second', actionTypeHrid: null }],
+                    getAllSnapshots: () => [{ id: 'L2', name: 'Second', actionTypeHrid: '/action_types/combat' }],
                 };
 
                 await ui._onSimulateAllZones();
@@ -14472,8 +14487,8 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // silently reattaching to whatever now sits at that position.
                 mocks.loadoutStore = {
                     getAllSnapshots: () => [
-                        { name: 'First', actionTypeHrid: null },
-                        { name: 'Second', actionTypeHrid: null },
+                        { name: 'First', actionTypeHrid: '/action_types/combat' },
+                        { name: 'Second', actionTypeHrid: '/action_types/combat' },
                     ],
                 };
                 ui._updateSoloPartyLoadoutPickers();
@@ -14482,8 +14497,8 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // Reordered — "Second" is now at index 0
                 mocks.loadoutStore = {
                     getAllSnapshots: () => [
-                        { name: 'Second', actionTypeHrid: null },
-                        { name: 'First', actionTypeHrid: null },
+                        { name: 'Second', actionTypeHrid: '/action_types/combat' },
+                        { name: 'First', actionTypeHrid: '/action_types/combat' },
                     ],
                 };
                 ui._updateSoloPartyLoadoutPickers();
@@ -14531,7 +14546,9 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 });
 
                 test('the substitution upgrades the loadout’s own food, not whatever the player wore before it', async () => {
-                    mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Solo Build', actionTypeHrid: null }] };
+                    mocks.loadoutStore = {
+                        getAllSnapshots: () => [{ name: 'Solo Build', actionTypeHrid: '/action_types/combat' }],
+                    };
                     ui._updateSoloPartyLoadoutPickers();
                     pick(soloSelect(), 'Solo Build');
 
@@ -14552,7 +14569,9 @@ describe('Solo zones + party dungeons: one ranked table', () => {
             });
 
             test('picking one leaves the other at its own selection', async () => {
-                mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Dungeon Build', actionTypeHrid: null }] };
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [{ name: 'Dungeon Build', actionTypeHrid: '/action_types/combat' }],
+                };
                 ui._updateSoloPartyLoadoutPickers();
                 pick(dungeonSelect(), 'Dungeon Build');
 
@@ -14566,7 +14585,9 @@ describe('Solo zones + party dungeons: one ranked table', () => {
             });
 
             test('a picked loadout that later disappears resets to null, not just a blank-looking select', () => {
-                mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Solo Build', actionTypeHrid: null }] };
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [{ name: 'Solo Build', actionTypeHrid: '/action_types/combat' }],
+                };
                 ui._updateSoloPartyLoadoutPickers();
                 pick(soloSelect(), 'Solo Build');
                 expect(ui._resolveSoloPartyLoadout(ui._soloZonesLoadoutName).name).toBe('Solo Build');
@@ -14587,7 +14608,9 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // the field null again, the next populate re-defaults it.
                 mocks.editorLoadoutName = 'Everyday';
                 mocks.editorLoadoutNameFor = { player2: 'Everyday' };
-                mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: '/action_types/combat' }],
+                };
                 ui._updateSoloPartyLoadoutPickers();
                 expect(ui._resolveSoloPartyLoadout(ui._soloZonesLoadoutName).name).toBe('Everyday');
             });
@@ -14608,7 +14631,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // the panel after the combat bundle has since loaded one.
                 ui.destroy();
                 mocks.loadoutStore = {
-                    getAllSnapshots: () => [{ id: 'L1', name: 'Solo Build', actionTypeHrid: null }],
+                    getAllSnapshots: () => [{ id: 'L1', name: 'Solo Build', actionTypeHrid: '/action_types/combat' }],
                 };
                 ui.buildPanel();
                 // _allZonesMode outlives destroy()/buildPanel() by design (a
@@ -14635,7 +14658,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
             test('destroy() unsubscribes — an update after teardown does not touch the (rebuilt) panel', () => {
                 ui.destroy();
                 mocks.loadoutStore = {
-                    getAllSnapshots: () => [{ id: 'L1', name: 'Solo Build', actionTypeHrid: null }],
+                    getAllSnapshots: () => [{ id: 'L1', name: 'Solo Build', actionTypeHrid: '/action_types/combat' }],
                 };
                 ui.buildPanel();
                 const listenersAfterFirstBuild = mocks.loadoutUpdateListeners.length;
@@ -14656,7 +14679,9 @@ describe('Solo zones + party dungeons: one ranked table', () => {
              * against the current character's own store.
              */
             test('destroy() (a character switch) clears both per-sweep loadout selections', () => {
-                mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Solo Build', actionTypeHrid: null }] };
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [{ name: 'Solo Build', actionTypeHrid: '/action_types/combat' }],
+                };
                 ui._updateSoloPartyLoadoutPickers();
                 pick(soloSelect(), 'Solo Build');
                 pick(dungeonSelect(), 'Solo Build');

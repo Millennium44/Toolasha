@@ -1927,7 +1927,7 @@ class TaskProfitDisplay {
         container.innerHTML = '';
         const snapshots = getLoadoutSnapshot()
             .getAllSnapshots()
-            .filter((s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat');
+            .filter((s) => s.actionTypeHrid === '/action_types/combat');
 
         const defaultLoadout = config.getSettingValue('combatSim_defaultLoadout', '');
 
