@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancing calculator updates once a run starts
+
+Pressing Enhance switches the panel to Current Action, and the calculator left there kept the figures drawn before the start. It now redraws with the run's loadout and talismans, so a Conservation line's kept protections show while you enhance.
+
 ### Combat no longer uses the All Skills loadout
 
 The All Skills loadout is skilling only, so the Combat Sim, task profit, consumables and planner pickers no longer offer or fall back to it. With no default loadout for a skill or for combat, figures use the gear you wear, as the game does.

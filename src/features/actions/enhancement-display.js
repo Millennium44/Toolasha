@@ -137,8 +137,8 @@ export async function displayEnhancementStats(panel, itemHrid) {
         // Get auto-detected enhancing parameters
         const params = getEnhancingParams();
 
-        // Read Protect From Level from UI
-        const protectFromLevel = getProtectFromLevelFromUI(panel);
+        // Read Protect From Level from UI (the Current Action tab shows it as read-only text)
+        const protectFromLevel = getProtectFromLevelFromUI(panel) || runningPanelLevel(panel, 'protectFrom') || 0;
 
         // Minimum protection level is 2 (dropping from +2 to +1)
         // Protection at +1 is meaningless (would drop to +0 anyway)
@@ -670,6 +670,27 @@ export function getTargetLevelFromUI(panel) {
     // Above what the cost solver models: unreadable, so nothing is shown rather than another level's figure
     if (value > ENHANCEMENT_SOLVER_MAX_LEVEL) return null;
     return Math.max(1, value);
+}
+
+/**
+ * A level the Current Action tab shows as read-only text ("+10", "+2") where the Enhance tab has an
+ * input. Read only by the calculator's own redraw: the other input readers act on inputs that tab
+ * does not have.
+ * @param {HTMLElement} panel - Enhancing panel
+ * @param {'target'|'protectFrom'} kind - Which setting
+ * @returns {number|null} The level (capped to the solver's range), or null when the tab shows none
+ */
+function runningPanelLevel(panel, kind) {
+    const container = panel.querySelector(
+        kind === 'target' ? '[class*="enhancingMaxLevelInputContainer"]' : '[class*="protectionMinLevelInputContainer"]'
+    );
+    if (!container || container.querySelector('input')) return null;
+    const text = container.querySelector('[class*="SkillActionDetail_input"]')?.textContent.trim() ?? '';
+    const match = text.match(/^\+?(\d+)$/);
+    if (!match) return null;
+    const value = parseInt(match[1], 10);
+    if (kind === 'target' && value > ENHANCEMENT_SOLVER_MAX_LEVEL) return null;
+    return Math.min(ENHANCEMENT_SOLVER_MAX_LEVEL, value);
 }
 
 /**
@@ -1588,7 +1609,7 @@ function formatEnhancementDisplay(
 
     // Read once and shared by both sections below it, the way the panel's other lookups
     // (protection item, protect-from level) are read once by the caller and threaded through.
-    const targetLevelForPanel = getTargetLevelFromUI(panel);
+    const targetLevelForPanel = getTargetLevelFromUI(panel) ?? runningPanelLevel(panel, 'target');
     // The panel's own item: a running enhance on some other item says nothing about this one
     const currentLevelForPanel = getCurrentEnhancementLevel(panel, itemDetails.hrid);
 
@@ -1741,17 +1762,19 @@ function findCurrentActionTab(panel) {
  * @param {string} html - HTML to inject
  */
 function injectDisplay(panel, html) {
-    // CRITICAL: Final safety check - verify we're on Enhance tab before injecting
-    // This prevents the calculator from appearing on Current Action tab due to race conditions
+    const existing = panel.querySelector('#mwi-enhancement-stats');
+
+    // The calculator is never added to the Current Action tab. Pressing Enhance switches the game to that tab
+    // and leaves the calculator on screen, though, so one already there is redrawn in place: the run's
+    // Conservation and loadout change its figures, and skipping the redraw froze the pre-run ones
     const currentActionTab = findCurrentActionTab(panel);
-    if (currentActionTab) {
+    if (currentActionTab && !existing) {
         // Check if Current Action tab is active
         if (
             currentActionTab.getAttribute('aria-selected') === 'true' ||
             currentActionTab.classList.contains('Mui-selected') ||
             currentActionTab.getAttribute('tabindex') === '0'
         ) {
-            // Current Action tab is active, don't inject calculator
             return;
         }
     }
@@ -1759,7 +1782,6 @@ function injectDisplay(panel, html) {
     // Save scroll position and expand state before removing existing display
     let savedScrollTop = 0;
     const expandedSections = new Set();
-    const existing = panel.querySelector('#mwi-enhancement-stats');
     if (existing) {
         const scrollContainer = existing.querySelector('#mwi-enhancement-table-scroll');
         if (scrollContainer) {

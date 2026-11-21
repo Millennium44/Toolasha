@@ -161,6 +161,63 @@ async function protectionsTo5() {
     return Number(row[column].textContent.trim().replace(/,/g, ''));
 }
 
+/**
+ * The panel as the game draws it once an enhance runs: the Current Action tab is selected and Target Level and
+ * Protect From Level are read-only text, not inputs (captured live 2026-11-21, Cheese Boots to +10 from +2).
+ * @param {boolean} withCalculator - Whether the calculator was already on screen (drawn on the Enhance tab)
+ * @returns {Promise<HTMLElement>} The panel
+ */
+async function runningPanel(withCalculator) {
+    document.body.innerHTML = '';
+    const shell = document.createElement('div');
+    shell.innerHTML =
+        '<div role="tablist"><button role="tab" aria-selected="false" tabindex="-1">Enhance</button>' +
+        '<button role="tab" aria-selected="true" tabindex="0" class="Mui-selected">Current Action</button></div>' +
+        '<div class="SkillActionDetail_enhancingComponent__17bOx">' +
+        '<div class="SkillActionDetail_enhancingMaxLevelInputContainer__1VCWl"><div class="SkillActionDetail_label__1mGQJ">Target Level</div><div class="SkillActionDetail_input__1G-kE">+5</div></div>' +
+        '<div class="SkillActionDetail_protectionItemInputContainer__35ChM"><svg><use href="/static/media/items_sprite.abc.svg#cheese_sword_protector"></use></svg></div>' +
+        '<div class="SkillActionDetail_protectionMinLevelInputContainer__1HSzb"><span class="SkillActionDetail_label__1mGQJ">Protect From Level</span><div class="SkillActionDetail_input__1G-kE">+2</div></div>' +
+        (withCalculator ? '<div id="mwi-enhancement-stats">pre-run figures</div>' : '') +
+        '</div>';
+    document.body.appendChild(shell);
+    const panel = shell.querySelector('.SkillActionDetail_enhancingComponent__17bOx');
+    await displayEnhancementStats(panel, '/items/cheese_sword');
+    return panel;
+}
+
+/**
+ * The +5 row's Protection cell.
+ * @param {HTMLElement} panel - Panel
+ * @returns {number} Expected protections to +5
+ */
+function plusFiveProtections(panel) {
+    const headers = [...panel.querySelectorAll('th')];
+    const column = headers.findIndex((th) => th.textContent.trim() === 'Protection');
+    expect(column).toBeGreaterThanOrEqual(0);
+    const row = [...panel.querySelectorAll('tr')]
+        .map((r) => [...r.querySelectorAll('td')])
+        .find((cells) => cells[0]?.textContent.trim() === '+5');
+    return Number(row[column].textContent.trim().replace(/,/g, ''));
+}
+
+describe('a running enhance on the Current Action tab', () => {
+    test('redraws the calculator left on screen with the run figures', async () => {
+        const plain = await protectionsTo5();
+        state.conservation = 0.5;
+        clearProtectSweepMemo();
+        const panel = await runningPanel(true);
+        expect(panel.textContent).not.toContain('pre-run figures');
+        expect(panel.querySelectorAll('#mwi-enhancement-stats')).toHaveLength(1);
+        // Read-only Protect From +2 and the slot's protector still apply, thinned by Conservation
+        expect(plusFiveProtections(panel)).toBeCloseTo(plain * 0.5, 1);
+    });
+
+    test('adds no calculator to a Current Action tab that has none', async () => {
+        const panel = await runningPanel(false);
+        expect(panel.querySelector('#mwi-enhancement-stats')).toBeNull();
+    });
+});
+
 describe('the costs-by-level Protection column', () => {
     test('thins out by the Conservation share', async () => {
         const plain = await protectionsTo5();
