@@ -26,7 +26,17 @@ fi
 
 cd "$integ" || exit 2
 git fetch -q origin || exit 2
-if ! git checkout -q --detach "$ref"; then
+# A branch that exists only on origin (pushed by sha from an agent worktree) has no local ref here, and
+# `git checkout --detach <name>` then fails ("--detach cannot be used with -b"). Resolve it to a commit first.
+if sha="$(git rev-parse -q --verify "$ref^{commit}" 2>/dev/null)"; then
+    :
+elif sha="$(git rev-parse -q --verify "origin/$ref^{commit}" 2>/dev/null)"; then
+    echo "[gate-branch] $ref has no local ref; using origin/$ref"
+else
+    echo "[gate-branch] $ref is neither a local ref nor origin/$ref" >&2
+    exit 2
+fi
+if ! git checkout -q --detach "$sha"; then
     echo "[gate-branch] could not check out $ref in $integ" >&2
     exit 2
 fi

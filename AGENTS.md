@@ -91,6 +91,10 @@ push to `main` or merge.
 - Prefer independent branches to stacked ones. If you must stack, name the base in the PR.
 - **Say plainly what was and was not verified in a live game client.** Passing tests do not establish
   that anything works in game, and reviewers need to know which is which.
+- **A bug never reproduced live is checked live before landing.** When the diagnosis came from reading
+  code, load the branch (`bash scripts/dev-load-branch.sh origin/main <branch>`) and confirm the symptom is
+  gone on the test server before merging. On 2026-11-20, #1079 passed tests, review and Codex, then failed
+  live because the redraw it added never fixed what the player saw.
 - **Prove each regression test fails before the fix**: copy the fixed source aside, restore `HEAD`'s
   version, run the test, copy the fix back. Never `git stash` for this — the stash stack is shared by
   every worktree, and a pop can restore someone else's work into yours.
