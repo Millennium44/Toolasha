@@ -153,6 +153,9 @@ export function estimateUnlimitedAction(spec) {
 
         const key = [
             contextSignature(actionContext),
+            // Talismans ride on the equipment Map, not its entries; the buff state version moves with them, and with
+            // the running action's loadout id (No Loadout over the same items is other talismans)
+            dataManager.getBuffStateVersion?.() ?? '',
             spec.actionHrid,
             spec.itemHrid || '',
             spec.enhancementLevel || 0,

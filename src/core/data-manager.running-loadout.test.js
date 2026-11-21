@@ -78,6 +78,37 @@ describe('the running loadout and the buff state version', () => {
         expect(dataManager.getBuffStateVersion()).toBe(before);
     });
 
+    test('the queue moving on to another action of the same skill under the same loadout leaves it alone', () => {
+        const saved = dataManager.initClientData;
+        dataManager.initClientData = {
+            actionDetailMap: {
+                '/actions/foraging/farmland': { hrid: '/actions/foraging/farmland', type: '/action_types/foraging' },
+                '/actions/foraging/shimmering_lake': {
+                    hrid: '/actions/foraging/shimmering_lake',
+                    type: '/action_types/foraging',
+                },
+            },
+        };
+        try {
+            actionsUpdated(
+                buildCharacterAction({ id: 1, actionHrid: '/actions/foraging/farmland', characterLoadoutID: 39838 })
+            );
+            const before = dataManager.getBuffStateVersion();
+            actionsUpdated(
+                buildCharacterAction({ id: 1, actionHrid: '/actions/foraging/farmland', isDone: true }),
+                buildCharacterAction({
+                    id: 2,
+                    actionHrid: '/actions/foraging/shimmering_lake',
+                    characterLoadoutID: 39838,
+                    ordinal: 2,
+                })
+            );
+            expect(dataManager.getBuffStateVersion()).toBe(before);
+        } finally {
+            dataManager.initClientData = saved;
+        }
+    });
+
     test('a queued action behind the running one does not move the version', () => {
         actionsUpdated(buildCharacterAction({ id: 1, actionHrid: ENHANCE, characterLoadoutID: 0, ordinal: 1 }));
         const before = dataManager.getBuffStateVersion();

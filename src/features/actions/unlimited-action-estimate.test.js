@@ -46,6 +46,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getElapsedSecondsInCurrentUnit: () => 0,
         getSkills: () => [],
         getEquipment: () => [],
+        getBuffStateVersion: () => game.buffStateVersion ?? 0,
         on: () => () => {},
         off: () => {},
     },
@@ -813,6 +814,20 @@ describe('the Repeat infinity estimate uses the resolved action context', () => 
         ]);
         estimateUnlimitedAction({ actionHrid: CRAFT_PLANK });
         expect(calc.lastOptions).not.toBeNull();
+    });
+
+    test('a moved buff state version (talismans, or the running loadout id) is a different cache entry', () => {
+        game.buffStateVersion = 1;
+        try {
+            estimateUnlimitedAction({ actionHrid: CRAFT_PLANK });
+            calc.lastOptions = null;
+            // Same items worn: a restart with No Loadout swaps only the talismans the Map carries
+            game.buffStateVersion = 2;
+            estimateUnlimitedAction({ actionHrid: CRAFT_PLANK });
+            expect(calc.lastOptions).not.toBeNull();
+        } finally {
+            game.buffStateVersion = 0;
+        }
     });
 
     test('an unchanged context still hits the cache', () => {

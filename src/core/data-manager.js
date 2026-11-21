@@ -3098,7 +3098,10 @@ class DataManager {
      */
     _noteRunningLoadout() {
         const running = runningAction(this.characterActions);
-        const signature = running ? `${running.actionHrid || ''}|${running.characterLoadoutID ?? ''}` : null;
+        // By action type, which is what the pick reads: the queue moving on to another action of the same skill under
+        // the same loadout changes nothing. The hrid stands in until the game data has loaded.
+        const kind = running ? this.getActionDetails(running.actionHrid)?.type || running.actionHrid || '' : '';
+        const signature = running ? `${kind}|${running.characterLoadoutID ?? ''}` : null;
         if (signature === this._runningLoadoutSignature) return;
         this._runningLoadoutSignature = signature;
         this.buffStateVersion++;
