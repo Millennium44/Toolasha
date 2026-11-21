@@ -168,6 +168,7 @@ vi.mock('../../utils/token-valuation.js', () => ({
 
 const { default: DungeonRoiBoardUI, listDungeons, rewardsPerCompletion } = await import('./dungeon-roi-board-ui.js');
 const dataManager = (await import('../../core/data-manager.js')).default;
+const { formatKMB } = await import('../../utils/formatters.js');
 
 function run(dungeonName, tier, durationMs, team = ['Me']) {
     return { dungeonName, tier, duration: durationMs, team, teamKey: team.join(',') };
@@ -370,6 +371,62 @@ describe('drawing', () => {
         );
         expect(den0.children[1].textContent).toBe('1');
         expect(den0.firstChild.title).toContain('Party of 3 (from the filter)');
+    });
+
+    test('typed minutes and runs per day add a what-if net/day column, and clearing them removes it', async () => {
+        // A 10 minute clear and a measured food bill of 10 donuts (200 each) an hour
+        state.runs = [run('Chimerical Den', 0, 600_000)];
+        state.sessions = [sessionWithConsumable(10)];
+        const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
+        const container = panel();
+        await board.render(container);
+        expect(container.querySelector('th[data-column="whatIf"]')).toBeNull();
+
+        const type = (id, value) => {
+            const input = container.querySelector(id);
+            input.value = value;
+            input.dispatchEvent(new Event('change'));
+        };
+        const den0 = () =>
+            [...container.querySelectorAll('.mwi-dt-roi-row')].find((tr) =>
+                tr.firstChild.textContent.includes('Den T0')
+            );
+        const row = board.rows.find((r) => r.key.endsWith('chimerical_den::T0'));
+
+        type('#mwi-dt-roi-whatif-minutes', '20');
+        expect(container.querySelector('th[data-column="whatIf"]')).not.toBeNull();
+        const cells = den0().children;
+        // Food doubles over a 20 minute run: 2000 an hour, a third of an hour
+        const netAt20 = row.revenuePerRun - row.keyCostPerRun - 2000 / 3;
+        expect(cells[cells.length - 1].title).toBe(`${formatKMB(netAt20)} per run × 72.0 runs at 20.0 min/run`);
+        expect(cells[cells.length - 1].textContent).toBe(formatKMB(netAt20 * 72));
+        expect(board.whatIfMinutes).toBe('20');
+
+        type('#mwi-dt-roi-whatif-runs', '10');
+        expect(den0().lastChild.title).toContain('10.0 runs at 20.0 min/run');
+        // The pace boxes survive the redraw with what was typed
+        expect(container.querySelector('#mwi-dt-roi-whatif-minutes').value).toBe('20');
+
+        type('#mwi-dt-roi-whatif-minutes', '');
+        type('#mwi-dt-roi-whatif-runs', '');
+        expect(container.querySelector('th[data-column="whatIf"]')).toBeNull();
+    });
+
+    test('a what-if row that cannot be priced says why instead of showing a number', async () => {
+        state.runs = [run('Chimerical Den', 0, 600_000)];
+        // No sessions and no snapshot: the food bill is unknown
+        const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
+        const container = panel();
+        await board.render(container);
+
+        const input = container.querySelector('#mwi-dt-roi-whatif-minutes');
+        input.value = '15';
+        input.dispatchEvent(new Event('change'));
+        const den0 = [...container.querySelectorAll('.mwi-dt-roi-row')].find((tr) =>
+            tr.firstChild.textContent.includes('Den T0')
+        );
+        expect(den0.lastChild.textContent).toBe('—');
+        expect(den0.lastChild.title).toContain('No net');
     });
 
     test('the Clear hover says which runs it covers', async () => {

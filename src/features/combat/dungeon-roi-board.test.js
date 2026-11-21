@@ -15,6 +15,7 @@ import {
     simReading,
     groupRunsByDungeonTier,
     runPartySize,
+    whatIfFigures,
 } from './dungeon-roi-board.js';
 
 const DEN = '/actions/combat/chimerical_den';
@@ -630,5 +631,72 @@ describe('sortRoiRows', () => {
             'A1',
             'B0',
         ]);
+    });
+});
+
+describe('whatIfFigures', () => {
+    // 100k revenue, 10k keys, 6k food an hour, a 10 minute clear
+    const row = (extra = {}) => ({
+        rewardsKnown: true,
+        costGap: null,
+        revenuePerRun: 100_000,
+        keyCostPerRun: 10_000,
+        consumableCostPerHour: 6_000,
+        clearSeconds: 600,
+        ...extra,
+    });
+
+    test('nothing typed, or a non-positive figure, is no what-if', () => {
+        expect(whatIfFigures(row())).toBeNull();
+        expect(whatIfFigures(row(), { minutesPerRun: null, runsPerDay: null })).toBeNull();
+        expect(whatIfFigures(row(), { minutesPerRun: 0 })).toBeNull();
+        expect(whatIfFigures(row(), { runsPerDay: -3 })).toBeNull();
+        expect(whatIfFigures(row(), { minutesPerRun: 'x' })).toBeNull();
+    });
+
+    test('typed minutes scale the food, and a day fills with back-to-back runs', () => {
+        const out = whatIfFigures(row(), { minutesPerRun: 20 });
+        expect(out.consumableCostPerRun).toBe(2_000);
+        expect(out.netPerRun).toBe(100_000 - 10_000 - 2_000);
+        expect(out.runsPerDay).toBe(72);
+        expect(out.netPerDay).toBe(88_000 * 72);
+    });
+
+    test('typed runs per day alone use the row clear time for food', () => {
+        const out = whatIfFigures(row(), { runsPerDay: 30 });
+        expect(out.minutesPerRun).toBe(10);
+        expect(out.netPerRun).toBe(100_000 - 10_000 - 1_000);
+        expect(out.netPerDay).toBe(89_000 * 30);
+    });
+
+    test('both typed: runs per day is taken as typed, not derived from the minutes', () => {
+        const out = whatIfFigures(row(), { minutesPerRun: 20, runsPerDay: 10 });
+        expect(out.netPerDay).toBe(88_000 * 10);
+    });
+
+    test('a row with no clear time is priced once minutes are typed, and unknown without them', () => {
+        const noClear = row({ clearSeconds: null });
+        expect(whatIfFigures(noClear, { minutesPerRun: 12 }).netPerRun).toBe(100_000 - 10_000 - 1_200);
+        const out = whatIfFigures(noClear, { runsPerDay: 5 });
+        expect(out.netPerRun).toBeNull();
+        expect(out.netPerDay).toBeNull();
+        expect(out.costGap).toBe('consumables');
+    });
+
+    test('a cost the row could not see stays unknown, never zero', () => {
+        expect(whatIfFigures(row({ rewardsKnown: false, revenuePerRun: null }), { minutesPerRun: 10 }).costGap).toBe(
+            'rewards'
+        );
+        const keys = whatIfFigures(row({ costGap: 'keys', keyCostPerRun: null }), { minutesPerRun: 10 });
+        expect(keys.netPerDay).toBeNull();
+        expect(keys.costGap).toBe('keys');
+        const food = whatIfFigures(row({ consumableCostPerHour: null }), { minutesPerRun: 10 });
+        expect(food.netPerRun).toBeNull();
+        expect(food.costGap).toBe('consumables');
+    });
+
+    test('a negative net stays negative, and zero food is a real zero', () => {
+        expect(whatIfFigures(row({ revenuePerRun: 1_000 }), { minutesPerRun: 10 }).netPerDay).toBeLessThan(0);
+        expect(whatIfFigures(row({ consumableCostPerHour: 0 }), { minutesPerRun: 10 }).consumableCostPerRun).toBe(0);
     });
 });

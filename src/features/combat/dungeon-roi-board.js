@@ -587,6 +587,58 @@ export function buildDungeonRoiRows(input) {
     return sortRoiRows(rows, 'netPerHour', false);
 }
 
+const MINUTES_PER_DAY = 1440;
+
+/**
+ * A typed pace applied to one board row: net per run and per day at a run length and a runs-per-day count
+ * the player chose, rather than the measured or simulated clear time.
+ *
+ * Nothing is priced again. A row's revenue and keys per completion do not depend on how long a run takes, so
+ * they are taken as the row has them (drops, tax and key pricing all came through the board's own functions).
+ * Only food scales with pace: the row's consumable cost per hour is spent over the typed minutes. A cost the
+ * row could not see (no reward table, an unpriced key, an unknown food bill) stays unknown here too, never zero.
+ *
+ * Either input may be left out: no minutes uses the row's own clear time, no runs per day fills the day with
+ * back-to-back runs at that pace.
+ *
+ * @param {Object} row - From `buildDungeonRoiRows`
+ * @param {Object} [what] - The player's figures
+ * @param {number|null} [what.minutesPerRun] - Minutes one run takes
+ * @param {number|null} [what.runsPerDay] - Runs in a day
+ * @returns {{minutesPerRun: number|null, runsPerDay: number|null, consumableCostPerRun: number|null,
+ *   netPerRun: number|null, netPerDay: number|null, costGap: string|null}|null} Null when neither figure was
+ *   typed, or the typed ones are not positive numbers
+ */
+export function whatIfFigures(row, { minutesPerRun = null, runsPerDay = null } = {}) {
+    const typedMinutes = Number(minutesPerRun);
+    const typedRuns = Number(runsPerDay);
+    const hasMinutes = minutesPerRun !== null && minutesPerRun !== '' && Number.isFinite(typedMinutes);
+    const hasRuns = runsPerDay !== null && runsPerDay !== '' && Number.isFinite(typedRuns);
+    if (!hasMinutes && !hasRuns) return null;
+    if ((hasMinutes && !(typedMinutes > 0)) || (hasRuns && !(typedRuns > 0))) return null;
+
+    const minutes = hasMinutes ? typedMinutes : row.clearSeconds > 0 ? row.clearSeconds / 60 : null;
+    const perDay = hasRuns ? typedRuns : minutes ? MINUTES_PER_DAY / minutes : null;
+
+    const consumableCostPerRun =
+        minutes !== null && row.consumableCostPerHour !== null && row.consumableCostPerHour !== undefined
+            ? (row.consumableCostPerHour * minutes) / 60
+            : null;
+    const costGap = !row.rewardsKnown ? 'rewards' : !row.costGap || row.costGap === 'consumables' ? null : row.costGap;
+    // Food is judged on the typed pace: a row with no clear time can still be priced once minutes are typed
+    const foodGap = consumableCostPerRun === null ? 'consumables' : null;
+    const gap = costGap || foodGap;
+    const netPerRun = gap === null ? row.revenuePerRun - (row.keyCostPerRun || 0) - consumableCostPerRun : null;
+    return {
+        minutesPerRun: minutes,
+        runsPerDay: perDay,
+        consumableCostPerRun,
+        netPerRun,
+        netPerDay: netPerRun !== null && perDay !== null ? netPerRun * perDay : null,
+        costGap: gap,
+    };
+}
+
 /**
  * Order rows by a column, nulls last whichever way the sort runs.
  *

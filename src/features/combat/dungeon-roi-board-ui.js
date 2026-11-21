@@ -16,7 +16,7 @@ import { calculateExpectedDrops, taxedDropValue } from '../combat-sim/combat-sim
 import { loadSessions } from '../combat-stats/combat-session-history.js';
 import { ownDropQuantity } from './dungeon-key-runway.js';
 import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
-import { buildDungeonRoiRows, sortRoiRows, ROI_SORT_COLUMNS } from './dungeon-roi-board.js';
+import { buildDungeonRoiRows, sortRoiRows, whatIfFigures, ROI_SORT_COLUMNS } from './dungeon-roi-board.js';
 import { loadAllZonesSnapshot } from '../../utils/all-zones-snapshot.js';
 import { describeKeyCosts } from '../../utils/key-cost.js';
 import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
@@ -286,6 +286,9 @@ class DungeonRoiBoardUI {
         this.sortAsc = false;
         this.filterTier = 'all';
         this.filterParty = 'all';
+        // The what-if pace the player typed, as text; empty means "use the row's own clear time"
+        this.whatIfMinutes = '';
+        this.whatIfRuns = '';
         this.container = null;
         this._rendering = null;
     }
@@ -486,7 +489,58 @@ class DungeonRoiBoardUI {
         });
         bar.appendChild(partySelect);
 
+        bar.appendChild(
+            this.buildNumberInput(
+                'mwi-dt-roi-whatif-minutes',
+                'What if: min/run',
+                this.whatIfMinutes,
+                "Minutes one run takes. Blank uses each row's own clear time. Food scales with it.",
+                (value) => (this.whatIfMinutes = value)
+            )
+        );
+        bar.appendChild(
+            this.buildNumberInput(
+                'mwi-dt-roi-whatif-runs',
+                'runs/day',
+                this.whatIfRuns,
+                'Runs in a day. Blank fills the day with back-to-back runs at the pace above.',
+                (value) => (this.whatIfRuns = value)
+            )
+        );
+
         return bar;
+    }
+
+    /**
+     * A small number box that redraws the board when its value is committed.
+     * @param {string} id - Element id
+     * @param {string} label - Text before the box
+     * @param {string} current - Current text
+     * @param {string} title - Hover text
+     * @param {function(string): void} onCommit - Stores the new text
+     * @returns {HTMLElement}
+     */
+    buildNumberInput(id, label, current, title, onCommit) {
+        const wrap = document.createElement('label');
+        wrap.style.cssText = 'display: inline-flex; gap: 6px; align-items: center;';
+        wrap.title = title;
+        wrap.appendChild(document.createTextNode(`${label}:`));
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '0';
+        input.step = 'any';
+        input.id = id;
+        input.value = current;
+        input.style.cssText =
+            'width: 60px; background: #333; color: #fff; border: 1px solid #555; border-radius: 3px; padding: 2px 4px; font-size: 11px;';
+        // On commit, not on every keystroke: the redraw rebuilds this bar and would drop the caret
+        input.addEventListener('change', (event) => {
+            onCommit(event.target.value.trim());
+            const host = this.container?.querySelector('#mwi-dt-roi-container');
+            if (host) this.draw(host);
+        });
+        wrap.appendChild(input);
+        return wrap;
     }
 
     /**
@@ -545,6 +599,15 @@ class DungeonRoiBoardUI {
             }
             headRow.appendChild(th);
         }
+        if (this.whatIfActive()) {
+            const th = document.createElement('th');
+            th.textContent = 'What-if net/day';
+            th.title = "Net per day at the min/run and runs/day typed above. Revenue and keys are the row's own.";
+            th.dataset.column = 'whatIf';
+            th.style.cssText =
+                'text-align: right; padding: 3px 6px; border-bottom: 1px solid #555; color: #4a9eff; font-weight: bold; position: sticky; top: 0; background: rgba(0,0,0,0.95);';
+            headRow.appendChild(th);
+        }
         thead.appendChild(headRow);
         table.appendChild(thead);
 
@@ -552,6 +615,23 @@ class DungeonRoiBoardUI {
         for (const row of rows) tbody.appendChild(this.buildRow(row));
         table.appendChild(tbody);
         return table;
+    }
+
+    /**
+     * The typed what-if pace, as numbers.
+     * @returns {{minutesPerRun: number|null, runsPerDay: number|null}}
+     */
+    whatIfInput() {
+        const num = (text) => (text === '' ? null : Number(text));
+        return { minutesPerRun: num(this.whatIfMinutes), runsPerDay: num(this.whatIfRuns) };
+    }
+
+    /**
+     * Whether a usable pace is typed, so the what-if column shows.
+     * @returns {boolean}
+     */
+    whatIfActive() {
+        return this.rows.some((row) => whatIfFigures(row, this.whatIfInput()) !== null);
     }
 
     /**
@@ -705,6 +785,27 @@ class DungeonRoiBoardUI {
                     ? `${costGapNote(row)}\n${COLUMNS[COLUMNS.length - 1].title}`
                     : COLUMNS[COLUMNS.length - 1].title,
         });
+
+        if (this.whatIfActive()) {
+            const what = whatIfFigures(row, this.whatIfInput());
+            const known = what && Number.isFinite(what.netPerDay);
+            let title;
+            if (!what) title = 'Type a positive number of minutes or runs';
+            else if (!known) {
+                title =
+                    what.costGap === 'consumables' && what.minutesPerRun === null
+                        ? 'Needs a run length: type min/run, or this row needs a clear time'
+                        : costGapNote({ ...row, costGap: what.costGap });
+            } else {
+                title =
+                    `${gold(what.netPerRun)} per run × ${what.runsPerDay.toFixed(1)} runs at ` +
+                    `${what.minutesPerRun.toFixed(1)} min/run`;
+            }
+            cell(known ? gold(what.netPerDay) : '—', {
+                color: !known ? '#666' : what.netPerDay >= 0 ? '#5fda5f' : '#ff6b6b',
+                title,
+            });
+        }
 
         return tr;
     }
