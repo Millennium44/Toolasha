@@ -19,11 +19,13 @@
  *
  * ## What is stored
  *
- * `{ownerCharacterId, entries: {[memberCharacterId]: {capturedAt, loadout}}}` with the loadout trimmed
- * to the fields a sim reads. Only captures made in the party context, of a combat loadout, whose rows
- * name the same character the capture is filed under. A capture by another character replaces the
- * store (as `view-loadout.js` drops the previous character's captures). A party reply with no loadout
- * deletes that member's entry, since it is newer news than the entry.
+ * `{owners: {[capturingCharacterId]: {entries: {[memberCharacterId]: {capturedAt, loadout}}}}}` with the
+ * loadout trimmed to the fields a sim reads. Only captures made in the party context, of a combat
+ * loadout, whose rows name the same character the capture is filed under. A capture by one character
+ * leaves the others' entries alone (two tabs, or a swap, must not empty each other's store); the
+ * {@link MAX_PARTY_LOADOUT_OWNERS} most recent characters are kept. A party reply with no loadout
+ * deletes that member's entry, since it is newer news than the entry. The single-owner
+ * `{ownerCharacterId, entries}` shape an earlier build wrote is still read.
  *
  * ## Storage and sync
  *
@@ -51,8 +53,11 @@ export const GM_PARTY_LOADOUTS_KEY = 'toolasha_metz_party_loadouts';
  */
 export const PARTY_LOADOUT_TTL_MS = PROFILE_STALE_MS;
 
-/** Entries kept, newest first. A party is five; this leaves room for a rotating group. */
+/** Entries kept per character, newest first. A party is five; this leaves room for a rotating group. */
 export const MAX_PARTY_LOADOUTS = 12;
+
+/** Characters whose entries are kept, most recently captured first. */
+export const MAX_PARTY_LOADOUT_OWNERS = 4;
 
 const COMBAT_ACTION_TYPE = '/action_types/combat';
 
@@ -108,10 +113,19 @@ function readStore() {
     try {
         const raw = gmGetValue(GM_PARTY_LOADOUTS_KEY, null);
         const parsed = raw ? JSON.parse(raw) : null;
-        const store =
-            isObject(parsed) && idKey(parsed.ownerCharacterId) && isObject(parsed.entries)
-                ? { ownerCharacterId: String(parsed.ownerCharacterId), entries: parsed.entries }
-                : null;
+        let store = null;
+        if (isObject(parsed) && isObject(parsed.owners)) {
+            const owners = {};
+            for (const [owner, bucket] of Object.entries(parsed.owners)) {
+                if (idKey(owner) && isObject(bucket) && isObject(bucket.entries)) {
+                    owners[owner] = { entries: bucket.entries };
+                }
+            }
+            store = { owners };
+        } else if (isObject(parsed) && idKey(parsed.ownerCharacterId) && isObject(parsed.entries)) {
+            // The single-owner shape an earlier build wrote
+            store = { owners: { [String(parsed.ownerCharacterId)]: { entries: parsed.entries } } };
+        }
         return { raw, store };
     } catch (error) {
         console.error('[MetzPartyLoadouts] Failed to read stored loadouts:', error);
@@ -128,10 +142,10 @@ function isLive(stored, now) {
 
 /**
  * Fold one capture into a store, in place.
- * @param {{ownerCharacterId: string, entries: Object}|null} store
+ * @param {{owners: Object}|null} store - Entries by the character that captured them
  * @param {Object} entry - A `CapturedLoadout` from view-loadout.js
- * @returns {{ownerCharacterId: string, entries: Object}|null} The store, or a new one when the capture
- *   belongs to another character; null when the capture is not one this store keeps
+ * @returns {{owners: Object}|null} The store (a new one when there was none); null when there is
+ *   none and the capture is not one this store keeps
  */
 function fold(store, entry) {
     if (!entry || entry.context !== VIEW_LOADOUT_CONTEXT.Party) return store;
@@ -147,8 +161,10 @@ function fold(store, entry) {
     const capturedAt = Number(entry.capturedAt);
     if (!Number.isFinite(capturedAt)) return store;
 
-    const next = store && store.ownerCharacterId === owner ? store : { ownerCharacterId: owner, entries: {} };
-    const previous = next.entries[memberId];
+    // Another character's entries stay: two tabs, or a character swap, must not empty each other's store
+    const next = store || { owners: {} };
+    const bucket = (next.owners[owner] ||= { entries: {} });
+    const previous = bucket.entries[memberId];
     // An older reply arriving late never replaces a newer one
     if (previous && Number(previous.capturedAt) > capturedAt) return next;
 
@@ -156,13 +172,13 @@ function fold(store, entry) {
     const usable = trimmed && (Object.keys(trimmed.wearableItemMap).length > 0 || trimmed.equippedAbilities.length > 0);
     if (!usable) {
         // Nothing to wear: the entry it replaces is out of date either way
-        delete next.entries[memberId];
+        delete bucket.entries[memberId];
         return next;
     }
     // Kept only when the rows themselves name this member. A reply whose rows carry no id was matched
     // to its request by name at best, and a loadout must never be filed under the wrong player.
     if (rowId !== memberId) return store;
-    next.entries[memberId] = { capturedAt, loadout: trimmed };
+    bucket.entries[memberId] = { capturedAt, loadout: trimmed };
     return next;
 }
 
@@ -181,11 +197,20 @@ export function recordPartyLoadouts(entries, now = Date.now()) {
     for (const entry of Array.isArray(entries) ? entries : []) store = fold(store, entry);
     if (!store) return false;
 
-    const kept = Object.entries(store.entries)
-        .filter(([, value]) => isLive(value, now))
-        .sort(([, a], [, b]) => b.capturedAt - a.capturedAt)
-        .slice(0, MAX_PARTY_LOADOUTS);
-    const serialized = JSON.stringify({ ownerCharacterId: store.ownerCharacterId, entries: Object.fromEntries(kept) });
+    const owners = Object.entries(store.owners)
+        .map(([owner, bucket]) => ({
+            owner,
+            kept: Object.entries(bucket.entries)
+                .filter(([, value]) => isLive(value, now))
+                .sort(([, a], [, b]) => b.capturedAt - a.capturedAt)
+                .slice(0, MAX_PARTY_LOADOUTS),
+        }))
+        .filter(({ kept }) => kept.length > 0)
+        .sort((a, b) => b.kept[0][1].capturedAt - a.kept[0][1].capturedAt)
+        .slice(0, MAX_PARTY_LOADOUT_OWNERS);
+    const serialized = JSON.stringify({
+        owners: Object.fromEntries(owners.map(({ owner, kept }) => [owner, { entries: Object.fromEntries(kept) }])),
+    });
     if (serialized === raw) return false;
     try {
         gmSetValue(GM_PARTY_LOADOUTS_KEY, serialized);
@@ -209,8 +234,7 @@ export function getPartyLoadout(ownerCharacterId, memberCharacterId, now = Date.
     const memberId = idKey(memberCharacterId);
     if (!owner || !memberId) return null;
     const { store } = readStore();
-    if (!store || store.ownerCharacterId !== owner) return null;
-    const stored = store.entries[memberId];
+    const stored = store?.owners[owner]?.entries[memberId];
     return isLive(stored, now) ? { capturedAt: stored.capturedAt, loadout: stored.loadout } : null;
 }
 

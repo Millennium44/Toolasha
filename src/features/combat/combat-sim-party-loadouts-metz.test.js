@@ -32,6 +32,7 @@ const {
     GM_PARTY_LOADOUTS_KEY,
     PARTY_LOADOUT_TTL_MS,
     MAX_PARTY_LOADOUTS,
+    MAX_PARTY_LOADOUT_OWNERS,
     getPartyLoadout,
     recordPartyLoadouts,
     startMetzPartyLoadoutPublisher,
@@ -163,15 +164,36 @@ describe('recordPartyLoadouts', () => {
         expect(globalThis.GM_setValue).toHaveBeenCalledTimes(1);
     });
 
-    test("another character's capture replaces the store, and the old owner's entries are not readable", () => {
+    test("another character's capture leaves the first character's entries readable", () => {
         recordPartyLoadouts([capture(7)], NOW);
         recordPartyLoadouts([capture(9, { ownerCharacterId: '200' })], NOW);
 
-        expect(stored().ownerCharacterId).toBe('200');
-        expect(getPartyLoadout(100, 7, NOW)).toBeNull();
+        expect(Object.keys(stored().owners).sort()).toEqual(['100', '200']);
+        expect(getPartyLoadout(100, 7, NOW)).not.toBeNull();
         expect(getPartyLoadout(200, 9, NOW)).not.toBeNull();
         // The exporting character must be the one that captured it
         expect(getPartyLoadout(100, 9, NOW)).toBeNull();
+        expect(getPartyLoadout(200, 7, NOW)).toBeNull();
+    });
+
+    test('reads the single-owner shape an earlier build wrote, and keeps it when another character captures', () => {
+        gm.set(
+            GM_PARTY_LOADOUTS_KEY,
+            JSON.stringify({ ownerCharacterId: '100', entries: { 7: { capturedAt: NOW - 1000, loadout: payload(7) } } })
+        );
+        expect(getPartyLoadout(100, 7, NOW)).not.toBeNull();
+        recordPartyLoadouts([capture(9, { ownerCharacterId: '200' })], NOW);
+        expect(getPartyLoadout(100, 7, NOW)).not.toBeNull();
+    });
+
+    test('only the most recent characters are kept', () => {
+        const owners = Array.from({ length: MAX_PARTY_LOADOUT_OWNERS + 2 }, (_, index) => String(200 + index));
+        owners.forEach((owner, index) =>
+            recordPartyLoadouts([capture(7, { ownerCharacterId: owner, capturedAt: NOW - 5000 + index })], NOW)
+        );
+        expect(Object.keys(stored().owners)).toHaveLength(MAX_PARTY_LOADOUT_OWNERS);
+        expect(getPartyLoadout(owners[0], 7, NOW)).toBeNull();
+        expect(getPartyLoadout(owners.at(-1), 7, NOW)).not.toBeNull();
     });
 
     test('expired entries are not read even with no write since, are pruned on the next write, and the count is capped', () => {
@@ -183,7 +205,7 @@ describe('recordPartyLoadouts', () => {
             capture(300 + index, { capturedAt: later - index })
         );
         recordPartyLoadouts(many, later);
-        const ids = Object.keys(stored().entries);
+        const ids = Object.keys(stored().owners['100'].entries);
         expect(ids).toHaveLength(MAX_PARTY_LOADOUTS);
         expect(ids).not.toContain('7');
         expect(ids).toContain('300');
