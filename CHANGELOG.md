@@ -28,7 +28,7 @@ With the labyrinth tokens net worth setting on (off by default), seal scrolls no
 
 ### Task shop shows value per token
 
-The task shop shows each item's value per task token and marks the best redemption, including chests at their expected value.
+The task shop shows each item's value per task token and marks the best redemption. Chests count at the higher of their market price and expected value, as in the task token tooltip.
 
 ### Best crafting plan shows savings
 
@@ -40,7 +40,7 @@ The Buy Now and Sell Now dialogs warn when the best buy and sell offers are two 
 
 ### Copy Settings can remove old characters
 
-The Copy Settings dialog has a remove button (press twice) on each character, to clear ones you no longer play. Their settings are kept.
+The Copy Settings dialog has a remove button (press twice) on each character, to clear ones you no longer play. Their settings are kept, and a character comes back the next time it is played.
 
 ### Mana panel counts refused casts
 
@@ -48,7 +48,7 @@ The mana tab estimates how many casts of each ability were refused for lack of m
 
 ### Hit tape and DPS sparkline on the per-player panel
 
-The per-player panel can show a tape of your last minute of hits, and its header shows a small party DPS sparkline.
+The per-player panel shows a tape of your last minute of hits (a setting turns it off), and its header shows a small party DPS sparkline.
 
 ### Metz export uses a partymate's View Loadout
 
