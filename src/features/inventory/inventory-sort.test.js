@@ -971,3 +971,72 @@ describe('InventorySort.sortItemsByPrice — change-only order writes', () => {
         expect(tiles.map((t) => t.style.order)).toEqual(['0', '1', '2', '3']);
     });
 });
+
+describe('InventorySort with more than one inventory copy in the page', () => {
+    // The game keeps a hidden copy in the side panel next to the visible one in the main panel
+    function buildCopies() {
+        document.body.innerHTML = `
+            <div id="side" style="display:none"><div class="Inventory_items__x"></div></div>
+            <div id="main"><div class="Inventory_items__x"></div></div>`;
+        return [...document.querySelectorAll('.Inventory_items__x')];
+    }
+
+    afterEach(() => {
+        inventorySort.disable();
+        inventorySort.currentInventoryElem = null;
+        inventorySort.currentMode = 'none';
+        document.body.innerHTML = '';
+    });
+
+    test('every copy gets its own controls and a repeat inject adds none', () => {
+        const [side, main] = buildCopies();
+
+        inventorySort.injectSortControls(side);
+        inventorySort.injectSortControls(main);
+        inventorySort.injectSortControls(main);
+
+        expect(document.querySelectorAll('.mwi-inventory-sort-controls')).toHaveLength(2);
+        expect(main.previousElementSibling.classList.contains('mwi-inventory-sort-controls')).toBe(true);
+        expect(side.previousElementSibling.classList.contains('mwi-inventory-sort-controls')).toBe(true);
+    });
+
+    test('the active-mode highlight follows every set of controls', () => {
+        const [side, main] = buildCopies();
+        inventorySort.injectSortControls(side);
+        inventorySort.injectSortControls(main);
+
+        inventorySort.currentMode = 'bid';
+        inventorySort.updateButtonStates();
+
+        const active = [...document.querySelectorAll('.mwi-inventory-sort-controls button')].filter(
+            (button) => button.style.fontWeight === 'bold'
+        );
+        expect(active.map((button) => button.dataset.mode)).toEqual(['bid', 'bid']);
+    });
+
+    test('sorting reaches the visible copy even when another copy was tracked last', async () => {
+        document.body.innerHTML = `
+            <div class="Inventory_items__x"><div class="Inventory_itemGrid__x">
+                <div class="Item_itemContainer__x" data-ask-value="1"></div>
+                <div class="Item_itemContainer__x" data-ask-value="9"></div></div></div>
+            <div class="Inventory_items__x"></div>`;
+        const [main, other] = document.querySelectorAll('.Inventory_items__x');
+        inventorySort.currentInventoryElem = other;
+        inventorySort.currentMode = 'ask';
+
+        await inventorySort.applyCurrentSort();
+
+        const orders = [...main.querySelectorAll('.Item_itemContainer__x')].map((item) => item.style.order);
+        expect(orders).toEqual(['1', '0']);
+    });
+
+    test('disable removes the controls of every copy', () => {
+        const [side, main] = buildCopies();
+        inventorySort.injectSortControls(side);
+        inventorySort.injectSortControls(main);
+
+        inventorySort.disable();
+
+        expect(document.querySelectorAll('.mwi-inventory-sort-controls')).toHaveLength(0);
+    });
+});

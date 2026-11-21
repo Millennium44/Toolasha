@@ -54,7 +54,6 @@ class InventorySort {
         this.currentMode = 'none'; // 'ask', 'bid', 'none'
         this.modeChangeListeners = [];
         this.unregisterHandlers = [];
-        this.controlsContainer = null;
         this.currentInventoryElem = null;
         this.warnedItems = new Set(); // Track items we've already warned about
         this.isCalculating = false; // Guard flag to prevent recursive calls
@@ -161,10 +160,11 @@ class InventorySort {
         // watcher, so the catch-up waits for its actual-ready signal (immediate if attached).
         this.unregisterHandlers.push(
             domObserver.onReady('InventorySortCatchUp', () => {
-                const existingInv = document.querySelector('[class*="Inventory_items"]');
-                if (existingInv) {
-                    this.currentInventoryElem = existingInv;
-                    this.injectSortControls(existingInv);
+                // The game can keep a hidden copy in the side panel and a visible one in the main
+                // panel (depending on window width), so every copy gets its own controls
+                const existingInventories = document.querySelectorAll('[class*="Inventory_items"]');
+                if (existingInventories.length > 0) {
+                    existingInventories.forEach((existingInv) => this.injectSortControls(existingInv));
                     this.applyCurrentSort();
                 }
             })
@@ -175,7 +175,7 @@ class InventorySort {
         this.unregisterHandlers.push(
             inventoryBadgeManager.onRepriced(() => {
                 if (this.currentInventoryElem && !this.isCalculating) {
-                    this._applyCategoryOrderPass(this.currentInventoryElem);
+                    this._applyAllOrderPasses();
                 }
             })
         );
@@ -199,7 +199,7 @@ class InventorySort {
             'InventorySortTabSwitch',
             'Inventory_categoryButton',
             (elem) => {
-                if (!this.currentInventoryElem || !this.currentInventoryElem.contains(elem)) return;
+                if (!this._inAnyInventory(elem)) return;
                 this.scheduleApplyCurrentSort();
             }
         );
@@ -217,7 +217,7 @@ class InventorySort {
         // Equipment tab strip, which sits outside Inventory_items entirely.
         this.tabClickHandler = (event) => {
             const tab = event.target?.closest?.('[role="tab"]');
-            if (!tab || !this.currentInventoryElem?.contains(tab)) return;
+            if (!tab || !this._inAnyInventory(tab)) return;
             this.scheduleApplyCurrentSort();
         };
         document.addEventListener('click', this.tabClickHandler, true);
@@ -337,15 +337,15 @@ class InventorySort {
         // Set current inventory element
         this.currentInventoryElem = inventoryElem;
 
-        // Check if controls already exist
-        if (this.controlsContainer && document.body.contains(this.controlsContainer)) {
+        // Each inventory copy carries its own controls
+        if (inventoryElem.previousElementSibling?.classList.contains('mwi-inventory-sort-controls')) {
             return;
         }
 
         // Create controls container
-        this.controlsContainer = document.createElement('div');
-        this.controlsContainer.className = 'mwi-inventory-sort-controls';
-        this.controlsContainer.style.cssText = `
+        const controlsContainer = document.createElement('div');
+        controlsContainer.className = 'mwi-inventory-sort-controls';
+        controlsContainer.style.cssText = `
             color: ${config.COLOR_ACCENT};
             font-size: 0.875rem;
             text-align: left;
@@ -365,13 +365,13 @@ class InventorySort {
         const noneButton = this.createSortButton('None', 'none');
 
         // Assemble controls
-        this.controlsContainer.appendChild(sortLabel);
-        this.controlsContainer.appendChild(askButton);
-        this.controlsContainer.appendChild(bidButton);
-        this.controlsContainer.appendChild(noneButton);
+        controlsContainer.appendChild(sortLabel);
+        controlsContainer.appendChild(askButton);
+        controlsContainer.appendChild(bidButton);
+        controlsContainer.appendChild(noneButton);
 
         // Insert before inventory
-        inventoryElem.insertAdjacentElement('beforebegin', this.controlsContainer);
+        inventoryElem.insertAdjacentElement('beforebegin', controlsContainer);
 
         // Update button states
         this.updateButtonStates();
@@ -407,9 +407,7 @@ class InventorySort {
      * Update button visual states based on current mode
      */
     updateButtonStates() {
-        if (!this.controlsContainer) return;
-
-        const buttons = this.controlsContainer.querySelectorAll('button');
+        const buttons = document.querySelectorAll('.mwi-inventory-sort-controls button');
         buttons.forEach((button) => {
             const isActive = button.dataset.mode === this.currentMode;
 
@@ -550,7 +548,7 @@ class InventorySort {
 
         const inventoryElem = this.currentInventoryElem;
         try {
-            this._applyCategoryOrderPass(inventoryElem);
+            this._applyAllOrderPasses();
         } finally {
             this.isCalculating = false;
         }
@@ -577,7 +575,7 @@ class InventorySort {
             // Only reapply if nothing else moved on in the meantime: a different inventory is now
             // showing, or another pass is already in flight and will see the fresh values itself.
             if (this.currentInventoryElem === inventoryElem && !this.isCalculating) {
-                this._applyCategoryOrderPass(inventoryElem);
+                this._applyAllOrderPasses();
             }
         };
         try {
@@ -602,6 +600,37 @@ class InventorySort {
             }
         } catch (error) {
             console.error('[InventorySort] Background price refresh failed:', error);
+        }
+    }
+
+    /**
+     * Every inventory copy in the page, plus the tracked one (which may not match the class query).
+     * @returns {Element[]}
+     * @private
+     */
+    _inventoryCopies() {
+        const copies = new Set(document.querySelectorAll('[class*="Inventory_items"]'));
+        if (this.currentInventoryElem) copies.add(this.currentInventoryElem);
+        return [...copies];
+    }
+
+    /**
+     * Whether a node sits inside any inventory copy
+     * @param {Node} node
+     * @returns {boolean}
+     * @private
+     */
+    _inAnyInventory(node) {
+        return this._inventoryCopies().some((copy) => copy.contains(node));
+    }
+
+    /**
+     * Run the order pass on every inventory copy: the visible one is not always the one seen last.
+     * @private
+     */
+    _applyAllOrderPasses() {
+        for (const copy of this._inventoryCopies()) {
+            this._applyCategoryOrderPass(copy);
         }
     }
 
@@ -767,9 +796,9 @@ class InventorySort {
      */
     refresh() {
         // Update controls container color
-        if (this.controlsContainer) {
-            this.controlsContainer.style.color = config.COLOR_ACCENT;
-        }
+        document.querySelectorAll('.mwi-inventory-sort-controls').forEach((controls) => {
+            controls.style.color = config.COLOR_ACCENT;
+        });
 
         // Update button states (which includes colors)
         this.updateButtonStates();
@@ -811,10 +840,7 @@ class InventorySort {
             inventoryBadgeManager.unregisterProvider('inventory-stack-price');
 
             // Remove controls
-            if (this.controlsContainer) {
-                this.controlsContainer.remove();
-                this.controlsContainer = null;
-            }
+            document.querySelectorAll('.mwi-inventory-sort-controls').forEach((controls) => controls.remove());
 
             // Remove all badges
             const badges = document.querySelectorAll('.mwi-stack-price');
