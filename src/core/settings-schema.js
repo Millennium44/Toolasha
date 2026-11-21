@@ -1165,7 +1165,7 @@ export const settingsGroups = {
                 label: 'Shop: Show value per token',
                 type: 'checkbox',
                 default: true,
-                help: 'Shows what one token is worth in each entry of the Dungeon, Labyrinth and Task shops (the market value of what it buys, after market tax, per token) and stars the best entry for each token. A Task shop chest with no market price is valued by the expected value of its drops (a floor if some drops have no price). Untradable capes show the untradable-cape base value setting with an asterisk and are never starred.',
+                help: 'Shows what one token is worth in each entry of the Dungeon, Labyrinth and Task shops (the market value of what it buys, after market tax, per token) and stars the best entry for each token. A Task shop chest is valued at the higher of its market price and the expected value of its drops (a floor if some drops have no price), as in the task token tooltip. Untradable capes show the untradable-cape base value setting with an asterisk and are never starred.',
             },
             dungeonShopPlanner: {
                 id: 'dungeonShopPlanner',
