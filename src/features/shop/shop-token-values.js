@@ -1,7 +1,7 @@
 /**
  * Shop Token Values
  *
- * Marks each entry of the Dungeon shop and the Labyrinth shop with what one token is worth in it
+ * Marks each entry of the Dungeon, Labyrinth and Task shops with what one token is worth in it
  * (the market value of what it buys, after market tax, divided by its token cost), and stars the
  * best entry of each currency. An untradable cape has no market price: it shows the untradable-cape
  * setting's value with an asterisk and never takes the star.
@@ -11,7 +11,8 @@
  *
  * The tile selectors and the cost element's layout are read from the live game DOM and are the part
  * most likely to need a touch-up after a game update: ShopPanel_shopItems / ShopPanel_shopItem__
- * for the Dungeon shop, LabyrinthPanel_buyableGrid / LabyrinthPanel_item for the Labyrinth shop.
+ * for the Dungeon shop, LabyrinthPanel_buyableGrid / LabyrinthPanel_item for the Labyrinth shop,
+ * TasksPanel_buyableGrid / TasksPanel_item for the Task shop.
  */
 
 import config from '../../core/config.js';
@@ -31,6 +32,7 @@ import {
     bestLine,
     shopLineValues,
     LABYRINTH_TOKEN_HRID,
+    TASK_TOKEN_HRID,
 } from './shop-token-values-logic.js';
 
 const SETTING = 'shopTokenValues';
@@ -51,6 +53,7 @@ const WATCHED_SETTINGS = [
 
 const DUNGEON_TILE_SELECTOR = '[class*="ShopPanel_shopItems"] [class*="ShopPanel_shopItem__"]';
 const LABYRINTH_TILE_SELECTOR = '[class*="LabyrinthPanel_buyableGrid"] [class*="LabyrinthPanel_item__"]';
+const TASK_TILE_SELECTOR = '[class*="TasksPanel_buyableGrid"] [class*="TasksPanel_item__"]';
 const COST_SELECTOR = '[class*="costs"], [class*="cost"]';
 
 /**
@@ -114,7 +117,13 @@ class ShopTokenValues {
         this.isInitialized = true;
 
         // Tiles are added when a tab opens (partial class match: a tile or the grid that holds them)
-        for (const className of ['ShopPanel_shopItem', 'LabyrinthPanel_buyableGrid', 'LabyrinthPanel_item__']) {
+        for (const className of [
+            'ShopPanel_shopItem',
+            'LabyrinthPanel_buyableGrid',
+            'LabyrinthPanel_item__',
+            'TasksPanel_buyableGrid',
+            'TasksPanel_item__',
+        ]) {
             this.unregisterHandlers.push(
                 domObserver.onClass(`${OBSERVER_NAME}_${className}`, className, () => this.scheduleRefresh())
             );
@@ -170,7 +179,8 @@ class ShopTokenValues {
 
         const dungeonTiles = [...document.querySelectorAll(DUNGEON_TILE_SELECTOR)];
         const labyrinthTiles = [...document.querySelectorAll(LABYRINTH_TILE_SELECTOR)];
-        if (dungeonTiles.length === 0 && labyrinthTiles.length === 0) return;
+        const taskTiles = [...document.querySelectorAll(TASK_TILE_SELECTOR)];
+        if (dungeonTiles.length === 0 && labyrinthTiles.length === 0 && taskTiles.length === 0) return;
 
         // Every line of each currency, and its best: the shop's, not just the tiles on screen
         const side = badgeSide();
@@ -196,20 +206,24 @@ class ShopTokenValues {
             this.renderTile(tile, match);
         }
 
-        const labyrinth = linesByCurrency.get(LABYRINTH_TOKEN_HRID);
-        for (const tile of labyrinthTiles) {
-            const itemHrid = tileItemHrid(tile, itemDetailMap);
-            const candidates = labyrinth.lines.filter((entry) => entry.itemHrid === itemHrid);
-            // One line per item is the norm; when an item is offered more than once, the tile's own
-            // digits say which
-            const line =
-                candidates.length <= 1
-                    ? candidates[0]
-                    : candidates.find((entry) =>
-                          (tile.textContent || '').replace(/[,\s]/g, '').includes(String(entry.cost))
-                      );
-            this.renderTile(tile, line ? { line, best: labyrinth.best } : null);
-        }
+        // A shop that offers one item more than once: the tile's own digits say which line
+        const renderGrid = (tiles, currencyHrid) => {
+            const shop = linesByCurrency.get(currencyHrid);
+            for (const tile of tiles) {
+                const itemHrid = tileItemHrid(tile, itemDetailMap);
+                const candidates = shop.lines.filter((entry) => entry.itemHrid === itemHrid);
+                const line =
+                    candidates.length <= 1
+                        ? candidates[0]
+                        : candidates.find((entry) =>
+                              (tile.textContent || '').replace(/[,\s]/g, '').includes(String(entry.cost))
+                          );
+                this.renderTile(tile, line ? { line, best: shop.best } : null);
+            }
+        };
+        renderGrid(labyrinthTiles, LABYRINTH_TOKEN_HRID);
+        // The Task shop upgrade tiles share the grid but have no shop line, so they match nothing and stay bare
+        renderGrid(taskTiles, TASK_TOKEN_HRID);
     }
 
     /**
@@ -238,7 +252,11 @@ class ShopTokenValues {
         element.style.fontWeight = isBest ? '600' : '400';
         element.dataset.mwiBest = isBest ? 'true' : 'false';
         element.dataset.mwiAssumed = line.assumed ? 'true' : 'false';
-        element.title = line.assumed
+        element.title = line.isContainer
+            ? 'Not on the market. Worth what opening it yields (expected value of its drops)' +
+              `${line.partial ? ', a floor: some drops have no price and count as nothing' : ''}.` +
+              `${isBest ? ' Best value for this token.' : ''}`
+            : line.assumed
             ? line.assumedValue > 0
                 ? `Not on the market. Assumed worth ${formatKMB(line.assumedValue)} from the untradable-cape setting` +
                   `${line.partial ? ' (a floor: the base cape counts as nothing)' : ''}, never taxed and never marked best.`

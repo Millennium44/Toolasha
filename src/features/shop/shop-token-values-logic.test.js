@@ -3,6 +3,9 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
     shopItemDetailMap: {},
     labyrinthShopItemDetailMap: {},
+    taskShopItemDetailMap: {},
+    /** hrid -> {expectedValue, isPartial} the calculator answers */
+    evs: {},
     items: {},
     /** hrid -> {ask, bid} */
     books: {},
@@ -23,6 +26,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({
             shopItemDetailMap: mocks.shopItemDetailMap,
             labyrinthShopItemDetailMap: mocks.labyrinthShopItemDetailMap,
+            taskShopItemDetailMap: mocks.taskShopItemDetailMap,
             itemDetailMap: mocks.items,
         }),
         getItemDetails: (hrid) => mocks.items[hrid] ?? null,
@@ -48,6 +52,12 @@ vi.mock('../../utils/token-valuation.js', () => ({
     // The valuation's own pricer, here a plain book read on the forced side
     tokenPriceOf: () => (hrid) => mocks.custom[hrid] ?? mocks.books[hrid]?.[mocks.side] ?? null,
 }));
+vi.mock('../market/expected-value-calculator.js', () => ({
+    default: {
+        calculateExpectedValue: (hrid) => mocks.evs[hrid] ?? null,
+        getCachedValue: () => null,
+    },
+}));
 vi.mock('../../utils/untradable-cape-cost.js', () => ({
     getUntradableCapeBaseCost: (hrid, options) => {
         mocks.capeCalls.push([hrid, options]);
@@ -55,7 +65,7 @@ vi.mock('../../utils/untradable-cape-cost.js', () => ({
     },
 }));
 
-const { shopLineValues, bestLine, badgedCurrencies, badgeSide, LABYRINTH_TOKEN_HRID } =
+const { shopLineValues, bestLine, badgedCurrencies, badgeSide, LABYRINTH_TOKEN_HRID, TASK_TOKEN_HRID } =
     await import('./shop-token-values-logic.js');
 
 const CHIM = '/items/chimerical_token';
@@ -75,6 +85,8 @@ beforeEach(() => {
     mocks.capeCosts = {};
     mocks.custom = {};
     mocks.capeCalls = [];
+    mocks.evs = {};
+    mocks.taskShopItemDetailMap = {};
     mocks.books = {
         '/items/essence': { ask: 1000, bid: 800 },
         '/items/bulk': { ask: 50, bid: 40 },
@@ -205,6 +217,51 @@ describe('shopLineValues', () => {
     });
 });
 
+describe('Task shop lines', () => {
+    const taskLine = (itemHrid, count, outputCount = 1) => ({
+        itemHrid,
+        cost: { itemHrid: TASK_TOKEN_HRID, count },
+        outputCount,
+    });
+
+    beforeEach(() => {
+        mocks.items['/items/chest'] = { name: 'Chest', isOpenable: true, isTradable: false };
+        mocks.items['/items/crate'] = { name: 'Crate', isOpenable: true, isTradable: false };
+        mocks.items['/items/crystal'] = { name: 'Crystal', isTradable: false };
+        mocks.taskShopItemDetailMap = {
+            a: taskLine('/items/essence', 10, 2),
+            b: taskLine('/items/chest', 30),
+            c: taskLine('/items/crystal', 50),
+            d: { itemHrid: '/items/rare', costs: [{ itemHrid: TASK_TOKEN_HRID, count: 5 }, { itemHrid: '/items/coin', count: 9 }] },
+        };
+    });
+
+    test('a priced line is the book price after tax, like any other shop', () => {
+        const [line] = shopLineValues(TASK_TOKEN_HRID);
+        expect(line).toMatchObject({ itemHrid: '/items/essence', cost: 10, perToken: (1000 * 0.96 * 2) / 10 });
+    });
+
+    test('an unpriced chest is worth its expected value, untaxed, and a partial one is a floor', () => {
+        mocks.evs['/items/chest'] = { expectedValue: 30_000, isPartial: true };
+        const chest = shopLineValues(TASK_TOKEN_HRID).find((line) => line.itemHrid === '/items/chest');
+        expect(chest).toMatchObject({ perToken: 1000, isContainer: true, partial: true, assumed: false });
+    });
+
+    test('a chest with no expected value, a non-openable unpriced item and a mixed-cost line are left out', () => {
+        const hrids = shopLineValues(TASK_TOKEN_HRID).map((line) => line.itemHrid);
+        expect(hrids).toEqual(['/items/essence']);
+    });
+
+    test('a market price beats the expected value and the chest can be the best line', () => {
+        mocks.evs['/items/chest'] = { expectedValue: 90_000, isPartial: false };
+        expect(bestLine(shopLineValues(TASK_TOKEN_HRID))).toEqual({ itemHrid: '/items/chest', cost: 30 });
+        mocks.books['/items/chest'] = { ask: 3000, bid: 3000 };
+        const chest = shopLineValues(TASK_TOKEN_HRID).find((line) => line.itemHrid === '/items/chest');
+        expect(chest.isContainer).toBeUndefined();
+        expect(chest.perToken).toBeCloseTo((3000 * 0.96) / 30, 8);
+    });
+});
+
 describe('bestLine', () => {
     test('is the highest real value per token across every line, and says which cost it is', () => {
         expect(bestLine(shopLineValues(CHIM))).toEqual({ itemHrid: '/items/bulk', cost: 1 });
@@ -227,13 +284,14 @@ describe('bestLine', () => {
 });
 
 describe('badgedCurrencies', () => {
-    test('is the four dungeon tokens and the labyrinth token', () => {
+    test('is the four dungeon tokens, the labyrinth token and the task token', () => {
         expect(badgedCurrencies()).toEqual([
             '/items/chimerical_token',
             '/items/sinister_token',
             '/items/enchanted_token',
             '/items/pirate_token',
             LABYRINTH_TOKEN_HRID,
+            TASK_TOKEN_HRID,
         ]);
     });
 });

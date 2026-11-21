@@ -69,7 +69,13 @@ vi.mock('../../utils/token-valuation.js', () => ({
 vi.mock('./shop-token-values-logic.js', () => ({
     LABYRINTH_TOKEN_HRID: '/items/labyrinth_token',
     badgeSide: () => mocks.side,
-    badgedCurrencies: () => ['/items/chimerical_token', '/items/sinister_token', '/items/labyrinth_token'],
+    TASK_TOKEN_HRID: '/items/task_token',
+    badgedCurrencies: () => [
+        '/items/chimerical_token',
+        '/items/sinister_token',
+        '/items/labyrinth_token',
+        '/items/task_token',
+    ],
     shopLineValues: (currencyHrid) => mocks.lines[currencyHrid] || [],
     bestLine: (lines) => {
         const priced = lines.filter((entry) => !entry.assumed && entry.perToken > 0);
@@ -82,6 +88,7 @@ const { ShopTokenValues } = await import('./shop-token-values.js');
 
 const CHIM = '/items/chimerical_token';
 const LAB = '/items/labyrinth_token';
+const TASK = '/items/task_token';
 
 const line = (itemHrid, cost, perToken, extra = {}) => ({
     itemHrid,
@@ -249,6 +256,35 @@ describe('Labyrinth shop tiles', () => {
         expect(rare.textContent).toBe('★ 2880/token');
         expect(essence.textContent).toBe('1200/token');
         expect(essence.dataset.mwiBest).toBe('false');
+    });
+});
+
+describe('Task shop tiles', () => {
+    test('badges Task shop tiles, stars the best, shows a chest as an expected value, leaves upgrade tiles bare', () => {
+        mocks.items['/items/chest'] = { name: 'chest' };
+        mocks.items['/items/crystal'] = { name: 'crystal' };
+        mocks.lines[TASK] = [
+            line('/items/crystal', 50, 100),
+            line('/items/chest', 30, 1000, { isContainer: true, partial: true }),
+        ];
+        const tile = (slug) => `<div class="TasksPanel_item__x">${icon(slug)}<span>1</span></div>`;
+        document.body.innerHTML = `<div class="TasksPanel_buyableGrid__x">${tile('crystal')}${tile('chest')}${tile('cooldown')}</div>`;
+        feature.isInitialized = true;
+        feature.refreshAll();
+
+        const [crystal, chest, ...rest] = badges();
+        expect(rest).toHaveLength(0);
+        expect(crystal.textContent).toBe('100/token');
+        expect(chest.textContent).toBe('★ 1000/token');
+        expect(chest.title).toContain('expected value');
+        expect(chest.title).toContain('a floor');
+        expect(document.querySelectorAll('.TasksPanel_item__x')[2].querySelector('.mwi-shop-token-value')).toBeNull();
+    });
+
+    test('registers its panel classes with the observer', () => {
+        feature.initialize();
+        const classes = mocks.handlers.map(([, className]) => className);
+        expect(classes).toContain('TasksPanel_buyableGrid');
     });
 });
 

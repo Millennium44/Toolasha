@@ -17,15 +17,30 @@ import { tokenPricingSide, tokenPriceOf, DUNGEON_TOKEN_HRIDS } from '../../utils
 import { isUntradableCape } from '../../utils/untradable-cape.js';
 import { getUntradableCapeBaseCost } from '../../utils/untradable-cape-cost.js';
 import { dungeonShopOffers } from '../inventory/dungeon-shop-offers.js';
+import expectedValueCalculator from '../market/expected-value-calculator.js';
 
 export const LABYRINTH_TOKEN_HRID = '/items/labyrinth_token';
+export const TASK_TOKEN_HRID = '/items/task_token';
 
 /**
- * The currencies this feature badges: the four dungeon tokens and the labyrinth token.
+ * The currencies this feature badges: the four dungeon tokens, the labyrinth token and the task token.
  * @returns {string[]}
  */
 export function badgedCurrencies() {
-    return [...DUNGEON_TOKEN_HRIDS, LABYRINTH_TOKEN_HRID];
+    return [...DUNGEON_TOKEN_HRIDS, LABYRINTH_TOKEN_HRID, TASK_TOKEN_HRID];
+}
+
+/**
+ * What opening an unpriced openable (the Task shop chests) yields, from the expected-value calculator.
+ * @param {string} itemHrid - An openable container
+ * @returns {{value: number, partial: boolean}|null} null when the calculator has nothing; `partial` when some
+ *   drops could not be priced, so the figure is a floor
+ */
+function containerValueOf(itemHrid) {
+    const ev = expectedValueCalculator.calculateExpectedValue(itemHrid);
+    if (ev?.expectedValue > 0) return { value: ev.expectedValue, partial: Boolean(ev.isPartial) };
+    const cached = expectedValueCalculator.getCachedValue(itemHrid);
+    return cached > 0 ? { value: cached, partial: false } : null;
 }
 
 /**
@@ -63,11 +78,12 @@ function unitPriceOf(priceOf, itemHrid) {
  * @param {string} line.itemHrid - What it sells
  * @param {number} line.cost - Tokens per purchase
  * @param {number} line.outputCount - Units per purchase
+ * @param {boolean} [line.isOpenable] - Task shop only: the item can be opened
  * @param {number|null} unitPrice - Book price of one unit on the badge side, null when unquoted
- * @returns {{perToken: number, assumed: boolean, assumedValue: number, partial: boolean}|null} null
- *   when the item has no price and is not an untradable cape (nothing to say about it)
+ * @returns {{perToken: number, assumed: boolean, assumedValue: number, partial: boolean, isContainer?: boolean}|null}
+ *   null when the item has no price and is neither an untradable cape nor an openable with an expected value
  */
-function valueLine({ itemHrid, cost, outputCount }, unitPrice, side) {
+function valueLine({ itemHrid, cost, outputCount, isOpenable }, unitPrice, side) {
     if (unitPrice > 0) {
         return {
             perToken: (calculatePriceAfterTax(unitPrice) * outputCount) / cost,
@@ -75,6 +91,20 @@ function valueLine({ itemHrid, cost, outputCount }, unitPrice, side) {
             assumedValue: 0,
             partial: false,
         };
+    }
+    // An openable with no market price is worth what opening it yields. The expected value already
+    // counts only what the drops sell for, so it is not taxed again; unpriced drops make it a floor.
+    if (isOpenable) {
+        const container = containerValueOf(itemHrid);
+        if (container) {
+            return {
+                perToken: (container.value * outputCount) / cost,
+                assumed: false,
+                assumedValue: 0,
+                partial: container.partial,
+                isContainer: true,
+            };
+        }
     }
     if (!isUntradableCape(itemHrid)) return null;
     // A cape cannot be sold, so its assumed value is not taxed
@@ -92,7 +122,7 @@ function valueLine({ itemHrid, cost, outputCount }, unitPrice, side) {
 /**
  * Every entry of the shop that takes a currency, valued.
  *
- * @param {string} currencyHrid - A dungeon token or the labyrinth token
+ * @param {string} currencyHrid - A dungeon token, the labyrinth token or the task token
  * @param {'ask'|'bid'} [side] - Book side; the badge side by default
  * @returns {Array<{itemHrid: string, currencyHrid: string, cost: number, outputCount: number,
  *   perToken: number, assumed: boolean, assumedValue: number, partial: boolean}>} In shop order;
@@ -111,6 +141,21 @@ export function shopLineValues(currencyHrid, side = badgeSide()) {
                 cost,
                 outputCount: line.outputCount > 0 ? line.outputCount : 1,
                 unitPrice: unitPriceOf(priceOf, line.itemHrid),
+            });
+        }
+    } else if (currencyHrid === TASK_TOKEN_HRID) {
+        const gameData = dataManager.getInitClientData();
+        for (const line of Object.values(gameData?.taskShopItemDetailMap || {})) {
+            // Only lines bought with task tokens alone say what a token is worth
+            const costs = Array.isArray(line?.costs) ? line.costs : line?.cost ? [line.cost] : [];
+            const cost = costs.length === 1 && costs[0]?.itemHrid === TASK_TOKEN_HRID ? costs[0].count || 0 : 0;
+            if (!line?.itemHrid || !(cost > 0)) continue;
+            lines.push({
+                itemHrid: line.itemHrid,
+                cost,
+                outputCount: line.outputCount > 0 ? line.outputCount : 1,
+                unitPrice: unitPriceOf(priceOf, line.itemHrid),
+                isOpenable: Boolean(gameData?.itemDetailMap?.[line.itemHrid]?.isOpenable),
             });
         }
     } else {
