@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
     profiles: null,
     battleRoster: null,
     loadouts: [],
+    // `${ownerId}|${memberId}` -> {capturedAt, loadout}, as combat-sim-party-loadouts-metz.js answers
+    partyLoadouts: {},
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -43,6 +45,10 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('./combat-sim-loadouts-metz.js', () => ({
     getMetzLoadouts: vi.fn(() => mocks.loadouts),
+}));
+
+vi.mock('./combat-sim-party-loadouts-metz.js', () => ({
+    getPartyLoadout: vi.fn((owner, member) => mocks.partyLoadouts[`${owner}|${member}`] || null),
 }));
 
 vi.mock('./combat-sim-export.js', () => ({
@@ -77,6 +83,7 @@ import {
     applyLoadoutOverrideToMetzCharacter,
     describePartyProfiles,
 } from './combat-sim-export-metz.js';
+import { constructPartyPlayer } from './combat-sim-export.js';
 
 function baseCharacter(overrides = {}) {
     return {
@@ -104,6 +111,7 @@ describe('Metz combat export', () => {
         mocks.partySkills = [];
         mocks.profiles = null;
         mocks.battleRoster = null;
+        mocks.partyLoadouts = {};
     });
 
     test('mid-battle the team and the preview read the battle roster, not the emptied slot map', async () => {
@@ -792,5 +800,185 @@ describe('Metz export - MooPass expiry and speed gear', () => {
         ];
         const team = await constructMetzTeamExport('self-1');
         expect(team[1].skilling.speedGear).toEqual([{ itemHrid: '/items/philosophers_necklace', enhancementLevel: 7 }]);
+    });
+});
+
+describe('partymates in their stored View Loadout', () => {
+    const HOUR = 60 * 60 * 1000;
+    const gear = (itemHrid) => ({
+        '/item_locations/main_hand': { itemLocationHrid: '/item_locations/main_hand', itemHrid, enhancementLevel: 5 },
+    });
+    const profileOf = (id, name, itemHrid, ageMs) => ({
+        characterID: id,
+        characterName: name,
+        timestamp: Date.now() - ageMs,
+        profile: { characterSkills: [], wearableItemMap: gear(itemHrid) },
+    });
+    const loadoutOf = (itemHrid, ageMs) => ({
+        capturedAt: Date.now() - ageMs,
+        loadout: {
+            actionTypeHrid: '/action_types/combat',
+            wearableItemMap: gear(itemHrid),
+            equippedAbilities: [
+                { abilityHrid: '/abilities/b', level: 20, slotNumber: 2 },
+                { abilityHrid: '/abilities/a', level: 30, slotNumber: 1 },
+            ],
+            combatConsumables: [{ itemHrid: '/items/spaceberry_cake' }],
+            abilityCombatTriggersMap: {},
+            consumableCombatTriggersMap: {},
+        },
+    });
+    /** The profile constructPartyPlayer was handed for a member, and the battle data beside it */
+    const builtFor = (id) => {
+        const call = constructPartyPlayer.mock.calls.find(([profile]) => String(profile.characterID) === id);
+        return call ? { profile: call[0], battle: call[2] } : null;
+    };
+    const weaponOf = (id) => builtFor(id).profile.profile.wearableItemMap['/item_locations/main_hand'].itemHrid;
+
+    beforeEach(() => {
+        constructPartyPlayer.mockClear();
+        mocks.onGamePage = true;
+        mocks.characterData = baseCharacter({
+            partyInfo: {
+                partySlotMap: {
+                    1: { characterID: 'self-1' },
+                    2: { characterID: 'party-1' },
+                    3: { characterID: 'party-2' },
+                },
+            },
+        });
+        mocks.battleRoster = null;
+        mocks.partyLoadouts = {};
+        mocks.profiles = [
+            profileOf('party-1', 'Ann', '/items/ann_profile_sword', 2 * HOUR),
+            profileOf('party-2', 'Bob', '/items/bob_profile_bow', 2 * HOUR),
+        ];
+    });
+
+    test('each member wears their own loadout, by id, whatever the store order', async () => {
+        mocks.partyLoadouts = {
+            'self-1|party-2': loadoutOf('/items/bob_loadout_bow', HOUR / 2),
+            'self-1|party-1': loadoutOf('/items/ann_loadout_sword', HOUR / 2),
+        };
+        const warnings = [];
+
+        await constructMetzTeamExport('self-1', { warnings });
+
+        expect(weaponOf('party-1')).toBe('/items/ann_loadout_sword');
+        expect(weaponOf('party-2')).toBe('/items/bob_loadout_bow');
+        // The loadout's own consumables and slot order, never the live battle's
+        expect(builtFor('party-1').battle.players).toEqual([
+            expect.objectContaining({
+                character: { id: 'party-1' },
+                combatConsumables: [{ itemHrid: '/items/spaceberry_cake' }],
+            }),
+        ]);
+        expect(builtFor('party-1').profile.profile.equippedAbilities.map((row) => row.abilityHrid)).toEqual([
+            '/abilities/a',
+            '/abilities/b',
+        ]);
+        expect(warnings).toEqual([
+            expect.objectContaining({ name: 'Ann', level: 'loadout', text: expect.stringContaining('View Loadout') }),
+            expect.objectContaining({ name: 'Bob', level: 'loadout', text: expect.stringContaining('View Loadout') }),
+        ]);
+    });
+
+    test('two members with the same name still get their own loadouts by id', async () => {
+        mocks.profiles = [
+            profileOf('party-1', 'Twin', '/items/ann_profile_sword', 2 * HOUR),
+            profileOf('party-2', 'Twin', '/items/bob_profile_bow', 2 * HOUR),
+        ];
+        mocks.partyLoadouts = { 'self-1|party-2': loadoutOf('/items/bob_loadout_bow', HOUR / 2) };
+
+        await constructMetzTeamExport('self-1');
+
+        expect(weaponOf('party-1')).toBe('/items/ann_profile_sword');
+        expect(weaponOf('party-2')).toBe('/items/bob_loadout_bow');
+    });
+
+    test('a loadout older than the profile is passed over, and the warning says so', async () => {
+        mocks.partyLoadouts = { 'self-1|party-1': loadoutOf('/items/ann_loadout_sword', 3 * HOUR) };
+        const warnings = [];
+
+        await constructMetzTeamExport('self-1', { warnings });
+
+        expect(weaponOf('party-1')).toBe('/items/ann_profile_sword');
+        expect(warnings).toEqual([
+            expect.objectContaining({
+                name: 'Ann',
+                level: 'loadout',
+                text: expect.stringContaining('older than their profile (2 h old)'),
+            }),
+        ]);
+    });
+
+    test('an older loadout is passed over even when the profile shows no gear', async () => {
+        mocks.profiles = [
+            {
+                characterID: 'party-1',
+                characterName: 'Ann',
+                timestamp: Date.now() - HOUR,
+                profile: { characterSkills: [], hideWearableItems: true, wearableItemMap: {} },
+            },
+        ];
+        mocks.partyLoadouts = { 'self-1|party-1': loadoutOf('/items/ann_loadout_sword', 3 * HOUR) };
+        const warnings = [];
+
+        await constructMetzTeamExport('self-1', { warnings });
+
+        expect(builtFor('party-1').profile.profile.wearableItemMap).toEqual({});
+        expect(warnings[0]).toMatchObject({ level: 'gearless', text: expect.stringContaining('older than their profile') });
+    });
+
+    test('a newer loadout over a day-old profile keeps the stale warning for the levels', async () => {
+        mocks.profiles = [profileOf('party-1', 'Ann', '/items/ann_profile_sword', 30 * HOUR)];
+        mocks.partyLoadouts = { 'self-1|party-1': loadoutOf('/items/ann_loadout_sword', HOUR) };
+        const warnings = [];
+
+        await constructMetzTeamExport('self-1', { warnings });
+
+        expect(weaponOf('party-1')).toBe('/items/ann_loadout_sword');
+        expect(warnings[0]).toMatchObject({ level: 'stale', text: expect.stringContaining('refresh their levels') });
+    });
+
+    test('a loadout stored for someone no longer in the party adds nobody', async () => {
+        mocks.characterData = baseCharacter({
+            partyInfo: { partySlotMap: { 1: { characterID: 'self-1' }, 2: { characterID: 'party-1' } } },
+        });
+        mocks.partyLoadouts = { 'self-1|party-2': loadoutOf('/items/bob_loadout_bow', HOUR / 2) };
+
+        const team = await constructMetzTeamExport('self-1');
+
+        expect(team.map((entry) => entry.name)).toEqual(['Self', 'Ann']);
+        expect(builtFor('party-2')).toBeNull();
+    });
+
+    test('a loadout stored by another character is not exported for this one', async () => {
+        mocks.partyLoadouts = { 'other-self|party-1': loadoutOf('/items/ann_loadout_sword', HOUR / 2) };
+
+        await constructMetzTeamExport('self-1');
+
+        expect(weaponOf('party-1')).toBe('/items/ann_profile_sword');
+    });
+
+    test('without a profile the member is still left out, loadout or not', async () => {
+        mocks.profiles = [profileOf('party-1', 'Ann', '/items/ann_profile_sword', 2 * HOUR)];
+        mocks.partyLoadouts = { 'self-1|party-2': loadoutOf('/items/bob_loadout_bow', HOUR / 2) };
+        const warnings = [];
+
+        const team = await constructMetzTeamExport('self-1', { warnings });
+
+        expect(team).toHaveLength(2);
+        expect(warnings).toEqual([expect.objectContaining({ level: 'missing' })]);
+    });
+
+    test('describePartyProfiles weighs loadouts only when asked (the Shykai preview stays profile-only)', () => {
+        mocks.partyLoadouts = { 'self-1|party-1': loadoutOf('/items/ann_loadout_sword', HOUR / 2) };
+
+        const plain = describePartyProfiles(mocks.characterData, mocks.profiles);
+        const metz = describePartyProfiles(mocks.characterData, mocks.profiles, Date.now(), { sharedLoadouts: true });
+
+        expect(plain[0]).toMatchObject({ gearSource: 'profile', loadout: null, warning: null });
+        expect(metz[0]).toMatchObject({ gearSource: 'loadout', loadoutCapturedAt: expect.any(Number) });
     });
 });

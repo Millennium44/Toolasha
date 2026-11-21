@@ -1696,7 +1696,12 @@ class CombatScore {
         // Again after the await, in case a preview was opened some other way meanwhile
         wrapper._closePartyExportPreview?.();
 
-        const members = describePartyProfiles(characterData, profileList);
+        // Only the Metz export wears a stored View Loadout; the Shykai party export stays profile-only
+        const members = describePartyProfiles(characterData, profileList, Date.now(), {
+            sharedLoadouts: format !== SIM_EXPORT_FORMATS.SHYKAI,
+        });
+        // A 'loadout' note says which gear is used; it is not a problem to fix
+        const needsAttention = (member) => member.warning && member.warning.level !== 'loadout';
         const rowHtml = (name, label, color, title) =>
             `<div title="${escapeHtml(title)}" style="display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; color: ${color};">
                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(name)}</span>
@@ -1712,8 +1717,10 @@ class CombatScore {
             ...members.map((member) => {
                 let label = formatProfileAge(member.status.ageMs);
                 if (!member.status.found) label = 'missing, left out';
-                else if (member.status.gearless) label = `no gear, ${label}`;
-                const color = member.warning ? config.COLOR_WARNING : '#ddd';
+                else if (member.gearSource === 'loadout') {
+                    label = `View Loadout, ${formatProfileAge(Math.max(0, Date.now() - member.loadoutCapturedAt))}`;
+                } else if (member.status.gearless) label = `no gear, ${label}`;
+                const color = needsAttention(member) ? config.COLOR_WARNING : '#ddd';
                 return rowHtml(member.name, label, color, member.warning?.text || '');
             }),
         ];
@@ -1724,7 +1731,7 @@ class CombatScore {
         let note = '';
         if (members.length === 0) {
             note = 'Not in a party: only you will be exported.';
-        } else if (members.some((member) => member.warning)) {
+        } else if (members.some(needsAttention)) {
             note = 'Open a teammate’s profile to refresh it. Hover a name for details.';
         }
 

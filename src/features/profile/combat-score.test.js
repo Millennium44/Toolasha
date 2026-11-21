@@ -31,6 +31,8 @@ const stub = vi.hoisted(() => ({
     /** When an array, each profile-list read waits here until a test releases it */
     profileListGate: null,
     partyMembers: [],
+    /** Arguments of every describePartyProfiles call */
+    describeCalls: [],
     teamCalls: [],
 }));
 
@@ -82,7 +84,10 @@ vi.mock('../combat/combat-sim-export-metz.js', () => ({
         stub.onTeamBuild?.();
         return [{ name: 'Me', override: options?.selfLoadoutOverride }, { name: 'Teammate' }];
     },
-    describePartyProfiles: () => stub.partyMembers,
+    describePartyProfiles: (...args) => {
+        stub.describeCalls.push(args);
+        return stub.partyMembers;
+    },
 }));
 vi.mock('../combat/milkonomy-export.js', () => ({ constructMilkonomyExport: () => ({}) }));
 vi.mock('./character-card-button.js', () => ({
@@ -883,6 +888,38 @@ describe('sim export split button', () => {
             expect(preview.textContent).toContain('missing, left out');
             expect(clipboardText).toBeNull();
             expect(stub.teamCalls).toHaveLength(0);
+        });
+
+        test('the Metz preview names a member exported in their View Loadout; the Shykai one does not weigh it', async () => {
+            stub.describeCalls = [];
+            stub.partyMembers = [
+                {
+                    characterId: 'party-1',
+                    name: 'Teammate',
+                    profile: {},
+                    status: { found: true, ageMs: 2 * 60 * 60 * 1000, gearless: false, stale: false },
+                    gearSource: 'loadout',
+                    loadoutCapturedAt: Date.now() - 10 * 60 * 1000,
+                    warning: { level: 'loadout', text: 'Teammate: gear from their View Loadout (10 min old).' },
+                },
+            ];
+            combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
+            await flush();
+
+            document.querySelector('.mwi-combat-sim-party-export-option[data-name="Raid"]').click();
+            await flush();
+            const preview = document.querySelector('#mwi-party-export-preview');
+            expect(preview.textContent).toContain('View Loadout, 10 min old');
+            // An informational source note is not a problem to fix
+            expect(preview.textContent).not.toContain('refresh it');
+            expect(stub.describeCalls.at(-1)[3]).toEqual({ sharedLoadouts: true });
+
+            document.querySelector('#mwi-combat-sim-format-btn').click();
+            document.querySelector('.mwi-combat-sim-format-option[data-format="shykai"]').click();
+            await flush();
+            document.querySelector('.mwi-combat-sim-party-export-option[data-name="Raid"]').click();
+            await flush();
+            expect(stub.describeCalls.at(-1)[3]).toEqual({ sharedLoadouts: false });
         });
 
         test('a party that changed after the preview was drawn is shown again, not copied', async () => {

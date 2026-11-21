@@ -105,7 +105,8 @@ function mount() {
 
 /**
  * Show, under the import button, the party members whose cached profiles the import could not
- * trust: none cached (left out), no gear (imported naked), or older than a day. Replaced on every
+ * trust: none cached (left out), no gear (imported naked), or older than a day; and, for a member
+ * with a stored View Loadout, whether it or the profile supplied their gear. Replaced on every
  * import and removed when there is nothing to say.
  * @param {Element} button - The import button
  * @param {Array<{level: string, text: string}>} warnings - From `constructMetzTeamExport`
@@ -118,7 +119,8 @@ function showProfileWarnings(button, warnings) {
     list.style.cssText = 'margin:0 0 8px; font-size:12px; line-height:1.4;';
     for (const warning of warnings) {
         const line = document.createElement('div');
-        line.style.color = warning.level === 'stale' ? '#c9a227' : '#e0703a';
+        // 'loadout' only says which gear was used (a View Loadout or the profile)
+        line.style.color = warning.level === 'loadout' ? '#9aa4b2' : warning.level === 'stale' ? '#c9a227' : '#e0703a';
         line.textContent = `⚠ ${warning.text}`;
         list.appendChild(line);
     }

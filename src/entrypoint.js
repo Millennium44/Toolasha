@@ -1949,6 +1949,14 @@ function registerFeatures() {
             customCheck: () => config.isFeatureEnabled('loadoutSnapshot'),
         },
         {
+            key: 'metzPartyLoadoutPublisher',
+            name: 'Metz Party Loadout Publisher',
+            category: 'Combat',
+            module: Combat.metzPartyLoadoutPublisher,
+            // Copies partymates' View Loadouts to GM storage for the Metz team import. No setting of its
+            // own, like the capture it reads: a loadout the user opened is one they asked to see.
+        },
+        {
             key: 'scrollSimulatorUI',
             name: 'Scroll Simulator UI',
             category: 'Combat',

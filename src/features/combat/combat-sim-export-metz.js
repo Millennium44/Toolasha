@@ -13,9 +13,15 @@ import {
     constructSelfPlayer,
     constructPartyPlayer,
 } from './combat-sim-export.js';
-import { sharedProfileStatus, sharedProfileWarning } from '../../utils/shared-profile-status.js';
+import {
+    formatProfileAge,
+    profileAgeMs,
+    sharedProfileStatus,
+    sharedProfileWarning,
+} from '../../utils/shared-profile-status.js';
 import { gmGetValue } from '../../utils/gm-traffic.js';
 import { getMetzLoadouts } from './combat-sim-loadouts-metz.js';
+import { getPartyLoadout } from './combat-sim-party-loadouts-metz.js';
 
 const ENHANCING_TOOL_LOCATION = '/item_locations/enhancing_tool';
 const ALCHEMY_TOOL_LOCATION = '/item_locations/alchemy_tool';
@@ -299,6 +305,54 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
 }
 
 /**
+ * Which gear a member is exported in, and what the import should say about it.
+ *
+ * A stored View Loadout wins only when it is newer than the cached profile (a profile of unknown age
+ * counts as older, as it counts as stale everywhere else): an older loadout would silently replace
+ * fresher information. Levels, houses and buffs always come from the profile, so a missing profile
+ * still leaves the member out.
+ * @param {string} name
+ * @param {Object|null} profile
+ * @param {ReturnType<typeof sharedProfileStatus>} status
+ * @param {{capturedAt: number, loadout: Object}|null} shared
+ * @param {number} now
+ * @returns {{gearSource: 'loadout'|'profile', loadout: Object|null, warning: {level: string, text: string}|null}}
+ */
+function chooseGearSource(name, profile, status, shared, now) {
+    const profileWarning = sharedProfileWarning(name, status, now);
+    if (!shared || !profile) return { gearSource: 'profile', loadout: null, warning: profileWarning };
+
+    const who = name || 'Unknown';
+    const loadoutAge = formatProfileAge(profileAgeMs(shared.capturedAt, now));
+    const profileAge = formatProfileAge(profileAgeMs(status.capturedAt, now));
+    const newer = status.capturedAt === null || shared.capturedAt > status.capturedAt;
+    if (newer) {
+        const why = `newer than their profile (${profileAge})`;
+        return {
+            gearSource: 'loadout',
+            loadout: shared.loadout,
+            warning: status.stale
+                ? {
+                      level: 'stale',
+                      text: `${who}: gear from their View Loadout (${loadoutAge}), ${why}; levels from a profile ${profileAge}. Open their profile to refresh their levels.`,
+                  }
+                : {
+                      level: 'loadout',
+                      text: `${who}: gear from their View Loadout (${loadoutAge}), ${why}; levels from their profile.`,
+                  },
+        };
+    }
+    const note = `Their View Loadout (${loadoutAge}) is older than their profile (${profileAge}), so the profile's gear was used.`;
+    return {
+        gearSource: 'profile',
+        loadout: null,
+        warning: profileWarning
+            ? { ...profileWarning, text: `${profileWarning.text} ${note}` }
+            : { level: 'loadout', text: `${who}: ${note}` },
+    };
+}
+
+/**
  * Each other party member's cached profile and how far it can be trusted, in party-slot order.
  *
  * Shared by the team export (which turns it into warnings) and the profile panel's "export full
@@ -308,11 +362,15 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
  *   `dataManager.characterData`, else its `partyInfo.partySlotMap`
  * @param {Array<Object>} profileList - Cached `profile_list` entries
  * @param {number} [now=Date.now()] - Reference time for profile ages
+ * @param {{sharedLoadouts?: boolean}} [options] - `sharedLoadouts` weighs each member's stored View
+ *   Loadout (Metz exports only; the Shykai party export stays profile-only)
  * @returns {Array<{characterId: string|number, name: string, profile: Object|null,
  *   status: ReturnType<typeof sharedProfileStatus>,
- *   warning: {level: string, text: string}|null}>}
+ *   gearSource: 'loadout'|'profile', loadout: Object|null, loadoutCapturedAt: number|null,
+ *   warning: {level: string, text: string}|null}>} `loadout` is the stored View Loadout when it is the
+ *   one to export; `loadoutCapturedAt` is when one was stored, used or not
  */
-export function describePartyProfiles(characterObj, profileList, now = Date.now()) {
+export function describePartyProfiles(characterObj, profileList, now = Date.now(), { sharedLoadouts = false } = {}) {
     const ownerId = characterObj?.character?.id;
     const members = [];
     // The live character's `partySlotMap` is frozen at login and emptied for a whole battle, so the
@@ -327,15 +385,56 @@ export function describePartyProfiles(characterObj, profileList, now = Date.now(
             (profileList || []).find((entry) => sameCharacterId(entry?.characterID, member.characterID)) || null;
         const name = profile?.characterName || member.characterName || 'Unknown';
         const status = sharedProfileStatus(profile, now);
+        // Looked up by this exporting character and this roster member's id, never by name
+        const shared = sharedLoadouts ? getPartyLoadout(ownerId, member.characterID, now) : null;
+        const { gearSource, loadout, warning } = chooseGearSource(name, profile, status, shared, now);
         members.push({
             characterId: member.characterID,
             name,
             profile,
             status,
-            warning: sharedProfileWarning(name, status, now),
+            gearSource,
+            loadout,
+            loadoutCapturedAt: shared?.capturedAt ?? null,
+            warning,
         });
     }
     return members;
+}
+
+/**
+ * The profile with a View Loadout's gear, abilities and triggers in place of its own, plus the battle
+ * shape `constructPartyPlayer` reads consumables and triggers from first, so the whole build is the
+ * loadout's and no live battle data mixes into it. Abilities go in slot order, since
+ * `constructPartyPlayer` fills slots in array order.
+ * @param {Object} profile - A `profile_list` entry
+ * @param {Object} loadout - A stored View Loadout (combat-sim-party-loadouts-metz.js)
+ * @returns {{profile: Object, battle: Object}}
+ */
+function wearLoadout(profile, loadout) {
+    const slotOf = (row) => (Number.isFinite(row?.slotNumber) ? row.slotNumber : Number.MAX_SAFE_INTEGER);
+    return {
+        profile: {
+            ...profile,
+            profile: {
+                ...profile.profile,
+                wearableItemMap: loadout.wearableItemMap || {},
+                equippedAbilities: [...(loadout.equippedAbilities || [])].sort((a, b) => slotOf(a) - slotOf(b)),
+                abilityCombatTriggersMap: loadout.abilityCombatTriggersMap || {},
+                consumableCombatTriggersMap: loadout.consumableCombatTriggersMap || {},
+            },
+        },
+        battle: {
+            players: [
+                {
+                    character: { id: profile.characterID },
+                    combatConsumables: loadout.combatConsumables || [],
+                    abilityCombatTriggersMap: loadout.abilityCombatTriggersMap || {},
+                    consumableCombatTriggersMap: loadout.consumableCombatTriggersMap || {},
+                },
+            ],
+        },
+    };
 }
 
 /**
@@ -346,6 +445,10 @@ export function describePartyProfiles(characterObj, profileList, now = Date.now(
  * where one member's missing gear shapes only their own part of it. A member with no cached
  * profile has nothing to export and is left out. Both, and any profile older than a day, are
  * reported through `options.warnings` so the import button can say so.
+ *
+ * A member whose View Loadout was stored on this device (combat-sim-party-loadouts-metz.js) is
+ * exported in it when it is newer than their profile; `options.warnings` then names the source and
+ * both ages, as it also does when an older one is passed over.
  *
  * @param {string|number|null} [expectedCharacterId] - The character the simulator was opened for
  * @param {{warnings?: Array<{name: string, level: string, text: string}>,
@@ -377,14 +480,16 @@ export async function constructMetzTeamExport(
     const self = buildSelfMetzCharacter(characterObj, clientObj);
     const team = [selfLoadoutOverride ? applyLoadoutOverrideToMetzCharacter(self, selfLoadoutOverride) : self];
 
-    for (const { name, profile, warning } of describePartyProfiles(characterObj, profileList)) {
+    const members = describePartyProfiles(characterObj, profileList, Date.now(), { sharedLoadouts: true });
+    for (const { name, profile, loadout, warning } of members) {
         if (Array.isArray(warnings) && warning) warnings.push({ name, ...warning });
         if (!profile) continue;
+        const worn = loadout ? wearLoadout(profile, loadout) : { profile, battle: battleObj };
         team.push(
-            toMetzCharacter(profile.characterName, constructPartyPlayer(profile, clientObj, battleObj), {
+            toMetzCharacter(profile.characterName, constructPartyPlayer(worn.profile, clientObj, worn.battle), {
                 skills: profile.profile?.characterSkills,
                 speedGear: buildSpeedGear(
-                    Object.values(profile.profile?.wearableItemMap || {}),
+                    Object.values(worn.profile.profile?.wearableItemMap || {}),
                     [],
                     clientObj?.itemDetailMap
                 ),
