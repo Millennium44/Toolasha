@@ -14,7 +14,7 @@ import { computeBestCraftingPlan, collectMissingMaterials } from './crafting-pla
 import craftingPlanWalk, { buildWalkSteps, WALK_KEY_ATTRIBUTE } from './crafting-plan-walk.js';
 import { normalizePlannedSurplus } from './crafting-plan-surplus.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
-import { formatKMB, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
+import { formatKMB, formatPercentage, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
 import {
     findActionInput,
     attachInputListeners,
@@ -338,6 +338,133 @@ function createRow(leftText, rightText, options = {}) {
     // by this key rather than by position — the tree is rebuilt on every toggle.
     if (options.walkKey) row.setAttribute(WALK_KEY_ATTRIBUTE, options.walkKey);
     return row;
+}
+
+/**
+ * How much crafting the plan's item saves compared with buying the same quantity from the market.
+ * Uses the plan's own totals, so it follows the pricing mode (buy side), artisan mode and time cost.
+ * A comparison needs both sides priced: a product with no buy price, or any input nobody sells, makes
+ * the craft total infinite, and the block then says so rather than showing half a comparison.
+ *
+ * @param {Object} plan - Root CraftingPlanNode
+ * @returns {{status: 'ok', buyTotal: number, craftTotal: number, saving: number, percent: number}
+ *   |{status: 'unpriced', productUnpriced: boolean, inputsUnpriced: boolean}|null} null when the best
+ *   plan is to buy (nothing to compare)
+ */
+export function calculateCraftingSavings(plan) {
+    if (!plan || plan.strategy !== 'craft') return null;
+    const productUnpriced = !(plan.buyPrice > 0);
+    const inputsUnpriced = !Number.isFinite(plan.totalCost);
+    if (productUnpriced || inputsUnpriced) return { status: 'unpriced', productUnpriced, inputsUnpriced };
+    const buyTotal = plan.buyPrice * plan.quantity;
+    const saving = buyTotal - plan.totalCost;
+    return {
+        status: 'ok',
+        buyTotal,
+        craftTotal: plan.totalCost,
+        saving,
+        percent: buyTotal > 0 ? saving / buyTotal : 0,
+    };
+}
+
+/**
+ * The saving expressed per hour of crafting, so plans of different sizes and speeds compare. It is the
+ * same net figure as "You save": when the time cost is on, that cost is already inside it.
+ * @param {number} saving - Total saving (negative for a loss)
+ * @param {number} craftSeconds - Total time of every craft step in the plan
+ * @returns {number|null} Coins per hour, null when there is no crafting time to divide by
+ */
+export function calculateSavingsPerHour(saving, craftSeconds) {
+    if (!Number.isFinite(saving) || !Number.isFinite(craftSeconds) || craftSeconds <= 0) return null;
+    return saving / (craftSeconds / 3600);
+}
+
+/**
+ * Total crafting time of a plan's craft steps, using the same per-step arithmetic as the Crafting Steps rows.
+ * @param {Array<{actionHrid: string, actionsNeeded: number}>} steps - From collectCraftSteps
+ * @returns {number} Seconds
+ */
+function totalCraftSecondsOf(steps) {
+    const gameData = dataManager.getInitClientData();
+    const skills = dataManager.getSkills();
+    const equipment = dataManager.getEquipment();
+    let seconds = 0;
+    for (const step of steps) {
+        const actionDetails = step.actionHrid ? gameData?.actionDetailMap?.[step.actionHrid] : null;
+        if (!actionDetails || !(step.actionsNeeded > 0)) continue;
+        const stats = calculateActionStats(actionDetails, { skills, equipment, itemDetailMap: gameData.itemDetailMap });
+        seconds += (stats.actionTime * step.actionsNeeded) / calculateEfficiencyMultiplier(stats.totalEfficiency);
+    }
+    return seconds;
+}
+
+/**
+ * Build the "Savings vs buying" block shown at the bottom of the expanded plan.
+ * @param {Object} savings - Result of {@link calculateCraftingSavings}, not null
+ * @param {number} quantity - Items the totals cover
+ * @param {boolean} timeCostEnabled - Whether the craft total includes the time cost
+ * @param {number} craftSeconds - Total crafting time of the plan, for the per-hour row
+ * @returns {HTMLElement}
+ */
+function buildSavingsSection(savings, quantity, timeCostEnabled, craftSeconds) {
+    const container = document.createElement('div');
+    container.className = 'mwi-crafting-plan-savings';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'font-weight: 500; color: var(--text-color-primary, #fff); margin-bottom: 4px;';
+    header.textContent = `Savings vs buying (×${formatWithSeparator(quantity)})`;
+    container.appendChild(header);
+
+    if (savings.status === 'unpriced') {
+        const reasons = [];
+        if (savings.productUnpriced) reasons.push('the product has no buy price');
+        if (savings.inputsUnpriced) reasons.push('an input has no price');
+        const note = document.createElement('div');
+        note.style.cssText = 'font-size: 0.85em; line-height: 1.35; color: var(--text-color-secondary, #e8a87c);';
+        note.textContent = `Cannot compare crafting with buying: ${reasons.join(' and ')}.`;
+        container.appendChild(note);
+        return container;
+    }
+
+    const timeCostTitle = timeCostEnabled ? 'Includes the time cost you set, so this is not materials alone.' : '';
+    const withTitle = (row) => {
+        if (timeCostTitle) row.title = timeCostTitle;
+        return row;
+    };
+
+    container.appendChild(createRow('Buy it from the market', formatWithSeparator(Math.round(savings.buyTotal))));
+    container.appendChild(
+        withTitle(createRow('Craft it yourself', formatWithSeparator(Math.round(savings.craftTotal))))
+    );
+
+    const saved = savings.saving >= 0;
+    const totalRow = createRow(
+        saved ? 'You save' : 'You lose',
+        `${saved ? '' : '-'}${formatWithSeparator(Math.abs(Math.round(savings.saving)))} (${formatPercentage(Math.abs(savings.percent))})`,
+        { leftColor: 'var(--text-color-primary, #fff)', rightColor: saved ? '#4ade80' : '#f87171' }
+    );
+    totalRow.style.borderTop = '1px solid var(--border-color, #333)';
+    totalRow.style.marginTop = '4px';
+    totalRow.style.paddingTop = '4px';
+    container.appendChild(withTitle(totalRow));
+
+    const perHour = calculateSavingsPerHour(savings.saving, craftSeconds);
+    if (perHour !== null) {
+        container.appendChild(
+            withTitle(
+                createRow(
+                    'Per hour of crafting',
+                    `${perHour < 0 ? '-' : ''}${formatKMB(Math.abs(Math.round(perHour)))}/hr`,
+                    {
+                        leftColor: 'var(--text-color-primary, #fff)',
+                        rightColor: perHour >= 0 ? '#4ade80' : '#f87171',
+                    }
+                )
+            )
+        );
+    }
+
+    return container;
 }
 
 /**
@@ -889,6 +1016,20 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
             });
             content.appendChild(walkButton);
         }
+    }
+
+    // === Savings vs buying ===
+    const savings = calculateCraftingSavings(plan);
+    if (savings) {
+        const divider3 = document.createElement('div');
+        divider3.style.cssText = 'border-top: 1px solid var(--border-color, #333); margin: 6px 0;';
+        content.appendChild(divider3);
+        // Time over the same from-scratch plan the cost totals cover, not the inventory-credited steps above
+        const savingsSteps = [];
+        collectCraftSteps(executionPlan, savingsSteps);
+        content.appendChild(
+            buildSavingsSection(savings, plan.quantity, timeCostEnabled, totalCraftSecondsOf(savingsSteps))
+        );
     }
 
     const costText = plan.unitCost === Infinity ? '?' : `${formatKMB(Math.round(plan.unitCost))}/ea`;

@@ -242,7 +242,12 @@ vi.mock('./crafting-plan-walk.js', async () => {
     };
 });
 
-const { buildPlanUI, default: craftingPlanDisplay } = await import('./crafting-plan-display.js');
+const {
+    buildPlanUI,
+    calculateCraftingSavings,
+    calculateSavingsPerHour,
+    default: craftingPlanDisplay,
+} = await import('./crafting-plan-display.js');
 const { mergedMissingRoot } = await import('./task-crafting-train.js');
 
 // Reset the shared doubles that are new to this file (the count-listener and
@@ -1809,5 +1814,100 @@ describe('craft availability warnings', () => {
         craftingPlanDisplay.disable();
         for (const event of events) expect(state.gameListeners[event].size).toBe(before[event]);
         expect(state.loadoutListeners.size).toBe(0);
+    });
+});
+
+describe('savings vs buying', () => {
+    const craftPlan = (overrides = {}) => ({
+        strategy: 'craft',
+        itemHrid: '/items/crushed_amber',
+        itemName: 'Crushed Amber',
+        quantity: 10,
+        buyPrice: 1000,
+        totalCost: 7000,
+        unitCost: 700,
+        craftCost: 700,
+        actionHrid: '/actions/crafting/crushed_amber',
+        actionsNeeded: 2,
+        outputCount: 15,
+        children: [
+            { strategy: 'buy', itemHrid: '/items/wood', itemName: 'Wood', quantity: 5, unitCost: 5, totalCost: 25, children: [] },
+        ],
+        ...overrides,
+    });
+
+    test('compares the buy price of the whole quantity with the plan total', () => {
+        expect(calculateCraftingSavings(craftPlan())).toEqual({
+            status: 'ok',
+            buyTotal: 10000,
+            craftTotal: 7000,
+            saving: 3000,
+            percent: 0.3,
+        });
+        expect(calculateCraftingSavings(craftPlan({ totalCost: 12000 })).saving).toBe(-2000);
+    });
+
+    test('is null when buying is the best plan, and unpriced when either side has no price', () => {
+        expect(calculateCraftingSavings(craftPlan({ strategy: 'buy' }))).toBeNull();
+        expect(calculateCraftingSavings(craftPlan({ buyPrice: null }))).toMatchObject({
+            status: 'unpriced',
+            productUnpriced: true,
+            inputsUnpriced: false,
+        });
+        expect(calculateCraftingSavings(craftPlan({ totalCost: Infinity }))).toMatchObject({
+            status: 'unpriced',
+            productUnpriced: false,
+            inputsUnpriced: true,
+        });
+    });
+
+    test('per hour divides by the craft time and is null with none', () => {
+        expect(calculateSavingsPerHour(3000, 1800)).toBe(6000);
+        expect(calculateSavingsPerHour(-500, 900)).toBe(-2000);
+        expect(calculateSavingsPerHour(3000, 0)).toBeNull();
+        expect(calculateSavingsPerHour(Infinity, 3600)).toBeNull();
+    });
+
+    function savingsText(section) {
+        return section.querySelector('.mwi-crafting-plan-savings')?.textContent;
+    }
+
+    beforeEach(() => {
+        state.inventory = [];
+        state.settings = {};
+        state.missing = [];
+        state.planFor = undefined;
+        ledger.enabled = false;
+        ledger.claimedElsewhere = 0;
+    });
+
+    test('the panel shows the buy price, craft cost, saving and the saving per hour of crafting', () => {
+        state.plan = craftPlan();
+        const text = savingsText(buildPlanUI('/actions/crafting/wooden_bow'));
+        // 2 actions x 6s = 12s, so 3000 saved is 900.0K an hour
+        expect(text).toContain('Savings vs buying (×10)');
+        expect(text).toContain('Buy it from the market10,000');
+        expect(text).toContain('Craft it yourself7,000');
+        expect(text).toContain('You save3,000 (30.0%)');
+        expect(text).toContain('Per hour of crafting900.0K/hr');
+    });
+
+    test('a loss is labelled as one', () => {
+        state.plan = craftPlan({ totalCost: 12000 });
+        const text = savingsText(buildPlanUI('/actions/crafting/wooden_bow'));
+        expect(text).toContain('You lose-2,000');
+        expect(text).toContain('-');
+    });
+
+    test('an unpriced product or input says so and never shows a partial figure', () => {
+        state.plan = craftPlan({ buyPrice: null });
+        let text = savingsText(buildPlanUI('/actions/crafting/wooden_bow'));
+        expect(text).toContain('Cannot compare crafting with buying: the product has no buy price.');
+        expect(text).not.toContain('You save');
+
+        state.plan = craftPlan({ totalCost: Infinity });
+        text = savingsText(buildPlanUI('/actions/crafting/wooden_bow'));
+        expect(text).toContain('an input has no price');
+        expect(text).not.toContain('You lose');
     });
 });
