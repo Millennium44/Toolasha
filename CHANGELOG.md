@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Figures follow the loadout a running action was started with
+
+While a skill is running, its figures (enhancing, gathering, crafting and the rest) now use the loadout that run was started with, including "No Loadout" (the gear and talismans you wear), instead of always the skill's default loadout.
+
 ### Enhancing tracker counts Conservation-kept protections
 
 When a Conservation talisman keeps your protection item on a failed enhance, the session tracker no longer counts it as used or adds its cost.
