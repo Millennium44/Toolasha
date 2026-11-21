@@ -109,10 +109,15 @@ export function foldRefusalTick(state, entry, { at, abilityInfo }) {
     const counter = Number(entry.atkCounter);
     const mana = Number(entry.cMP);
     const previous = state.previous;
+    // A tick that states neither field changes nothing about what is prepared (the game omits them on some
+    // ticks, as damage-attribution's noteActions allows for), so only an explicit statement replaces it
+    const statesAbility = Boolean(entry.abilityHrid);
+    const statesAuto = !statesAbility && typeof entry.isAutoAtk === 'boolean';
+    const keepAction = !statesAbility && !statesAuto && previous !== null;
     const next = {
         counter: Number.isFinite(counter) ? counter : (previous?.counter ?? null),
-        auto: Boolean(entry.isAutoAtk),
-        abilityHrid: entry.isAutoAtk ? '' : entry.abilityHrid || '',
+        auto: keepAction ? previous.auto : Boolean(entry.isAutoAtk) && !statesAbility,
+        abilityHrid: keepAction ? previous.abilityHrid : statesAbility ? entry.abilityHrid : '',
         mana: Number.isFinite(mana) ? mana : (previous?.mana ?? null),
     };
     state.previous = next;

@@ -36,11 +36,13 @@ function battlePlayer({ kit = [DRAIN, ENTANGLE], haste = 0, mana = 500, counter 
  * an auto attack carries `isAutoAtk: true` as the captured monster entries do; no captured player entry shows
  * it yet (needs a live capture).
  */
-function tick({ counter, mana, ability = '' }) {
+function tick({ counter, mana, ability = '', silent = false }) {
     const entry = buildBattleUpdated(0).pMap[0];
     entry.atkCounter = counter;
     entry.cMP = mana;
     delete entry.abilityHrid;
+    // A silent tick states neither field, as the game does on some ticks
+    if (silent) return entry;
     if (ability) entry.abilityHrid = ability;
     else entry.isAutoAtk = true;
     return entry;
@@ -166,5 +168,29 @@ describe('casts refused for lack of mana', () => {
             [13_000, 13, 0],
         ]);
         expect(refusalSummary(state).turns).toBe(0);
+    });
+
+    test('a tick that states neither isAutoAtk nor abilityHrid leaves the prepared action as it was', () => {
+        const at = (when, counter, mana, silent) =>
+            foldRefusalTick(newState, tick({ counter, mana, silent }), { at: when, abilityInfo });
+        const newState = newRefusalState();
+        noteRefusalBattle(newState, battlePlayer({ kit: [DRAIN], preparing: DRAIN }));
+
+        // Drain is prepared; a silent tick must not turn it into idle, or its cast is never recorded
+        at(1_000, 10, 30, true);
+        at(11_000, 11, 30, false);
+        at(22_000, 12, 30, false);
+        // Drain cast at 11 s, ready again, unaffordable, and an auto was chosen at 22 s: refused
+        expect(at(33_000, 13, 30, false)).toEqual([DRAIN]);
+
+        // The auto attack is prepared; a silent tick must not hide that the next attack was an auto
+        const second = newRefusalState();
+        noteRefusalBattle(second, battlePlayer({ kit: [DRAIN], preparing: DRAIN }));
+        const step = (when, counter, mana, silent) =>
+            foldRefusalTick(second, tick({ counter, mana, silent }), { at: when, abilityInfo });
+        step(0, 11, 30, false);
+        step(11_000, 12, 30, false);
+        step(15_000, 12, 30, true);
+        expect(step(22_000, 13, 30, false)).toEqual([DRAIN]);
     });
 });
