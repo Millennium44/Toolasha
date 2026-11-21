@@ -310,7 +310,8 @@ anything new from CI. Never report a gate result from a run you did not do.
 
 To gate a PR branch before opening it, run `bash scripts/gate-branch.sh <branch>`. It runs the gates in
 `../Toolasha-integ`, so the main checkout and its dev build are untouched, and it exits with the gates'
-own code. Never pipe `gates.sh` into `tail`: the pipe's exit code hides a failure. An agent worktree may
+own code. It first runs `scripts/fast-check.sh` (Prettier and ESLint on the changed files, in seconds) and
+stops there on a failure; `land-stack.sh` does the same. Never pipe `gates.sh` into `tail`: the pipe's exit code hides a failure. An agent worktree may
 also lack files `../Toolasha-integ` has (a `chart.js` UMD file once failed a test there only).
 
 **Which pushes need it** (maintainer, 2026-11-11): a push to `main`, and opening a PR, run the full gates.
@@ -333,7 +334,8 @@ in one checkout at once.
 **The main checkout stays on `main`.** Several chats share it and assume `main`, so a PR branch checked out
 there collects other chats' commits (2026-11-13: five landed on another chat's PR branch and took a
 rebase and force-push to undo). Build an integration branch in its own worktree
-(`git worktree add ../Toolasha-<topic> -b <branch> origin/main`). Claude's `guard-bash` hook refuses a
+with `bash scripts/integ-worktree.sh add <topic> origin/main <branch>`, which links `node_modules` so Prettier
+and vitest run there, and remove it with `bash scripts/integ-worktree.sh remove <topic>` (never `rm -rf`). Claude's `guard-bash` hook refuses a
 commit in the main checkout on any other branch unless it carries `ALLOW_BRANCH_COMMIT=1`.
 
 ## Project Structure (High-Level)

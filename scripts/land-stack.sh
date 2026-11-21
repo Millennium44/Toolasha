@@ -428,6 +428,8 @@ check_changelog() {
 run_full_checks() {
     local log
     log="$(mktemp -d)/land-stack-checks.log"
+    note "Fast check: Prettier + ESLint on the stack's changed files"
+    bash "scripts/fast-check.sh" origin/main || die "fast check failed (fix formatting/lint before the full gates)"
     note "Running the full checks script (log: $log)"
     bash "scripts/gates.sh" >"$log" 2>&1 || { tail -30 "$log" >&2; die "gates failed; full log: $log"; }
     grep -q '^All gates passed\.' "$log" || { tail -30 "$log" >&2; die "gates did not report 'All gates passed.'; log: $log"; }

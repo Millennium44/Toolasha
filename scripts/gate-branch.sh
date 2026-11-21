@@ -42,6 +42,13 @@ if ! git checkout -q --detach "$sha"; then
 fi
 echo "[gate-branch] gating $(git log --oneline -1) in $integ; log: $log"
 
+# Seconds-long Prettier + ESLint on the changed files first (the main checkout's copy, so an older branch without
+# the script still gets it): a formatting slip stops here instead of after the suite and both builds.
+if ! bash "$repo_root/scripts/fast-check.sh" origin/main; then
+    echo "[gate-branch] gates exit code: 1 (fast check failed; full gates not run)"
+    exit 1
+fi
+
 ALLOW_INTEGRATION=1 bash scripts/gates.sh >"$log" 2>&1
 code=$?
 tail -n 3 "$log"
