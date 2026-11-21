@@ -24,6 +24,7 @@ vi.mock('../../utils/marketplace-autofill.js', () => ({
     modalItemHrid: () => mocks.modalItem,
 }));
 
+const { getCleanupRegistryCensus } = await import('../../utils/cleanup-registry.js');
 const { default: instantOrderGap, countPriceSteps, measureGap, gapText } = await import('./instant-order-gap.js');
 
 const deliver = (itemHrid, ask, bid, extra = {}) => {
@@ -191,6 +192,29 @@ describe('InstantOrderGap', () => {
 
         deliver('/items/x', 1004, 1000);
         expect(line(modal)).toBeNull();
+    });
+
+    test('a closed dialog is released when the next book or dialog arrives, and old books are dropped', () => {
+        const census = () => getCleanupRegistryCensus();
+        const base = census();
+        deliver('/items/x', 1012, 1000);
+        const first = open();
+        show(first);
+        const held = census();
+        expect(held.listeners).toBe(base.listeners + 2);
+        expect(held.timeouts).toBe(base.timeouts + 1);
+
+        first.remove();
+        deliver('/items/x', 1012, 1000);
+        expect(census().listeners).toBe(base.listeners);
+        expect(census().timeouts).toBe(base.timeouts);
+        expect(instantOrderGap.openModals.size).toBe(0);
+
+        vi.useFakeTimers();
+        deliver('/items/old', 1012, 1000);
+        vi.setSystemTime(Date.now() + 10 * 60 * 1000);
+        deliver('/items/x', 1012, 1000);
+        expect([...instantOrderGap.orderBooks.keys()]).toEqual(['/items/x']);
     });
 
     test('disable removes the line and every listener, and a re-enable starts clean', () => {

@@ -131,8 +131,9 @@ class InstantOrderGap {
         this.processedModals = new WeakSet();
         // itemHrid -> { books: the last `marketItemOrderBooks` message for it, receivedAt }
         this.orderBooks = new Map();
-        // Dialogs currently carrying (or able to carry) the line, so a new book can refresh them
-        this.openModals = new Set();
+        // Dialogs currently carrying (or able to carry) the line, so a new book can refresh them.
+        // dialog -> the function that releases its listeners and timer
+        this.openModals = new Map();
     }
 
     initialize() {
@@ -144,8 +145,10 @@ class InstantOrderGap {
         const onBooks = (data) => {
             const books = data?.marketItemOrderBooks;
             if (!books?.itemHrid) return;
+            this.pruneOrderBooks();
             this.orderBooks.set(books.itemHrid, { books, receivedAt: Date.now() });
-            for (const modal of [...this.openModals]) this.refresh(modal);
+            this.releaseClosedModals();
+            for (const modal of [...this.openModals.keys()]) this.refresh(modal);
         };
         dataManager.on('market_item_order_books_updated', onBooks);
         this.cleanupRegistry.registerCleanup(() => dataManager.off('market_item_order_books_updated', onBooks));
@@ -163,15 +166,39 @@ class InstantOrderGap {
         if (!this.isInitialized || this.processedModals.has(modal)) return;
         if (!instantKind(modal)) return;
         this.processedModals.add(modal);
+        this.releaseClosedModals();
 
         // Typing a quantity or changing the enhancement level moves the figures; the listeners go with the dialog
         const onChange = () => this.refresh(modal);
-        this.cleanupRegistry.registerListener(modal, 'input', onChange, true);
-        this.cleanupRegistry.registerListener(modal, 'click', () => setTimeout(onChange, 0), true);
-        this.openModals.add(modal);
-
+        const releases = [
+            this.cleanupRegistry.registerListener(modal, 'input', onChange, true),
+            this.cleanupRegistry.registerListener(modal, 'click', () => setTimeout(onChange, 0), true),
+        ];
         // Let the dialog finish rendering before reading its state
-        this.cleanupRegistry.registerTimeout(setTimeout(() => this.refresh(modal), SHOW_DELAY_MS));
+        const timer = this.cleanupRegistry.scheduleTimeout(() => this.refresh(modal), SHOW_DELAY_MS);
+        releases.push(() => this.cleanupRegistry.cancelTimeout(timer));
+        this.openModals.set(modal, () => releases.forEach((release) => release()));
+    }
+
+    /**
+     * Let go of every dialog that has left the page, so a closed dialog is not held for the session.
+     */
+    releaseClosedModals() {
+        for (const [modal, release] of [...this.openModals]) {
+            if (modal.isConnected) continue;
+            this.openModals.delete(modal);
+            release();
+        }
+    }
+
+    /**
+     * Drop order books too old to be used, so the cache does not grow with every item ever opened.
+     */
+    pruneOrderBooks() {
+        const now = Date.now();
+        for (const [itemHrid, cached] of [...this.orderBooks]) {
+            if (now - cached.receivedAt > MAX_BOOK_AGE_MS) this.orderBooks.delete(itemHrid);
+        }
     }
 
     /**
@@ -181,6 +208,7 @@ class InstantOrderGap {
     refresh(modal) {
         if (!this.isInitialized) return;
         if (!modal.isConnected) {
+            this.openModals.get(modal)?.();
             this.openModals.delete(modal);
             return;
         }
@@ -220,7 +248,7 @@ class InstantOrderGap {
         document.querySelectorAll(`.${LINE_CLASS}`).forEach((el) => el.remove());
         this.cleanupRegistry.cleanupAll();
         this.processedModals = new WeakSet();
-        this.openModals = new Set();
+        this.openModals = new Map();
         this.orderBooks = new Map();
         this.isInitialized = false;
     }
