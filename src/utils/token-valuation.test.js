@@ -45,6 +45,8 @@ const {
     calculateDungeonTokenValue,
     calculateDungeonTokenValueDetail,
     calculateLabyrinthTokenValueDetail,
+    calculateLabyrinthItemValue,
+    LABYRINTH_VALUED_HRIDS,
 } = await import('./token-valuation.js');
 const { nextPriceDown } = await import('./market-values.js');
 
@@ -528,5 +530,51 @@ describe('shopPurchasePrice and the Tester tab', () => {
             },
         };
         expect(shopPurchasePrice('/items/small_talisman_belt', [shop], () => 1)).toBe(7_000_000);
+    });
+});
+
+describe('calculateLabyrinthItemValue', () => {
+    // Shop lines as the code reads them: { itemHrid, cost: { count: tokens }, outputCount }
+    const labyrinthShop = {
+        lodestone: { itemHrid: '/items/pathseeker_lodestone', cost: { count: 20 }, outputCount: 1 },
+        seal: { itemHrid: '/items/seal_of_gathering', cost: { count: 30 }, outputCount: 1 },
+    };
+
+    beforeEach(() => {
+        game.settings = {};
+        game.sources = {};
+        game.initClientData = { labyrinthShopItemDetailMap: labyrinthShop };
+        game.prices = { '/items/pathseeker_lodestone': { ask: 140_000, bid: 120_000 } };
+    });
+
+    test('covers the token and all twelve seals', () => {
+        expect(LABYRINTH_VALUED_HRIDS.size).toBe(13);
+        expect(LABYRINTH_VALUED_HRIDS.has('/items/labyrinth_token')).toBe(true);
+        expect(LABYRINTH_VALUED_HRIDS.has('/items/seal_of_wisdom')).toBe(true);
+    });
+
+    test('a token is the best shop gold per token, a seal the tokens its own shop line costs', () => {
+        expect(calculateLabyrinthItemValue('/items/labyrinth_token')).toMatchObject({ value: 7000, tokens: 1 });
+        expect(calculateLabyrinthItemValue('/items/seal_of_gathering')).toMatchObject({ value: 210_000, tokens: 30 });
+    });
+
+    test('reads the cost off the shop line rather than assuming 30', () => {
+        labyrinthShop.seal.cost.count = 45;
+        try {
+            expect(calculateLabyrinthItemValue('/items/seal_of_gathering').value).toBe(315_000);
+        } finally {
+            labyrinthShop.seal.cost.count = 30;
+        }
+    });
+
+    test('a seal with no shop line of its own falls back to 30 tokens', () => {
+        expect(calculateLabyrinthItemValue('/items/seal_of_damage')).toMatchObject({ value: 210_000, tokens: 30 });
+    });
+
+    test('null for any other item and when the shop prices nothing', () => {
+        expect(calculateLabyrinthItemValue('/items/cheese')).toBeNull();
+        game.prices = {};
+        expect(calculateLabyrinthItemValue('/items/labyrinth_token')).toBeNull();
+        expect(calculateLabyrinthItemValue('/items/seal_of_gathering')).toBeNull();
     });
 });

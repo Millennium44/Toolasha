@@ -33,7 +33,12 @@ import { reconcileBook } from '../../utils/market-values.js';
 import { pricingStamp } from '../../utils/enhancement-input-pricing.js';
 import { GUILD_TOKEN_EXCHANGE_EVENT } from '../guild/guild-token-exchange-capture.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
-import { calculateDungeonTokenValue, DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
+import {
+    calculateDungeonTokenValue,
+    calculateLabyrinthItemValue,
+    DUNGEON_TOKEN_HRIDS,
+    LABYRINTH_VALUED_HRIDS,
+} from '../../utils/token-valuation.js';
 import { buildGoldPerCredit } from '../../utils/guild-credit-pricing.js';
 import { GUILD_CREDIT_HRIDS } from '../../utils/guild-credit-hrids.js';
 import { isOfficialValueSource } from '../../utils/guild-credit-networth-side.js';
@@ -269,6 +274,8 @@ class InventoryBadgeManager {
             'invSort_netOfTax',
             // Guild credit tiles are valued only while this is on
             'networth_includeGuildCredits',
+            // Labyrinth token and seal tiles are valued only while this is on
+            'networth_includeLabyrinthTokens',
             ...PATIENT_TICK_SETTING_KEYS,
         ]) {
             this.unregisterHandlers.push(config.onSettingChange(key, () => reprice('token pricing setting change')));
@@ -862,6 +869,21 @@ class InventoryBadgeManager {
                 setTileData(itemElem, 'bidPrice', perToken);
                 setTileData(itemElem, 'askValue', perToken * itemCount);
                 setTileData(itemElem, 'bidValue', perToken * itemCount);
+                if (itemCount > 0) expectPrice = gameData.itemDetailMap[itemHrid]?.name || itemHrid;
+                continue;
+            }
+
+            // Labyrinth tokens and seal scrolls have no listing either: valued through the Labyrinth shop at the
+            // best gold per token (a seal at the tokens it costs), behind the same switch Net Worth uses. Off,
+            // they fall through to ordinary pricing as before.
+            if (LABYRINTH_VALUED_HRIDS.has(itemHrid) && config.getSetting('networth_includeLabyrinthTokens') !== false) {
+                let perItem = calculateLabyrinthItemValue(itemHrid)?.value ?? 0;
+                // Gross shop-item market price: net-of-tax mode takes the same cut as the dungeon tokens
+                if (netOfTax) perItem *= 1 - MARKET_TAX;
+                setTileData(itemElem, 'askPrice', perItem);
+                setTileData(itemElem, 'bidPrice', perItem);
+                setTileData(itemElem, 'askValue', perItem * itemCount);
+                setTileData(itemElem, 'bidValue', perItem * itemCount);
                 if (itemCount > 0) expectPrice = gameData.itemDetailMap[itemHrid]?.name || itemHrid;
                 continue;
             }

@@ -22,7 +22,11 @@ import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { calculateTaskTokenValue } from '../tasks/task-profit-calculator.js';
-import { calculateDungeonTokenValueDetail, calculateLabyrinthTokenValueDetail } from '../../utils/token-valuation.js';
+import {
+    calculateDungeonTokenValueDetail,
+    calculateLabyrinthItemValue,
+    LABYRINTH_VALUED_HRIDS,
+} from '../../utils/token-valuation.js';
 import { explainGuildTokenValue, isGuildTokenHrid } from '../guild/guild-token-value.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import config from '../../core/config.js';
@@ -257,7 +261,7 @@ export const TOKEN_INCLUDE_SETTINGS = {
 export function tokenKind(itemHrid) {
     if (itemHrid === '/items/task_token') return 'task';
     if (DUNGEON_TOKEN_HRIDS.has(itemHrid)) return 'dungeon';
-    if (itemHrid === LABYRINTH_TOKEN_HRID) return 'labyrinth';
+    if (LABYRINTH_VALUED_HRIDS.has(itemHrid)) return 'labyrinth';
     if (isGuildTokenHrid(itemHrid)) return 'guild';
     if (GUILD_CREDIT_HRIDS.has(itemHrid)) return 'credit';
     return null;
@@ -313,8 +317,14 @@ export function explainTokenValue(itemHrid) {
                 : none;
         }
         case 'labyrinth': {
-            const detail = calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', null);
-            return detail?.value > 0 ? { rate: detail.value, bestItemHrid: detail.itemHrid, note: null } : none;
+            // The token, or a seal scroll at the tokens it costs
+            const detail = calculateLabyrinthItemValue(itemHrid, 'profitCalc_pricingMode', null);
+            if (!(detail?.value > 0)) return none;
+            return {
+                rate: detail.value,
+                bestItemHrid: detail.itemHrid,
+                note: detail.tokens > 1 ? `${detail.tokens} labyrinth tokens each` : null,
+            };
         }
         case 'guild': {
             const valuation = explainGuildTokenValue(guildCreditPricingMode());
@@ -1665,6 +1675,8 @@ function buildTokenBreakdown(entries, itemDetailMap = {}) {
             itemHrid: entry.itemHrid,
             name: entry.name,
             kind: tokenKind(entry.itemHrid),
+            // What `rate` is per: a seal scroll is priced per scroll (its tokens' worth), the rest per token
+            unit: entry.itemHrid !== LABYRINTH_TOKEN_HRID && LABYRINTH_VALUED_HRIDS.has(entry.itemHrid) ? 'scroll' : 'token',
             count: entry.count,
             rate: rate > 0 ? rate : null,
             value,

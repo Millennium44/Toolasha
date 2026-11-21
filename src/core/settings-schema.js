@@ -2540,10 +2540,10 @@ export const settingsGroups = {
             },
             networth_includeLabyrinthTokens: {
                 id: 'networth_includeLabyrinthTokens',
-                label: 'Include labyrinth tokens in net worth',
+                label: 'Include labyrinth tokens and scrolls in net worth and inventory totals',
                 type: 'checkbox',
                 default: false,
-                help: 'Value labyrinth tokens at the best gold per token the Labyrinth Shop converts them into, the figure their tooltip shows. Disable to exclude them from net worth.',
+                help: 'Value labyrinth tokens at the best gold per token the Labyrinth Shop converts them into, the figure their tooltip shows, and the seal scrolls at the tokens each costs there. Applies to net worth and the inventory item values and totals. Disable to leave them out.',
                 requires: 'networth',
             },
             networth_includeGuildTokens: {

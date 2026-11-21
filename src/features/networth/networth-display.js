@@ -754,7 +754,7 @@ class NetworthInventoryDisplay {
                           ? 'If sold at the cheapest gold per credit: ' +
                             `${formatKMB(token.count)} × ${formatKMB(token.rate)} gold/credit = ${formatKMB(token.value)}`
                           : `If converted ${token.bestItemName ? `into ${token.bestItemName} ` : ''}and sold at the best rate: ` +
-                            `${formatKMB(token.count)} × ${formatKMB(token.rate)} gold/token = ${formatKMB(token.value)}`) +
+                            `${formatKMB(token.count)} × ${formatKMB(token.rate)} gold/${token.unit === 'scroll' ? 'scroll' : 'token'} = ${formatKMB(token.value)}`) +
                       (token.note ? ` (${token.note})` : '') +
                       '.';
                 const notCounted = token.counted ? '' : ' (not counted)';

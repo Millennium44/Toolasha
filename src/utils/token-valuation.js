@@ -161,6 +161,69 @@ export function calculateLabyrinthTokenValueDetail(
     return labyrinthTokenValueDetail(shopMap, tokenPriceOf(pricingModeSetting, respectModeSetting, forcedSide));
 }
 
+/** The labyrinth shop's currency */
+const LABYRINTH_TOKEN = '/items/labyrinth_token';
+
+/** The Labyrinth scrolls (seals): never listed on the market, bought from the labyrinth shop with tokens. */
+export const SEAL_HRIDS = new Set([
+    '/items/seal_of_action_speed',
+    '/items/seal_of_attack_speed',
+    '/items/seal_of_cast_speed',
+    '/items/seal_of_combat_drop',
+    '/items/seal_of_critical_rate',
+    '/items/seal_of_damage',
+    '/items/seal_of_efficiency',
+    '/items/seal_of_gathering',
+    '/items/seal_of_gourmet',
+    '/items/seal_of_processing',
+    '/items/seal_of_rare_find',
+    '/items/seal_of_wisdom',
+]);
+
+/** Items valued through the labyrinth shop rather than the market: the token itself and the seals */
+export const LABYRINTH_VALUED_HRIDS = new Set([LABYRINTH_TOKEN, ...SEAL_HRIDS]);
+
+/** Tokens one seal costs when the shop data has no line for it (what the shop charged when this was written) */
+const SEAL_TOKEN_COST_FALLBACK = 30;
+
+/**
+ * Tokens one seal costs: its own labyrinth shop line when the game data has one, else the fallback.
+ * @param {string} sealHrid - A member of SEAL_HRIDS
+ * @param {Object} [shopMap] - The game's `labyrinthShopItemDetailMap`
+ * @returns {number}
+ */
+function sealTokenCost(sealHrid, shopMap) {
+    const line = Object.values(shopMap || {}).find((entry) => entry?.itemHrid === sealHrid);
+    const cost = line?.cost?.count || 0;
+    return cost > 0 ? cost / (line.outputCount || 1) : SEAL_TOKEN_COST_FALLBACK;
+}
+
+/**
+ * What one Labyrinth Token, or one seal scroll, is worth: the token at its best shop conversion
+ * ({@link calculateLabyrinthTokenValueDetail}), a seal at the tokens it costs times that. Gross, the way
+ * {@link calculateDungeonTokenValue} is: a market price with no sale tax taken off.
+ *
+ * @param {string} itemHrid - A member of LABYRINTH_VALUED_HRIDS
+ * @param {string} [pricingModeSetting] - Config setting key for pricing mode
+ * @param {string|false|null} [respectModeSetting] - Config setting key for respect pricing mode flag
+ * @param {'ask'|'bid'|null} [forcedSide] - Quote exactly this side of the book
+ * @returns {{value: number, itemHrid: string, tokens: number}|null} Coins per item, the shop item that sets the
+ *   token's rate, and the tokens one item stands for; null for any other item or when the shop prices nothing
+ */
+export function calculateLabyrinthItemValue(
+    itemHrid,
+    pricingModeSetting = 'profitCalc_pricingMode',
+    respectModeSetting = 'expectedValue_respectPricingMode',
+    forcedSide = null
+) {
+    if (!LABYRINTH_VALUED_HRIDS.has(itemHrid)) return null;
+    const token = calculateLabyrinthTokenValueDetail(pricingModeSetting, respectModeSetting, forcedSide);
+    if (!(token?.value > 0)) return null;
+    if (itemHrid === LABYRINTH_TOKEN) return { value: token.value, itemHrid: token.itemHrid, tokens: 1 };
+    const tokens = sealTokenCost(itemHrid, dataManager.getInitClientData()?.labyrinthShopItemDetailMap);
+    return { value: token.value * tokens, itemHrid: token.itemHrid, tokens };
+}
+
 /**
  * The pricer a token valuation reads its shop lines through.
  * @param {string} pricingModeSetting - Config setting key for pricing mode

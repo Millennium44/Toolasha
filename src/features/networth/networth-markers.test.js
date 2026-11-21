@@ -116,6 +116,19 @@ describe('buildMarker', () => {
         expect(marker.raw).toBe(363_100_000);
     });
 
+    test('the labyrinth switch also decides the seal scrolls it values', () => {
+        const prev = { rows: [tokenRow('/items/seal_of_gathering', 2, 0, 1)] };
+        const marker = buildMarker({
+            changes: [change('networth_includeLabyrinthTokens', false, true)],
+            prevRecord: prev,
+            current: { rows: [tokenRow('/items/seal_of_gathering', 2, 420_000)] },
+            prevTotal: 100,
+            total: 420_100,
+        });
+        expect(marker.step).toBe(420_000);
+        expect(marker.unseparated).toEqual([]);
+    });
+
     test('turned off, the step is negative; a step of zero is recorded as zero, not as missing', () => {
         const prev = { rows: [tokenRow('/items/task_token', 10, 5_000_000)] };
         const off = buildMarker({

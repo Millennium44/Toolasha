@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
     chestKeys: {},
     keyCost: 0,
     tokenValues: {},
+    labyrinthValues: {},
     goldPerCredit: { ask: {}, bid: {} },
     goldPerCreditCalls: 0,
 }));
@@ -93,6 +94,9 @@ vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: mocks.
 vi.mock('../../utils/token-valuation.js', () => ({
     DUNGEON_TOKEN_HRIDS: new Set(['/items/chimerical_token', '/items/pirate_token']),
     calculateDungeonTokenValue: (hrid) => mocks.tokenValues[hrid] ?? null,
+    LABYRINTH_VALUED_HRIDS: new Set(['/items/labyrinth_token', '/items/seal_of_gathering']),
+    calculateLabyrinthItemValue: (hrid) =>
+        mocks.labyrinthValues[hrid] > 0 ? { value: mocks.labyrinthValues[hrid], itemHrid: '/items/x', tokens: 1 } : null,
 }));
 vi.mock('../../utils/guild-credit-pricing.js', () => ({
     buildGoldPerCredit: (mode) => {
@@ -121,6 +125,7 @@ beforeEach(() => {
     for (const k of Object.keys(mocks.chestKeys)) delete mocks.chestKeys[k];
     mocks.keyCost = 0;
     mocks.tokenValues = {};
+    mocks.labyrinthValues = {};
     mocks.goldPerCredit = { ask: {}, bid: {} };
     mocks.goldPerCreditCalls = 0;
     mocks.yieldSpy.mockClear();
@@ -805,6 +810,7 @@ describe('dungeon tokens', () => {
         'profitCalc_patientTickBuy',
         'profitCalc_patientTickSell',
         'networth_includeGuildCredits',
+        'networth_includeLabyrinthTokens',
     ])('changing %s reprices the tiles', async (key) => {
         inventoryBadgeManager.initialize();
         const spy = vi.spyOn(inventoryBadgeManager, 'renderAllBadges').mockResolvedValue();
@@ -813,6 +819,51 @@ describe('dungeon tokens', () => {
         inventoryBadgeManager.disable();
         expect(mocks.settingListeners[key]).toBeUndefined();
         spy.mockRestore();
+    });
+
+    describe('labyrinth tokens and seal scrolls', () => {
+        beforeEach(() => {
+            mocks.settings.networth_includeLabyrinthTokens = true;
+            mocks.initData.itemDetailMap['/items/labyrinth_token'] = { name: 'Labyrinth Token' };
+            mocks.initData.itemDetailMap['/items/seal_of_gathering'] = { name: 'Seal of Gathering' };
+        });
+
+        test('are valued through the labyrinth shop, a seal at its tokens', async () => {
+            mocks.labyrinthValues['/items/labyrinth_token'] = 7000;
+            mocks.labyrinthValues['/items/seal_of_gathering'] = 210_000;
+            const token = tokenEl('labyrinth_token', 30);
+            const seal = tokenEl('seal_of_gathering', 2);
+            await inventoryBadgeManager.calculateItemPrices([token, seal], [], new Map());
+
+            expect(token.dataset.askValue).toBe('210000');
+            expect(token.dataset.bidValue).toBe('210000');
+            expect(seal.dataset.askPrice).toBe('210000');
+            expect(seal.dataset.askValue).toBe('420000');
+        });
+
+        test('take the market cut off in net-of-tax mode', async () => {
+            const { MARKET_TAX } = await import('../../utils/profit-constants.js');
+            mocks.settings.invSort_netOfTax = true;
+            mocks.labyrinthValues['/items/seal_of_gathering'] = 100_000;
+            const seal = tokenEl('seal_of_gathering', 2);
+            await inventoryBadgeManager.calculateItemPrices([seal], [], new Map());
+            expect(Number(seal.dataset.askValue)).toBeCloseTo(200_000 * (1 - MARKET_TAX));
+        });
+
+        test('with no priced shop line stay at zero and are flagged unpriced, not a whole value', async () => {
+            const seal = tokenEl('seal_of_gathering', 2);
+            await inventoryBadgeManager.calculateItemPrices([seal], [], new Map());
+            expect(seal.dataset.askValue).toBe('0');
+            expect(seal.dataset.expectPrice).toBe('Seal of Gathering');
+        });
+
+        test('are left to ordinary pricing when the switch is off', async () => {
+            mocks.settings.networth_includeLabyrinthTokens = false;
+            mocks.labyrinthValues['/items/seal_of_gathering'] = 210_000;
+            const seal = tokenEl('seal_of_gathering', 2);
+            await inventoryBadgeManager.calculateItemPrices([seal], [], new Map());
+            expect(seal.dataset.askValue).toBe('0');
+        });
     });
 
     test('a token with no derivable value stays at zero', async () => {

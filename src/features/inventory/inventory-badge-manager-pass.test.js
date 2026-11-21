@@ -87,6 +87,8 @@ vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }))
 vi.mock('../../utils/token-valuation.js', () => ({
     DUNGEON_TOKEN_HRIDS: new Set(),
     calculateDungeonTokenValue: () => null,
+    LABYRINTH_VALUED_HRIDS: new Set(),
+    calculateLabyrinthItemValue: () => null,
 }));
 vi.mock('../../utils/guild-credit-pricing.js', () => ({ buildGoldPerCredit: () => ({}) }));
 vi.mock('../../utils/key-cost.js', () => ({ getKeyUnitCost: () => 0 }));

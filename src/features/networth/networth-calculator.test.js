@@ -117,7 +117,14 @@ vi.mock('../../utils/token-valuation.js', () => ({
         hrid in mocks.dungeonTokenValues
             ? { value: mocks.dungeonTokenValues[hrid], itemHrid: '/items/dungeon_best', via: 'shop' }
             : null,
-    calculateLabyrinthTokenValueDetail: () => mocks.labyrinthTokenDetail,
+    LABYRINTH_VALUED_HRIDS: new Set(['/items/labyrinth_token', '/items/seal_of_gathering', '/items/seal_of_damage']),
+    // A seal stands for 30 tokens, the shop's line for it
+    calculateLabyrinthItemValue: (hrid) => {
+        const detail = mocks.labyrinthTokenDetail;
+        if (!detail) return null;
+        const tokens = hrid === '/items/labyrinth_token' ? 1 : 30;
+        return { value: detail.value * tokens, itemHrid: detail.itemHrid, tokens };
+    },
 }));
 vi.mock('../guild/guild-token-value.js', () => ({
     isGuildTokenHrid: (hrid) => /guild_token/.test(String(hrid || '')),
@@ -1739,6 +1746,33 @@ describe('labyrinth and guild tokens', () => {
         expect(await calculateItemValue({ itemHrid: '/items/guild_token', count: 5 })).toBe(0);
         expect(isUnpricedCurrency('/items/labyrinth_token')).toBe(false);
         expect(isUnpricedCurrency('/items/guild_token')).toBe(false);
+    });
+});
+
+describe('labyrinth seal scrolls', () => {
+    const SEAL = '/items/seal_of_gathering';
+
+    test('a seal is valued at the tokens it costs, behind the labyrinth token switch', async () => {
+        mocks.settings.networth_includeLabyrinthTokens = true;
+        mocks.labyrinthTokenDetail = { value: 7000, itemHrid: '/items/pathseeker_lodestone' };
+
+        expect(await calculateItemValue({ itemHrid: SEAL, enhancementLevel: 0, count: 2 })).toBe(420_000);
+        expect(networthUnitValue(SEAL)).toBe(210_000);
+        expect(explainTokenValue(SEAL)).toMatchObject({ rate: 210_000, note: '30 labyrinth tokens each' });
+    });
+
+    test('switched off, a seal is worth nothing and not reported unpriced', async () => {
+        mocks.settings.networth_includeLabyrinthTokens = false;
+        mocks.labyrinthTokenDetail = { value: 7000, itemHrid: '/items/pathseeker_lodestone' };
+
+        expect(await calculateItemValue({ itemHrid: SEAL, enhancementLevel: 0, count: 2 })).toBe(0);
+        expect(isUnpricedCurrency(SEAL)).toBe(false);
+    });
+
+    test('with no priced shop line a seal is reported unpriced, as the token is', async () => {
+        mocks.settings.networth_includeLabyrinthTokens = true;
+        expect(await calculateItemValue({ itemHrid: SEAL, enhancementLevel: 0, count: 2 })).toBe(0);
+        expect(isUnpricedCurrency(SEAL)).toBe(true);
     });
 });
 
