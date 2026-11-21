@@ -40,6 +40,8 @@ const {
     dpsGraphHTML,
     wireDpsGraph,
     bossBands,
+    dpsSparkline,
+    drawDpsSparkline,
     _resetDpsGraph,
 } = await import('./dps-graph.js');
 const { BUCKET_MS } = await import('../../utils/dps-series.js');
@@ -179,5 +181,48 @@ describe('the graph', () => {
         wireDpsGraph(hidden, redraw);
         hidden.querySelector('[data-graph-view="session"]').click();
         expect(dpsGraphHTML({ now })).toContain('<svg');
+    });
+});
+
+describe('the header sparkline', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(T0);
+    });
+
+    test('reads the sampler’s own series: the party line, its newest point and the session mean', () => {
+        startDpsSampler();
+        fight(20);
+        const spark = dpsSparkline({ now: T0 + 21 * BUCKET_MS });
+        // 600 damage a bucket between the two players is 300 per second
+        expect(spark.points.length).toBeGreaterThan(1);
+        expect(spark.current).toBeCloseTo(300);
+        // The mean over every bucket, the baseline bucket included
+        expect(spark.average).toBeGreaterThan(250);
+        expect(spark.average).toBeLessThanOrEqual(300);
+
+        const slot = document.createElement('span');
+        drawDpsSparkline(slot, { now: T0 + 21 * BUCKET_MS });
+        expect(slot.querySelector('svg[data-dps-sparkline] polyline')).not.toBeNull();
+        expect(slot.textContent).toContain('300');
+        expect(slot.innerHTML).not.toContain('NaN');
+    });
+
+    test('is nothing while nothing samples, with the graph off, or before two points', () => {
+        fight(20);
+        // The series was fed by hand, but no sampler is running
+        expect(dpsSparkline({ now: T0 + 21 * BUCKET_MS })).toBeNull();
+
+        startDpsSampler();
+        expect(dpsSparkline({ now: T0 })).toBeNull();
+        fight(20);
+        opts.settings = { combatDpsGraph: false };
+        expect(dpsSparkline({ now: T0 + 21 * BUCKET_MS })).toBeNull();
+
+        const slot = document.createElement('span');
+        slot.title = 'stale';
+        drawDpsSparkline(slot, { now: T0 + 21 * BUCKET_MS });
+        expect(slot.innerHTML).toBe('');
+        expect(slot.title).toBe('');
     });
 });

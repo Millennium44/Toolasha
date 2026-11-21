@@ -46,6 +46,9 @@ function listShape(select) {
  * @param {string} [definition.accent] - Accepted so callers keep working; the frame, header and title no longer
  *   take a color from it (the game's own look is neutral)
  * @param {number} [definition.refreshMs] - How often to redraw
+ * @param {Function} [definition.header] - `(slot) => void`, fills a small slot in the header beside the title.
+ *   Redrawn with the body and, unlike it, while the panel is minimized too: the header is what a minimized
+ *   panel still shows. Absent by default, and then there is no slot
  * @returns {Object} A panel with `show`, `hide`, `toggle` and `setTitle`
  */
 export function createPanel({
@@ -56,6 +59,7 @@ export function createPanel({
     // Accepted so a caller that still passes one works; it no longer colors anything
     accent: _accent,
     refreshMs = DEFAULT_REFRESH_MS,
+    header: drawHeader = null,
 }) {
     // Not a constant: a panel that can be pointed at more than one subject has
     // to be able to say which one it is currently about
@@ -63,6 +67,7 @@ export function createPanel({
     let panel = null;
     let bodyEl = null;
     let headingEl = null;
+    let headerSlotEl = null;
     let refreshId = null;
     let detachDrag = null;
     let detachResize = null;
@@ -73,9 +78,22 @@ export function createPanel({
     // a panel on screen that nothing is listening for the character switch on.
     let destroyed = false;
 
+    /** Fill the header slot, if the panel has one; a failure empties it rather than the panel */
+    function renderHeader() {
+        if (!headerSlotEl) return;
+        headerSlotEl.replaceChildren();
+        try {
+            drawHeader(headerSlotEl, panel);
+        } catch (error) {
+            console.error(`[Panel] ${title} header could not be drawn:`, error);
+            headerSlotEl.replaceChildren();
+        }
+    }
+
     /** Draw, or say which panel could not be drawn */
     function render() {
         if (!bodyEl) return;
+        renderHeader();
 
         // replaceChildren empties the body, which clamps its scrollTop to 0, and
         // the rebuilt list boxes start at the top with no focus. A redraw that
@@ -154,7 +172,10 @@ export function createPanel({
      */
     function refresh() {
         if (document.hidden) return;
-        if (minimizeCtl?.collapsed) return;
+        if (minimizeCtl?.collapsed) {
+            renderHeader();
+            return;
+        }
 
         const active = document.activeElement;
         const busy =
@@ -237,7 +258,22 @@ export function createPanel({
             api.hide();
         });
 
-        header.append(headingEl, close);
+        if (typeof drawHeader === 'function') {
+            headerSlotEl = document.createElement('span');
+            headerSlotEl.dataset.panelHeaderSlot = 'true';
+            Object.assign(headerSlotEl.style, {
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                marginRight: '4px',
+                fontSize: '11px',
+                fontWeight: '400',
+                flex: '0 0 auto',
+            });
+            header.append(headingEl, headerSlotEl, close);
+        } else {
+            header.append(headingEl, close);
+        }
         panel.appendChild(header);
 
         bodyEl = document.createElement('div');
@@ -336,6 +372,7 @@ export function createPanel({
             panel = null;
             bodyEl = null;
             headingEl = null;
+            headerSlotEl = null;
         },
         toggle() {
             if (isOpen()) api.hide();

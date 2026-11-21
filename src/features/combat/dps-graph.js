@@ -39,6 +39,7 @@ import {
     liveSessionKey,
     loadLiveSession,
 } from '../../utils/live-session-persist.js';
+import { formatKMB } from '../../utils/formatters.js';
 import { playerColor, resolveRosterColors } from '../../utils/player-colors.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -303,6 +304,73 @@ export function wireDpsGraph(body, redraw) {
             redraw();
         });
     });
+}
+
+/** The sparkline's size, px: small enough to sit in a panel header beside its buttons */
+export const SPARK_WIDTH = 50;
+export const SPARK_HEIGHT = 14;
+
+/**
+ * The party's DPS over the last five minutes, for the panel header's sparkline: the same series and the same
+ * 16-second average the graph draws, read rather than recorded again.
+ *
+ * @param {Object} [options] - For tests
+ * @param {number} [options.now] - Clock
+ * @returns {{points: number[], current: number, average: number}|null} The party line oldest first, its newest
+ *   point, and the whole series' mean; null while nothing is sampling (the panel or the graph setting is off)
+ *   or fewer than two points exist
+ */
+export function dpsSparkline({ now = Date.now() } = {}) {
+    if (!onNewBattle || config.getSetting('combatDpsGraph') !== true) return null;
+    const recent = seriesView(series, { now, window: 'recent' });
+    if (!recent || recent.points.length < 2) return null;
+    const points = recent.points.map((point) => point.party);
+    const session = seriesView(series, { now, window: 'session', smooth: 1 });
+    const all = session?.points.map((point) => point.party) ?? points;
+    const average = all.length ? all.reduce((sum, value) => sum + value, 0) / all.length : 0;
+    return { points, current: points[points.length - 1], average };
+}
+
+/**
+ * The sparkline as SVG: the line newest at the right, on a scale from zero, with the average dashed behind it.
+ * @param {{points: number[], average: number}} spark - From {@link dpsSparkline}
+ * @param {number} [width]
+ * @param {number} [height]
+ * @returns {string} SVG markup
+ */
+export function sparklineSVG({ points, average }, width = SPARK_WIDTH, height = SPARK_HEIGHT) {
+    const top = Math.max(1, average, ...points) * 1.05;
+    const y = (value) => (height - 1 - (Math.max(0, value) / top) * (height - 2)).toFixed(1);
+    const step = points.length > 1 ? width / (points.length - 1) : 0;
+    const line = points.map((value, index) => `${(index * step).toFixed(1)},${y(value)}`).join(' ');
+    const averageY = y(average);
+    return (
+        `<svg data-dps-sparkline width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" ` +
+        `style="display:block;">` +
+        `<line x1="0" y1="${averageY}" x2="${width}" y2="${averageY}" stroke="#ffffff" stroke-opacity="0.35" ` +
+        `stroke-dasharray="2 2"></line>` +
+        `<polyline points="${line}" fill="none" stroke="${BOARD_COLORS.good}" stroke-width="1.5"></polyline></svg>`
+    );
+}
+
+/**
+ * Fill a panel header slot with the sparkline and the current party DPS, or leave it empty.
+ * @param {HTMLElement} slot - The header slot (`createPanel`'s `header`)
+ * @param {Object} [options] - For tests
+ * @param {number} [options.now] - Clock
+ */
+export function drawDpsSparkline(slot, { now = Date.now() } = {}) {
+    slot.title = '';
+    const spark = dpsSparkline({ now });
+    if (!spark) return;
+    const pace = spark.average > 0 ? Math.round(((spark.current - spark.average) / spark.average) * 100) : 0;
+    const arrow = Math.abs(pace) < 3 ? '•' : pace > 0 ? '▲' : '▼';
+    slot.title =
+        `Party DPS over the last five minutes (a 16-second average), against the session average ` +
+        `(${formatKMB(Math.round(spark.average))}, dashed). ${arrow} ${Math.abs(pace)}% vs the average.`;
+    slot.innerHTML =
+        sparklineSVG(spark) +
+        `<span style="color:${BOARD_COLORS.dim};">${formatKMB(Math.round(spark.current))} ${arrow}</span>`;
 }
 
 /** Back to the opening state — for tests */

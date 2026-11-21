@@ -67,7 +67,7 @@ import domObserver from '../../core/dom-observer.js';
 import { damageBreakdown, actionLabel } from './damage-tracker.js';
 import { takenBreakdown } from './damage-taken-tracker.js';
 import { rotationAudit, startRotationTracker, stopRotationTracker } from './rotation-tracker.js';
-import { dpsGraphHTML, startDpsSampler, stopDpsSampler, wireDpsGraph } from './dps-graph.js';
+import { dpsGraphHTML, drawDpsSparkline, startDpsSampler, stopDpsSampler, wireDpsGraph } from './dps-graph.js';
 import { hitTapeHTML } from './hit-tape.js';
 import { savedCombatGraphHTML, startCombatHistory, stopCombatHistory, wireSavedCombatGraph } from './combat-history.js';
 import {
@@ -1263,6 +1263,8 @@ export function getPanel() {
             body.style.padding = '8px 10px';
             drawPanel(body);
         },
+        // The party's DPS line, which is what a minimized panel still shows; empty with the graph off
+        header: (slot) => drawDpsSparkline(slot),
     });
     return panel;
 }

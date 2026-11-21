@@ -426,6 +426,60 @@ describe('a body nobody can see is not redrawn', () => {
     });
 });
 
+describe('the optional header slot', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.body.replaceChildren();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('a panel without one has no slot', () => {
+        const panel = createPanel({ id: 'plain', title: 'Plain', size: SIZE, draw: () => {} });
+        panel.show();
+        expect(document.querySelector('[data-panel-header-slot]')).toBeNull();
+        panel.hide();
+    });
+
+    test('is filled with the body, and keeps refreshing while the panel is folded', () => {
+        let reading = 1;
+        const header = vi.fn((slot) => slot.append(`reading ${reading}`));
+        const draw = vi.fn();
+        const panel = createPanel({ id: 'slotted', title: 'Slotted', size: SIZE, refreshMs: 1000, draw, header });
+        panel.show();
+        const slot = document.querySelector('[data-panel-header-slot]');
+        expect(slot.textContent).toBe('reading 1');
+
+        minimize.collapsed = true;
+        draw.mockClear();
+        reading = 2;
+        vi.advanceTimersByTime(1000);
+        expect(draw).not.toHaveBeenCalled();
+        expect(slot.textContent).toBe('reading 2');
+        panel.hide();
+    });
+
+    test('a header that throws empties the slot and leaves the body drawn', () => {
+        const panel = createPanel({
+            id: 'throwing-header',
+            title: 'Throwing',
+            size: SIZE,
+            draw: (body) => body.append('body drawn'),
+            header: () => {
+                throw new Error('nope');
+            },
+        });
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        panel.show();
+        expect(document.querySelector('[data-panel-header-slot]').textContent).toBe('');
+        expect(document.body.textContent).toContain('body drawn');
+        panel.hide();
+        vi.restoreAllMocks();
+    });
+});
+
 describe('where a newly opened panel sits', () => {
     beforeEach(() => {
         vi.useFakeTimers();

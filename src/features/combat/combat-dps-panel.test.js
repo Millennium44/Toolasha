@@ -1026,6 +1026,17 @@ describe('the shell the panel is built from', () => {
 
         expect(switchListeners()).toBe(before);
     });
+
+    test('its header carries a slot for the DPS sparkline, empty until the graph has points', () => {
+        feature.initialize();
+        const panel = feature.getPanel();
+        panel.show({ remember: false });
+        const slot = document.querySelector('[data-panel-header-slot]');
+        expect(slot).not.toBeNull();
+        expect(slot.textContent).toBe('');
+        feature.cleanup();
+        expect(document.querySelector('[data-panel-header-slot]')).toBeNull();
+    });
 });
 
 describe('kills on the damage board', () => {
