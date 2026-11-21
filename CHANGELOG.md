@@ -6,6 +6,54 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Simulators load without a fresh game login
+
+The Combat Sim and other sim pages now fall back to the game data the game itself cached, so they work even when no new login data arrived in that tab.
+
+### Upgrade advisor buys or enhances +N gear, whichever is cheaper
+
+Rows for enhanced gear now compare buying the item at that level on the market with enhancing it yourself, and cost the cheaper route.
+
+### Dungeon ROI board what-if
+
+The Dungeon ROI board takes a minutes-per-run and runs-per-day pace, for this session, and adds a What-if net/day column at that pace.
+
+### Inventory sort bar on every inventory, with Collapse all
+
+Sort controls now appear on every copy of the inventory, a Collapse all / Expand all button folds every category at once, and the Unorganized section shows a value total. Section totals follow the category totals setting.
+
+### Labyrinth tokens and seals in net worth
+
+With the labyrinth tokens net worth setting on (off by default), seal scrolls now count too, and both carry a value in inventory category totals.
+
+### Task shop shows value per token
+
+The task shop shows each item's value per task token and marks the best redemption, including chests at their expected value.
+
+### Best crafting plan shows savings
+
+The best crafting plan now says how much it saves against buying the item, and that saving per hour of crafting.
+
+### Buy Now and Sell Now warn about a price gap
+
+The Buy Now and Sell Now dialogs warn when the best buy and sell offers are two or more price steps apart, with what the gap costs per item and for your quantity. Order totals in the buy and sell dialogs also wrap instead of running under the queued actions box.
+
+### Copy Settings can remove old characters
+
+The Copy Settings dialog has a remove button (press twice) on each character, to clear ones you no longer play. Their settings are kept.
+
+### Mana panel counts refused casts
+
+The mana tab estimates how many casts of each ability were refused for lack of mana.
+
+### Hit tape and DPS sparkline on the per-player panel
+
+The per-player panel can show a tape of your last minute of hits, and its header shows a small party DPS sparkline.
+
+### Metz export uses a partymate's View Loadout
+
+Opening View Loadout on a party member saves it for a day, and the Metz team export uses it when it is newer than their profile. The Metz import button also no longer jumps in front of another script's button.
+
 <!-- shipped in 3.91.0 -->
 
 ### Enhancing calculator updates once a run starts
