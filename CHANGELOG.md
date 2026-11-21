@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.92.0 -->
+
 ### Simulators load without a fresh game login
 
 The Combat Sim and other sim pages now fall back to the game data the game itself cached, so they work even when no new login data arrived in that tab.
@@ -7924,6 +7926,58 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.92.0](https://github.com/Millennium44/Toolasha/compare/v3.91.0...v3.92.0) (2026-11-21)
+
+### Features
+
+- best crafting plan shows savings vs buying and per hour of crafting ([cea6662](https://github.com/Millennium44/Toolasha/commit/cea6662100871ce9d691f4e1b20835c7e3666ad6))
+- collapse all / expand all button in the inventory sort bar ([e9cb516](https://github.com/Millennium44/Toolasha/commit/e9cb516259d8c41784f45edaeba0752cd2d5072f))
+- dps sparkline in the per-player panel header ([030f36a](https://github.com/Millennium44/Toolasha/commit/030f36a96ced1eb6c6460111a69c291c5e10cf7e))
+- dungeon roi board what-if for minutes per run and runs per day ([ad6282e](https://github.com/Millennium44/Toolasha/commit/ad6282eb0e5976aecb0784679500e1fdf94299f8))
+- hit tape of your last minute of hits on the per-player panel ([6cc65c4](https://github.com/Millennium44/Toolasha/commit/6cc65c4d836ccab3c00eeb46fc93f944a84ee16c))
+- mana panel counts casts refused for lack of mana per ability ([bf36fbe](https://github.com/Millennium44/Toolasha/commit/bf36fbe8b80e21d2f660d73d09713b42d3879b25))
+- metz team export wears a partymate's view loadout when newer than their profile ([6b7349b](https://github.com/Millennium44/Toolasha/commit/6b7349b61c0267fe79c4b2dedb8b8532a007e170))
+- remove stale characters from the copy settings dialog ([6e3e8cf](https://github.com/Millennium44/Toolasha/commit/6e3e8cf3c72e52887226372b0ac817cc0e8774d8))
+- show value per token and the best redemption in the task shop ([4fc563d](https://github.com/Millennium44/Toolasha/commit/4fc563d2310ac87faead3820ac47a3c53fd211d1))
+- unorganized value total, and section totals follow the category totals toggle ([56dc598](https://github.com/Millennium44/Toolasha/commit/56dc5988b25805c062f7c1a4a6b764d4e6ce7498))
+- value labyrinth tokens and seal scrolls in inventory totals and net worth ([ca16e54](https://github.com/Millennium44/Toolasha/commit/ca16e545c34b61058fada4b478f61dcadfca63da))
+- warn in buy now and sell now when the best offers are two or more price steps apart ([2c11e6a](https://github.com/Millennium44/Toolasha/commit/2c11e6ae88cada06afeaad6ac3f15eecab2d7eb1))
+
+### Bug Fixes
+
+- header sparkline average uses the run's fighting time ([7e50de5](https://github.com/Millennium44/Toolasha/commit/7e50de5e9cd35142d73b5fde73a9be48a22a59ba))
+- instant order gap releases closed dialogs and drops stale order books ([e5cbc6b](https://github.com/Millennium44/Toolasha/commit/e5cbc6b93bd27f3efb19cc961f6f13f03455069d))
+- inventory sort controls and sorting cover every inventory copy ([db148df](https://github.com/Millennium44/Toolasha/commit/db148dff76a08ebba09c0649c74bfb7f8bf4521e))
+- metz import button no longer leapfrogs another script's button ([88b451e](https://github.com/Millennium44/Toolasha/commit/88b451ea643adf347f6e55929af63c71abb61e44))
+- metz party loadout store keeps other characters' entries ([eff4602](https://github.com/Millennium44/Toolasha/commit/eff4602313c8502076f27ecb7de673953f420dd5))
+- refused-cast count takes one ability per turn, judged when the auto was chosen ([5b3d620](https://github.com/Millennium44/Toolasha/commit/5b3d620fea59ff18359ea3036045da3cfbda8003))
+- refused-casts keeps the prepared action across a tick that omits it ([9c81374](https://github.com/Millennium44/Toolasha/commit/9c81374dba899358766e90b9f6bb2fbbd8d8b7f0))
+- settings import skips a removed character's stored settings map ([2826e17](https://github.com/Millennium44/Toolasha/commit/2826e17b60e527a6124b385916fd2740f06dd21c))
+- settings import survives a failed local key listing ([a9b6802](https://github.com/Millennium44/Toolasha/commit/a9b6802122b628ad1965b542bf677d624d94a339))
+- shop token badges redraw when the expected-value calculator finishes a recompute ([43947f3](https://github.com/Millennium44/Toolasha/commit/43947f32a0f03a7025882f37ea1ab86b8ca9827f))
+- sim pages read the game's cached client data when no init_client_data arrived ([76e5c21](https://github.com/Millennium44/Toolasha/commit/76e5c21610ab83b744797973e696e59c1dcaffd7))
+- task shop badge values a listed chest at the better of market and expected value ([4b4ef61](https://github.com/Millennium44/Toolasha/commit/4b4ef61e2d1cafdc2c891bddc1c764fa9a6502ae))
+- task shop value help says chests take the better of market and expected value ([983d238](https://github.com/Millennium44/Toolasha/commit/983d238a926e1bb82058c18c92d17107fb6c4f17))
+- upgrade rows for +N gear take the cheaper of the market trade and enhancing ([dbce05c](https://github.com/Millennium44/Toolasha/commit/dbce05c1e018ddc7f601f8813a70a156cf8e452d))
+- wrap the order totals so they stay clear of the queued actions box ([a507e3c](https://github.com/Millennium44/Toolasha/commit/a507e3c0d64eba0262d8254eb8d25bfce4e9adcb))
+
+### Documentation
+
+- changelog for the upstream 3.35.0 ports ([beb826f](https://github.com/Millennium44/Toolasha/commit/beb826ff79ea3867a78e3ef9fd011dbcebf356ac))
+- tighten upstream port changelog lines ([31455e3](https://github.com/Millennium44/Toolasha/commit/31455e3031c671221c46d98a4efac0c3f78e8d41))
+
+### Styles
+
+- prettier on the upstream port files ([6961a2f](https://github.com/Millennium44/Toolasha/commit/6961a2f4283f91869e1c8157bbcc37854607f07c))
+
+### Tests
+
+- worn +10 trade-in test pins enhancing high after the cheaper-route port ([e8005b3](https://github.com/Millennium44/Toolasha/commit/e8005b30502e69ddc69d6846d6b71ff925d3b23c))
+
+### Miscellaneous Chores
+
+- fast prettier/eslint check before gates and an integration worktree script ([b0b6c54](https://github.com/Millennium44/Toolasha/commit/b0b6c54a394123a450a8d3ccc2374d5295ac38f8))
 
 ## [3.91.0](https://github.com/Millennium44/Toolasha/compare/v3.90.0...v3.91.0) (2026-11-21)
 
