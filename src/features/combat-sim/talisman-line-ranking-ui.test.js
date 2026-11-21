@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
     dungeon: false,
     /** characterTalismans */
     owned: [],
+    /** getSlottedTalismans */
+    slotted: [],
     /** Stored settings (config.getSettingValue / setSettingValue) */
     settings: {},
     /** Deaths per hour the fake sim gives a line (by hrid fragment) */
@@ -82,6 +84,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: () => mocks.characterId,
         getSkills: () => [{ skillHrid: '/skills/milking', level: 100 }],
         getCharacterTalismans: () => mocks.owned,
+        getSlottedTalismans: () => mocks.slotted,
     },
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
@@ -209,6 +212,7 @@ beforeEach(() => {
     mocks.dungeon = false;
     mocks.cancelled = 0;
     mocks.owned = [];
+    mocks.slotted = [];
     mocks.settings = {};
     mocks.deathsFor = {};
     mocks.buffs = null;
@@ -1310,5 +1314,49 @@ describe('header caveat and the estimate rate', () => {
             spy.mockRestore();
             resetSessionRate();
         }
+    });
+});
+
+describe('core context appearance', () => {
+    const mods = (n) => [
+        { hrid: '/talisman_modifiers/armor', grade: 1 },
+        { hrid: '/talisman_modifiers/tenacity', grade: n },
+    ];
+    // The game's shape: full records for the worn ones, the sim DTO keeps slot and lines
+    const live = [
+        talismanRow(11, mods(1), { slotIndex: 1, iconHrid: '/talisman_icons/combat_a', marker: 0 }),
+        talismanRow(12, mods(2), { slotIndex: 2, iconHrid: '/talisman_icons/combat_b', marker: 9 }),
+        talismanRow(13, mods(3), { slotIndex: 3 }),
+    ];
+    const simOf = (rows) => rows.map((r) => ({ slotIndex: r.slotIndex, modifiers: structuredClone(r.modifiers) }));
+
+    test('the local build gets id, icon and marker from its own records; the DTO and its shape stay as they were', async () => {
+        mocks.slotted = live;
+        mocks.roster[0].talismans = simOf(live);
+        const before = JSON.stringify(mocks.roster[0].talismans);
+        await run();
+        const ctx = await section._coreContext();
+        expect(ctx.talismans.map((t) => [t.id, t.iconHrid, t.marker])).toEqual([
+            [11, '/talisman_icons/combat_a', 0],
+            [12, '/talisman_icons/combat_b', 9],
+            [13, undefined, undefined],
+        ]);
+        // Nothing is written back to what the sim and the saved build read
+        expect(JSON.stringify(mocks.roster[0].talismans)).toBe(before);
+        expect(Object.keys(mocks.roster[0].talismans[0]).sort()).toEqual(['modifiers', 'slotIndex']);
+    });
+
+    test("a teammate's build, or one edited away from the worn lines, shows no local badge", async () => {
+        mocks.slotted = live;
+        mocks.roster[0].hrid = '/players/2';
+        mocks.roster[0].talismans = simOf(live);
+        await run();
+        let ctx = await section._coreContext();
+        expect(ctx.talismans.every((t) => t.id === undefined && t.iconHrid === undefined)).toBe(true);
+        mocks.roster[0].hrid = '/players/1';
+        mocks.roster[0].talismans = simOf([talismanRow(99, mods(5), { slotIndex: 1 })]);
+        await run();
+        ctx = await section._coreContext();
+        expect(ctx.talismans.map((t) => t.id)).toEqual([undefined]);
     });
 });

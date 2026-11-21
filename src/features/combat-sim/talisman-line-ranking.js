@@ -361,6 +361,31 @@ export function wornTalismans(talismans, slots) {
     );
 }
 
+/**
+ * Put the local player's own talisman records (id, icon, marker, type) back on the worn list of a sim build, for
+ * display only. The sim DTO carries slot and lines alone, so a table drawn from it cannot show the icon or marker.
+ * A row is matched to a record by slot AND identical lines, so a build edited away from the worn belt, or any
+ * other player's build, gets no badge rather than the local player's. The input and the DTO are not changed.
+ * @param {Array<Object>} worn - From {@link wornTalismans}
+ * @param {Array<Object>|null} liveSlotted - `dataManager.getSlottedTalismans()`; null/empty when the build is not the local player's
+ * @returns {Array<Object>} Copies of `worn`, with the matched record's appearance fields where one matched
+ */
+export function withLocalAppearance(worn, liveSlotted) {
+    const linesOf = (t) => JSON.stringify((t.modifiers || []).map((m) => [m.hrid, m.grade]));
+    const live = Array.isArray(liveSlotted) ? liveSlotted : [];
+    return worn.map((t) => {
+        const own = live.find((l) => l?.slotIndex === t.slotIndex && linesOf(l) === linesOf(t));
+        if (!own) return t;
+        return {
+            ...t,
+            id: own.id,
+            talismanTypeHrid: own.talismanTypeHrid,
+            iconHrid: own.iconHrid,
+            marker: own.marker,
+        };
+    });
+}
+
 /** 95% error bar, in standard errors (the upgrade advisor's `SIGNIFICANCE_Z`) */
 const Z = 1.96;
 

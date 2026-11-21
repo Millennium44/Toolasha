@@ -52,6 +52,7 @@ import {
     runCombatLineRanking,
     talismanLines,
     wornTalismans,
+    withLocalAppearance,
 } from './talisman-line-ranking.js';
 import { estimateBeltSims, runCombatBeltAdvisor } from './talisman-belt-run.js';
 import { beltCandidates } from '../talismans/talisman-belt-advisor.js';
@@ -781,7 +782,7 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
         }
         const { zoneHrid } = this.host._readUpgradeInputs();
         const playerIndex = this.host._upgradePlayerIndex();
-        const { playerDTOs } = await this._loadRoster();
+        const { playerDTOs, selfHrid } = await this._loadRoster();
         const dto = playerDTOs?.[playerIndex] || null;
         const ready = combatRankingReadiness({ gameData: this._payload(), playerDTO: dto, zoneHrid });
         if (
@@ -801,7 +802,15 @@ export class TalismanLineRankingSection extends TalismanRankingSectionBase {
                 message: 'The ranking was run for another player. Rank again, then check the cores.',
             };
         }
-        return { talismans: wornTalismans(dto.talismans, ready.slots), power: ready.power, slots: ready.slots };
+        // Display only: the DTO holds slot and lines, so the icon and marker come from the player's own records, and
+        // only for the player's own build (a teammate's talismans have no local record)
+        const isSelf = Boolean(selfHrid) && dto.hrid === selfHrid;
+        const worn = wornTalismans(dto.talismans, ready.slots);
+        return {
+            talismans: withLocalAppearance(worn, isSelf ? dataManager.getSlottedTalismans?.() : null),
+            power: ready.power,
+            slots: ready.slots,
+        };
     }
 
     async _runBelts(current, metricKey) {
