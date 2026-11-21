@@ -3365,17 +3365,11 @@ function calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
             }).price;
         }
 
-        // Primary: a market trade (buy the target level, sell the worn one), when the mode prices both sides
-        const trade = enhancementMarketTrade(candidate);
+        // A market trade (buy the target level, sell the worn one) when the mode prices both sides and it is
+        // not dearer than enhancing at the bench; otherwise the enhance estimate with protection
+        const { trade, directCost } = chooseEnhancementRoute(candidate, gameData);
         if (trade) return trade.buy - trade.credit;
-
-        // Fallback: enhancement cost estimate with protection
-        return calculateDirectEnhancementCost(
-            candidate.currentHrid,
-            candidate.currentLevel,
-            candidate.upgradeLevel,
-            gameData
-        );
+        return directCost;
     }
 
     // Tier upgrade: buy new item at target enhancement - sell current item
@@ -3452,6 +3446,33 @@ function enhancementMarketTrade(candidate) {
     const proceeds = saleProceeds(sold);
     const { credit, capped } = capEnhancementCredit(buy, proceeds);
     return { buy, proceeds, grossSell: sold.price, credit, capped };
+}
+
+/**
+ * Which way an `enhancement` row is priced: the market trade or enhancing at the bench, whichever is cheaper.
+ *
+ * The trade is only a candidate when the pricing mode prices both sides; the enhance quote only when it can
+ * be quoted at all (no recipe, an unpriced material or nothing priceable gives null). With both, the trade wins
+ * a tie, as it is the plainer route to act on. Every reader of an enhancement row's cost goes through this, so
+ * the number and the breakdown that names its route cannot disagree.
+ *
+ * @param {Object} candidate - An `enhancement` row
+ * @param {Object} gameData - Game data payload
+ * @returns {{trade: Object|null, directCost: number|null}} `trade` is set when the row is a market trade;
+ *   otherwise the row is an enhance, costing `directCost` (null when unquotable)
+ */
+function chooseEnhancementRoute(candidate, gameData) {
+    const trade = enhancementMarketTrade(candidate);
+    const directCost = calculateDirectEnhancementCost(
+        candidate.currentHrid,
+        candidate.currentLevel,
+        candidate.upgradeLevel,
+        gameData
+    );
+    if (trade && directCost != null && directCost < trade.buy - trade.credit) {
+        return { trade: null, directCost };
+    }
+    return { trade, directCost };
 }
 
 /**
@@ -5359,7 +5380,7 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
 
     if (candidate.type === 'enhancement') {
         const upgraded = getItemPrices(candidate.currentHrid, candidate.upgradeLevel);
-        const trade = enhancementMarketTrade(candidate);
+        const { trade, directCost } = chooseEnhancementRoute(candidate, gameData);
         if (trade) {
             const name = nameOf(candidate.currentHrid);
             const { buy, proceeds, credit, capped } = trade;
@@ -5397,12 +5418,7 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
                 enhanceSource: null,
             };
         } else {
-            const cost = calculateDirectEnhancementCost(
-                candidate.currentHrid,
-                candidate.currentLevel,
-                candidate.upgradeLevel,
-                gameData
-            );
+            const cost = directCost;
             return {
                 buys: [],
                 credits: [],

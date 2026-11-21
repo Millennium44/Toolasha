@@ -28,6 +28,8 @@ const state = vi.hoisted(() => ({
     sides: null,
     // The untradable-cape setting: 'zero' | 'mirror'
     capeMode: 'zero',
+    // What enhancing at the bench quotes: a number, 0 (free), or null (cannot be quoted)
+    directCost: 0,
 }));
 
 const CAPE_BASE = '/items/test_cape';
@@ -157,7 +159,7 @@ vi.mock('./labyrinth-level-finder.js', () => ({ findMaxLabyrinthLevel: vi.fn(), 
 vi.mock('../../utils/tester-shop.js', () => ({ testerShopEnabled: () => false, testerGearPrice: () => null }));
 // The sweep's own arithmetic has its suite; here the enhance run adds nothing to the base
 vi.mock('./direct-enhancement-cost.js', () => ({
-    calculateDirectEnhancementCost: () => 0,
+    calculateDirectEnhancementCost: () => state.directCost,
     enhancementSweepParams: () => ({
         teas: { blessed: state.blessedChance > 0 },
         blessedTeaBonus: state.blessedChance,
@@ -208,6 +210,7 @@ beforeEach(() => {
     state.craftingSetting = false;
     state.sides = null;
     state.capeMode = 'zero';
+    state.directCost = 0;
 });
 
 const tooltipPath = () => calculateEnhancementPath(SWORD, 1, enhancingConfig, { priceContext: 'ask' });
@@ -259,6 +262,8 @@ describe('an enhancement row prices both levels as the pricing mode and custom p
     beforeEach(() => {
         state.books[`${SWORD}:3`] = { ask: 600_000, bid: 500_000 };
         state.books[`${SWORD}:5`] = { ask: 2_000_000, bid: 1_500_000 };
+        // Enhancing is dearer than every trade below unless a test says otherwise
+        state.directCost = 50_000_000;
     });
 
     /** Cost and breakdown, which must agree */
@@ -274,6 +279,54 @@ describe('an enhancement row prices both levels as the pricing mode and custom p
         // 2M - floor(500K * 0.96)
         expect(cost).toBe(2_000_000 - 480_000);
         expect(detail).toMatchObject({ gross: 2_000_000, credit: 480_000, rawBid: 500_000, source: 'market' });
+    });
+
+    describe('enhancing at the bench against the market trade', () => {
+        // The trade nets 2,000,000 - 480,000 = 1,520,000
+        test('a cheaper enhance is the cost, and the breakdown names the enhance route', () => {
+            state.directCost = 900_000;
+            const { cost, detail } = both(enhance());
+            expect(cost).toBe(900_000);
+            expect(detail).toMatchObject({ source: 'sim', enhancementPath: true, gross: 900_000, credit: 0 });
+            expect(detail.buys).toEqual([]);
+            // The watch aims at the target's ask, which the trade no longer names
+            expect(detail.targetAsk).toBe(2_000_000);
+        });
+
+        test('a dearer enhance leaves the market trade', () => {
+            state.directCost = 1_520_001;
+            const { cost, detail } = both(enhance());
+            expect(cost).toBe(1_520_000);
+            expect(detail.source).toBe('market');
+        });
+
+        test('equal costs stay on the market trade', () => {
+            state.directCost = 1_520_000;
+            const { detail } = both(enhance());
+            expect(detail.source).toBe('market');
+            expect(detail.enhancementPath).toBeUndefined();
+        });
+
+        test('an enhance that cannot be quoted does not displace the trade, and a free one does', () => {
+            state.directCost = null;
+            expect(both(enhance()).detail.source).toBe('market');
+            state.directCost = 0;
+            expect(both(enhance()).cost).toBe(0);
+        });
+
+        test('an unpriced side leaves the enhance, as before', () => {
+            delete state.books[`${SWORD}:3`];
+            state.directCost = 3_000_000;
+            const { cost, detail } = both(enhance());
+            expect(cost).toBe(3_000_000);
+            expect(detail.enhancementPath).toBe(true);
+        });
+
+        test('a worn +0 priced from nothing and a nonzero level both compare the same way', () => {
+            state.directCost = 400_000;
+            expect(both(enhance({ currentLevel: 3 })).cost).toBe(400_000);
+            expect(both(enhance({ currentLevel: 0, upgradeLevel: 5 })).cost).toBeLessThanOrEqual(400_000);
+        });
     });
 
     test('patient buy: the row and the matching swap both buy the +5 at its bid', () => {
@@ -469,6 +522,8 @@ describe('resale and material buys follow the pricing mode', () => {
             state.books[`${SWORD}:4`] = { ask: 800_000, bid: 800_000 };
             state.books[`${SWORD}:5`] = { ask: 3_000_000, bid: 3_000_000 };
             state.books[`${MIRROR}:0`] = { ask: 100_000, bid: 100_000 };
+            // Enhancing at the bench is the dearest way, so the trade-in is what is under test
+            state.directCost = 50_000_000;
         });
 
         test("sells the worn +2 on the mode's sell side", () => {
