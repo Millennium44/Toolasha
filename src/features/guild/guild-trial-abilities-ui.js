@@ -129,7 +129,8 @@ export function snapshotFromViewLoadout(entry) {
     if (!loadout || typeof loadout !== 'object') return null;
     // The roster answers with whatever the player built for that trial kind; only a
     // combat loadout says anything about combat abilities
-    if (loadout.actionTypeHrid && loadout.actionTypeHrid !== '/action_types/combat') return null;
+    // An empty string is an All Skills loadout (skilling); a reply that names no type is not rejected
+    if (loadout.actionTypeHrid != null && loadout.actionTypeHrid !== '/action_types/combat') return null;
     const name = entry.name || loadout.sharableCharacter?.name || null;
     if (!name && (entry.characterId === null || entry.characterId === undefined)) return null;
 

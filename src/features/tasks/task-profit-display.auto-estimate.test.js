@@ -122,6 +122,31 @@ afterEach(async () => {
     buildAllPlayerDTOs.mockReset();
 });
 
+describe('a saved default loadout that is not a combat loadout', () => {
+    const savedDefault = (name) => {
+        config.getSettingValue.mockImplementation((key, fallback) =>
+            key === 'combatSim_defaultLoadout' ? name : fallback
+        );
+    };
+
+    test('reads as Current Gear, while a saved combat loadout is kept', async () => {
+        const store = await import('../combat/loadout-snapshot.js');
+        const all = [
+            { name: 'Everything', actionTypeHrid: '' },
+            { name: 'Fighting', actionTypeHrid: '/action_types/combat' },
+        ];
+        vi.spyOn(store.default, 'getAllSnapshots').mockReturnValue(all);
+        savedDefault('Everything');
+        expect(taskProfitDisplay._savedCombatLoadoutName()).toBe('');
+        savedDefault('Fighting');
+        expect(taskProfitDisplay._savedCombatLoadoutName()).toBe('Fighting');
+        savedDefault('Deleted');
+        expect(taskProfitDisplay._savedCombatLoadoutName()).toBe('');
+        savedDefault('');
+        expect(taskProfitDisplay._savedCombatLoadoutName()).toBe('');
+    });
+});
+
 describe('initial automatic task estimates', () => {
     test.each([
         ['best', 'solo', 4],

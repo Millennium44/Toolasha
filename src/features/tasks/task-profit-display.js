@@ -1929,7 +1929,7 @@ class TaskProfitDisplay {
             .getAllSnapshots()
             .filter((s) => s.actionTypeHrid === '/action_types/combat');
 
-        const defaultLoadout = config.getSettingValue('combatSim_defaultLoadout', '');
+        const defaultLoadout = this._savedCombatLoadoutName(snapshots);
 
         let html =
             '<div class="mwi-combat-est-controls" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-width:0; max-width:100%;">';
@@ -2000,7 +2000,7 @@ class TaskProfitDisplay {
         try {
             await preceding;
             if (isStale() || !config.getSetting('taskCombatEstimate')) return;
-            const loadoutName = config.getSettingValue('combatSim_defaultLoadout', '');
+            const loadoutName = this._savedCombatLoadoutName();
             const mode = this._estimateMode;
             for (let attempt = 0; attempt < MAX_AUTOMATIC_ATTEMPTS; attempt++) {
                 if (shouldStop()) break;
@@ -2026,6 +2026,24 @@ class TaskProfitDisplay {
             // Keep the queue alive: one rejected estimate must not poison later cards.
             console.error('[TaskProfitDisplay] Combat sim estimate failed:', error);
         }
+    }
+
+    /**
+     * The saved "Combat Simulator: Default loadout" name, resolved at the point of use: a name that is not one of
+     * the combat loadouts (an All Skills or skilling loadout saved earlier, or one since deleted) reads as Current
+     * Gear, which is what the picker shows for it. Nothing stored is changed.
+     * @param {Array<Object>} [snapshots] - Combat snapshots already read
+     * @returns {string} A combat loadout name, or '' for Current Gear
+     */
+    _savedCombatLoadoutName(snapshots = null) {
+        const saved = config.getSettingValue('combatSim_defaultLoadout', '');
+        if (!saved) return '';
+        const combat =
+            snapshots ??
+            getLoadoutSnapshot()
+                .getAllSnapshots()
+                .filter((s) => s.actionTypeHrid === '/action_types/combat');
+        return combat.some((s) => s.name === saved) ? saved : '';
     }
 
     /**

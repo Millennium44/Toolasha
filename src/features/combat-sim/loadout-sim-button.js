@@ -68,7 +68,7 @@ export async function openLoadoutInSim(name, button = null) {
         }
         // The roster also answers for skilling trials; that gear is not a combat build
         const actionType = entry.loadout?.actionTypeHrid;
-        if (actionType && actionType !== '/action_types/combat') {
+        if (actionType != null && actionType !== '/action_types/combat') {
             if (button) flash(button, 'Not a combat loadout');
             return false;
         }

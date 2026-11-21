@@ -871,6 +871,16 @@ export class SimEditor {
      */
     applyLoadoutByName(loadoutName) {
         if (!loadoutName || !this._editedDTOs) return false;
+        // The combat editor takes combat loadouts only: an All Skills (or skilling) loadout is not combat gear,
+        // and a remembered pick of one must not be re-applied or re-saved
+        if (!this.labMode && !this.skillingMode) {
+            const all = (loadoutSnapshot() || bundledLoadoutSnapshot).getAllSnapshots?.() || [];
+            const candidates =
+                typeof loadoutName === 'object' ? [loadoutName] : all.filter((snap) => snap?.name === loadoutName);
+            if (candidates.length && !candidates.some((snap) => snap.actionTypeHrid === '/action_types/combat')) {
+                return false;
+            }
+        }
         if (!this._applyLoadoutToDTO(loadoutName)) return false;
         this._selectedLoadoutName = typeof loadoutName === 'object' ? loadoutName.name || '' : loadoutName;
         this._selectedLoadoutId =

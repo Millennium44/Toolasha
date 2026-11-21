@@ -9,9 +9,10 @@
  *
  * Skill matching: the loadout's actionTypeHrid (e.g. "/action_types/brewing") is compared
  * to the action type of the profit calculation. An "All Skills" loadout (empty actionTypeHrid)
- * is used as a fallback when no skill-specific snapshot is found.
+ * is used as a fallback for skilling when no skill-specific default is found; combat never uses it.
  *
- * Priority: skill default > all skills default > skill non-default > all skills non-default
+ * Priority (as the game's Start picker): skill default > all skills default > null (the gear worn now).
+ * Combat: the combat default > null. A loadout that is not a default is never picked.
  */
 
 import webSocketHook from '../../core/websocket.js';

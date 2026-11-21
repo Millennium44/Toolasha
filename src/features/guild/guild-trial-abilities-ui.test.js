@@ -1064,6 +1064,17 @@ describe('trial abilities panel', () => {
             expect(snapshotFromViewLoadout(entry)).toBeNull();
         });
 
+        test('an All Skills loadout (empty type) says nothing about combat abilities', () => {
+            const entry = {
+                characterId: '5',
+                name: 'Alice',
+                hasLoadout: true,
+                capturedAt: NOW,
+                loadout: { sharableCharacter: { name: 'Alice' }, actionTypeHrid: '', equippedAbilities: [] },
+            };
+            expect(snapshotFromViewLoadout(entry)).toBeNull();
+        });
+
         test('hasLoadout:false is not treated as a proven-empty kit', () => {
             const entry = {
                 characterId: '5',

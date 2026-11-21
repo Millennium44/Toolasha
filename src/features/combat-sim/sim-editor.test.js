@@ -1145,6 +1145,21 @@ describe('the loadout selection is remembered', () => {
         expect(el.querySelector('#mwi-csim-loadout-select').value).toBe('Bruteforce');
     });
 
+    test('a remembered All Skills pick is not re-applied or re-saved by the combat editor', async () => {
+        settings.values.set('simEditorLoadoutName', 'Everything');
+        bridge.snapshots = [
+            { name: 'Everything', actionTypeHrid: '', isDefault: true },
+            { name: 'Bruteforce', actionTypeHrid: '/action_types/combat' },
+        ];
+
+        const { editor } = await openEditor();
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+        expect(bridge.applied).toEqual([]);
+        expect(editor.applyLoadoutByName(bridge.snapshots[0])).toBe(false);
+        expect(editor.applyLoadoutByName('Bruteforce')).toBe(true);
+    });
+
     test('a loadout that no longer exists falls back to current gear, silently', async () => {
         settings.values.set('simEditorLoadoutName', 'Deleted');
         bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
