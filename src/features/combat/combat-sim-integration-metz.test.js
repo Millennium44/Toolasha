@@ -76,6 +76,56 @@ describe('Metz simulator page integration', () => {
         expect(document.querySelector('#toolasha-metz-import-warnings')).toBeNull();
     });
 
+    test('stay put when another script inserts its own element between them and the paste box', async () => {
+        const textarea = document.querySelector('textarea');
+        initialize();
+        const button = document.querySelector('#toolasha-metz-import-button');
+        const other = document.createElement('button');
+        other.id = 'other-script-button';
+        textarea.insertAdjacentElement('afterend', other);
+
+        document.body.appendChild(document.createElement('span'));
+        await vi.advanceTimersByTimeAsync(600);
+
+        expect(textarea.nextElementSibling).toBe(other);
+        expect(other.nextElementSibling).toBe(button);
+    });
+
+    test('the warnings list stays put when another element lands between it and the button', async () => {
+        mocks.warnings = [{ name: 'Ally', level: 'gearless', text: 'Ally: included with NO gear' }];
+        initialize();
+        const button = document.querySelector('#toolasha-metz-import-button');
+        button.click();
+        await vi.runAllTimersAsync();
+        const list = document.querySelector('#toolasha-metz-import-warnings');
+        const other = document.createElement('div');
+        button.insertAdjacentElement('afterend', other);
+
+        document.body.appendChild(document.createElement('span'));
+        await vi.advanceTimersByTimeAsync(600);
+
+        expect(button.nextElementSibling).toBe(other);
+        expect(other.nextElementSibling).toBe(list);
+    });
+
+    test('are put back after the paste box when something moves them before it or into another parent', async () => {
+        const textarea = document.querySelector('textarea');
+        initialize();
+        const button = document.querySelector('#toolasha-metz-import-button');
+        document.body.insertBefore(button, textarea);
+
+        document.body.appendChild(document.createElement('span'));
+        await vi.advanceTimersByTimeAsync(600);
+        expect(textarea.nextElementSibling).toBe(button);
+
+        const wrapper = document.createElement('div');
+        document.body.appendChild(wrapper);
+        wrapper.appendChild(button);
+        document.body.appendChild(document.createElement('span'));
+        await vi.advanceTimersByTimeAsync(600);
+        expect(textarea.nextElementSibling).toBe(button);
+    });
+
     test('uses the native value setter so a controlled textarea receives the import', async () => {
         const textarea = document.querySelector('textarea');
         const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');

@@ -56,6 +56,19 @@ function findImportTextarea() {
     return textareas.find((textarea) => /export|import/i.test(textarea.placeholder || '')) || textareas[0];
 }
 
+/**
+ * Whether `node` sits after `anchor` in the same parent, not necessarily next to it.
+ * @param {Element} anchor - The element it must follow
+ * @param {Element} node - The element being placed
+ * @returns {boolean}
+ */
+function isAfterInSameParent(anchor, node) {
+    return (
+        node.parentElement === anchor.parentElement &&
+        !!(anchor.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)
+    );
+}
+
 function mount() {
     const textarea = findImportTextarea();
     const existing = document.getElementById(BUTTON_ID);
@@ -65,10 +78,12 @@ function mount() {
         return;
     }
     if (existing) {
-        if (existing.previousElementSibling !== textarea) textarea.insertAdjacentElement('afterend', existing);
+        // Anywhere after the paste box in its parent will do. Another script also inserts its button right
+        // after the box, and insisting on being the very next sibling made the two keep moving past each
+        // other; a move between mouse down and up drops the click.
+        if (!isAfterInSameParent(textarea, existing)) textarea.insertAdjacentElement('afterend', existing);
         const warnings = document.getElementById(WARNINGS_ID);
-        if (warnings && warnings.previousElementSibling !== existing)
-            existing.insertAdjacentElement('afterend', warnings);
+        if (warnings && !isAfterInSameParent(existing, warnings)) existing.insertAdjacentElement('afterend', warnings);
         return;
     }
 
