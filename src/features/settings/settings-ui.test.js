@@ -30,6 +30,9 @@ const mocks = vi.hoisted(() => ({
     knownCharacters: [],
     synced: [],
     syncResult: { success: true, count: 0 },
+    /** Ids the Copy Settings dialog asked to take off the roster, and what the call answers */
+    removed: [],
+    removeResult: true,
     /** Which panels the utility buttons asked to open or close */
     toggled: [],
     censusCalls: [],
@@ -353,6 +356,10 @@ vi.mock('../../core/config.js', () => ({
             mocks.resets.push('shared');
         },
         getKnownCharacters: async () => mocks.knownCharacters,
+        removeKnownCharacter: async (id) => {
+            mocks.removed.push(id);
+            return mocks.removeResult;
+        },
         syncSettingsToAllCharacters: async (ids) => {
             mocks.synced.push(ids);
             return { ...mocks.syncResult, count: mocks.syncResult.count || ids.length };
@@ -596,6 +603,8 @@ beforeEach(() => {
     mocks.knownCharacters = [];
     mocks.synced = [];
     mocks.syncResult = { success: true, count: 0 };
+    mocks.removed = [];
+    mocks.removeResult = true;
     mocks.toggled = [];
     mocks.censusCalls = [];
     mocks.coarsePointer = false;
@@ -976,6 +985,89 @@ describe('copying settings to the iron cows', () => {
 
         expect(mocks.synced).toEqual([['char-2', 'char-3', 'char-4']]);
         expect(globalThis.alert.mock.calls.at(-1)[0]).toBe('Settings copied to 3 characters!');
+    });
+});
+
+describe('removing a stale character from the Copy Settings dialog', () => {
+    beforeEach(() => {
+        mocks.knownCharacters = [
+            { id: 'char-1', name: 'Main' },
+            { id: 'char-2', name: 'Gone' },
+            { id: 'char-3', name: 'Alt' },
+        ];
+    });
+
+    /** @returns {HTMLElement} The copy dialog's confirm button */
+    function copyButton() {
+        const dialog = document.querySelector('.toolasha-copy-settings-dialog');
+        return [...dialog.querySelectorAll('button')].find((button) => button.textContent === 'Copy Settings');
+    }
+
+    /** @param {string} id @returns {HTMLElement|null} That row's remove control */
+    const removeButton = (id) => document.querySelector(`[data-remove-character="${id}"]`);
+    const rowNames = () =>
+        [...document.querySelectorAll('.toolasha-copy-settings-dialog label span')].map((span) => span.textContent);
+
+    test('the character being played gets no row, so it cannot be removed', async () => {
+        drawPanel();
+        await settingsUI.handleSync();
+        expect(removeButton('char-1')).toBe(null);
+        expect(removeButton('char-2')).not.toBe(null);
+    });
+
+    test('the first press only asks; the second removes the row and leaves its box unticked', async () => {
+        drawPanel();
+        await settingsUI.handleSync();
+        const button = removeButton('char-2');
+        const box = button.closest('label').querySelector('input');
+
+        button.click();
+        await settle();
+        expect(mocks.removed).toEqual([]);
+        expect(button.textContent).toBe('Remove?');
+        // The press stays off the label, which would otherwise untick the copy target
+        expect(box.checked).toBe(true);
+
+        button.click();
+        await settle();
+        expect(mocks.removed).toEqual(['char-2']);
+        expect(rowNames()).toEqual(['Alt']);
+
+        // A removed row is not copied to
+        copyButton().click();
+        await settle();
+        expect(mocks.synced).toEqual([['char-3']]);
+    });
+
+    test('a refused or failed removal keeps the row and says so', async () => {
+        mocks.removeResult = false;
+        drawPanel();
+        await settingsUI.handleSync();
+        const button = removeButton('char-2');
+
+        button.click();
+        button.click();
+        await settle();
+
+        expect(mocks.removed).toEqual(['char-2']);
+        expect(rowNames()).toEqual(['Gone', 'Alt']);
+        expect(button.textContent).toBe('Not removed');
+    });
+
+    test('removing every row leaves a dialog that copies to nobody', async () => {
+        drawPanel();
+        await settingsUI.handleSync();
+        for (const id of ['char-2', 'char-3']) {
+            removeButton(id).click();
+            removeButton(id).click();
+            await settle();
+        }
+        expect(rowNames()).toEqual([]);
+
+        copyButton().click();
+        await settle();
+        expect(mocks.synced).toEqual([]);
+        expect(document.querySelector('.toolasha-copy-settings-dialog')).toBe(null);
     });
 });
 

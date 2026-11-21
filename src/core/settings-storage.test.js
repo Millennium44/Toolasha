@@ -1737,6 +1737,99 @@ describe('the known-characters roster holds one entry per character', () => {
     });
 });
 
+describe('a character taken off the known-characters roster', () => {
+    beforeEach(() => {
+        stored.clear();
+        outage.on = false;
+        settingsStorage.setCharacterId('alice', 'Alice');
+    });
+
+    afterEach(() => {
+        settingsStorage.setCharacterId('alice', 'Alice');
+    });
+
+    const roster = () => stored.get('json:known_character_ids');
+
+    test('loses its roster entry and keeps its saved settings', async () => {
+        stored.set('json:known_character_ids', [
+            { id: 'alice', name: 'Alice' },
+            { id: 'bob', name: 'Bob' },
+        ]);
+        stored.set('json:script_settingsMap_bob', { a: { id: 'a', value: 1 } });
+
+        expect(await settingsStorage.removeKnownCharacter('bob')).toBe(true);
+
+        expect(roster()).toEqual([{ id: 'alice', name: 'Alice' }]);
+        expect(stored.get('json:script_settingsMap_bob')).toEqual({ a: { id: 'a', value: 1 } });
+    });
+
+    test('the character in play is never removed, compared as strings', async () => {
+        settingsStorage.setCharacterId(30404, 'MillenniumTest');
+        stored.set('json:known_character_ids', [
+            { id: '30404', name: 'MillenniumTest' },
+            { id: 'bob', name: 'Bob' },
+        ]);
+
+        expect(await settingsStorage.removeKnownCharacter('30404')).toBe(false);
+        expect(await settingsStorage.removeKnownCharacter(30404)).toBe(false);
+        expect(roster()).toHaveLength(2);
+    });
+
+    test('nothing is removed while no character is known, or for an id not listed', async () => {
+        stored.set('json:known_character_ids', [{ id: 'bob', name: 'Bob' }]);
+        expect(await settingsStorage.removeKnownCharacter('nobody')).toBe(false);
+        settingsStorage.setCharacterId(null);
+        expect(await settingsStorage.removeKnownCharacter('bob')).toBe(false);
+        expect(roster()).toEqual([{ id: 'bob', name: 'Bob' }]);
+    });
+
+    test('a roster that cannot be read or written is left as it was, and the answer is no', async () => {
+        stored.set('json:known_character_ids', [
+            { id: 'alice', name: 'Alice' },
+            { id: 'bob', name: 'Bob' },
+        ]);
+        outage.on = true;
+        expect(await settingsStorage.removeKnownCharacter('bob')).toBe(false);
+        outage.on = false;
+        expect(roster()).toHaveLength(2);
+
+        // Readable, but the write is refused
+        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+        expect(await settingsStorage.removeKnownCharacter('bob')).toBe(false);
+    });
+
+    test('a removed character that is still played lists itself again on its next load', async () => {
+        stored.set('json:known_character_ids', [{ id: 'bob', name: 'Bob' }]);
+        stored.set('json:script_settingsMap_alice', {});
+
+        await settingsStorage.loadSettings();
+
+        expect(roster()).toEqual([
+            { id: 'bob', name: 'Bob' },
+            { id: 'alice', name: 'Alice' },
+        ]);
+    });
+
+    test('a roster read that fails on load is not rewritten as this character alone', async () => {
+        stored.set('json:known_character_ids', [{ id: 'bob', name: 'Bob' }]);
+        storage.tryGet.mockImplementation(async (key) => {
+            if (key === 'known_character_ids') return null;
+            const value = stored.get(`json:${key}`) ?? stored.get(key);
+            return value != null ? { found: true, value } : { found: false, value: null };
+        });
+        try {
+            await settingsStorage.addToKnownCharacters('alice', 'Alice');
+        } finally {
+            storage.tryGet.mockImplementation((key) => {
+                if (outage.on) return Promise.resolve(null);
+                const value = stored.get(`json:${key}`) ?? stored.get(key);
+                return Promise.resolve(value != null ? { found: true, value } : { found: false, value: null });
+            });
+        }
+        expect(roster()).toEqual([{ id: 'bob', name: 'Bob' }]);
+    });
+});
+
 describe('a save keeps setting ids this build does not know about', () => {
     beforeEach(() => {
         stored.clear();

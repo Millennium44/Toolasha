@@ -3087,6 +3087,55 @@ class SettingsUI {
     }
 
     /**
+     * A row's "remove from this list" control: the first press asks, a second press on "Remove?" removes.
+     *
+     * Only the roster entry goes (see `settingsStorage.removeKnownCharacter`); the character's saved settings
+     * stay, and it is listed again the next time it is played. The press is kept off the row's `<label>`, which
+     * would otherwise tick the checkbox.
+     *
+     * @param {{id: string, name: string}} char - The character on the row
+     * @param {HTMLElement} row - The row, removed once the entry is
+     * @returns {HTMLButtonElement}
+     */
+    _removeCharacterButton(char, row) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.removeCharacter = char.id;
+        button.textContent = '×';
+        button.title =
+            'Remove from this list (for a character that no longer exists). Its saved settings are kept, ' +
+            'and it comes back the next time you play it.';
+        button.style.cssText =
+            'margin-left:auto;background:transparent;border:none;color:#888;font-size:12px;cursor:pointer;padding:0 4px;';
+        let armed = false;
+        let busy = false;
+        button.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (busy) return;
+            if (!armed) {
+                armed = true;
+                button.textContent = 'Remove?';
+                button.style.color = '#ff8a80';
+                return;
+            }
+            busy = true;
+            const removed = await this.config.removeKnownCharacter(char.id);
+            busy = false;
+            if (removed) {
+                row.remove();
+                return;
+            }
+            armed = false;
+            button.textContent = 'Not removed';
+            button.style.color = '#888';
+            button.title =
+                'This character could not be removed (it is the one being played, or the list could not be saved).';
+        });
+        return button;
+    }
+
+    /**
      * The pick-your-characters dialog both copy buttons share.
      *
      * @param {Object} options - What to draw
@@ -3120,6 +3169,7 @@ class SettingsUI {
             nameSpan.textContent = characterLabel(char);
             row.appendChild(cb);
             row.appendChild(nameSpan);
+            row.appendChild(this._removeCharacterButton(char, row));
             dialog.appendChild(row);
             return cb;
         });
@@ -3157,7 +3207,8 @@ class SettingsUI {
         });
 
         copyBtn.addEventListener('click', async () => {
-            const selected = checkboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+            // A row taken off the list is no longer a target, whatever its box said
+            const selected = checkboxes.filter((cb) => cb.isConnected && cb.checked).map((cb) => cb.value);
             if (selected.length === 0) {
                 close();
                 return;

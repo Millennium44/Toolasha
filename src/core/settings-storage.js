@@ -746,15 +746,18 @@ class SettingsStorage {
                         carryFrom: this.storageKey,
                     });
                 }
-
-                // Add character to known characters list
-                await this.addToKnownCharacters(characterId, characterName);
             }
 
             // Migrations first: a rewrite entry may name an id a migration derives
             saved = await this.applyKeyMigrations(saved, characterKey);
             saved = await this.applyDefaultRewrites(saved, characterKey);
             saved = await this.applyPinnedPreviousDefaults(saved, characterKey);
+
+            // Every load, not only the first: a character taken off the roster by hand (the Copy Settings
+            // dialog's remove) keeps its settings map, so a first-run-only add would never list it again.
+            // Writes only when the entry is missing or renamed. Before the shared-settings pass, which names
+            // each character's map from the roster.
+            if (characterId) await this.addToKnownCharacters(characterId, characterName);
             await this.migrateSharedSettings(characterKey);
         } else {
             console.warn(`[SettingsStorage] ${characterKey} could not be read; answering with schema defaults`);
@@ -1759,7 +1762,11 @@ class SettingsStorage {
         // pushed a fresh duplicate of the same character, and rosters grew into
         // the hundreds. Everything below works in strings.
         const id = String(characterId);
-        const raw = await storage.getJSON(this.knownCharactersKey, this.storageArea, []);
+        // A read that could not be made is not an empty roster: writing `[this one]` over it would drop every
+        // other character, and the sync would carry the loss to the other devices
+        const probed = await storage.tryGet(this.knownCharactersKey, this.storageArea);
+        if (probed === null) return;
+        const raw = probed.found ? storage.parseJSON(probed.value, this.knownCharactersKey, []) : [];
         const list = this._normalizeKnownCharacters(raw);
         const existing = list.find((c) => c.id === id);
         if (existing) {
@@ -1822,6 +1829,32 @@ class SettingsStorage {
             await storage.setJSON(this.knownCharactersKey, list, this.storageArea, true);
         }
         return list;
+    }
+
+    /**
+     * Take a character off the known-characters roster, for one that no longer exists (a deleted character
+     * stays listed in the Copy Settings dialog forever otherwise).
+     *
+     * Only the roster entry goes. The character's saved settings map is left where it is, so removing a
+     * character that is still played loses nothing: its next load lists it again (see `loadSettings`), with
+     * its own settings. The character in play is never removed, nor anything while no character is known.
+     *
+     * @param {string|number} characterId - The character to remove
+     * @returns {Promise<boolean>} True when an entry was removed and the shorter roster was written
+     */
+    async removeKnownCharacter(characterId) {
+        const id = String(characterId ?? '');
+        const isCurrent = () => !this.currentCharacterId || String(this.currentCharacterId) === id;
+        if (!id || isCurrent()) return false;
+        const probed = await storage.tryGet(this.knownCharactersKey, this.storageArea);
+        if (probed === null || !probed.found) return false;
+        const list = this._normalizeKnownCharacters(storage.parseJSON(probed.value, this.knownCharactersKey, []));
+        const kept = list.filter((character) => character.id !== id);
+        if (kept.length === list.length) return false;
+        // A switch onto that character while the roster was read
+        if (isCurrent()) return false;
+        const written = await storage.setJSON(this.knownCharactersKey, kept, this.storageArea, true);
+        return written !== false;
     }
 
     /**

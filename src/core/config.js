@@ -1530,6 +1530,20 @@ class Config {
     }
 
     /**
+     * Take a character off the known-characters roster; its saved settings are kept.
+     * @param {string} characterId - The character to remove
+     * @returns {Promise<boolean>} Whether an entry was removed
+     */
+    async removeKnownCharacter(characterId) {
+        try {
+            return await settingsStorage.removeKnownCharacter(characterId);
+        } catch (error) {
+            console.error('[Config] Failed to remove character:', error);
+            return false;
+        }
+    }
+
+    /**
      * Get number of known characters (including current)
      * @returns {Promise<number>} Number of characters
      */
