@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat no longer uses the All Skills loadout
+
+The All Skills loadout is skilling only, so the Combat Sim, task profit, consumables and planner pickers no longer offer or fall back to it. With no default loadout for a skill or for combat, figures use the gear you wear, as the game does.
+
 ### Figures follow the loadout a running action was started with
 
 While a skill is running, its figures (enhancing, gathering, crafting and the rest) now use the loadout that run was started with, including "No Loadout" (the gear and talismans you wear), instead of always the skill's default loadout.
