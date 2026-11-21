@@ -77,6 +77,8 @@ const protectionPanelWatchers = new WeakMap();
 let enhancingPanelWatchers = [];
 let itemsUpdatedHandler = null;
 let consumablesUpdatedHandler = null;
+let loadoutInForceHandler = null;
+let loadoutInForceDebounceTimer = null;
 
 /**
  * Trigger debounced enhancement stats update
@@ -191,6 +193,17 @@ function setupEnhancementRefreshListeners() {
             }, DEBOUNCE_DELAY);
         };
         dataManager.on('consumables_updated', consumablesUpdatedHandler);
+    }
+
+    // The gear in force follows the running action's loadout, and a talisman is worn without any equipment change:
+    // starting an enhance on "No Loadout" puts the worn talismans (Conservation) in force with no items_updated
+    if (!loadoutInForceHandler) {
+        loadoutInForceHandler = () => {
+            clearTimeout(loadoutInForceDebounceTimer);
+            loadoutInForceDebounceTimer = setTimeout(refreshEnhancementCalculator, DEBOUNCE_DELAY);
+        };
+        dataManager.on('actions_updated', loadoutInForceHandler);
+        dataManager.on('talismans_updated', loadoutInForceHandler);
     }
 }
 
@@ -803,6 +816,12 @@ export function disablePanelObserver() {
         dataManager.off('consumables_updated', consumablesUpdatedHandler);
         consumablesUpdatedHandler = null;
     }
+    if (loadoutInForceHandler) {
+        dataManager.off('actions_updated', loadoutInForceHandler);
+        dataManager.off('talismans_updated', loadoutInForceHandler);
+        loadoutInForceHandler = null;
+    }
+    clearTimeout(loadoutInForceDebounceTimer);
 
     // The calculator's phone-layout stylesheet goes with the calculator
     releaseEnhancementMobileStyles();

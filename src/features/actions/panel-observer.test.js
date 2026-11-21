@@ -75,7 +75,8 @@ vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: vi.fn(
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({ calculateEnhancementPath: vi.fn() }));
 
 const { createMutationWatcher } = await import('../../utils/dom-observer-helpers.js');
-const { getProtectionItemFromUI } = await import('./enhancement-display.js');
+const { getProtectionItemFromUI, displayEnhancementStats } = await import('./enhancement-display.js');
+const dataManager = (await import('../../core/data-manager.js')).default;
 const { getEnhancingParams } = await import('../../utils/enhancement-config.js');
 const { getItemHridFromName, getItemHridFromIconHref, getIconHref } = await import('../../utils/game-lookups.js');
 const { calculateEnhancementPath } = await import('../enhancement/tooltip-enhancement.js');
@@ -280,5 +281,38 @@ describe('late-rendered enhancement protection slot', () => {
 
         expect(getProtectionItemFromUI).not.toHaveBeenCalled();
         vi.useRealTimers();
+    });
+
+    describe('the calculator follows what the character runs on', () => {
+        // The costs table reads Conservation off the gear in force. Starting an enhance on "No Loadout" puts the
+        // worn talisman in force with no equipment change, so only the action and talisman messages announce it
+        test.each(['actions_updated', 'talismans_updated'])('%s redraws the open calculator', async (event) => {
+            vi.useFakeTimers();
+            const panel = buildEnhancingPanel();
+            panel.dataset.mwiItemHrid = '/items/gator_vest';
+            document.body.appendChild(panel);
+            displayEnhancementStats.mockClear();
+
+            // Other modules listen to the same message too; fire every listener as the emitter does
+            const handlers = dataManager.on.mock.calls.filter(([name]) => name === event).map(([, fn]) => fn);
+            expect(handlers.length).toBeGreaterThan(0);
+            for (const handler of handlers) handler({});
+            await vi.advanceTimersByTimeAsync(1000);
+
+            expect(displayEnhancementStats).toHaveBeenCalledWith(panel, '/items/gator_vest');
+            vi.useRealTimers();
+        });
+
+        test('disabling the observer detaches both listeners', () => {
+            const added = dataManager.on.mock.calls.filter(
+                ([name]) => name === 'actions_updated' || name === 'talismans_updated'
+            );
+            expect(added.map(([name]) => name)).toContain('actions_updated');
+            expect(added.map(([name]) => name)).toContain('talismans_updated');
+            disablePanelObserver();
+            for (const [name, handler] of added) {
+                expect(dataManager.off).toHaveBeenCalledWith(name, handler);
+            }
+        });
     });
 });
