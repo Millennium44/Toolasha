@@ -10,9 +10,8 @@
  * Resolution priority (handled inside loadoutSnapshot._findSnapshot):
  *   1. Skill-specific default loadout
  *   2. All-skills default loadout
- *   3. Skill-specific non-default
- *   4. All-skills non-default
- *   5. Fall back to currently-equipped gear / current drinks
+ *   3. Fall back to currently-equipped gear / current drinks (a non-default loadout is never picked;
+ *      combat skips the All Skills one)
  *
  * One exception: while an action of the asked-for type is RUNNING, the answer is the loadout that
  * action was started with (its `characterLoadoutID`), because the game equipped that loadout when it

@@ -227,9 +227,17 @@ describe('a whole loadout at once', () => {
             expect(store.findSnapshotForSkill(COMBAT).name).toBe('Fighting');
         });
 
-        test('combat with only a non-default combat loadout takes it, over an All Skills default', () => {
+        test('combat with only a non-default combat loadout is the worn gear, as the game’s Start leaves it', () => {
             const store = storeWith(entry('Everything', '', true, 0), entry('Spare', COMBAT, false, 1));
-            expect(store.findSnapshotForSkill(COMBAT).name).toBe('Spare');
+            expect(store.findSnapshotForSkill(COMBAT)).toBeNull();
+            expect(store.getSnapshotInfoForSkill(COMBAT)).toBeNull();
+        });
+
+        test('a skill with no default of its own and no All Skills default is the worn gear', () => {
+            const store = storeWith(entry('Foraging B', FORAGING, false, 0), entry('Other', '', false, 1));
+            expect(store.findSnapshotForSkill(FORAGING)).toBeNull();
+            expect(store.getSnapshotForSkill(FORAGING)).toBeNull();
+            expect(store.getSnapshotDrinksForSkill(FORAGING)).toBeNull();
         });
 
         test('combat with no combat loadout at all is the worn gear, never All Skills', () => {

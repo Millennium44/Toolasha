@@ -428,10 +428,9 @@ class LoadoutSnapshot {
     }
 
     /**
-     * Find the best snapshot for a given action type.
-     * Priority: skill default > all skills default > skill non-default > all skills non-default.
-     * Combat never uses an "All Skills" loadout (the game keeps those for skilling only): combat is its own
-     * combat default, then a non-default combat loadout, else null (the gear worn now).
+     * Find the loadout the game's Start picker would send for an action type: the skill's own default, else the
+     * All Skills default, else null (the gear worn now). Combat never uses an All Skills loadout (they are for
+     * skilling only): the combat default, else null. A loadout that is not a default is never picked.
      * @param {string} actionTypeHrid - e.g. "/action_types/brewing"
      * @returns {Object|null} snapshot entry or null
      */
@@ -441,26 +440,17 @@ class LoadoutSnapshot {
 
         let skillDefault = null;
         let allSkillsDefault = null;
-        let skillNonDefault = null;
-        let allSkillsNonDefault = null;
 
         for (const snapshot of Object.values(this.snapshots)) {
+            if (!snapshot.isDefault) continue;
             if (snapshot.actionTypeHrid === actionTypeHrid) {
-                if (snapshot.isDefault) {
-                    skillDefault = snapshot;
-                } else {
-                    skillNonDefault = snapshot;
-                }
+                skillDefault = snapshot;
             } else if (snapshot.actionTypeHrid === '' && actionTypeHrid !== COMBAT_ACTION_TYPE) {
-                if (snapshot.isDefault) {
-                    allSkillsDefault = snapshot;
-                } else {
-                    allSkillsNonDefault = snapshot;
-                }
+                allSkillsDefault = snapshot;
             }
         }
 
-        return skillDefault || allSkillsDefault || skillNonDefault || allSkillsNonDefault || null;
+        return skillDefault || allSkillsDefault || null;
     }
 
     /**

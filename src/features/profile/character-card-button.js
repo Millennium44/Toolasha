@@ -286,8 +286,8 @@ export async function handleViewCardFromSnapshot(snapshotName, snapshotId, { ope
             clientData,
             consumablesData,
             combatScore,
-            // A skilling loadout's card shows its own (usually empty) ability row; extra combat auras
-            // there read as part of a gathering or crafting build. An All Skills loadout is skilling too.
+            // Skilling (including All Skills) loadouts have no abilities; extra combat auras there would read
+            // as part of a gathering or crafting build. Only a combat loadout's card gets them.
             {
                 includeLoadoutAuras:
                     config.getSetting('characterCard_extraAuras') === true &&
