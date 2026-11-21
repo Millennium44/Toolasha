@@ -162,7 +162,9 @@ class MarketOrderTotals {
         this.displayElement.classList.add('mwi-market-order-totals');
         this.displayElement.style.cssText = `
             display: flex;
-            gap: 12px;
+            flex-wrap: wrap;
+            gap: 2px 12px;
+            white-space: nowrap;
             font-size: 0.85em;
             color: #aaa;
             margin-top: 4px;
