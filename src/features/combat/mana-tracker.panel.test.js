@@ -164,9 +164,9 @@ describe('the refused-casts figure on the mana panel', () => {
 
     const text = () => document.body.textContent;
 
-    test('shows zero before anything is refused, and says it is an estimate', () => {
+    test('shows a dash before anything is measured, and says it is an estimate', () => {
         manaPanel.show({ remember: false });
-        expect(text()).toContain('Refused casts (est.)');
+        expect(text()).toContain('Refused casts (est.)—');
         expect(text()).not.toContain('could not be drawn');
         const line = [...document.querySelectorAll('[title]')].find((el) => el.title.startsWith('An estimate.'));
         expect(line).toBeTruthy();
@@ -190,6 +190,8 @@ describe('the refused-casts figure on the mana panel', () => {
         state.ws.battle_updated({ battleId: 7, pMap: { 0: { atkCounter: 11, cMP: 30, isAutoAtk: true } } });
         vi.setSystemTime(11_000);
         state.ws.battle_updated({ battleId: 7, pMap: { 0: { atkCounter: 12, cMP: 30, isAutoAtk: true } } });
+        vi.setSystemTime(14_000);
+        state.ws.battle_updated({ battleId: 7, pMap: { 0: { atkCounter: 13, cMP: 30, isAutoAtk: true } } });
 
         manaPanel.show({ remember: false });
         expect(text()).toContain('1 refused');

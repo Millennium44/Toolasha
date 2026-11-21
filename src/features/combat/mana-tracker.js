@@ -333,10 +333,11 @@ function manaCostOf(abilityHrid) {
 
 /** What the refused-cast figure is, said where it is shown */
 const REFUSED_HELP =
-    'An estimate. Auto attacks made while an ability you have cast was off cooldown (base cooldown with your ' +
-    'ability haste) but cost more mana than you had: the game takes the first ready ability and, when it cannot ' +
-    'pay for it, auto attacks rather than casting a cheaper one. Ability triggers are not on the wire, so a ' +
-    'ready ability whose trigger was false still counts.';
+    'An estimate. Auto attacks chosen while an ability you have cast was off cooldown (base cooldown with your ' +
+    'ability haste) but cost more mana than you had: the game takes the first ready ability in slot order and, ' +
+    'when it cannot pay for it, auto attacks rather than casting a later one. One refusal per auto attack, filed ' +
+    'under that first ability. Ability triggers are not on the wire, so a ready ability whose trigger did not ' +
+    'hold can still be counted.';
 
 let onNewBattle = null;
 let onAbility = null;
@@ -379,7 +380,12 @@ export default {
             if (startHp <= 0) markDead();
             else markAlive();
             ownSlot = self ? (Object.entries(data?.players || {}).find(([, p]) => p === self)?.[0] ?? null) : null;
-            noteRefusalBattle(refusals, self);
+            // `new_battle` lists the kit in server order; the slots come from the character's own equipped list
+            const abilitySlots = {};
+            for (const row of dataManager.getEquippedAbilities?.() || []) {
+                if (row?.abilityHrid && Number(row.slotNumber) > 0) abilitySlots[row.abilityHrid] = Number(row.slotNumber);
+            }
+            noteRefusalBattle(refusals, self, { slots: abilitySlots });
             refusalBattleId = self ? (data?.battleId ?? null) : null;
             const stats = self?.combatDetails?.combatStats;
             // A live new_battle player carries max MP at the top level; combatDetails only has combatStats
@@ -420,10 +426,9 @@ export default {
         // Only a state change matters: the player's HP reaching 0, and rising above it again
         onBattleUpdated = (data) => {
             if (ownSlot === null) return;
-            // A watched guild trial's ticks are not this character's fight
-            if (data?.isGuildBattle) return;
             const entry = data?.pMap?.[ownSlot];
-            if (entry) {
+            // A watched guild trial's ticks are not this character's fight
+            if (entry && !data?.isGuildBattle) {
                 // A slot is a seat in one battle: another battle's ticks have no baseline here until it is announced
                 if (data?.battleId !== refusalBattleId) {
                     forgetRefusalBaseline(refusals);
@@ -657,7 +662,8 @@ export const manaPanel = createPanel({
         run.appendChild(
             panelLine(
                 'Refused casts (est.)',
-                formatWithSeparator(refused.turns),
+                // Nothing measured yet (no fight of this character's seen) is not "none refused"
+                refused.measured ? formatWithSeparator(refused.turns) : '—',
                 refused.turns > 0 ? ROW_COLORS.bad : ROW_COLORS.dim,
                 REFUSED_HELP
             )

@@ -252,8 +252,11 @@ describe('refused casts on the mana tracker', () => {
         game.handlers['battle_updated'](tick(11, 30));
         vi.setSystemTime(11_000);
         game.handlers['battle_updated'](tick(12, 30));
+        // That auto was chosen at 0, with Drain cooling down; the next is chosen at 11 s with Drain ready
+        vi.setSystemTime(14_000);
+        game.handlers['battle_updated'](tick(13, 30));
 
-        expect(manaRefusals()).toEqual({ turns: 1, abilities: [{ abilityHrid: DRAIN, refused: 1 }] });
+        expect(manaRefusals()).toEqual({ measured: true, turns: 1, abilities: [{ abilityHrid: DRAIN, refused: 1 }] });
         resetManaTally();
         expect(manaRefusals().turns).toBe(0);
     });
@@ -275,6 +278,9 @@ describe('refused casts on the mana tracker', () => {
         game.handlers['battle_updated'](tick(11, 30));
         vi.setSystemTime(11_000);
         game.handlers['battle_updated'](tick(12, 30));
+        // That auto was chosen at 0, with Drain cooling down; the next is chosen at 11 s with Drain ready
+        vi.setSystemTime(14_000);
+        game.handlers['battle_updated'](tick(13, 30));
         expect(manaRefusals().turns).toBe(1);
 
         game.dataManagerHandlers['character_switching']();
