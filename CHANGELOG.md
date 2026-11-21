@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.91.0 -->
+
 ### Enhancing calculator updates once a run starts
 
 Pressing Enhance switches the panel to Current Action, and the calculator left there kept the figures drawn before the start. It now redraws with the run's loadout and talismans, so a Conservation line's kept protections show while you enhance.
@@ -7874,6 +7876,98 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.91.0](https://github.com/Millennium44/Toolasha/compare/v3.90.0...v3.91.0) (2026-11-21)
+
+### Features
+
+- balanced talisman ranking can weigh encounters per hour and deaths per hour ([ddfe603](https://github.com/Millennium44/Toolasha/commit/ddfe6031d08a4d295be3095b664ab0e44da6bdb0))
+- combat sim lets Sim All Zones, Solo and Dungeons be ticked together ([5b1ff0f](https://github.com/Millennium44/Toolasha/commit/5b1ff0f64eca21a8352a37651fa35e3434029bd8))
+- combat sim models the Consistency talisman special for non-crit autos and parry counters ([8610053](https://github.com/Millennium44/Toolasha/commit/8610053d2c8cf62b24728616f04aaae8669349a6))
+- keep a short history of order-book snapshots per item for readers ([6e34c29](https://github.com/Millennium44/Toolasha/commit/6e34c290f996eb85ce8ef5211a3c5a9d013dcc8e))
+- keep five levels of order-book depth in the market price store ([5985511](https://github.com/Millennium44/Toolasha/commit/598551175efe002f1583c0b04a876123065d9a69))
+- let a reader ask for order-book depth to be saved from page load ([acdca36](https://github.com/Millennium44/Toolasha/commit/acdca36da16f0e85e8dcb6aaf64d1a2558bab7d4))
+- mooket i history can show mooket ii volume, behind an opt-in ([154da0d](https://github.com/Millennium44/Toolasha/commit/154da0dbd08aa020468e7130505b2d4a427f8e52))
+- price talisman orbs without a listing at crafting cost ([9c71ae4](https://github.com/Millennium44/Toolasha/commit/9c71ae45d8c6c776f0ba6e6f58afd9a42cc59ab1))
+- reroll advisor plans adding lines with cores before rerolling ([1ec0d67](https://github.com/Millennium44/Toolasha/commit/1ec0d67ad19efabd0404daac912a3a68a573a3eb))
+- reroll advisor required lines and an any-K aim from the ranking ([d31d624](https://github.com/Millennium44/Toolasha/commit/d31d6244d3c9db30350b891ece915875d81c7482))
+- reroll advisor says how rarely an orb roll is worth keeping ([c42fc1e](https://github.com/Millennium44/Toolasha/commit/c42fc1e61afee04827322e7576bbc46511f360e1))
+- reroll advisor target can be any K of a pool of wanted lines ([a534875](https://github.com/Millennium44/Toolasha/commit/a534875a41fb6068c0a40d20d9bfe3bf51d9865a))
+- show each talisman game icon and marker beside it in the core table, Improve mine and loadout warnings ([c9f65b4](https://github.com/Millennium44/Toolasha/commit/c9f65b45406a50252634b625bd41d3c4d99f3360))
+- talisman lines ranking shows the time left while it runs and a rough time before ([53bbf69](https://github.com/Millennium44/Toolasha/commit/53bbf696367cff4fa760485e4a220067d416e9a7))
+- talisman ranking re-scores and rebuilds its set without new sims, and applies it in Configure ([445e72d](https://github.com/Millennium44/Toolasha/commit/445e72d4c57c0d15513dbb9391c9e8505dc9a562))
+- value the five skilling talisman Special lines in profit, XP and the ranking ([3e4c27a](https://github.com/Millennium44/Toolasha/commit/3e4c27afd3fa80dc9ec4a17df41552b88337b355))
+
+### Bug Fixes
+
+- a skill or combat starts from a default loadout only, else the worn gear ([6ba0d2b](https://github.com/Millennium44/Toolasha/commit/6ba0d2bb6a17b4e08fbccb7c4813f30b6cecf754))
+- aim for any k keeps strong own lines required when a stronger alternative joins ([6fb76a5](https://github.com/Millennium44/Toolasha/commit/6fb76a54d96953e135dd88f80566044429a76c2a))
+- aim for any k keeps the option's own lines in the pool ([89245e3](https://github.com/Millennium44/Toolasha/commit/89245e3ff9e1d0e902992551d841dd53e7538503))
+- an unloaded running loadout reads the worn kit, and finisher readiness sees the running loadout ([9186bd3](https://github.com/Millennium44/Toolasha/commit/9186bd3f7cca3e0dde6d3b3f92a0659267ebad38))
+- combat never offers or picks an All Skills loadout ([67909a5](https://github.com/Millennium44/Toolasha/commit/67909a5cfd48d94406f481c22e1a075ceb17f47b))
+- combat sim core table shows the talisman icon, marker and id ([e963b0e](https://github.com/Millennium44/Toolasha/commit/e963b0e3777e9bc2348829c1b0a7d10396679f59))
+- crafting plan bills worst-case artisan from the no-proc outcome ([0e249db](https://github.com/Millennium44/Toolasha/commit/0e249db13255220e73490433fd44f1bf17b73bc6))
+- depth history keeps one snapshot per 10-minute bucket instead of every re-sent book ([c9c7443](https://github.com/Millennium44/Toolasha/commit/c9c7443a9a6785167d761afeafed9d843c8983bf))
+- enhancing calculator redraws on the current action tab during a run ([1c8cdd1](https://github.com/Millennium44/Toolasha/commit/1c8cdd17c324e727e85dd1cc34015994fae711fb))
+- enhancing calculator redraws when the running loadout or a talisman changes ([28ff5ec](https://github.com/Millennium44/Toolasha/commit/28ff5ec4abc31eb87c6277edb4ec5cca0d0b2a44))
+- enhancing session prediction and networth worker count conservation ([8dab410](https://github.com/Millennium44/Toolasha/commit/8dab410165b3f0417324a885a5db9e9a67909d9a))
+- enhancing tracker no longer counts a kept protection (conservation) as used ([88a4dcd](https://github.com/Millennium44/Toolasha/commit/88a4dcd7724c5f6da8f1bb177d5a71dc59709729))
+- enhancing values Conservation and Epiphany from the worn talisman ([#1067](https://github.com/Millennium44/Toolasha/issues/1067)) ([8da70a3](https://github.com/Millennium44/Toolasha/commit/8da70a3c6d5348cd5a0f80e3ea57852cff6282c3))
+- figures for a running action use the loadout it was started with ([f82c8fc](https://github.com/Millennium44/Toolasha/commit/f82c8fca80c4a5afb8a8ae0ec74155ad5d39721e))
+- gathering luck limit and processing mix count abundance once ([0e7c8d1](https://github.com/Millennium44/Toolasha/commit/0e7c8d151e8472d88e6717627c4113d9f2878716))
+- invigoration in the tea optimizer, artisan material readers and combat mechanic test ([f0827e0](https://github.com/Millennium44/Toolasha/commit/f0827e091fba3c6ac75db56457472cf3f9579f06))
+- invigoration is two weighted outcomes, not averaged drinks ([c195f53](https://github.com/Millennium44/Toolasha/commit/c195f530d3394de5fde37a915ff913dd2892d99a))
+- keep price-store depth in a device-only key, not in the synced prices ([2168ef9](https://github.com/Millennium44/Toolasha/commit/2168ef9461526898a772bcd42e909d9bf205125a))
+- kept-protection check counts doubtful cases as consumed ([3fedf90](https://github.com/Millennium44/Toolasha/commit/3fedf9017921fd14c50c410f2e64f59573f8c09e))
+- merged mooket volume shows no reading instead of zero in the trade-stats table ([0a00b2a](https://github.com/Millennium44/Toolasha/commit/0a00b2a9ae67a2ab97899639081d5e35149c8878))
+- mix per-item arrays across invigoration outcomes ([98f412b](https://github.com/Millennium44/Toolasha/commit/98f412b68d5e7994d34e9a7835822bbf70687ab7))
+- price orb recipe inputs from market quotes only, as the orbs are ([b025099](https://github.com/Millennium44/Toolasha/commit/b025099814d01c61e41e0dbc5c13a8e3a9029d3a))
+- profile score prices worn enhanced gear net of the viewer's conservation ([d8065a6](https://github.com/Millennium44/Toolasha/commit/d8065a6be11a76ad7aca371807e5aeac84721e5a))
+- prosperity in production totals and breakdowns, invigoration in action stats, honest core note ([e080c0a](https://github.com/Millennium44/Toolasha/commit/e080c0ac413991f80221503cfb9daed8274c2537))
+- ranking caveat names re-sims only when they ran; time estimate uses comparable runs ([fd29030](https://github.com/Millennium44/Toolasha/commit/fd29030a6ca9ae5ff3771d838ca8031020a723af))
+- reroll advisor adds a line with the lock kept instead of unlocking first ([fd93f9b](https://github.com/Millennium44/Toolasha/commit/fd93f9b0d961e48769be1fbf7dc7ef4513a4fe7d))
+- reroll advisor keeps a fallback focus when no focusable line advances the goal ([390f442](https://github.com/Millennium44/Toolasha/commit/390f4428b6d21f78bb566e121cbba5190764e049))
+- reroll advisor names an over-ceiling add plan and judges pending rolls on one basis ([e4e0f25](https://github.com/Millennium44/Toolasha/commit/e4e0f25922c795731df44a724ebbd3519ca6f534))
+- reroll advisor never shows keeping a lock as costing infinity times as much ([f3c5d4c](https://github.com/Millennium44/Toolasha/commit/f3c5d4c2d7845a9ee4e7d13e0de7cdfc3b5ab9fa))
+- reroll advisor skips optional focus once a locked optional line fills the quota ([43546ac](https://github.com/Millennium44/Toolasha/commit/43546acb646b5779d8f96bcb87734d3752a14ee5))
+- reroll advisor states large cost gaps as a multiple ([652817b](https://github.com/Millennium44/Toolasha/commit/652817b389b81f0fa178b7dfce06b6bb1facd75a))
+- reroll solver ignores optional lines when the required ones fill K ([e6a4b6f](https://github.com/Millennium44/Toolasha/commit/e6a4b6ff705c296c60703acc037dcf67d0334948))
+- reroll solver yields through enumeration and refuses pools over a state ceiling ([53fe6fe](https://github.com/Millennium44/Toolasha/commit/53fe6feecd0bebafc8e7d6db4961b8476a24491b))
+- running loadout signature is per skill, and the infinity estimate key sees it ([f19c390](https://github.com/Millennium44/Toolasha/commit/f19c390a6fb7e5a79fa1a42c0d7e687d36a987fe))
+- saved all skills picks no longer sim as combat gear ([fce429e](https://github.com/Millennium44/Toolasha/commit/fce429eb1448778977fecb4f7f87e23ef304d055))
+- skilling specials reach the action page's gourmet and artisan; core note stops saying zero ([c675ea8](https://github.com/Millennium44/Toolasha/commit/c675ea80b8996d4eb0ee9b2a867f4f0878ce79e6))
+- talisman badge follows the game icon and marker rules ([12fe3a7](https://github.com/Millennium44/Toolasha/commit/12fe3a7e3e14318ba524e6c3d35becd5ee772d85))
+- tea optimizer counts abundance on gathering ([3ff6363](https://github.com/Millennium44/Toolasha/commit/3ff6363b73d09ab3796b2607cd187f84b6fde9bd))
+- thread conservation and abundance through the remaining catalyst and gathering readers ([2c2b9cd](https://github.com/Millennium44/Toolasha/commit/2c2b9cd4d0b1d881393f58f7e4a12a1412a443ec))
+- trade-stats table never renders plain mooket i zeros as merged volume ([69931c6](https://github.com/Millennium44/Toolasha/commit/69931c623d3b5e861af7c1fbe556e492189508e6))
+- use in configure checks the seat and ranking inputs; stale note and fingerprints made exact ([d5f853b](https://github.com/Millennium44/Toolasha/commit/d5f853bf7660d37c1ed373b66967a09b53017e41))
+- use source timestamps for merged market volume ([a49d84f](https://github.com/Millennium44/Toolasha/commit/a49d84f9125f8cbab55811525f070846e92bb2c0))
+
+### Performance Improvements
+
+- write order-book depth to storage only once a reader has asked for it ([dfe8792](https://github.com/Millennium44/Toolasha/commit/dfe87927c2cd379a5928c6cd82abd25109724486))
+
+### Documentation
+
+- agents hand back a clean working tree with the head hash ([9bd5a17](https://github.com/Millennium44/Toolasha/commit/9bd5a17d6e130ed9c9abbaf8158f5007ba4b097b))
+- agents run the bundle-sharing precheck for a new shared module ([e2ef968](https://github.com/Millennium44/Toolasha/commit/e2ef9683c8c42b9d19960c9daba9eb07f4261657))
+- changelog entry for mooket ii volume under mooket i ([4d1b1e8](https://github.com/Millennium44/Toolasha/commit/4d1b1e8892b6a40ebd291e1f2d60a8265292ea4e))
+- changelog for combat no longer using the all skills loadout ([600d084](https://github.com/Millennium44/Toolasha/commit/600d08459aa3271942dbe11908906d8a81949495))
+- changelog for conservation-kept protections in the enhancing tracker ([a20a60a](https://github.com/Millennium44/Toolasha/commit/a20a60a077b844a8d6b12de964210981f24d0256))
+- changelog for figures following the running loadout ([b733094](https://github.com/Millennium44/Toolasha/commit/b733094380193b08c6f23b59db8167916944b095))
+- changelog for required reroll lines and aim for any k ([9221f4f](https://github.com/Millennium44/Toolasha/commit/9221f4f4765de41d456e83fde68141afe0293445))
+- changelog for skilling specials in the remaining readers ([3c9fcf0](https://github.com/Millennium44/Toolasha/commit/3c9fcf0821efae1e6180517e10d125f25e813662))
+- changelog for talisman icons and markers in lists ([97178dd](https://github.com/Millennium44/Toolasha/commit/97178dd9bff6fceda03c7ead57d4c563871dac12))
+- changelog for the reroll advisor adding lines with cores ([ae33768](https://github.com/Millennium44/Toolasha/commit/ae3376839e1b4e351d0368ec71f02a151a01d401))
+- changelog for the reroll advisor any-k target ([96158df](https://github.com/Millennium44/Toolasha/commit/96158dff0441331752ffb8eea7b521aba9d27691))
+
+### Build System
+
+- allow the talisman orb recipe index in every bundle ([18fabad](https://github.com/Millennium44/Toolasha/commit/18fabad01304fb7784faf880315e8f0da7f053f0))
+
+### Miscellaneous Chores
+
+- gate-branch resolves origin-only branches; live check for code-only diagnoses ([83420ec](https://github.com/Millennium44/Toolasha/commit/83420ece900c291d502b2df5943dd8f161f71615))
 
 ## [3.90.0](https://github.com/Millennium44/Toolasha/compare/v3.89.0...v3.90.0) (2026-11-19)
 
