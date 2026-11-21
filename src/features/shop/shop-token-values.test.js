@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
     marketListeners: [],
     marketOff: [],
     loadedListeners: [],
+    dataListeners: [],
+    dataOff: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -34,7 +36,11 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getInitClientData: () => ({ itemDetailMap: mocks.items }) },
+    default: {
+        getInitClientData: () => ({ itemDetailMap: mocks.items }),
+        on: (event, cb) => mocks.dataListeners.push([event, cb]),
+        off: (event, cb) => mocks.dataOff.push([event, cb]),
+    },
 }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
@@ -127,6 +133,8 @@ beforeEach(() => {
     mocks.loadedListeners = [];
     mocks.marketListeners = [];
     mocks.marketOff = [];
+    mocks.dataListeners = [];
+    mocks.dataOff = [];
     mocks.items = Object.fromEntries(
         [
             'essence',
@@ -439,6 +447,29 @@ describe('lifecycle', () => {
             mocks.loadedListeners[0]();
             vi.advanceTimersByTime(200);
             expect(badges()[0].textContent).toBe('13/token');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe('expected-value calculator recompute', () => {
+    test('a finished recompute redraws the badges, and disable removes the listener', () => {
+        vi.useFakeTimers();
+        try {
+            document.body.innerHTML = `<div class="LabyrinthPanel_buyableGrid__x">${labyrinthTile('essence')}</div>`;
+            feature.initialize();
+            const subscribed = mocks.dataListeners.filter(([event]) => event === 'expected_value_initialized');
+            expect(subscribed).toHaveLength(1);
+            expect(badges()).toHaveLength(0);
+
+            mocks.lines[LAB] = [line('/items/essence', 4, 777)];
+            subscribed[0][1]();
+            vi.advanceTimersByTime(200);
+            expect(badges()[0].textContent).toContain('777/token');
+
+            feature.disable();
+            expect(mocks.dataOff).toEqual([['expected_value_initialized', subscribed[0][1]]]);
         } finally {
             vi.useRealTimers();
         }

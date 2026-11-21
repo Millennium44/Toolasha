@@ -110,6 +110,7 @@ class ShopTokenValues {
         this.timer = null;
         this.isInitialized = false;
         this.priceHandler = null;
+        this.calculatorHandler = null;
     }
 
     initialize() {
@@ -139,6 +140,10 @@ class ShopTokenValues {
             if (pricesMoved(change)) this.scheduleRefresh();
         };
         marketAPI.on(this.priceHandler);
+        // Task shop chests are worth what the expected-value calculator says, and it recomputes after a price
+        // or setting change on its own schedule: redraw when it finishes, not only when the trigger fires
+        this.calculatorHandler = () => this.scheduleRefresh();
+        dataManager.on('expected_value_initialized', this.calculatorHandler);
         for (const key of WATCHED_SETTINGS) {
             this.unregisterHandlers.push(config.onSettingChange(key, () => this.scheduleRefresh()));
         }
@@ -159,6 +164,10 @@ class ShopTokenValues {
         if (this.priceHandler) {
             marketAPI.off(this.priceHandler);
             this.priceHandler = null;
+        }
+        if (this.calculatorHandler) {
+            dataManager.off('expected_value_initialized', this.calculatorHandler);
+            this.calculatorHandler = null;
         }
         document.querySelectorAll(`.${BADGE_CLASS}`).forEach((el) => el.remove());
     }
