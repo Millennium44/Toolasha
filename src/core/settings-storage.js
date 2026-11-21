@@ -2165,7 +2165,14 @@ class SettingsStorage {
             // A character removed from the roster can still have its settings map
             // here. Its id is as much "another character" as a listed one, and
             // short game ids miss the digit-run pattern below.
-            const localKeys = (await storage.tryGetAllKeys(this.storageArea)) || [];
+            // The lookup only widens the skip set; if it cannot be made the import still runs.
+            let localKeys = [];
+            try {
+                const listed = await storage.tryGetAllKeys(this.storageArea);
+                if (Array.isArray(listed)) localKeys = listed;
+            } catch (error) {
+                console.warn('[Settings Storage] Could not list local keys for import; continuing without:', error);
+            }
             const mapPrefix = `${this.storageKey}_`;
             for (const localKey of localKeys) {
                 if (

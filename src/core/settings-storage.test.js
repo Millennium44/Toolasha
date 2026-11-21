@@ -136,6 +136,17 @@ describe('SettingsStorage.importSettings known-character matching', () => {
         expect(stored.has('json:globalKey')).toBe(true);
     });
 
+    test('a key listing that throws or is unavailable does not fail the import', async () => {
+        const storage = (await import('./storage.js')).default;
+        for (const listing of [() => Promise.reject(new Error('idb gone')), () => Promise.resolve(null)]) {
+            stored.clear();
+            storage.tryGetAllKeys.mockImplementationOnce(listing);
+            const result = await settingsStorage.importSettings(JSON.stringify({ globalKey: { shared: true } }));
+            expect(result).toEqual({ imported: 1, skipped: 0 });
+            expect(stored.has('json:globalKey')).toBe(true);
+        }
+    });
+
     test('skips a removed character whose settings map is still stored locally', async () => {
         stored.set('json:known_character_ids', [{ id: 'alice', name: 'Alice' }]);
         stored.set('json:script_settingsMap_30404', { newer: 'setting' });
