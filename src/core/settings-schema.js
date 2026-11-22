@@ -1153,19 +1153,19 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
-            itemTooltip_wheelScroll: {
-                id: 'itemTooltip_wheelScroll',
-                label: 'Scroll tall tooltips with the mouse wheel',
-                type: 'checkbox',
-                default: true,
-                help: 'When a tooltip is taller than the window, the mouse wheel over the item scrolls the tooltip instead of the page, so the lines cut off at the bottom (enhancement milestones and the like) can be read. At the top or bottom of the tooltip the wheel scrolls the page again, and a scroll that started on the page carries on scrolling it.',
-            },
             inventoryTooltipBeside: {
                 id: 'inventoryTooltipBeside',
                 label: 'Keep item tooltips off the hovered item',
                 type: 'checkbox',
                 default: true,
                 help: "When an item's tooltip (inventory, Loadouts and equipment panels, marketplace, item pickers) is too tall to fit above or below the item, it opens to the left or right of the item, whichever has more room, instead of covering it. Tooltips that fit above or below stay where the game puts them. Off on phones.",
+            },
+            itemTooltip_wheelScroll: {
+                id: 'itemTooltip_wheelScroll',
+                label: 'Scroll tall tooltips with the mouse wheel',
+                type: 'checkbox',
+                default: true,
+                help: 'When a tooltip is taller than the window, the mouse wheel over the item scrolls the tooltip instead of the page, so the lines cut off at the bottom (enhancement milestones and the like) can be read. At the top or bottom of the tooltip the wheel scrolls the page again, and a scroll that started on the page carries on scrolling it.',
             },
             shop_maxBuyButton: {
                 id: 'shop_maxBuyButton',
