@@ -276,7 +276,9 @@ vi.mock('../../utils/market-data.js', () => ({
                 : base;
         return price == null
             ? { price: null, source: null, estimated: false }
-            : { price, source: 'book', estimated: false };
+            : priceState.info[hrid]?.estimated
+              ? { price, source: 'value', estimated: true }
+              : { price, source: 'book', estimated: false };
     },
     withProfitPricingMode: (_mode, fn) => fn(),
     getItemPrices: () => ({ ask: 10, bid: 9 }),
@@ -810,10 +812,47 @@ describe('held materials: craft vs sell them', () => {
             profitPerHour: -1,
             profitPerDay: -24,
         };
-        // Every material sells for 10 in this file's price mock: 1 + 0.9 + 2.7 = 4.6 a craft, 2.3 an item
+        // Every material sells for 10: 1 + 0.9 + 2.7 = 4.6 a craft, 2.3 an item
+        for (const hrid of ['/items/sighted_bracers', '/items/marksman_brooch', '/items/umbral_bracers']) {
+            priceState.info[hrid] = { bid: 10, ask: 12 };
+        }
         tooltipPrices.injectProfitDisplay(el, shown, false, [], data({ profitPerItem: 50_000 }));
         expect(el.textContent).toContain(`Held materials: craft +${formatKMB(50_000 + 3_925_000 - 2.3)}/item`);
         expect(el.textContent).toContain('over selling them');
+        expect(el.textContent).not.toContain('estimate');
+    });
+
+    test('a held material with no order on its sell side is an estimate, said so and drawn neutral', () => {
+        const el = itemTooltip('Marksman Bracers');
+        for (const hrid of ['/items/sighted_bracers', '/items/umbral_bracers']) {
+            priceState.info[hrid] = { bid: 10, ask: 12 };
+        }
+        priceState.info['/items/marksman_brooch'] = { bid: 10, ask: 12, estimated: true };
+        const shown = {
+            ...data(),
+            itemPrice: { ask: 80_000_000, bid: 76_000_000 },
+            profitPerHour: 1,
+            profitPerDay: 24,
+        };
+        tooltipPrices.injectProfitDisplay(el, shown, false, [], data());
+        const line = [...el.querySelectorAll('div')].find((div) => div.textContent.startsWith('Held materials'));
+        expect(line.textContent).toContain('a material with no order priced at its estimate');
+        expect(line.textContent).toContain('≈');
+        expect(line.getAttribute('style')).toContain('#abc');
+    });
+
+    test('an estimated sale price is carried through, a book price is not flagged', () => {
+        const quotes = {
+            '/items/sighted_bracers': { price: 1_800_000, estimated: false },
+            '/items/marksman_brooch': { price: 4_000_000, estimated: true },
+            '/items/umbral_bracers': { price: 400_000, estimated: false },
+        };
+        const estimated = heldCraftCompare(data(), null, { sellOf: (hrid) => quotes[hrid] });
+        expect(estimated.estimated).toBe(true);
+        // The figure is still the same arithmetic; only its standing changes
+        expect(estimated.heldValue).toBeCloseTo(3_240_000, 0);
+        expect(heldCraftCompare(data(), null, { sellOf }).estimated).toBe(false);
+        expect(heldCraftLine(estimated).color).toBe('#abc');
     });
 });
 

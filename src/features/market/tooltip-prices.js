@@ -30,7 +30,7 @@ import {
     isAbbreviationEnabled,
     timeReadable,
 } from '../../utils/formatters.js';
-import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
+import { getItemPrice, getItemPriceInfo, getItemPrices } from '../../utils/market-data.js';
 import { applyLoadoutLevelToGameLines } from '../../utils/loadout-tooltip-rewrite.js';
 import { getAlchemyOutputShopValue } from '../../utils/alchemy-shop-value.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
@@ -437,10 +437,12 @@ export function ownUseLine(comparison) {
  * @param {Object|null} profitData - From `profitCalculator.calculateProfit`
  * @param {Object|null} [actionDetail] - The producing action's detail, for the multi-output gate
  * @param {Object} opts
- * @param {(hrid: string) => number|null} opts.sellOf - An input's sell-side price, before tax
+ * @param {(hrid: string) => number|{price: number|null, estimated?: boolean}|null} opts.sellOf - An input's
+ *   sell-side price, before tax; as `getItemPriceInfo` returns it, so an estimate is known to be one
  * @param {Set<string>|null} [opts.held] - Inputs held; null means every input. The rest stay bought.
- * @returns {{net: number, heldValue: number, partlyUnpriced: boolean}|null} Per finished item;
- *   null when a held input, the output or a tea has no price, or the recipe has several outputs
+ * @returns {{net: number, heldValue: number, partlyUnpriced: boolean, estimated: boolean}|null} Per finished
+ *   item; null when a held input, the output or a tea has no price, or the recipe has several outputs.
+ *   `estimated`: a held input has no order on its sell side and is valued at the game's value-map estimate
  */
 export function heldCraftCompare(profitData, actionDetail = null, { sellOf, held = null } = {}) {
     if (!profitData || typeof sellOf !== 'function') return null;
@@ -463,6 +465,7 @@ export function heldCraftCompare(profitData, actionDetail = null, { sellOf, held
     const afterTax = (price) => (profitData.excludeSellTax ? price : calculatePriceAfterTax(price, MARKET_TAX));
     let heldPerAction = 0;
     let boughtPerAction = 0;
+    let estimated = false;
     for (const material of materials) {
         const amount = Number(material.amount) || 0;
         if (held && !held.has(material.itemHrid)) {
@@ -473,19 +476,22 @@ export function heldCraftCompare(profitData, actionDetail = null, { sellOf, held
             heldPerAction += amount;
             continue;
         }
-        const price = Number(sellOf(material.itemHrid));
+        const quote = sellOf(material.itemHrid);
+        const price = Number(quote && typeof quote === 'object' ? quote.price : quote);
         if (!(price > 0)) return null;
+        // No order on that side: the price is the value map's estimate, not what selling it brings now
+        if (quote?.estimated) estimated = true;
         heldPerAction += amount * afterTax(price);
     }
     const heldValue = heldPerAction / perAction;
     // Inputs left bought are still a cost; only the held ones are swapped for their sale value
     const net = profitPerItem + costPerItem - boughtPerAction / perAction - heldValue;
-    return { net, heldValue, partlyUnpriced: Boolean(profitData.bonusRevenue?.hasMissingPrices) };
+    return { net, heldValue, partlyUnpriced: Boolean(profitData.bonusRevenue?.hasMissingPrices), estimated };
 }
 
 /**
  * The held-materials line's text and color: profit green when crafting beats selling the
- * materials, loss red when it does not, informational blue on a lower bound.
+ * materials, loss red when it does not, informational blue on a lower bound or an estimated sale.
  * @param {Object|null} comparison - From {@link heldCraftCompare}
  * @returns {{text: string, color: string}|null}
  */
@@ -494,11 +500,12 @@ export function heldCraftLine(comparison) {
     const floor = comparison.partlyUnpriced ? '≥' : '';
     const sign = comparison.net > 0 ? '+' : '';
     let color = comparison.net >= 0 ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
-    if (comparison.partlyUnpriced) color = config.COLOR_TOOLTIP_INFO;
+    if (comparison.partlyUnpriced || comparison.estimated) color = config.COLOR_TOOLTIP_INFO;
+    const sale = comparison.estimated
+        ? `they sell for ≈${formatKMB(comparison.heldValue)}, a material with no order priced at its estimate`
+        : `they sell for ${formatKMB(comparison.heldValue)}`;
     return {
-        text:
-            `Held materials: craft ${floor}${sign}${formatKMB(comparison.net)}/item over selling them ` +
-            `(they sell for ${formatKMB(comparison.heldValue)})`,
+        text: `Held materials: craft ${floor}${sign}${formatKMB(comparison.net)}/item over selling them (${sale})`,
         color,
     };
 }
@@ -1732,7 +1739,7 @@ class TooltipPrices {
             const action = dataManager.getActionDetails?.(basis?.actionHrid) ?? null;
             const line = heldCraftLine(
                 heldCraftCompare(basis, action, {
-                    sellOf: (hrid) => getItemPrice(hrid, { context: 'profit', side: 'sell' }),
+                    sellOf: (hrid) => getItemPriceInfo(hrid, { context: 'profit', side: 'sell' }),
                 })
             );
             if (line) {
