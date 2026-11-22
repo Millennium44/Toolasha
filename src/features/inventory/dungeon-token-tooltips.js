@@ -19,6 +19,9 @@ import { craftEnhanceBoard } from '../../utils/bundle-bridge.js';
 
 /** The craft suggestions under a dungeon token's shop table */
 export const TOKEN_CRAFTS_SETTING = 'dungeonTokenTooltips_crafts';
+/** How often a block showing "Ranking crafts…" checks for the finished rows, and for how long */
+const CRAFTS_RETRY_MS = 1000;
+const CRAFTS_RETRY_LIMIT = 90;
 const OWNED_MODE_WORDS = {
     market: 'held drops at sale value',
     buy: 'every input bought',
@@ -39,7 +42,7 @@ export function craftSuggestionsHtml(suggestions) {
     const where = 'Full list: Craft &amp; Enhance (Ctrl+K, or the Crafting page), Dungeon filter';
     const html = `<div style="margin-top: 8px;"><strong>Crafts from ${escape(suggestions.dungeon)} inputs:</strong></div>`;
     if (status === 'error') return html + note('The Craft &amp; Enhance ranking failed; open the window to retry.');
-    if (status === 'computing') return html + note('Ranking crafts… hover again in a moment.');
+    if (status === 'computing') return html + note('Ranking crafts… this fills in when it is done.');
 
     const list = (label, rows) => {
         if (!rows?.length) return '';
@@ -137,6 +140,8 @@ class DungeonTokenTooltips {
         this.isInitialized = false;
         this.itemNameToHridCache = null;
         this.itemNameToHridCacheSource = null;
+        /** Timers filling in a "Ranking crafts…" block once the window's ranking finishes */
+        this.craftTimers = new Set();
     }
 
     /**
@@ -266,12 +271,16 @@ class DungeonTokenTooltips {
         if (config.getSetting(TOKEN_CRAFTS_SETTING, true)) {
             const injected = tooltipElement.querySelector('.dungeon-token-shop-injected');
             if (injected && !injected.querySelector('.dungeon-token-crafts')) {
-                const html = craftSuggestionsHtml(craftEnhanceBoard()?.suggestionsFor?.(tokenHrid) ?? null);
+                const suggestions = craftEnhanceBoard()?.suggestionsFor?.(tokenHrid) ?? null;
+                const html = craftSuggestionsHtml(suggestions);
                 if (html) {
                     const block = document.createElement('div');
                     block.className = 'dungeon-token-crafts';
                     block.innerHTML = html;
                     injected.appendChild(block);
+                    // The game can reuse this popper for the same token, which is never processed twice, so a
+                    // hover cannot be relied on to redraw a pending block: it fills itself in
+                    if (suggestions?.status === 'computing') this._fillWhenRanked(tooltipElement, block, tokenHrid);
                 }
             }
         }
@@ -463,6 +472,36 @@ class DungeonTokenTooltips {
     }
 
     /**
+     * Re-read a pending craft block until the ranking has finished, then draw it. Stops once the block has left the
+     * tooltip, the tooltip shows another item, the limit is reached, or the feature is cleaned up.
+     * @param {Element} tooltipElement - The token's tooltip
+     * @param {HTMLElement} block - The pending `.dungeon-token-crafts` block
+     * @param {string} tokenHrid - The token it is for
+     */
+    _fillWhenRanked(tooltipElement, block, tokenHrid) {
+        const item = tooltipElement.dataset.dungeonProcessedItem;
+        let tries = 0;
+        const check = () => {
+            this.craftTimers.delete(timer);
+            if (!block.isConnected || tooltipElement.dataset.dungeonProcessedItem !== item) return;
+            const suggestions = craftEnhanceBoard()?.suggestionsFor?.(tokenHrid) ?? null;
+            if (suggestions?.status === 'computing') {
+                if (++tries < CRAFTS_RETRY_LIMIT) {
+                    timer = setTimeout(check, CRAFTS_RETRY_MS);
+                    this.craftTimers.add(timer);
+                }
+                return;
+            }
+            const html = craftSuggestionsHtml(suggestions);
+            if (html) block.innerHTML = html;
+            else block.remove();
+            dom.fixTooltipOverflow(tooltipElement);
+        };
+        let timer = setTimeout(check, CRAFTS_RETRY_MS);
+        this.craftTimers.add(timer);
+    }
+
+    /**
      * Get shop items from labyrinthShopItemDetailMap (labyrinth tokens)
      * Only includes items with market value (tradeable items)
      * Accounts for outputCount (e.g., 1 token → 10 essences)
@@ -647,6 +686,8 @@ class DungeonTokenTooltips {
             this.unregisterObserver = null;
         }
 
+        for (const timer of this.craftTimers) clearTimeout(timer);
+        this.craftTimers.clear();
         this.isActive = false;
         this.isInitialized = false;
     }
@@ -657,6 +698,9 @@ class DungeonTokenTooltips {
 }
 
 const dungeonTokenTooltips = new DungeonTokenTooltips();
+
+/** The instance, for tests */
+export { dungeonTokenTooltips };
 
 export default {
     name: 'Dungeon Token Tooltips',

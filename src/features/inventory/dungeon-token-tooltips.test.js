@@ -48,7 +48,7 @@ vi.mock('../../utils/dom.js', () => ({
     },
 }));
 
-const { default: feature, craftSuggestionsHtml } = await import('./dungeon-token-tooltips.js');
+const { default: feature, craftSuggestionsHtml, dungeonTokenTooltips } = await import('./dungeon-token-tooltips.js');
 const { default: tooltipObserver } = await import('../../core/tooltip-observer.js');
 
 /**
@@ -227,6 +227,69 @@ describe('craft suggestions under a dungeon token', () => {
         expect(text).toContain('Griffin Bulwark <b>: +109.7M/item (level too low)');
         expect(text).toContain('held drops at sale value');
         expect(text).toContain('Ctrl+K');
+    });
+
+    test('a pending block fills itself in when the ranking finishes, without a new hover', () => {
+        vi.useFakeTimers();
+        const answers = [{ status: 'computing', dungeon: 'Chimerical Den' }];
+        const ready = {
+            status: 'ok',
+            dungeon: 'Chimerical Den',
+            targetLevel: 5,
+            ownedMode: 'market',
+            craft: [{ itemName: 'Griffin Tunic', profitPerUnit: 2_500_000, levelMet: true }],
+            enhance: [],
+            recipes: 4,
+        };
+        globalThis.window.Toolasha = { Actions: { craftEnhanceBoard: { suggestionsFor: () => answers[0] } } };
+        try {
+            const tooltip = document.createElement('div');
+            tooltip.dataset.dungeonProcessedItem = 'Chimerical Token';
+            const block = document.createElement('div');
+            block.innerHTML = craftSuggestionsHtml(answers[0]);
+            tooltip.appendChild(block);
+            document.body.appendChild(tooltip);
+
+            dungeonTokenTooltips._fillWhenRanked(tooltip, block, '/items/chimerical_token');
+            vi.advanceTimersByTime(3000);
+            expect(block.textContent).toContain('Ranking crafts');
+            answers[0] = ready;
+            vi.advanceTimersByTime(1000);
+            expect(block.textContent).toContain('Griffin Tunic: +2.5M/item');
+            expect(dungeonTokenTooltips.craftTimers.size).toBe(0);
+        } finally {
+            delete globalThis.window.Toolasha;
+            vi.useRealTimers();
+        }
+    });
+
+    test('a pending block stops checking once its tooltip shows another item, and on cleanup', () => {
+        vi.useFakeTimers();
+        const suggestionsFor = vi.fn(() => ({ status: 'computing', dungeon: 'Chimerical Den' }));
+        globalThis.window.Toolasha = { Actions: { craftEnhanceBoard: { suggestionsFor } } };
+        try {
+            const tooltip = document.createElement('div');
+            tooltip.dataset.dungeonProcessedItem = 'Chimerical Token';
+            const block = document.createElement('div');
+            tooltip.appendChild(block);
+            document.body.appendChild(tooltip);
+            dungeonTokenTooltips._fillWhenRanked(tooltip, block, '/items/chimerical_token');
+            vi.advanceTimersByTime(1000);
+            const seen = suggestionsFor.mock.calls.length;
+            tooltip.dataset.dungeonProcessedItem = 'Sinister Token';
+            vi.advanceTimersByTime(5000);
+            expect(suggestionsFor.mock.calls.length).toBe(seen);
+
+            tooltip.dataset.dungeonProcessedItem = 'Chimerical Token';
+            dungeonTokenTooltips._fillWhenRanked(tooltip, block, '/items/chimerical_token');
+            feature.cleanup();
+            vi.advanceTimersByTime(5000);
+            expect(suggestionsFor.mock.calls.length).toBe(seen);
+            expect(dungeonTokenTooltips.craftTimers.size).toBe(0);
+        } finally {
+            delete globalThis.window.Toolasha;
+            vi.useRealTimers();
+        }
     });
 
     test('no profitable recipe says how many were looked at', () => {
