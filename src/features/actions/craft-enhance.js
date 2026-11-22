@@ -55,6 +55,8 @@ import {
     normalizeOwnedMode,
     normalizeTargetLevel,
     priceCraftMaterials,
+    recipeDungeons,
+    tokenDungeon,
 } from './craft-enhance-rank.js';
 
 /** The setting that turns the window on */
@@ -142,6 +144,16 @@ export function heldStockDigest(
         if (watched.has(key.slice(0, split)) && level <= targetLevel) parts.push(`${key}=${count}`);
     }
     return `held:${parts.sort().join(',')}`;
+}
+
+/**
+ * The dungeon a token drops in, by the index the rows are tagged with.
+ * @param {string} tokenHrid - A dungeon token
+ * @returns {string|null} Null before game data, or for an item no dungeon drops
+ */
+export function dungeonForToken(tokenHrid) {
+    const gameData = dataManager.getInitClientData();
+    return gameData ? tokenDungeon(tokenHrid, dungeonIndexFor(gameData)) : null;
 }
 
 /** Drop the memoised ranking */
@@ -838,6 +850,8 @@ export function rankCraftEnhance({
                     actionName: recipe.action.name || recipe.actionHrid.split('/').pop(),
                     skillHrid: recipe.skill.skillHrid,
                     skillLabel: recipe.skill.label,
+                    // Every dungeon a direct input comes from, for the window's dungeon filter
+                    dungeons: recipeDungeons(recipe.action, index),
                     requiredLevel,
                     level,
                     // The game's own start check: a skill-level tea raises the level, Artisan's Action Level raises the

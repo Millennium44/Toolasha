@@ -26,6 +26,7 @@ const state = vi.hoisted(() => ({
     destroyed: 0,
     stamp: 1,
     gear: 'a',
+    tokenDungeons: { '/items/chimerical_token': 'Chimerical Den', '/items/pirate_token': 'Pirate Cove' },
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -97,6 +98,7 @@ vi.mock('./craft-enhance.js', () => ({
         state.cleared++;
     },
     craftEnhanceAvailable: () => !state.ironCow,
+    dungeonForToken: (tokenHrid) => state.tokenDungeons[tokenHrid] ?? null,
     craftEnhanceStateKey: () =>
         [
             state.stamp,
@@ -112,6 +114,7 @@ vi.mock('./craft-enhance.js', () => ({
 }));
 
 const { default: board, OPEN_BUTTON_CLASS } = await import('./craft-enhance-board.js');
+const { registeredCommands } = await import('../../utils/command-registry.js');
 
 const level = (over = {}) => ({
     level: 5,
@@ -1120,5 +1123,86 @@ describe('the best level looks at the usual sale levels and each one volume', ()
         );
         // Held to 0 in Best, the necklace still ranks on its uncapped +5 figure
         expect(names[0]).toContain('necklace');
+    });
+});
+
+describe('by dungeon', () => {
+    // sword: Chimerical Den, a loss at +0; shield: both dungeons, a profit at both levels; robe: Pirate Cove only
+    const dungeonRows = () => [
+        row('sword', { dungeons: ['Chimerical Den'] }),
+        row('shield', {
+            dungeons: ['Chimerical Den', 'Pirate Cove'],
+            base: level({ level: 0, profitPerUnit: 900, profitPerHour: 9000 }),
+            target: level({ profitPerUnit: 9000, profitPerHour: 90000 }),
+        }),
+        row('robe', { dungeons: ['Pirate Cove'], target: level({ profitPerUnit: 99999 }) }),
+        row('cape', { dungeons: ['Chimerical Den'], target: unpricedLevel(['sale']) }),
+    ];
+
+    test('the window filters to one dungeon, and lists only the dungeons its rows name', async () => {
+        state.rows = dungeonRows();
+        openBoard();
+        await flush();
+        const select = state.panel.panel.querySelector('[data-ce-dungeon]');
+        expect([...select.options].map((o) => o.value)).toEqual(['', 'Chimerical Den', 'Pirate Cove']);
+        select.value = 'Pirate Cove';
+        select.dispatchEvent(new Event('change'));
+        expect(text()).toContain('robe');
+        expect(text()).toContain('shield');
+        expect(text()).not.toContain('sword');
+        expect(text()).not.toContain('could not be drawn');
+    });
+
+    test('the palette offers the window while it is on, and not after', () => {
+        board.initialize();
+        expect(registeredCommands().map((c) => c.name)).toContain('Craft & Enhance');
+        board.disable();
+        expect(registeredCommands().map((c) => c.name)).not.toContain('Craft & Enhance');
+    });
+
+    test('suggestions: off, unknown token, then computing until the rows land', async () => {
+        expect(board.suggestionsFor('/items/chimerical_token').status).toBe('off');
+        state.rows = dungeonRows();
+        board.initialize();
+        expect(board.suggestionsFor('/items/labyrinth_token').status).toBe('unknown');
+        expect(board.suggestionsFor('/items/chimerical_token')).toMatchObject({
+            status: 'computing',
+            dungeon: 'Chimerical Den',
+        });
+        expect(state.rankCalls).toHaveLength(1);
+        await flush();
+        const ready = board.suggestionsFor('/items/chimerical_token');
+        expect(ready.status).toBe('ok');
+        expect(state.rankCalls).toHaveLength(1);
+        // Profitable rows only, best per item first; a row in two dungeons counts for both; unpriced never
+        expect(ready.enhance.map((r) => r.itemName)).toEqual(['shield', 'sword']);
+        expect(ready.craft.map((r) => r.itemName)).toEqual(['shield']);
+        expect(ready.recipes).toBe(3);
+        expect(ready.targetLevel).toBe(5);
+        expect(board.suggestionsFor('/items/pirate_token').enhance.map((r) => r.itemName)).toEqual(['robe', 'shield']);
+    });
+
+    test('stale rows are not offered: the ranking runs again first', async () => {
+        state.rows = dungeonRows();
+        board.initialize();
+        board.suggestionsFor('/items/chimerical_token');
+        await flush();
+        state.stamp = 2; // market data refreshed
+        expect(board.suggestionsFor('/items/chimerical_token').status).toBe('computing');
+        expect(state.rankCalls).toHaveLength(2);
+        await flush();
+        expect(board.suggestionsFor('/items/chimerical_token').status).toBe('ok');
+    });
+
+    test('a failed ranking says so rather than computing forever', () => {
+        board.initialize();
+        board.error = new Error('boom');
+        expect(board.suggestionsFor('/items/chimerical_token').status).toBe('error');
+    });
+
+    test('nothing for an Iron Cow character', () => {
+        state.ironCow = true;
+        board.initialize();
+        expect(board.suggestionsFor('/items/chimerical_token').status).toBe('off');
     });
 });

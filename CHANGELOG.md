@@ -14,6 +14,14 @@ When a tooltip is taller than the window, the mouse wheel over the item now scro
 
 Craftable items' profit section adds a "Held materials" line: what crafting materials you already hold (dungeon drops, say) and selling the result earns per item over selling the materials, each valued at its after-tax sale price under your pricing mode.
 
+### Dungeon token tooltips suggest crafts
+
+A dungeon token's tooltip now lists the most profitable gear to craft from that dungeon's drops and shop items, sold at +0 and enhanced to your Craft & Enhance target, per item after tax.
+
+### Craft & Enhance: dungeon filter and Ctrl+K
+
+The Craft & Enhance window can be filtered to one dungeon's drops and token-shop items, and opens from the command palette (Ctrl+K) as well as the crafting skill pages.
+
 ### Simulators load without a fresh game login
 
 The Combat Sim and other sim pages now fall back to the game data the game itself cached, so they work even when no new login data arrived in that tab.

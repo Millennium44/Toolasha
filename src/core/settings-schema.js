@@ -1153,6 +1153,14 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            dungeonTokenTooltips_crafts: {
+                id: 'dungeonTokenTooltips_crafts',
+                label: 'Dungeon token tooltips: best crafts from that dungeon',
+                type: 'checkbox',
+                default: true,
+                requires: 'dungeonTokenTooltips',
+                help: "Under a dungeon token's shop table, the most profitable gear to craft from that dungeon's drops and token-shop items: sold at +0, and enhanced to the Craft & Enhance target level, per item after tax, valued the way that window values held drops. Read from the Craft & Enhance window's ranking (its setting must be on); the first hover after prices refresh starts the ranking and says so. Hidden for Iron Cow characters.",
+            },
             inventoryTooltipBeside: {
                 id: 'inventoryTooltipBeside',
                 label: 'Keep item tooltips off the hovered item',

@@ -48,7 +48,7 @@ vi.mock('../../utils/dom.js', () => ({
     },
 }));
 
-const { default: feature } = await import('./dungeon-token-tooltips.js');
+const { default: feature, craftSuggestionsHtml } = await import('./dungeon-token-tooltips.js');
 const { default: tooltipObserver } = await import('../../core/tooltip-observer.js');
 
 /**
@@ -184,5 +184,64 @@ describe('token values through the tooltip observer', () => {
 
         // The stale Cowbell value line must not still be showing under the Log tooltip
         expect(el.querySelector('.dungeon-token-shop-injected')).toBeNull();
+    });
+});
+
+describe('craft suggestions under a dungeon token', () => {
+    const textOf = (html) => {
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        return div.textContent;
+    };
+
+    test('nothing when the window is off or the token is not a dungeon one', () => {
+        expect(craftSuggestionsHtml(null)).toBe('');
+        expect(craftSuggestionsHtml({ status: 'off' })).toBe('');
+        expect(craftSuggestionsHtml({ status: 'unknown' })).toBe('');
+    });
+
+    test('computing and failed say so', () => {
+        expect(textOf(craftSuggestionsHtml({ status: 'computing', dungeon: 'Chimerical Den' }))).toContain(
+            'Ranking crafts'
+        );
+        expect(textOf(craftSuggestionsHtml({ status: 'error', dungeon: 'Chimerical Den' }))).toContain('failed');
+    });
+
+    test('lists both kinds with the target level and the valuation it used', () => {
+        const text = textOf(
+            craftSuggestionsHtml({
+                status: 'ok',
+                dungeon: 'Chimerical Den',
+                targetLevel: 5,
+                ownedMode: 'market',
+                craft: [{ itemName: 'Griffin Tunic', profitPerUnit: 2_500_000, levelMet: true }],
+                enhance: [{ itemName: 'Griffin Bulwark <b>', profitPerUnit: 109_700_000, levelMet: false }],
+                recipes: 4,
+            })
+        );
+        expect(text).toContain('Crafts from Chimerical Den inputs:');
+        expect(text).toContain('Craft and sell:');
+        expect(text).toContain('Griffin Tunic: +2.5M/item');
+        expect(text).toContain('Craft, enhance to +5 and sell:');
+        // A name is text, never markup
+        expect(text).toContain('Griffin Bulwark <b>: +109.7M/item (level too low)');
+        expect(text).toContain('held drops at sale value');
+        expect(text).toContain('Ctrl+K');
+    });
+
+    test('no profitable recipe says how many were looked at', () => {
+        const text = textOf(
+            craftSuggestionsHtml({
+                status: 'ok',
+                dungeon: 'Pirate Cove',
+                targetLevel: 5,
+                ownedMode: 'sunk',
+                craft: [],
+                enhance: [],
+                recipes: 6,
+            })
+        );
+        expect(text).toContain('None of its 6 recipes is profitable right now');
+        expect(text).toContain('held drops at 0');
     });
 });

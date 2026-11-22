@@ -182,6 +182,43 @@ export function hasDungeonInput(action, index) {
 }
 
 /**
+ * The dungeons a recipe's direct inputs come from, by the same inputs {@link hasDungeonInput} reads, priced or not.
+ * A drop names the dungeons it drops in; a token-shop item names the dungeons that drop its token. A drop every
+ * dungeon shares (the gems and star fragments in every chest) names none: it says nothing about which dungeon's
+ * loot a recipe uses, and on the test server it tagged 40 of 90 recipes with all four.
+ *
+ * @param {Object} action - The game's action details
+ * @param {{drops: Map, tokenShop: Map}} index - From {@link buildDungeonInputIndex}
+ * @returns {string[]} Dungeon names, sorted; empty when none is known
+ */
+export function recipeDungeons(action, index) {
+    const hrids = (action?.inputItems || []).map((input) => input?.itemHrid);
+    if (action?.upgradeItemHrid) hrids.push(action.upgradeItemHrid);
+    const everyDungeon = new Set();
+    for (const { dungeons } of index?.drops?.values() || []) for (const name of dungeons || []) everyDungeon.add(name);
+    const names = new Set();
+    for (const hrid of hrids) {
+        if (!hrid) continue;
+        const dungeons = index?.drops?.get(hrid)?.dungeons || [];
+        const shared = everyDungeon.size > 1 && dungeons.length >= everyDungeon.size;
+        if (!shared) for (const name of dungeons) names.add(name);
+        const token = index?.tokenShop?.get(hrid)?.tokenHrid;
+        for (const name of (token && index?.drops?.get(token)?.dungeons) || []) names.add(name);
+    }
+    return [...names].sort();
+}
+
+/**
+ * The dungeon a token drops in, from the same index the rows are tagged with.
+ * @param {string} tokenHrid - A dungeon token
+ * @param {{drops: Map}} index - From {@link buildDungeonInputIndex}
+ * @returns {string|null}
+ */
+export function tokenDungeon(tokenHrid, index) {
+    return index?.drops?.get(tokenHrid)?.dungeons?.[0] ?? null;
+}
+
+/**
  * Held units by item and level, from the character's inventory.
  *
  * Only stacks in the inventory count (not equipment, not the market). The pool is keyed
@@ -1082,6 +1119,7 @@ export function arrangeCraftEnhanceRows(
         craftableOnly = false,
         skillHrid = null,
         query = '',
+        dungeon = null,
     } = {}
 ) {
     const key = SORT_KEYS[sort] || SORT_KEYS.hour;
@@ -1091,6 +1129,7 @@ export function arrangeCraftEnhanceRows(
 
     const kept = (rows || []).filter((row) => {
         if (skillHrid && row.skillHrid !== skillHrid) return false;
+        if (dungeon && !(row.dungeons || []).includes(dungeon)) return false;
         if (craftableOnly && !row.levelMet) return false;
         if (needle && !row.itemName.toLowerCase().includes(needle) && !row.actionName.toLowerCase().includes(needle)) {
             return false;

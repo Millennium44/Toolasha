@@ -294,6 +294,14 @@ export function craftingPlanCalculator() {
 }
 
 /**
+ * The Craft & Enhance window (`suggestionsFor`, for the dungeon token tooltip).
+ * @returns {Object|null} The window, or null when the actions bundle is absent
+ */
+export function craftEnhanceBoard() {
+    return toolashaRoot()?.Actions?.craftEnhanceBoard || null;
+}
+
+/**
  * The action panel's missing-materials marketplace opener.
  * @returns {Object|null} The module, or null when the feature is off or absent
  */

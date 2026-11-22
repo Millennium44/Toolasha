@@ -26,6 +26,8 @@ import {
     normalizeOwnedMode,
     normalizeTargetLevel,
     priceCraftMaterials,
+    recipeDungeons,
+    tokenDungeon,
 } from './craft-enhance-rank.js';
 import {
     DUNGEON_CRAFT_GAME_DATA,
@@ -195,6 +197,73 @@ describe('the index on real test-server data', () => {
         expect(hasDungeonInput(MANTICORE_SHIELD_ACTION, real)).toBe(true);
         expect(dungeonInputKind('/items/holy_cheese', real)).toBeNull();
         expect(dungeonInputKind('/items/manticore_sting', real)).toEqual({ drop: true, token: true });
+    });
+
+    test('the chimerical token drops in the Chimerical Den, and the real recipes are tagged with it', () => {
+        expect(tokenDungeon('/items/chimerical_token', real)).toBe('Chimerical Den');
+        expect(recipeDungeons(GRIFFIN_TUNIC_ACTION, real)).toEqual(['Chimerical Den']);
+        expect(recipeDungeons(MANTICORE_SHIELD_ACTION, real)).toEqual(['Chimerical Den']);
+        expect(tokenDungeon('/items/holy_cheese', real)).toBeNull();
+    });
+});
+
+describe('which dungeons a recipe draws on', () => {
+    // Hand-built so a shop item, a drop of two dungeons and an upgrade item can all be in one recipe
+    const index = {
+        drops: new Map([
+            ['/items/fang', { dungeons: ['Sinister Circus'] }],
+            ['/items/shard', { dungeons: ['Pirate Cove', 'Enchanted Fortress'] }],
+            ['/items/sinister_token', { dungeons: ['Sinister Circus'] }],
+            ['/items/pirate_token', { dungeons: ['Pirate Cove'] }],
+            ['/items/old_bow', { dungeons: ['Enchanted Fortress'] }],
+        ]),
+        tokenShop: new Map([['/items/cloth', { tokenHrid: '/items/pirate_token', tokenCount: 50, outputCount: 1 }]]),
+    };
+
+    test('a shop item counts for the dungeon that drops its token, an upgrade item for its own', () => {
+        const action = {
+            inputItems: [{ itemHrid: '/items/cloth' }, { itemHrid: '/items/fang' }, { itemHrid: '/items/cheese' }],
+            upgradeItemHrid: '/items/old_bow',
+        };
+        expect(recipeDungeons(action, index)).toEqual(['Enchanted Fortress', 'Pirate Cove', 'Sinister Circus']);
+    });
+
+    test('a drop of two dungeons names both, once each', () => {
+        const action = { inputItems: [{ itemHrid: '/items/shard' }, { itemHrid: '/items/shard' }] };
+        expect(recipeDungeons(action, index)).toEqual(['Enchanted Fortress', 'Pirate Cove']);
+    });
+
+    test('a drop every dungeon shares tags nothing, though a dungeon-specific input beside it still does', () => {
+        const shared = {
+            drops: new Map([
+                ...index.drops,
+                ['/items/gem', { dungeons: ['Sinister Circus', 'Pirate Cove', 'Enchanted Fortress'] }],
+            ]),
+            tokenShop: index.tokenShop,
+        };
+        expect(recipeDungeons({ inputItems: [{ itemHrid: '/items/gem' }] }, shared)).toEqual([]);
+        expect(
+            recipeDungeons({ inputItems: [{ itemHrid: '/items/gem' }, { itemHrid: '/items/fang' }] }, shared)
+        ).toEqual(['Sinister Circus']);
+    });
+
+    test('no dungeon input, no dungeon', () => {
+        expect(recipeDungeons({ inputItems: [{ itemHrid: '/items/cheese' }] }, index)).toEqual([]);
+        expect(recipeDungeons(null, index)).toEqual([]);
+    });
+
+    test('the window filter keeps a row in either of its dungeons, and only those', () => {
+        const rowIn = (name, dungeons) => ({
+            itemName: name,
+            actionName: name,
+            dungeons,
+            base: { status: 'ok', profitPerHour: 1 },
+            target: { status: 'ok', profitPerHour: 1, profitPerUnit: 1 },
+        });
+        const rows = [rowIn('a', ['Pirate Cove']), rowIn('b', ['Enchanted Fortress', 'Pirate Cove']), rowIn('c', [])];
+        expect(arrangeCraftEnhanceRows(rows, { dungeon: 'Pirate Cove' }).map((r) => r.itemName)).toEqual(['a', 'b']);
+        expect(arrangeCraftEnhanceRows(rows, { dungeon: 'Enchanted Fortress' }).map((r) => r.itemName)).toEqual(['b']);
+        expect(arrangeCraftEnhanceRows(rows, { dungeon: null })).toHaveLength(3);
     });
 });
 

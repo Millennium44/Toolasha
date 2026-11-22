@@ -15,6 +15,56 @@ import { parseItemCount } from '../../utils/number-parser.js';
 import { heldTokensWorth } from '../../utils/token-worth.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { dungeonShopOffers, ownedTokenCount } from './dungeon-shop-offers.js';
+import { craftEnhanceBoard } from '../../utils/bundle-bridge.js';
+
+/** The craft suggestions under a dungeon token's shop table */
+export const TOKEN_CRAFTS_SETTING = 'dungeonTokenTooltips_crafts';
+const OWNED_MODE_WORDS = {
+    market: 'held drops at sale value',
+    buy: 'every input bought',
+    sunk: 'held drops at 0',
+};
+
+/**
+ * The craft suggestions block for a dungeon token, from the Craft & Enhance window's rows.
+ * @param {Object|null} suggestions - From the window's `suggestionsFor`
+ * @returns {string} HTML; empty when there is nothing to say (the window is off, or the token is unknown)
+ */
+export function craftSuggestionsHtml(suggestions) {
+    const status = suggestions?.status;
+    if (!status || status === 'off' || status === 'unknown') return '';
+    const escape = (text) =>
+        String(text).replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]);
+    const note = (text) => `<div style="font-size: 11px; color: #888; margin-top: 2px;">${text}</div>`;
+    const where = 'Full list: Craft &amp; Enhance (Ctrl+K, or the Crafting page), Dungeon filter';
+    const html = `<div style="margin-top: 8px;"><strong>Crafts from ${escape(suggestions.dungeon)} inputs:</strong></div>`;
+    if (status === 'error') return html + note('The Craft &amp; Enhance ranking failed; open the window to retry.');
+    if (status === 'computing') return html + note('Ranking crafts… hover again in a moment.');
+
+    const list = (label, rows) => {
+        if (!rows?.length) return '';
+        let part = `<div style="margin-top: 2px;">${label}</div>`;
+        for (const row of rows) {
+            const level = row.levelMet === false ? ' <span style="color:#888;">(level too low)</span>' : '';
+            part +=
+                `<div style="margin-left: 8px; font-size: 12px;">${escape(row.itemName)}: ` +
+                `<span style="color: ${config.COLOR_TOOLTIP_PROFIT};">+${formatKMB(row.profitPerUnit)}/item</span>${level}</div>`;
+        }
+        return part;
+    };
+    const body =
+        list('Craft and sell:', suggestions.craft) +
+        list(`Craft, enhance to +${suggestions.targetLevel} and sell:`, suggestions.enhance);
+    const basis = `Profit per item after tax, ${OWNED_MODE_WORDS[suggestions.ownedMode] || 'held drops at sale value'}, your bench.`;
+    if (!body) {
+        return (
+            html +
+            note(`None of its ${suggestions.recipes || 0} recipes is profitable right now. ${basis}`) +
+            note(where)
+        );
+    }
+    return html + body + note(basis) + note(where);
+}
 
 /**
  * Token types and their shop data sources
@@ -210,6 +260,19 @@ class DungeonTokenTooltips {
                 hint.style.cssText = 'font-size: 11px; color: #888; margin-top: 2px;';
                 hint.textContent = 'Plan spend: Shop → Dungeon → Plan spend (volume-capped)';
                 injected.appendChild(hint);
+            }
+        }
+        // Inside the injected block, so the next item's cleanup takes it too
+        if (config.getSetting(TOKEN_CRAFTS_SETTING, true)) {
+            const injected = tooltipElement.querySelector('.dungeon-token-shop-injected');
+            if (injected && !injected.querySelector('.dungeon-token-crafts')) {
+                const html = craftSuggestionsHtml(craftEnhanceBoard()?.suggestionsFor?.(tokenHrid) ?? null);
+                if (html) {
+                    const block = document.createElement('div');
+                    block.className = 'dungeon-token-crafts';
+                    block.innerHTML = html;
+                    injected.appendChild(block);
+                }
             }
         }
         dom.fixTooltipOverflow(tooltipElement);

@@ -34,6 +34,7 @@ import { navigateToAction, navigateToItem } from '../../utils/item-navigation.js
 import { itemDailyVolume } from '../../utils/liquidity-cap.js';
 import { itemLabel } from '../../utils/overlay-format.js';
 import { getIconHref, getSkillHridFromIconHref } from '../../utils/game-lookups.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { PRODUCTION_SKILLS } from './production-arbitrage.js';
 import {
     CRAFT_ENHANCE_SETTING,
@@ -42,6 +43,7 @@ import {
     clearCraftEnhanceCache,
     craftEnhanceAvailable,
     craftEnhanceStateKey,
+    dungeonForToken,
     rankCraftEnhance,
 } from './craft-enhance.js';
 import {
@@ -61,6 +63,8 @@ export { CRAFT_ENHANCE_SETTING };
 export const OPEN_BUTTON_CLASS = 'mwi-craft-enhance-open';
 
 const PANEL_ID = 'craft-enhance';
+/** The command palette entry's name */
+const COMMAND_NAME = 'Craft & Enhance';
 const MAX_ROWS = 100;
 /** Rows whose volume is looked up; the rest are off the first screen */
 const VOLUME_ROWS = 40;
@@ -344,6 +348,8 @@ class CraftEnhanceBoard {
         this.profitableOnly = false;
         this.craftableOnly = false;
         this.skillHrid = null;
+        /** A dungeon name: only rows with an input from it */
+        this.dungeon = null;
         this.query = '';
         this.error = null;
         /** Bumped whenever a run is abandoned (a character switch, a recompute, a changed target or mode) */
@@ -399,12 +405,20 @@ class CraftEnhanceBoard {
         document
             .querySelectorAll('[class*="GatheringProductionSkillPanel_title"]')
             .forEach((titleElement) => this.injectOpenButton(titleElement));
+
+        // The button lives only on three skill pages; the palette reaches the window from anywhere
+        registerCommand({
+            name: COMMAND_NAME,
+            hint: 'Gear from dungeon drops and token-shop items, crafted, enhanced and sold',
+            run: () => this.open(),
+        });
     }
 
     /** Feature-registry teardown */
     disable() {
         try {
             this.generation++;
+            unregisterCommand(COMMAND_NAME);
             this.unregisterTitleObserver?.();
             this.unregisterTitleObserver = null;
             document.querySelectorAll(`.${OPEN_BUTTON_CLASS}`).forEach((button) => button.remove());
@@ -416,6 +430,7 @@ class CraftEnhanceBoard {
             this.rows = null;
             this.computing = false;
             this.error = null;
+            this.dungeon = null;
             // Nothing measured for one character is another's
             this.volumes.clear();
             this.volumePending.clear();
@@ -468,6 +483,57 @@ class CraftEnhanceBoard {
         if (!this.initialized) return;
         this.panel?.show();
         this.ensureRows();
+    }
+
+    /**
+     * The best crafts for one dungeon token, for its tooltip: the window's own rows, filtered to recipes with an input
+     * from the token's dungeon. Only finished rows for the current state are used; otherwise the window's normal run
+     * is started (or restarted, for stale rows) and the answer is that it is computing.
+     *
+     * Per item, not per hour: the hourly figure is uncapped until the window looks up volume for the rows it shows.
+     *
+     * @param {string} tokenHrid - A dungeon token
+     * @param {number} [count=3] - Rows per list
+     * @returns {{status: 'off'|'unknown'|'computing'|'error'|'ok', dungeon?: string, targetLevel?: number,
+     *   ownedMode?: string, craft?: Array<Object>, enhance?: Array<Object>, recipes?: number}}
+     *   `craft` sells at +0 and `enhance` at the target level, each the profitable rows only, best per item first
+     */
+    suggestionsFor(tokenHrid, count = 3) {
+        if (!this.initialized) return { status: 'off' };
+        const dungeon = dungeonForToken(tokenHrid);
+        if (!dungeon) return { status: 'unknown' };
+        const targetLevel = this.targetLevel;
+        const ownedMode = this.ownedMode;
+        if (this.error && !this.computing) return { status: 'error', dungeon };
+        if (!this.rows || this.computing || this.rowsKey !== this.currentKey()) {
+            if (!this.computing) {
+                if (this.rows) this.recompute();
+                else this.ensureRows();
+            }
+            return { status: 'computing', dungeon, targetLevel, ownedMode };
+        }
+
+        const mine = arrangeCraftEnhanceRows(this.rows, { dungeon, sort: 'unit' });
+        const top = (level) =>
+            mine
+                .filter((row) => row[level]?.status === 'ok' && row[level].profitPerUnit > 0)
+                .sort((a, b) => b[level].profitPerUnit - a[level].profitPerUnit)
+                .slice(0, count)
+                .map((row) => ({
+                    itemHrid: row.itemHrid,
+                    itemName: row.itemName,
+                    profitPerUnit: row[level].profitPerUnit,
+                    levelMet: row.levelMet,
+                }));
+        return {
+            status: 'ok',
+            dungeon,
+            targetLevel,
+            ownedMode,
+            craft: top('base'),
+            enhance: top('target'),
+            recipes: mine.length,
+        };
     }
 
     /** Forget the ranking and cost everything again */
@@ -645,6 +711,32 @@ class CraftEnhanceBoard {
         });
         controls.appendChild(skillSelect);
 
+        const dungeonSelect = document.createElement('select');
+        dungeonSelect.classList.add('toolasha-select');
+        dungeonSelect.setAttribute('data-ce-dungeon', 'true');
+        dungeonSelect.title =
+            'Only recipes with an input from this dungeon: a drop, or a shop item bought with its token';
+        this.styleSelect(dungeonSelect);
+        const anyDungeon = document.createElement('option');
+        anyDungeon.value = '';
+        anyDungeon.textContent = 'All dungeons';
+        dungeonSelect.appendChild(anyDungeon);
+        const dungeons = new Set((this.rows || []).flatMap((row) => row.dungeons || []));
+        // Keep the choice listed while the rows that name it are still being costed
+        if (this.dungeon) dungeons.add(this.dungeon);
+        for (const name of [...dungeons].sort()) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            dungeonSelect.appendChild(option);
+        }
+        dungeonSelect.value = this.dungeon || '';
+        dungeonSelect.addEventListener('change', () => {
+            this.dungeon = dungeonSelect.value || null;
+            this.panel?.render();
+        });
+        controls.appendChild(dungeonSelect);
+
         const search = document.createElement('input');
         search.type = 'text';
         search.placeholder = 'Filter items…';
@@ -813,6 +905,7 @@ class CraftEnhanceBoard {
             profitableOnly: this.profitableOnly,
             craftableOnly: this.craftableOnly,
             skillHrid: this.skillHrid,
+            dungeon: this.dungeon,
             query: this.query,
         });
 
