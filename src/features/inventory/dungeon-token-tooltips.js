@@ -60,11 +60,18 @@ export function craftSuggestionsHtml(suggestions) {
         list(`Craft, enhance to +${suggestions.targetLevel} and sell:`, suggestions.enhance);
     const basis = `Profit per item after tax, ${OWNED_MODE_WORDS[suggestions.ownedMode] || 'held drops at sale value'}, your bench.`;
     if (!body) {
-        return (
-            html +
-            note(`None of its ${suggestions.recipes || 0} recipes is profitable right now. ${basis}`) +
-            note(where)
-        );
+        const recipes = suggestions.recipes || 0;
+        const unpriced = Math.min(suggestions.unpriced || 0, recipes);
+        const priced = recipes - unpriced;
+        // A recipe with a missing price has an unknown profit, not none
+        let verdict;
+        if (priced === 0) verdict = `Its ${recipes} recipes are missing a price, so their profit is unknown.`;
+        else if (unpriced === 0) verdict = `None of its ${recipes} recipes is profitable right now.`;
+        else
+            verdict =
+                `None of its ${priced} priced recipes is profitable right now; ` +
+                `${unpriced} more ${unpriced === 1 ? 'is' : 'are'} missing a price.`;
+        return html + note(`${verdict} ${basis}`) + note(where);
     }
     return html + body + note(basis) + note(where);
 }

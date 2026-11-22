@@ -495,7 +495,7 @@ class CraftEnhanceBoard {
      * @param {string} tokenHrid - A dungeon token
      * @param {number} [count=3] - Rows per list
      * @returns {{status: 'off'|'unknown'|'computing'|'error'|'ok', dungeon?: string, targetLevel?: number,
-     *   ownedMode?: string, craft?: Array<Object>, enhance?: Array<Object>, recipes?: number}}
+     *   ownedMode?: string, craft?: Array<Object>, enhance?: Array<Object>, recipes?: number, unpriced?: number}}
      *   `craft` sells at +0 and `enhance` at the target level, each the profitable rows only, best per item first
      */
     suggestionsFor(tokenHrid, count = 3) {
@@ -533,6 +533,8 @@ class CraftEnhanceBoard {
             craft: top('base'),
             enhance: top('target'),
             recipes: mine.length,
+            // Rows with no full figure at either level: their profit is unknown, not absent
+            unpriced: mine.filter((row) => row.base?.status !== 'ok' && row.target?.status !== 'ok').length,
         };
     }
 

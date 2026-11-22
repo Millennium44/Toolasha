@@ -307,4 +307,20 @@ describe('craft suggestions under a dungeon token', () => {
         expect(text).toContain('None of its 6 recipes is profitable right now');
         expect(text).toContain('held drops at 0');
     });
+
+    test('unpriced recipes are an unknown, never counted as unprofitable', () => {
+        const base = {
+            status: 'ok',
+            dungeon: 'Pirate Cove',
+            targetLevel: 5,
+            ownedMode: 'market',
+            craft: [],
+            enhance: [],
+        };
+        const allUnpriced = textOf(craftSuggestionsHtml({ ...base, recipes: 8, unpriced: 8 }));
+        expect(allUnpriced).toContain('Its 8 recipes are missing a price, so their profit is unknown.');
+        expect(allUnpriced).not.toContain('profitable');
+        const some = textOf(craftSuggestionsHtml({ ...base, recipes: 8, unpriced: 3 }));
+        expect(some).toContain('None of its 5 priced recipes is profitable right now; 3 more are missing a price.');
+    });
 });

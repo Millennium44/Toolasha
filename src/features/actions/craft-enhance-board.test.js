@@ -1178,6 +1178,8 @@ describe('by dungeon', () => {
         expect(ready.enhance.map((r) => r.itemName)).toEqual(['shield', 'sword']);
         expect(ready.craft.map((r) => r.itemName)).toEqual(['shield']);
         expect(ready.recipes).toBe(3);
+        // cape is unpriced at the target, but its +0 has a figure, so it is not an unknown
+        expect(ready.unpriced).toBe(0);
         expect(ready.targetLevel).toBe(5);
         expect(board.suggestionsFor('/items/pirate_token').enhance.map((r) => r.itemName)).toEqual(['robe', 'shield']);
     });
