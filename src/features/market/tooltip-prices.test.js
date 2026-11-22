@@ -836,7 +836,7 @@ describe('held materials: craft vs sell them', () => {
         };
         tooltipPrices.injectProfitDisplay(el, shown, false, [], data());
         const line = [...el.querySelectorAll('div')].find((div) => div.textContent.startsWith('Held materials'));
-        expect(line.textContent).toContain('a material with no order priced at its estimate');
+        expect(line.textContent).toContain('an item with no order priced at its estimate');
         expect(line.textContent).toContain('≈');
         expect(line.getAttribute('style')).toContain('#abc');
     });
@@ -853,6 +853,24 @@ describe('held materials: craft vs sell them', () => {
         expect(estimated.heldValue).toBeCloseTo(3_240_000, 0);
         expect(heldCraftCompare(data(), null, { sellOf }).estimated).toBe(false);
         expect(heldCraftLine(estimated).color).toBe('#abc');
+    });
+
+    test('an output sold at its estimate flags the comparison too', () => {
+        const quotes = {
+            '/items/marksman_bracers': { price: 80_000_000, estimated: true },
+            '/items/sighted_bracers': { price: 1_800_000, estimated: false },
+            '/items/marksman_brooch': { price: 4_000_000, estimated: false },
+            '/items/umbral_bracers': { price: 400_000, estimated: false },
+        };
+        const compared = heldCraftCompare(data({ itemHrid: '/items/marksman_bracers' }), null, {
+            sellOf: (hrid) => quotes[hrid],
+        });
+        expect(compared.estimated).toBe(true);
+        quotes['/items/marksman_bracers'].estimated = false;
+        expect(
+            heldCraftCompare(data({ itemHrid: '/items/marksman_bracers' }), null, { sellOf: (hrid) => quotes[hrid] })
+                .estimated
+        ).toBe(false);
     });
 });
 

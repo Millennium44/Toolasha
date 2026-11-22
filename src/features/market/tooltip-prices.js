@@ -442,7 +442,8 @@ export function ownUseLine(comparison) {
  * @param {Set<string>|null} [opts.held] - Inputs held; null means every input. The rest stay bought.
  * @returns {{net: number, heldValue: number, partlyUnpriced: boolean, estimated: boolean}|null} Per finished
  *   item; null when a held input, the output or a tea has no price, or the recipe has several outputs.
- *   `estimated`: a held input has no order on its sell side and is valued at the game's value-map estimate
+ *   `estimated`: a held input or the output has no order on its sell side and is valued at the game's value-map
+ *   estimate
  */
 export function heldCraftCompare(profitData, actionDetail = null, { sellOf, held = null } = {}) {
     if (!profitData || typeof sellOf !== 'function') return null;
@@ -465,7 +466,10 @@ export function heldCraftCompare(profitData, actionDetail = null, { sellOf, held
     const afterTax = (price) => (profitData.excludeSellTax ? price : calculatePriceAfterTax(price, MARKET_TAX));
     let heldPerAction = 0;
     let boughtPerAction = 0;
-    let estimated = false;
+    // The output read the same way: a value-map estimate where its sell side has no orders is still a price to the
+    // profit calculator, which only flags its own crafting-cost fallback
+    const outputQuote = profitData.itemHrid ? sellOf(profitData.itemHrid) : null;
+    let estimated = Boolean(profitData.outputPriceEstimated) || Boolean(outputQuote?.estimated);
     for (const material of materials) {
         const amount = Number(material.amount) || 0;
         if (held && !held.has(material.itemHrid)) {
@@ -502,7 +506,7 @@ export function heldCraftLine(comparison) {
     let color = comparison.net >= 0 ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
     if (comparison.partlyUnpriced || comparison.estimated) color = config.COLOR_TOOLTIP_INFO;
     const sale = comparison.estimated
-        ? `they sell for ≈${formatKMB(comparison.heldValue)}, a material with no order priced at its estimate`
+        ? `they sell for ≈${formatKMB(comparison.heldValue)}, an item with no order priced at its estimate`
         : `they sell for ${formatKMB(comparison.heldValue)}`;
     return {
         text: `Held materials: craft ${floor}${sign}${formatKMB(comparison.net)}/item over selling them (${sale})`,
