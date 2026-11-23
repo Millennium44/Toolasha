@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### More switches turn off without a reload
+
+Turning off features such as Item Count Display, Listing Price Display, Market History, Bulk Sell Assistant, Budget Calculator, the Ability Dictionary button and Chat Profile Link now removes them right away. Quick input buttons and the XP tracker are tagged as needing a reload.
+
+### Alchemy says when an item has no price
+
+The alchemy Profitability section now reads "Profitability unavailable: no market price for …" instead of showing nothing when the selected item has no market price.
+
+### Iron Cow hides skill-page pricing buttons
+
+Iron Cow mode now also switches off the skill page's pricing mode, craft and sell-tax buttons, which only change pricing settings it already locks. Your own choices come back when you turn the mode off.
+
 ### Presets can be combined, and a Guild preset is added
 
 Combat, Market and Guild can now be ticked together on top of Essentials and applied as one, which Restore undoes. Presets no longer switch off about 125 features their players use, such as the command palette, task sorter and Enhancement Simulator. The skilling optimizer and house upgrade costs now come with Market, since they need prices. Ticked chips show as pressed and clear once applied.
