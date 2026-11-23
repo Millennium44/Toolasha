@@ -81,6 +81,9 @@ vi.mock('../../core/config.js', () => ({
             sellQueue: { type: 'checkbox', isTrue: true },
             market_itemHop: { type: 'checkbox', isTrue: false },
             guildCreditExchangeAdvisor: { type: 'checkbox', isTrue: true },
+            actionPanel_showPricingMode: { type: 'checkbox', isTrue: true },
+            actionPanel_showCraftToggle: { type: 'checkbox', isTrue: false },
+            actionPanel_showSellTaxToggle: { type: 'checkbox', isTrue: true },
         },
         getSetting: () => true,
         setSetting: (id, value) => world.restored.push([id, value]),
@@ -393,5 +396,58 @@ describe('iron cow mode locks the marketplace-screen tools', () => {
         const back = Object.fromEntries(world.restored);
         expect(back.sellQueue).toBe(true);
         expect(back.guildCreditExchangeAdvisor).toBe(true);
+    });
+});
+
+describe('iron cow mode locks the skill-page pricing buttons', () => {
+    const BUTTONS = ['actionPanel_showPricingMode', 'actionPanel_showCraftToggle', 'actionPanel_showSellTaxToggle'];
+
+    beforeEach(() => {
+        world.characterId = 'char1';
+        world.store = new Map();
+        world.deleted = [];
+        world.restored = [];
+        world.switchOnRead = false;
+        world.switchOnWrite = false;
+        world.readFails = false;
+        world.writeFails = false;
+    });
+
+    test('the buttons are on the locked list', () => {
+        for (const id of BUTTONS) expect(IRON_COW_SETTINGS.has(id), id).toBe(true);
+    });
+
+    test('turning the mode on snapshots the player value then forces the buttons off; turning it off restores', async () => {
+        await ironCowMode.enable();
+        const snapshot = world.store.get('settings::toolasha_ironCowSnapshot_char1');
+        expect(snapshot.actionPanel_showPricingMode).toEqual({ type: 'checkbox', value: true });
+        expect(snapshot.actionPanel_showCraftToggle).toEqual({ type: 'checkbox', value: false });
+        const forced = Object.fromEntries(world.restored);
+        for (const id of BUTTONS) expect(forced[id], id).toBe(false);
+
+        world.restored = [];
+        await ironCowMode.disable();
+        const back = Object.fromEntries(world.restored);
+        expect(back.actionPanel_showPricingMode).toBe(true);
+        expect(back.actionPanel_showCraftToggle).toBe(false);
+        expect(back.actionPanel_showSellTaxToggle).toBe(true);
+    });
+
+    test('a mode already on at upgrade snapshots the buttons before forcing them, and restores them', async () => {
+        world.store.set('settings::toolasha_ironCowSnapshot_char1', { invWorth: { type: 'checkbox', value: false } });
+
+        await ironCowMode.reconcile();
+
+        const snapshot = world.store.get('settings::toolasha_ironCowSnapshot_char1');
+        expect(snapshot.actionPanel_showPricingMode).toEqual({ type: 'checkbox', value: true });
+        expect(snapshot.actionPanel_showSellTaxToggle).toEqual({ type: 'checkbox', value: true });
+        const forced = Object.fromEntries(world.restored);
+        for (const id of BUTTONS) expect(forced[id], id).toBe(false);
+
+        world.restored = [];
+        await ironCowMode.disable();
+        const back = Object.fromEntries(world.restored);
+        expect(back.actionPanel_showPricingMode).toBe(true);
+        expect(back.actionPanel_showSellTaxToggle).toBe(true);
     });
 });
