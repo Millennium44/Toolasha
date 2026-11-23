@@ -869,7 +869,7 @@ export const settingsGroups = {
                 label: "Watchlist: Track chosen items, a zone's drops, or a chest's contents",
                 type: 'checkbox',
                 default: true,
-                help: 'A list of items with what you hold and what it is worth. Tick a combat zone to add everything it drops, or a chest to add everything it contains. Tracked items get a dot in the inventory, and anything the vendor pays more for than the market is flagged. Open it from the Watchlist overlay row',
+                help: 'A list of items with what you hold and what it is worth. Tick a combat zone to add everything it drops, or a chest to add its contents. Tracked items get a dot in the inventory, and anything the vendor pays more for than the market is flagged. Open it from the Watchlist overlay row.',
             },
             watchlist_menuButton: {
                 id: 'watchlist_menuButton',
@@ -883,7 +883,7 @@ export const settingsGroups = {
                 label: 'Watchlist: Dot tracked items in the inventory',
                 type: 'checkbox',
                 default: true,
-                help: 'Puts a small dot in the corner of every inventory tile holding a tracked item. The point of a watchlist is knowing what is on it while you are looking at your inventory rather than while you are looking at the list — but it is one more mark on a busy grid, so it can be turned off. The Watchlist panel has the same switch',
+                help: 'Puts a small dot in the corner of every inventory tile holding a tracked item, so you see the watchlist while browsing your inventory. Turn it off if the grid is too busy. The Watchlist panel has the same switch.',
             },
             equipmentSavings_menuButton: {
                 id: 'equipmentSavings_menuButton',
@@ -897,7 +897,7 @@ export const settingsGroups = {
                 label: 'Upgrade advisors: Price upgrades by your preferred route',
                 type: 'checkbox',
                 default: true,
-                help: "The Combat and Lab advisors price a supported upgrade by Equipment Watch's preferred route (Buy, Craft or Mirror; Auto takes the lowest real cost), and its Cost, ranking and shopping buttons follow that route. Supported means one tradable item of your own; party members, multi-item swaps, untradable gear, drinks and abilities keep the advisor's own quote, as does any row whose route the shopping buttons cannot follow yet. Rerun the analysis after changing this setting or the preferred route.",
+                help: "The Combat and Lab advisors price a supported upgrade by Equipment Watch's preferred route (Buy, Craft or Mirror; Auto takes the lowest real cost). Cost, ranking and shopping buttons follow that route. Supported means one tradable item of your own; others keep the advisor's own quote. Rerun the analysis after changing this.",
             },
             equipmentWatch_routePreference: {
                 id: 'equipmentWatch_routePreference',
@@ -910,7 +910,7 @@ export const settingsGroups = {
                     { value: 'craft', label: 'Prefer crafting' },
                     { value: 'mirror', label: 'Prefer mirror' },
                 ],
-                help: 'Applies to Equipment Watch cards whose route chip is on Auto: the preferred route is used whenever it is priced and applicable for that card, otherwise the card falls back to Auto, which takes the lowest real cost (coins plus the sale value of any copy of yours the route uses up). A card pinned to a route ignores this',
+                help: 'Applies to Equipment Watch cards whose route chip is on Auto: the preferred route is used whenever it is priced and applicable, otherwise the card falls back to Auto (lowest real cost, counting the sale value of any copy of yours the route uses up). A card pinned to a route ignores this.',
             },
             combatText_floating: {
                 id: 'combatText_floating',
@@ -952,7 +952,7 @@ export const settingsGroups = {
                 label: 'Loot Log: Analytics pivot table (📊 button beside Refresh)',
                 type: 'checkbox',
                 default: false,
-                help: 'Every other XP/hr and gold/hr figure in this script is predicted from game data; this is the one built from what your runs actually paid. A sortable table over the current session plus stored history — one row per action and per difficulty tier, with time spent, drop value at ask and bid, and XP/hr per skill (plus a combined line for actions that train several). Off by default because it adds a button to the game’s own panel',
+                help: "A sortable table over the current session plus stored history, built from what your runs actually paid: one row per action and difficulty tier, with time spent, drop value at ask and bid, and XP/hr per skill. Adds a button to the game's own panel. Off by default.",
             },
             lootLogPivotSplitLabyrinth: {
                 id: 'lootLogPivotSplitLabyrinth',
@@ -966,14 +966,14 @@ export const settingsGroups = {
                 label: 'Loot Log: Drop luck percentile for gathering runs',
                 type: 'checkbox',
                 default: true,
-                help: "Places a run's drop value in the distribution of everything those actions could have paid — 50 is typical, 5 means nineteen runs in twenty do better. Only for actions with their own drop table (gathering); combat has its own verdict and production rolls nothing",
+                help: "Places a run's drop value in the distribution of everything those actions could have paid: 50 is typical, 5 means nineteen runs in twenty do better. Only for actions with their own drop table (gathering); combat has its own verdict and production rolls nothing.",
             },
             lootLogEnhancingCost: {
                 id: 'lootLogEnhancingCost',
                 label: 'Loot Log: Enhancing cost, luck and profit',
                 type: 'checkbox',
                 default: false,
-                help: 'Adds a summary to enhancing loot-log entries: material and protection cost vs the statistically expected cost (how lucky the run was), and the profit — the finished item’s after-fee value minus the base and what you spent. Reconstructed from the run’s per-level results, assuming the cost-optimal protect level.',
+                help: 'Adds a summary to enhancing loot-log entries: material and protection cost vs the statistically expected cost (how lucky the run was), and the profit (finished item after-fee value minus base and spend). Assumes the cost-optimal protect level.',
             },
         },
     },
@@ -1013,14 +1013,14 @@ export const settingsGroups = {
                 label: 'Show make-vs-buy line for own use (no sales tax)',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a line to the profit section comparing buying the item at the current ask against crafting it for your own consumption — materials and teas at your efficiency, with no sales tax on either side, since a dungeon key or a meal you use is never sold. The profit figures above it stay seller-priced.',
+                help: 'Adds a line to the profit section comparing buying the item at the current ask with crafting it for your own use (materials and teas at your efficiency, no sales tax on either side). The profit figures above stay seller-priced.',
             },
             itemTooltip_heldCraftCompare: {
                 id: 'itemTooltip_heldCraftCompare',
                 label: 'Show craft-vs-sell line for materials you already hold',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a line to the profit section for materials you already hold, such as dungeon drops: what crafting them and selling the result earns per item over selling the materials as they are. Each material is worth what selling it would bring under your pricing mode, after the sales tax; teas are still bought, and the output is priced as in the profit figure. Shown with the production cost and profit section. Not shown for recipes with several outputs, for an enhanced upgrade item, for Iron Cow characters, or when a material, a tea or the output has no market price.',
+                help: 'Adds a line to the profit section for materials you already hold, such as dungeon drops: what crafting them and selling the result earns per item over selling the materials as they are, after sales tax and at your pricing mode. Not shown for multi-output recipes, enhanced upgrade items, Iron Cow characters, or when a material, tea or the output has no market price.',
             },
             itemTooltip_detailedProfit: {
                 id: 'itemTooltip_detailedProfit',
@@ -1034,14 +1034,14 @@ export const settingsGroups = {
                 label: 'Craft cost includes crafting sub-materials',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a "Best plan" row to the detailed materials table that prices the craft by buying or crafting each ingredient, whichever is cheaper, all the way down. Shown only when it differs from the Total row; a sub-material with no market price marks it as a floor (≥). The profit/hr figure always uses the Total row. Not shown while "direct recipe only" is on',
+                help: 'Adds a "Best plan" row to the detailed materials table that prices the craft by buying or crafting each ingredient, whichever is cheaper. Shown only when it differs from Total; a sub-material with no price marks it as a floor (≥). Profit/hr always uses Total. Not shown while "direct recipe only" is on.',
             },
             itemTooltip_detailedProfitFlat: {
                 id: 'itemTooltip_detailedProfitFlat',
                 label: 'Profit: direct recipe only (buy base items, no sub-craft chain)',
                 type: 'checkbox',
                 default: false,
-                help: 'Costs each recipe ingredient at its own market Ask/Bid and stops there, instead of recursing into how a craftable ingredient is itself made. The detailed breakdown collapses to the direct ingredients, and the profit/hr is figured for buying the base items and crafting just this one step (no upgrade-item craft cost or chain time). Overrides "Use crafting cost for upgrade items if cheaper" while on.',
+                help: 'Costs each recipe ingredient at its own market Ask/Bid and stops there instead of recursing into how it is made. The breakdown shows only direct ingredients, and profit/hr is for buying the base items and crafting this one step. Overrides "Use crafting cost for upgrade items if cheaper" while on.',
             },
             itemTooltip_multiActionProfit: {
                 id: 'itemTooltip_multiActionProfit',
@@ -1055,14 +1055,14 @@ export const settingsGroups = {
                 label: 'Show self-use alchemy lines (no sales tax)',
                 type: 'checkbox',
                 default: false,
-                help: 'Adds self-use lines to the alternative actions: decompose once, the full decompose chain down to materials (with the gear it collects along the way, for the collection log), and transmuting an item you already hold. Which outputs are kept follows "What a K mark means" (press K on a tooltip, or click the chip there): by default every output is kept, valued at what you would pay for it under your pricing mode with no sales tax, except the ones you mark to sell, valued at what selling them would bring after tax. In "keep" mode it is the other way round. The decomposed item costs the cheaper of making or buying it, and a held item costs what selling it would bring after tax. The ordinary taxed figures are unchanged.',
+                help: 'Adds self-use lines to the alternative actions: decompose once, the full decompose chain (with the gear it collects, for the collection log), and transmuting an item you hold. Which outputs are kept follows "What a K mark means" (press K on a tooltip). Kept outputs are valued at your buy price, sold ones after tax. The ordinary taxed figures are unchanged.',
             },
             itemTooltip_selfUseKeepChip: {
                 id: 'itemTooltip_selfUseKeepChip',
                 label: 'Show the Keep for self-use chip on tooltips',
                 type: 'checkbox',
                 default: false,
-                help: 'A small "Sell (K)" tag ("Keep (K)" in keep mode) on the tooltip of an alchemy output, clickable or toggled with the K key, for marking it. Needs the self-use lines or the cheaper-routes setting to be on. Marks made earlier still count with this off, and the list below can still review and remove them.',
+                help: 'A small "Sell (K)" tag ("Keep (K)" in keep mode) on an alchemy output tooltip, clickable or toggled with the K key, for marking it. Needs the self-use lines or the cheaper-routes setting on. Earlier marks still count with this off, and the list below can review and remove them.',
             },
             selfUse_markMeaning: {
                 id: 'selfUse_markMeaning',
@@ -1073,7 +1073,7 @@ export const settingsGroups = {
                     { value: 'sell', label: 'K marks items to sell (keep the rest)' },
                     { value: 'keep', label: 'K marks items to keep (sell the rest)' },
                 ],
-                help: 'Which way the self-use marks (K on a tooltip) cut. "Sell" (the default) marks the few outputs you sell: a marked output is valued as sold after tax and every other output is kept, which suits the full decompose chain when you keep most intermediates for the collection log and crafting. "Keep" flips that: a marked output is valued at what you would pay for it and every other output is sold after tax. Marks made before this default existed were cleared once, since they meant "keep"; they are not carried over.',
+                help: 'Which way the self-use marks (K on a tooltip) cut. "Sell" (default): a marked output is valued as sold after tax and every other output is kept. "Keep" flips that: a marked output is valued at what you would pay and every other output is sold after tax. Marks made before this default existed were cleared once.',
             },
             itemTooltip_selfUseKeepList: {
                 id: 'itemTooltip_selfUseKeepList',
@@ -1087,7 +1087,7 @@ export const settingsGroups = {
                 label: 'Show cheaper alchemy routes instead of buying',
                 type: 'checkbox',
                 default: false,
-                help: 'On an item you might buy (an essence before enhancing, say), names the best one or two items you could buy and decompose or transmute to get it for less than buying it, and how much each saves per unit. Prices follow your Buy and Sell pricing: the item, source, catalyst and tea are bought at your buy price; every other output is sold at your sell price after tax, or valued at your buy price when kept for self-use (see "What a K mark means"). Estimated prices are left out. Alchemy time is charged at "Your time value (gold/hr)". Nothing is shown when buying is cheapest. Alchemy time is charged at "Your time value (gold/hr)".',
+                help: 'On an item you might buy (an essence before enhancing, say), names the best one or two items you could buy and decompose or transmute to get it for less, and the saving per unit. Prices follow your pricing mode; other outputs are sold after tax or valued at your buy price when kept (see "What a K mark means"). Estimated prices are left out; alchemy time is charged at "Your time value (gold/hr)". Nothing shows when buying is cheapest.',
             },
             itemTooltip_alchemyInsteadHeadline: {
                 id: 'itemTooltip_alchemyInsteadHeadline',
@@ -1107,14 +1107,14 @@ export const settingsGroups = {
                 label: 'Show alchemy routes that beat selling an item you hold',
                 type: 'checkbox',
                 default: true,
-                help: 'On an item you might sell, names the alchemy action (decompose, transmute or coinify) that pays more for one unit you already hold than selling it, and what it nets per unit against selling that unit at your sell price after tax (which side of the book that is follows your pricing mode). The input is valued at your sell price after tax, never your buy price, so this is for items you farmed or made yourself. The catalyst and tea are bought at your buy price; every output is sold at your sell price after tax, whatever your K marks say. Estimated prices are left out. Alchemy time is charged at "Your time value (gold/hr)". Nothing is shown when selling pays more.',
+                help: 'On an item you might sell, names the alchemy action (decompose, transmute or coinify) that pays more for one unit you hold than selling it at your sell price after tax. For items you farmed or made yourself. Outputs are sold after tax whatever your K marks say; estimated prices are left out; alchemy time is charged at "Your time value (gold/hr)". Nothing shows when selling pays more.',
             },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',
                 label: 'Show expected value for openable containers',
                 type: 'checkbox',
                 default: true,
-                help: 'Shows the expected value of a crate, chest or other openable container on its tooltip, and the all-N duration line on a stack of scrolls. Only the tooltip changes: with this off, those containers are still priced in net worth, inventory badges, the loot log, combat stats and task values, so those figures do not depend on it.',
+                help: 'Shows the expected value of a crate, chest or other openable container on its tooltip, and the all-N duration line on a stack of scrolls. Only the tooltip changes: with this off, containers are still priced in net worth, inventory badges, the loot log, combat stats and task values.',
             },
             expectedValue_showDrops: {
                 id: 'expectedValue_showDrops',
@@ -1159,21 +1159,21 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 requires: 'dungeonTokenTooltips',
-                help: "Under a dungeon token's shop table, the most profitable gear to craft from that dungeon's drops and token-shop items: sold at +0, and enhanced to the Craft & Enhance target level, per item after tax, valued the way that window values held drops. Read from the Craft & Enhance window's ranking (its setting must be on); the first hover after prices refresh starts the ranking and says so. Hidden for Iron Cow characters.",
+                help: "Under a dungeon token shop table, the most profitable gear to craft from that dungeon's drops and token-shop items, sold at +0 and enhanced to the Craft & Enhance target level, per item after tax. Needs the Craft & Enhance setting on; the first hover after prices refresh starts the ranking. Hidden for Iron Cow characters.",
             },
             inventoryTooltipBeside: {
                 id: 'inventoryTooltipBeside',
                 label: 'Keep item tooltips off the hovered item',
                 type: 'checkbox',
                 default: true,
-                help: "When an item's tooltip (inventory, Loadouts and equipment panels, marketplace, item pickers) is too tall to fit above or below the item, it opens to the left or right of the item, whichever has more room, instead of covering it. Tooltips that fit above or below stay where the game puts them. Off on phones.",
+                help: 'When an item tooltip (inventory, Loadouts and equipment panels, marketplace, item pickers) is too tall to fit above or below the item, it opens to the left or right instead of covering it. Tooltips that fit stay where the game puts them. Off on phones.',
             },
             itemTooltip_wheelScroll: {
                 id: 'itemTooltip_wheelScroll',
                 label: 'Scroll tall tooltips with the mouse wheel',
                 type: 'checkbox',
                 default: true,
-                help: 'When a tooltip is taller than the window, the mouse wheel over the item scrolls the tooltip instead of the page, so the lines cut off at the bottom (enhancement milestones and the like) can be read. At the top or bottom of the tooltip the wheel scrolls the page again, and a scroll that started on the page carries on scrolling it.',
+                help: 'When a tooltip is taller than the window, the mouse wheel over the item scrolls the tooltip instead of the page, so cut-off lines (enhancement milestones and the like) can be read. At the top or bottom the wheel scrolls the page again.',
             },
             shop_maxBuyButton: {
                 id: 'shop_maxBuyButton',
@@ -1187,7 +1187,7 @@ export const settingsGroups = {
                 label: 'Shop: Show value per token',
                 type: 'checkbox',
                 default: true,
-                help: 'Shows what one token is worth in each entry of the Dungeon, Labyrinth and Task shops (the market value of what it buys, after market tax, per token) and stars the best entry for each token. A Task shop chest is valued at the higher of its market price and the expected value of its drops (a floor if some drops have no price), as in the task token tooltip. Untradable capes show the untradable-cape base value setting with an asterisk and are never starred.',
+                help: 'Shows what one token is worth in each entry of the Dungeon, Labyrinth and Task shops (market value of what it buys, after market tax, per token) and stars the best entry per token. A Task shop chest uses the higher of market price and expected drops. Untradable capes show the untradable-cape base value with an asterisk and are never starred.',
             },
             dungeonShopPlanner: {
                 id: 'dungeonShopPlanner',
@@ -1229,7 +1229,7 @@ export const settingsGroups = {
                 min: 0,
                 max: 100,
                 requires: 'dungeonShopPlanner',
-                help: 'Once the best items hit their volume caps, leftover tokens used to fall through to whatever was next in line, often at a much worse price. This holds those tokens for the next run instead of spending them on an item below this share of the best gold/token available. 0 turns the hold off.',
+                help: 'Once the best items hit their volume caps, leftover tokens used to fall through to a much worse item. This holds them for the next run instead of spending them on an item below this share of the best gold/token available. 0 turns the hold off.',
             },
             dungeonShopPlanner_skipEssence: {
                 id: 'dungeonShopPlanner_skipEssence',
@@ -1303,7 +1303,7 @@ export const settingsGroups = {
                 label: 'Quote enhancement predictions at pro rates instead of your stats',
                 type: 'checkbox',
                 default: false,
-                help: 'Prices the enhancement path and milestones as a top-end enhancer (level 140, Observatory 8, ultra + blessed tea, +13 Celestial enhancer, +10 gear) instead of your own gear and level. Also toggled from the "Yours / Pro" chip on the tooltip section header, or by pressing P while the tooltip is open.',
+                help: 'Prices the enhancement path and milestones as a top-end enhancer (level 140, Observatory 8, ultra + blessed tea, +13 Celestial enhancer, +10 gear) instead of your own gear. Also toggled from the "Yours / Pro" chip on the tooltip header, or with P while the tooltip is open.',
             },
             itemTooltip_enhancingHourlyRate: {
                 id: 'itemTooltip_enhancingHourlyRate',
@@ -1636,14 +1636,14 @@ export const settingsGroups = {
                 label: 'Resume the last session when a run picks up where it ended',
                 type: 'checkbox',
                 default: false,
-                help: 'When a new enhancing run is the same item, target level and protection setup as the most recent session, and starts at exactly the level that session ended at, its attempts are added to that session instead of starting a new one. Only active enhancing time is counted. It matches by item and level only, so a different copy of the same item at the same level also resumes it, as does a run whose protection item is not known yet.',
+                help: 'A new enhancing run with the same item, target level and protection setup as the most recent session, starting at the level it ended at, adds to that session instead of starting a new one. Only active enhancing time counts. Matches by item and level only, so another copy at that level also resumes it.',
             },
             enhancementTracker_autoCombine: {
                 id: 'enhancementTracker_autoCombine',
                 label: 'Auto-resume also continues a run that uses a different protection item',
                 type: 'checkbox',
                 default: true,
-                help: 'Works with auto-resume. When the new run matches the most recent session in every way except the protection item it loads, it still continues that session instead of starting a new one, and the session lists the protection used per item. A different target, a different protect-from level or a different starting level still start a new session.',
+                help: 'Works with auto-resume. When a new run matches the most recent session in everything except the protection item, it still continues that session, which lists the protection used per item. A different target, protect-from level or starting level starts a new session.',
             },
             enhancementXPH: {
                 id: 'enhancementXPH',
@@ -2839,21 +2839,21 @@ export const settingsGroups = {
                 label: 'Combat meters: Keep the live session through a page refresh',
                 type: 'checkbox',
                 default: true,
-                help: 'Saves the damage and damage-taken tallies, the DPS graph and a watched guild trial every few seconds, in this browser only, and picks them back up after a refresh within 20 minutes — for the same character and the same party and zone, or the same trial fight. The last few seconds before a refresh can be missing, and the first hit on each unit after it is not counted.',
+                help: 'Saves the damage tallies, DPS graph and a watched guild trial in this browser, and restores them after a refresh within 20 minutes for the same character, party and zone (or trial fight). The last few seconds before a refresh can be missing.',
             },
             partyLint_live: {
                 id: 'partyLint_live',
                 label: 'Party lint: Flag loadout mistakes in the live party',
                 type: 'checkbox',
                 default: true,
-                help: 'The same checks the Combat Sim runs before a party simulation — skilling gear in a combat slot, the same aura equipped twice — fired on the party you are actually fighting with, as an amber block in the Damage panel. Auras are checked for everyone; gear only for you, since the battle payload carries no one’s equipment. Parties of 2+ only',
+                help: 'Runs the Combat Sim party checks (skilling gear in a combat slot, the same aura twice) on your live party, as an amber block in the Damage panel. Auras are checked for everyone, gear only for you. Parties of 2+ only.',
             },
             combatRecorder_autoStart: {
                 id: 'combatRecorder_autoStart',
                 label: 'Auto-record combat on load',
                 type: 'checkbox',
                 default: false,
-                help: 'Starts the combat recorder the moment the page loads and writes the file out on its own, then switches itself back off. The Record button in the Damage panel cannot capture the first seconds of a session, which is exactly when a reload lands mid-fight and the client never sees what it is fighting. Turn it on again for each recording you want',
+                help: 'Starts the combat recorder as soon as the page loads and saves the file on its own, then switches itself off. Catches the first seconds after a reload that the Record button cannot. Turn it on again for each recording.',
             },
             combatRecorder_autoStartSeconds: {
                 id: 'combatRecorder_autoStartSeconds',
@@ -2878,7 +2878,7 @@ export const settingsGroups = {
                 default: false,
                 // A `liveStop` registry entry: turning it on starts recording
                 // live, turning it off tears the hooks down live too.
-                help: 'Watches the battle stream for a stun that was still being reported after its caster died, keeping only the waves where exactly one thing could have cast it. The tally survives a reload and builds up over sessions. The payload carries one crowd-control flag, so this covers stun only — not blind and not silence. Feeds the Stun Persistence overlay row and the panel behind it',
+                help: 'Watches for a stun still reported after its caster died, keeping only waves where exactly one thing could have cast it. The tally builds up over sessions. Stun only, not blind or silence. Feeds the Stun Persistence overlay row and panel.',
             },
             waveGapWatch: {
                 id: 'waveGapWatch',
@@ -2887,7 +2887,7 @@ export const settingsGroups = {
                 default: false,
                 // A `liveStop` registry entry: turning it on starts recording
                 // live, turning it off tears the hooks down live too.
-                help: 'Times the last monster of a wave dying to the next wave starting, keeping open-zone respawns, dungeon wave transitions and dungeon run boundaries apart, and calibrating its own timing noise against the interval the server states for each action. The simulator uses one constant for all of these; this is our own measurement of whether it should. The tally survives a reload and builds up over sessions. Feeds the Wave Gap overlay row and the panel behind it',
+                help: "Measures the time from a wave's last monster dying to the next wave starting (open zones, dungeon waves and run boundaries kept apart), to check the constant the simulator uses. The tally builds up over sessions. Feeds the Wave Gap overlay row and panel.",
             },
             tickPeriodWatch: {
                 id: 'tickPeriodWatch',
@@ -2896,7 +2896,7 @@ export const settingsGroups = {
                 default: false,
                 // A `liveStop` registry entry: turning it on starts recording
                 // live, turning it off tears the hooks down live too.
-                help: 'Times the interval between successive regeneration, food and drink recovery, damage-over-time and enrage ticks on the same unit, keeping only the ones the battle stream can tell apart from an ordinary hit or heal, and calibrating its own timing noise against the interval the server states for each action. The simulator advances all four on constants it inherited and nobody here has ever checked. The tally survives a reload and builds up over sessions. Feeds the Tick Period overlay row and the panel behind it',
+                help: 'Measures the interval between regeneration, food and drink recovery, damage-over-time and enrage ticks, to check the constants the simulator uses. The tally builds up over sessions. Feeds the Tick Period overlay row and panel.',
             },
             combatScore: {
                 id: 'combatScore',
@@ -2945,7 +2945,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 requires: 'characterCard',
-                help: 'Adds up to three other learned auras to tib-san.gitlab.io cards, in saved combat/all-skills loadout order, at their current levels (not on cards built from a skilling loadout). Slots 1–5 remain equipped; slots 6–8 are extras. The external viewer does not label or dim the extras. Other players need their own learned/loadout data; yours is never used for them.',
+                help: 'Adds up to three other learned auras to tib-san.gitlab.io cards, in saved combat/all-skills loadout order, at current levels (not on skilling-loadout cards). Slots 1–5 remain equipped; 6–8 are extras. The viewer does not label or dim the extras. Your data only.',
             },
             eliteAchievementReminder: {
                 id: 'eliteAchievementReminder',
@@ -2999,7 +2999,7 @@ export const settingsGroups = {
                 default: 0,
                 min: 0,
                 max: 500,
-                help: 'The average printed beside each run in party chat is a lifetime one by default, so a build or ability change takes hundreds of runs to show up in it. Set a window — 20 is a good starting point — and each line averages only the runs ending with it, labelled with how many it covered. The dungeon panel’s "Avg from here" button does the same job for one dungeon at a stroke.',
+                help: 'The average beside each run in party chat is lifetime by default, so build changes show up slowly. Set a window (20 is a good start) and each line averages only the last runs, labeled with how many. "Avg from here" in the dungeon panel does the same once.',
             },
             labyrinthRunLedger: {
                 id: 'labyrinthRunLedger',
@@ -3048,14 +3048,14 @@ export const settingsGroups = {
                 label: 'Skilling: Show "Buy supplies" button',
                 type: 'checkbox',
                 default: true,
-                help: 'Replaces the Consumables heading on a skill’s action panel with a button that opens the Consumables panel on its Skilling tab for that skill: how long your teas last, with a Buy all walk for whatever is short of your target. Nothing is bought until you confirm in the game',
+                help: 'Replaces the Consumables heading on a skill action panel with a button opening the Consumables panel on its Skilling tab for that skill: how long your teas last, with a Buy all walk. Nothing is bought until you confirm in the game.',
             },
             labyrinthPathStepper: {
                 id: 'labyrinthPathStepper',
                 label: 'Labyrinth: Show shroud and beacon step buttons',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a step button beside Path and beside Beacons that carries out the plan one game action per press: press once to arm the shroud (or beacon), press again to pick the next planned room. It checks the live map before every press and stops with a message if the plan no longer matches. Never presses on its own',
+                help: 'Adds a step button beside Path and Beacons that carries out the plan one game action per press (arm the shroud or beacon, then pick the next room). Checks the live map first and stops if the plan no longer matches. Never presses on its own.',
             },
             labyrinthGridScaleControl: {
                 id: 'labyrinthGridScaleControl',
@@ -3079,7 +3079,7 @@ export const settingsGroups = {
                 label: 'Monster stat check (sim diagnostic)',
                 type: 'checkbox',
                 default: false,
-                help: 'When you click a monster in combat, opens a panel comparing the game’s live buffed stats (armor, resistances, evasion, accuracy) against what the combat sim computes for the same monster — so a modelling gap or an active buff is visible at a glance. Diagnostic; off by default.',
+                help: "Clicking a monster in combat opens a panel comparing the game's live buffed stats (armor, resistances, evasion, accuracy) with what the combat sim computes for it, so a modeling gap or active buff shows. Diagnostic; off by default.",
             },
             labyrinthRecommendTargetRate: {
                 id: 'labyrinthRecommendTargetRate',
@@ -3120,7 +3120,7 @@ export const settingsGroups = {
                     { value: 'capped', label: 'Stop at the fight and time ceilings' },
                     { value: 'precision', label: 'Run to the precision target' },
                 ],
-                help: 'Capped: a sim stops at the standard fight budget even if its clear chance is still loose, and a wide result is marked "(capped)". Run to precision: it keeps fighting until the precision below is met, bounded by a safety backstop of 100× the normal budget so a room that can never converge still ends. Every labyrinth sim follows this — the floor map, the Automation tab, Single Sim and Upgrade — and each panel’s own "Uncapped" box is a view onto it.',
+                help: 'Capped: a sim stops at the standard fight budget even if its clear chance is still loose, and a wide result is marked "(capped)". Run to precision: keeps fighting until the precision below is met, up to a 100x backstop. Applies to every labyrinth sim.',
             },
             labyrinthSimPrecision: {
                 id: 'labyrinthSimPrecision',
@@ -3130,7 +3130,7 @@ export const settingsGroups = {
                 min: 0.1,
                 max: 10,
                 step: 0.5,
-                help: "A room's sim keeps fighting until its clear chance is pinned to within this many percentage points either side — the 95% confidence interval has to fit inside ±this before the run is allowed to stop. A settled room gets there in a few hundred fights and a close one needs thousands, so the work goes where the answer is still in doubt (lower = tighter interval, more fights, slower)",
+                help: 'A room sim keeps fighting until its 95% confidence interval for the clear chance fits within this many percentage points either side. Settled rooms need a few hundred fights, close ones thousands. Lower = tighter, more fights, slower.',
             },
             labyrinthSimMaxHours: {
                 id: 'labyrinthSimMaxHours',
@@ -3140,7 +3140,7 @@ export const settingsGroups = {
                 min: 1,
                 max: 100000,
                 step: 1,
-                help: 'Upper bound on one room simulation, in simulated hours — the fight clock inside the sim, not how long you wait. Precision normally ends a run well before this; the ceiling stops a room whose fights run very long from eating its whole fight budget on a handful of them. Ignored when the stopping rule above is "run to the precision target".',
+                help: 'Upper bound on one room simulation, in simulated hours (the fight clock, not your wait). Stops a room with very long fights from eating the whole fight budget. Ignored when the stopping rule above is "run to the precision target".',
             },
             labyrinthPathClearThreshold: {
                 id: 'labyrinthPathClearThreshold',
@@ -3263,7 +3263,7 @@ export const settingsGroups = {
                 label: 'Labyrinth: Room action logs',
                 type: 'checkbox',
                 default: true,
-                help: 'Records per-action success/fail/double logs for labyrinth skilling rooms and per-attempt win/death/timeout logs for combat rooms, each set beside the clear chance the calculator predicted, grouped by floor with experience per hour. A second tab totals every room ever recorded, so you can see where the calculator is being contradicted (Logs button in the labyrinth panel)',
+                help: 'Records per-action success/fail/double logs for labyrinth skilling rooms and per-attempt win/death/timeout logs for combat rooms, next to the clear chance the calculator predicted, with experience per hour. Logs button in the labyrinth panel.',
             },
             labyrinthRoomLogSize: {
                 id: 'labyrinthRoomLogSize',
@@ -3328,7 +3328,7 @@ export const settingsGroups = {
                 label: 'Death Recap: Show what happened in your last seconds before a death',
                 type: 'checkbox',
                 default: true,
-                help: 'Keeps your own last ~15 seconds of HP, MP, incoming hits and casts in memory (about 30 small samples, nothing saved) and freezes a compact recap when you die. Open it from the death alert or the small Death recap button; the last five are kept until you reload. A zero-HP reading is shown as unconfirmed until the server’s death count agrees, attribution of hits to monsters is approximate, and a recap says so when recording began too late to cover the whole window.',
+                help: 'Keeps your last ~15 seconds of HP, MP, incoming hits and casts in memory (nothing saved) and freezes a recap when you die. Open it from the death alert or the Death recap button; the last five are kept until reload. Hit attribution is approximate.',
             },
             combatDeathRecapLabyrinth: {
                 id: 'combatDeathRecapLabyrinth',
@@ -3349,7 +3349,7 @@ export const settingsGroups = {
                 label: 'Dungeon profit: value chests at my measured treasure rate',
                 type: 'checkbox',
                 default: false,
-                help: "Scales a dungeon chest's expected value in profit estimates by your own treasure rate for that chest — what your recorded openings actually returned against the drop table's expectation, both at today's prices. Only applies once a few hundred openings back the measurement, and every adjusted figure is marked (*) with the measurement in its tooltip",
+                help: "Scales a dungeon chest's expected value in profit estimates by your own treasure rate for it (what your recorded openings returned against the drop table, at today's prices). Needs a few hundred openings; adjusted figures are marked (*).",
             },
             combatDps: {
                 id: 'combatDps',
@@ -3363,7 +3363,7 @@ export const settingsGroups = {
                 label: 'Per-player panel: Rank the party’s damage during normal combat',
                 type: 'checkbox',
                 default: false,
-                help: 'The guild trial’s per-player board, for ordinary party and solo fights: damage (with kills), damage taken beside the healing each member received, and healing done, ranked with shares and rates. Opens from a “Per-player” button on the battle panel. Damage is inferred from health moving per tick and credited by attack counters, presence and mana, so a share is an attribution rather than a measurement — the panel says so. Healing done is credited only to heal casts, life-steal and Bloom procs; regeneration, food and unexplained rises are one team line. Off by default',
+                help: 'The guild trial per-player board for ordinary party and solo fights: damage (with kills), damage taken, healing received and healing done, ranked with shares and rates. Opens from a "Per-player" button on the battle panel. Damage and healing are attributed, not measured. Off by default.',
             },
             portraitDps: {
                 id: 'portraitDps',
@@ -3377,56 +3377,56 @@ export const settingsGroups = {
                 label: 'Unit badges: Show each player’s DPS and share of the damage on their portrait',
                 type: 'checkbox',
                 default: false,
-                help: "A small “1,240/s · 22%” on every party tile, matched by name. The narrow mini units get a compact “1,240/s” pinned to the bottom edge instead, so nothing lands on the name along their top. During a guild trial it reads the spectated trial split instead of this client's own fight. With Portrait DPS also on, the badge leaves the full cards to it and covers the mini units it never reaches — the two never state the same run twice. Off by default because the portraits are already busy",
+                help: 'A small "1,240/s · 22%" on every party tile, matched by name; narrow mini units get a compact "1,240/s" along the bottom edge. In a guild trial it shows the spectated trial split. With Portrait DPS on, the badge covers only the mini units. Off by default.',
             },
             combatPlayerColors: {
                 id: 'combatPlayerColors',
                 label: 'Player colors: Give each player one color on the damage boards and unit badges',
                 type: 'checkbox',
                 default: true,
-                help: 'Each player keeps one color across the Per-player panel, the trial damage board and the unit badges, so a row and a badge can be matched at a glance. Players in the same party get different colors (up to twelve), and a player keeps theirs for the session when someone joins. Click the dot beside a name to pick a color; it is remembered for that player on every character. With this off, the trial board goes back to coloring bars by damage type',
+                help: 'Each player keeps one color across the Per-player panel, trial damage board and unit badges (up to twelve; party members differ). Click the dot beside a name to pick one; it is remembered per player on every character. Off: trial bars color by damage type.',
             },
             combatDpsGraph: {
                 id: 'combatDpsGraph',
                 label: 'DPS graph: Chart damage per second over time on the Per-player panel and trial damage board',
                 type: 'checkbox',
                 default: true,
-                help: 'A small line chart above the rows on the Damage tab: the party, and each player in their own color. On the Per-player panel it covers the same run as the table, with a five-minute and a whole-session view and boss fights shaded red; it reads the damage totals every two seconds and draws a 16-second average. On the trial damage board it draws the trial recorder’s readings, one every fifteen seconds, with the five leading players and a dashed line at each wave or tier change. Either board can hide it. It also feeds the small party DPS line in the Per-player panel’s header, which stays visible while the panel is minimized. Needs the Per-player panel on for normal fights',
+                help: 'A small line chart above the rows on the Damage tab: the party and each player in their own color. The Per-player panel has five-minute and whole-session views with boss fights shaded; the trial board shows the recorder readings. Also feeds the party DPS line in the panel header. Needs the Per-player panel on for normal fights.',
             },
             combatDpsHitTape: {
                 id: 'combatDpsHitTape',
                 label: 'Hit tape: Show your last minute of hits on the Per-player panel',
                 type: 'checkbox',
                 default: true,
-                help: 'A strip under the DPS graph on the Damage tab with one bar per hit you landed in the last minute: the height is the damage, a gold cap is a crit, a hollow stub is a miss, purple is damage over time and orange is reflected damage. Gaps are the time between waves. Only hits credited to you alone are drawn; a tick shared between party members is left out. Needs the Per-player panel on',
+                help: 'A strip under the DPS graph with one bar per hit you landed in the last minute: height is damage, a gold cap is a crit, a hollow stub is a miss, purple is damage over time, orange is reflected. Only hits credited to you alone. Needs the Per-player panel on.',
             },
             combatMeterHistory: {
                 id: 'combatMeterHistory',
                 label: 'Meter history: Keep finished sessions on the Per-player panel and trial damage board',
                 type: 'checkbox',
                 default: true,
-                help: 'Saves each finished session so it can be opened again from a History button: on the Per-player panel when a run ends (a zone or party change, Reset, a character switch) after 30 seconds of fighting, and on the trial damage board once per trial, with the game’s own totals when they arrive. A saved session redraws the same board read-only — every tab, the per-ability rows and the graph. The last ten per character are kept, plus up to thirty you star; each can be renamed, copied as text or deleted. Stored on this device, per character. Needs the Per-player panel on for normal fights',
+                help: 'Saves each finished session (after 30 seconds of fighting) to a History button on the Per-player panel, and each trial once on the trial damage board. A saved session redraws read-only. Keeps the last ten per character plus thirty starred; rename, copy or delete. Needs the Per-player panel on for normal fights.',
             },
             combatClassOverride: {
                 id: 'combatClassOverride',
                 label: 'Class override: Click a player’s class on the damage boards to set it by hand',
                 type: 'checkbox',
                 default: true,
-                help: 'The class beside each name is inferred from what the player casts and carries, and it can be wrong — a tank whose taunt was never seen, a healer who has only thrown damage so far. Click the class (or the dot beside the name) to set it, or choose Automatic to go back to the inferred class. Remembered by player name on every character, and shown on the Per-player panel and the trial damage board',
+                help: 'The class beside each name is inferred from casts and gear and can be wrong. Click the class (or the dot beside the name) to set it, or choose Automatic to go back. Remembered by player name on every character; shown on the Per-player panel and trial damage board.',
             },
             combatUnitBuffBars: {
                 id: 'combatUnitBuffBars',
                 label: 'Buff bars: Show the buffs and debuffs on every combat unit',
                 type: 'checkbox',
                 default: false,
-                help: "A strip of the game's own ability icons under each tile — yours, every party member's and every monster's — counting down what is on them. Read from the buff maps the server states each tick, so nothing is inferred from a cast: a debuff that was resisted never appears. Effects no ability declares (community buffs, drinks) show an abbreviation instead of an icon. Off by default because the tiles are already busy",
+                help: "A strip of the game's ability icons under each tile (yours, party members and monsters) counting down what is on them, read from the server buff maps, so a resisted debuff never appears. Drinks and community buffs show an abbreviation. Off by default.",
             },
             combatConsumableRunway: {
                 id: 'combatConsumableRunway',
                 label: 'Consumable runway: Show how long each food and drink lasts on the battle grid',
                 type: 'checkbox',
                 default: false,
-                help: 'A small duration under each icon in the in-battle Consumables grid — how long that stock lasts at the rate it is actually being used, red once it drops under the low-consumable warning hours, ∞ for a slot that is filled but not being drunk. Same figure as the Consumables panel and the low-consumable alert, from the same forecast; what is new is only that it is readable mid-fight without a click. Needs Combat Statistics on, since its tracker measures the rate. Off by default.',
+                help: 'A small duration under each icon in the in-battle Consumables grid: how long that stock lasts at the rate it is used, red under the low-consumable warning hours, infinity for a filled slot not being drunk. Needs Combat Statistics on. Off by default.',
             },
             portraitDpsPosition: {
                 id: 'portraitDpsPosition',
@@ -3508,7 +3508,7 @@ export const settingsGroups = {
                 label: 'Dungeon Tracker: How long your keys will last',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds "(~1h 20m)" beside the Keys count on the in-progress dungeon panel: your held entry keys times the average of your recent clears of this dungeon, tier and team (up to 20, within the Dungeon Tracker average window and since any "Avg from here" reset). Needs at least three such clears; shows nothing with no keys',
+                help: 'Adds "(~1h 20m)" beside the Keys count on the in-progress dungeon panel: held entry keys times your average recent clear of this dungeon, tier and team (up to 20, within the Dungeon Tracker window). Needs at least three clears; nothing with no keys.',
             },
             combatSim: {
                 id: 'combatSim',
@@ -3559,10 +3559,7 @@ export const settingsGroups = {
                 label: 'Combat Simulator: Party tab (find your best party)',
                 type: 'checkbox',
                 default: true,
-                help:
-                    'Adds a Party tab to the Combat Simulator: save teammate builds to a roster, then sim you with ' +
-                    'every party you could make from it, in the zones you pick, and rank the parties by your own ' +
-                    'EXP/hr and profit/hr against going solo. Off: the tab and its roster controls are not drawn.',
+                help: 'Adds a Party tab to the Combat Simulator: save teammate builds to a roster, sim you with every party you could make from it in the zones you pick, and rank the parties by your EXP/hr and profit/hr against solo. Off: the tab is not drawn.',
             },
             combatSim_talismanLineRanking: {
                 id: 'combatSim_talismanLineRanking',
@@ -3570,11 +3567,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 hidden: !isTestServer(),
-                help:
-                    'Test server only. Adds a Talisman lines section to the Upgrade tab: ranks every combat talisman ' +
-                    'line by what it adds to your build (by sim in the chosen zone) and recommends a set (Practical, ' +
-                    'Ideal or within an orb budget). Off: the section is not drawn. The skilling ranking is in the ' +
-                    'Skilling Optimizer.',
+                help: 'Test server only. Adds a Talisman lines section to the Upgrade tab: ranks every combat talisman line by what it adds to your build (by sim in the chosen zone) and recommends a set (Practical, Ideal or within an orb budget). Off: section hidden.',
             },
             combatSim_talismanBalanceXp: {
                 id: 'combatSim_talismanBalanceXp',
@@ -3677,12 +3670,7 @@ export const settingsGroups = {
                 label: 'Combat Simulator: Ignore thread caps',
                 type: 'checkbox',
                 default: false,
-                help:
-                    'Max threads is normally clamped to your core count, and an analysis runs at most "Simulations at ' +
-                    'once" simulations together — each one holds its own copy of the game data, and the tab running ' +
-                    'the game needs a core too. Turn this on to take the thread number literally (0 then means every ' +
-                    'core) and lift the phone 2-thread limit and Simulations at once. It does not lift Max hrs, the ' +
-                    're-sim time cap or Shorten above.',
+                help: 'Max threads is normally clamped to your core count, and an analysis runs a limited number of simulations at once. Turn this on to take the thread number literally (0 = every core) and lift the phone 2-thread limit and Simulations at once. Max hrs, the re-sim time cap and Shorten above still apply.',
             },
             combatSim_maxConcurrentSims: {
                 id: 'combatSim_maxConcurrentSims',
@@ -3747,18 +3735,14 @@ export const settingsGroups = {
                 label: 'Combat & Lab Simulator: Auto-verify close calls',
                 type: 'checkbox',
                 default: false,
-                help: "After an analysis finishes, re-runs up to 3 'within noise' winners longer on fresh paired seeds and marks each confirmed, not confirmed or worse. Slower when it triggers, and never runs on a stopped or remembered result. The Verify buttons work the same way on demand.",
+                help: 'After an analysis finishes, re-runs up to 3 "within noise" winners longer on fresh paired seeds and marks each confirmed, not confirmed or worse. Slower when it triggers; never runs on a stopped or remembered result. The Verify buttons do the same on demand.',
             },
             combatSim_soloMode: {
                 id: 'combatSim_soloMode',
                 label: 'Combat Simulator: Solo (Configure tab checkbox)',
                 type: 'checkbox',
                 default: false,
-                help:
-                    'Mirrors the Solo checkbox next to the party controls on the Configure tab. When on, a ' +
-                    'simulation runs only the player selected there instead of the whole loaded party — the ' +
-                    'roster, fetched loadouts and edits are kept, so unchecking it goes straight back to the ' +
-                    'full party.',
+                help: 'Mirrors the Solo checkbox next to the party controls on the Configure tab. When on, a simulation runs only the player selected there instead of the whole loaded party; the roster, loadouts and edits are kept, so unchecking goes straight back.',
             },
             combatSim_taskDamage: {
                 id: 'combatSim_taskDamage',
@@ -3770,21 +3754,14 @@ export const settingsGroups = {
                     { value: 'perMonster', label: 'Only on your task monsters' },
                     { value: 'everyFight', label: 'Every fight' },
                 ],
-                help:
-                    'Whether a simulation pays the task damage from task badges and trinkets. Off: never, so a ' +
-                    'general zone sim carries no bonus it has not earned. Only on your task monsters: the bonus ' +
-                    'applies against the monsters your own combat tasks name, decided per fight and, in a party, ' +
-                    "from each player's own board, and stopping for each task once the run has killed as many as " +
-                    'that task still needs. Every fight: treat every fight as a task fight, which ' +
-                    'overstates a mixed zone but is what you want comparing task gear head to head. Estimates run ' +
-                    'from the Tasks panel always count the task, whatever this says.',
+                help: 'Whether a simulation pays the task damage from task badges and trinkets. Off: never. Only on your task monsters: against the monsters your own combat tasks name, until each task has its kills. Every fight: treats every fight as a task fight (overstates a mixed zone; good for comparing task gear). Estimates from the Tasks panel always count the task.',
             },
             combatSim_rememberUpgradeResults: {
                 id: 'combatSim_rememberUpgradeResults',
                 label: 'Combat & Lab Simulator: Remember upgrade results across refreshes',
                 type: 'checkbox',
                 default: false,
-                help: 'Keeps the last Upgrade-tab results (Combat Sim and Lab Sim) after a page reload, until you run a new analysis, so a run you waited on is still there when you come back. Off by default because it stores the full result set (one blob per character per sim) in the browser database.',
+                help: 'Keeps the last Upgrade-tab results (Combat Sim and Lab Sim) after a page reload, until you run a new analysis. Off by default because it stores the full result set (one blob per character per sim) in the browser database.',
             },
             combatStats: {
                 id: 'combatStats',
