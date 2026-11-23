@@ -41,6 +41,8 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     settingsUI: () => ({ onSettingsPanelAppear: (callback) => hooks.panelCallbacks.push(callback) }),
+    guildMemberSkills: () => null,
+    marketUndercutAlerts: () => null,
 }));
 
 const { default: philoCalculator } = await import('./philo-calculator.js');
