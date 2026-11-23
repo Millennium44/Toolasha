@@ -12,7 +12,7 @@ Turning off features such as Item Count Display, Listing Price Display, Market H
 
 ### Alchemy says when an item has no price
 
-The alchemy Profitability section now reads "Profitability unavailable: no market price for …" instead of showing nothing when the selected item has no market price.
+The alchemy Profitability section now reads "Profitability unavailable: no market price for …" instead of showing nothing when the selected item has no market price. Items the game draws without an icon, such as Focus Orb, now get their profit figures too.
 
 ### Iron Cow hides skill-page pricing buttons
 
