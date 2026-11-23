@@ -76,6 +76,25 @@ describe('restampRestoredTabConfig', () => {
         expect(out.tabs[0].items).toEqual(['/items/sword']);
     });
 
+    test('a device clock behind the backup never lowers a tab below a record it already outlived', () => {
+        const now = 1_800_000_000_000;
+        const config = {
+            version: 1,
+            tabs: [
+                { id: 'kept', name: 'Kept', items: [], children: [], updatedAt: now + 60_000 },
+                { id: 'old', name: 'Old', items: [], children: [], updatedAt: now - 90_000 },
+            ],
+            removed: { gone: now + 10_000 },
+            clearedAll: { op1: { at: now + 30_000, ids: ['kept', 'old'], prior: [] } },
+        };
+        const out = restampRestoredTabConfig(config, now);
+        // A newer own stamp is kept; everything else lands past the newest deletion the backup carries
+        expect(out.tabs[0].updatedAt).toBe(now + 60_000);
+        expect(out.tabs[1].updatedAt).toBe(now + 30_001);
+        const folded = mergeForKey('settings', KEY).foldPull(out, config);
+        expect(ids(folded)).toEqual(['kept', 'old']);
+    });
+
     test('a JSON string comes back a string; anything else unchanged', () => {
         const now = 1_800_000_000_000;
         expect(JSON.parse(restampRestoredTabConfig(JSON.stringify(backupConfig()), now)).tabs[1].updatedAt).toBe(now);

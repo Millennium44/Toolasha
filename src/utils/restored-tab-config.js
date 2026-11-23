@@ -21,15 +21,34 @@ export function isTabConfigKey(key) {
 }
 
 /**
- * @param {Array} tabs
- * @param {number} now
- * @returns {Array} Copies, every tab and descendant stamped `now`
+ * The newest deletion time the config itself carries: its removal records' `at` and its tombstones.
+ * A restored tab must outlive these too, because the restoring device's clock can be behind the one that
+ * wrote the backup, so `now` alone could fall below a record the tab had already survived.
+ * @param {Object} config
+ * @returns {number}
  */
-function stampTree(tabs, now) {
+function newestDeletion(config) {
+    let newest = 0;
+    const consider = (value) => {
+        const at = Number(value);
+        if (Number.isFinite(at) && at > newest) newest = at;
+    };
+    for (const record of Object.values(config.clearedAll || {})) consider(record?.at);
+    for (const when of Object.values(config.removed || {})) consider(when);
+    return newest;
+}
+
+/**
+ * @param {Array} tabs
+ * @param {number} floor - The least stamp a restored tab may carry
+ * @returns {Array} Copies, every tab and descendant stamped at least `floor`, a newer own stamp kept
+ */
+function stampTree(tabs, floor) {
     return tabs.map((tab) => {
         if (!tab || typeof tab !== 'object') return tab;
-        const out = { ...tab, updatedAt: now };
-        if (Array.isArray(tab.children)) out.children = stampTree(tab.children, now);
+        const own = Number(tab.updatedAt);
+        const out = { ...tab, updatedAt: Number.isFinite(own) && own > floor ? own : floor };
+        if (Array.isArray(tab.children)) out.children = stampTree(tab.children, floor);
         return out;
     });
 }
@@ -51,6 +70,6 @@ export function restampRestoredTabConfig(value, now = Date.now()) {
         }
     }
     if (!config || typeof config !== 'object' || !Array.isArray(config.tabs)) return value;
-    const out = { ...config, tabs: stampTree(config.tabs, now) };
+    const out = { ...config, tabs: stampTree(config.tabs, Math.max(now, newestDeletion(config) + 1)) };
     return typeof value === 'string' ? JSON.stringify(out) : out;
 }
