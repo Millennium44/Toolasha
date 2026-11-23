@@ -6,6 +6,26 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Presets can be combined, and a Guild preset is added
+
+Combat, Market and Guild can now be ticked together on top of Essentials and applied as one, which Restore undoes. Presets no longer switch off about 125 features their players use, such as the command palette, task sorter and Enhancement Simulator.
+
+### Every panel opens from Ctrl+K
+
+About 30 panels that only opened from an Overlay tile now have a command palette entry, among them Account, Party damage, Watchlist, Guild Roster, Trial Ledger and Net worth history.
+
+### Settings take effect without a reload
+
+About 30 switches, among them pop-out chat, mention tracking, alchemy profit, output totals and the best crafting plan, now start or stop as soon as you change them. The few that still need a reload are tagged so in the settings panel.
+
+### Sub-settings gray out with their parent
+
+Options that only work while another setting is on (labyrinth path options, guild trial tools, tooltip price extras and many more) now gray out in the settings panel when it is off.
+
+### Shorter, corrected setting descriptions
+
+Long setting descriptions are about a third shorter, and several that no longer matched what the setting does were corrected. The Guild Trials switch now says it is the master switch for the other trial settings.
+
 ### Scroll tall tooltips with the mouse wheel
 
 When a tooltip is taller than the window, the mouse wheel over the item now scrolls the tooltip, so the lines cut off at the bottom (enhancement milestones and the like) can be read. At either end the wheel scrolls the page again.

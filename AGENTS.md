@@ -262,6 +262,13 @@ Every brief to a sub-agent carries these lines:
   game never sends: `enhancementLevelTotalBonusMultiplierTable` counts 2% steps (+20 = 50), was read as
   a fraction in 3.76.0, and every skilling figure went 100x off. The real table lives in
   `src/__fixtures__/wire/enhancement-scaling.js`.
+- **A new setting is placed, linked and reachable in the same change.** A default-on checkbox goes in
+  the presets it belongs to (`setting-presets.js`, several is fine) or in `LEFT_OUT` with a reason; a
+  sub-setting gets `requires: '<parent>'`; a registry entry whose key is not its setting id gets a
+  `customCheck`, and `liveStop: true` when its `disable()` removes everything (else the setting gets
+  `requiresRefresh: true`); a new panel registers a Ctrl+K command. `setting-presets.test.js`,
+  `settings-schema.test.js`, `feature-registry-gates.test.js` and `panel-command-coverage.test.js`
+  fail until it is.
 - **Pull with `git pull --rebase`**, never a merge.
 - **A changed settings default applies to new users only.** Never migrate existing users' settings
   unless the maintainer asks. New features may default **on**; default one off only when it is
