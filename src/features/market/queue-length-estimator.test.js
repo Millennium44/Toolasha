@@ -488,13 +488,15 @@ describe('combined counts text size', () => {
     });
 });
 
-describe('switched back on with an order book already open', () => {
-    test('initialize repaints from the books cached before the switch-off', () => {
-        const repainted = vi.spyOn(queueLengthEstimator, 'repaint').mockImplementation(() => {});
+describe('switched back on after books moved while it was off', () => {
+    test('disable drops the cached books, so nothing stale is shown as current', () => {
+        queueLengthEstimator.orderBooksCache = {
+            '/items/milk': { data: { orderBooks: [] }, lastUpdated: Date.now() },
+        };
         queueLengthEstimator.disable();
+        expect(queueLengthEstimator.orderBooksCache).toEqual({});
         queueLengthEstimator.initialize();
-        expect(repainted).toHaveBeenCalledTimes(1);
-        repainted.mockRestore();
+        expect(queueLengthEstimator.orderBooksCache).toEqual({});
         queueLengthEstimator.disable();
     });
 });

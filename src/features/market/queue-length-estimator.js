@@ -66,10 +66,6 @@ class QueueLengthEstimator {
         this.setupWebSocketListeners();
         this.setupObserver();
         this.setupVolumeStatsListener();
-
-        // The order books cached before a switch-off stay in hand, so an order book already open is
-        // redrawn now rather than on the next order-book push
-        this.repaint();
     }
 
     /**
@@ -476,6 +472,9 @@ class QueueLengthEstimator {
         try {
             this.clearDisplays();
             this.cleanupRegistry.cleanupAll();
+            // Books stop arriving while this is off, so what is held would be shown as current when it
+            // comes back on. The next order-book push fills it again.
+            this.orderBooksCache = {};
             this.isInitialized = false;
         } catch (error) {
             console.error('[Queue Length Estimator] Disable failed part-way:', error);
