@@ -24,11 +24,12 @@
 
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
-import { addStyles } from '../../utils/dom.js';
+import { addStyles, removeStyles } from '../../utils/dom.js';
 import { PARTY_STATUS_PHRASES } from '../../utils/game-text.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
 const NAME_CLASS = 'mwi-chat-profile-name';
+const STYLE_ID = 'mwi-chat-profile-link-style';
 // "<Name> has <verb> …" announcements; names are single tokens in MWI.
 // The `(?!Guild has\b)` guard skips the guild-wide broadcast "Guild has reached
 // level N!" — "Guild" is the guild there, not a player, so it must not become a
@@ -127,7 +128,7 @@ class ChatProfileLink {
         addStyles(
             `.${NAME_CLASS} { color: #4a9eff; cursor: pointer; }
              .${NAME_CLASS}:hover { text-decoration: underline; }`,
-            'mwi-chat-profile-link-style'
+            STYLE_ID
         );
 
         this.delegatedClickHandler = (e) => {
@@ -192,6 +193,31 @@ class ChatProfileLink {
         }
         this.stylesActive = false;
         this.observerActive = false;
+        this._undecorate();
+    }
+
+    /**
+     * Take the links already drawn back off the page. Without it the names stayed blue with nothing
+     * behind them once the click listener was gone, and a message decorated before the switch-off
+     * was skipped when it came back on. Only the names this module wrapped are unwrapped; an element
+     * another feature marked through `markAsProfileLink` keeps its own text and loses the link look.
+     */
+    _undecorate() {
+        for (const wrap of document.querySelectorAll('[data-mwi-profile-wrap]')) {
+            wrap.replaceWith(...wrap.childNodes);
+        }
+        for (const el of document.querySelectorAll(`.${NAME_CLASS}`)) {
+            const name = el.dataset.mwiProfileName;
+            el.classList.remove(NAME_CLASS);
+            delete el.dataset.mwiProfileName;
+            if (name && el.title === `Open ${name}'s profile`) el.removeAttribute('title');
+        }
+        for (const el of document.querySelectorAll('[data-mwi-profile-link]')) {
+            // Adjacent text nodes the unwrapping left are one again, so a later pass finds the name whole
+            el.normalize();
+            delete el.dataset.mwiProfileLink;
+        }
+        removeStyles(STYLE_ID);
     }
 }
 
@@ -225,6 +251,7 @@ function wrapNameOccurrence(root, { name, afterPrefixes, beforeSuffix }) {
                 range.setStart(node, idx);
                 range.setEnd(node, idx + name.length);
                 const span = document.createElement('span');
+                span.dataset.mwiProfileWrap = '1';
                 markAsProfileLink(span, name);
                 range.surroundContents(span);
                 return;

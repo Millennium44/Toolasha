@@ -30,7 +30,10 @@ vi.mock('../../core/dom-observer.js', () => ({
         },
     },
 }));
-vi.mock('../../utils/dom.js', () => ({ addStyles: () => {} }));
+vi.mock('../../utils/dom.js', () => ({
+    addStyles: () => {},
+    removeStyles: (id) => document.getElementById(id)?.remove(),
+}));
 
 const {
     ANNOUNCE_RE,
@@ -361,5 +364,44 @@ describe('end-to-end: an announcement message decorated by the feature is clicka
         expect(document.querySelector('.mwi-chat-profile-name')?.textContent).toBe('Player11');
 
         chatProfileLinkFeature.disable();
+    });
+});
+
+describe('switching the feature off while messages are on screen', () => {
+    test('disable() takes the links off the page and initialize() draws them again', () => {
+        settings.chat_profileLink = true;
+        document.body.innerHTML =
+            '<div class="Chat_chatInputContainer"><input /></div>' +
+            '<div class="ChatMessage_chatMessage">Player11 has joined the guild!</div>';
+        const messageEl = document.querySelector('.ChatMessage_chatMessage');
+
+        chatProfileLinkFeature.initialize();
+        expect(document.querySelectorAll('.mwi-chat-profile-name')).toHaveLength(1);
+
+        chatProfileLinkFeature.disable();
+        expect(document.querySelector('.mwi-chat-profile-name')).toBeNull();
+        expect(document.querySelector('[data-mwi-profile-wrap]')).toBeNull();
+        expect(messageEl.textContent).toBe('Player11 has joined the guild!');
+        // One text node again, not three, so the name can be found whole next time
+        expect(messageEl.childNodes).toHaveLength(1);
+
+        chatProfileLinkFeature.initialize();
+        expect(document.querySelectorAll('.mwi-chat-profile-name')).toHaveLength(1);
+        expect(document.querySelector('.mwi-chat-profile-name').textContent).toBe('Player11');
+
+        chatProfileLinkFeature.disable();
+    });
+
+    test('an element another feature marked loses the link look but keeps its text', () => {
+        settings.chat_profileLink = true;
+        document.body.innerHTML = '<span id="other">Mate</span>';
+        const other = document.getElementById('other');
+        markAsProfileLink(other, 'Mate');
+        expect(other.classList.contains('mwi-chat-profile-name')).toBe(true);
+
+        chatProfileLinkFeature.disable();
+
+        expect(other.classList.contains('mwi-chat-profile-name')).toBe(false);
+        expect(other.textContent).toBe('Mate');
     });
 });
