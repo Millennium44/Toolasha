@@ -47,19 +47,19 @@
         "@rollup/plugin-terser": "^1.0.2",
         "chart.js": "4.6.1",
         "chartjs-plugin-datalabels": "2.2.0",
-        "eslint": "^10.14.0",
+        "eslint": "^10.15.0",
         "eslint-config-prettier": "^10.1.8",
         "globals": "^17.14.0",
         "happy-dom": "^21.0.4",
         "husky": "^9.1.7",
-        "lint-staged": "^17.6.0",
+        "lint-staged": "^17.6.1",
         "markdown-link-check": "^3.14.2",
         "markdownlint-cli": "^0.50.0",
         "mathjs": "15.2.0",
         "prettier": "^3.10.1",
-        "rollup": "^4.68.3",
+        "rollup": "^4.68.7",
         "rollup-plugin-banner2": "^1.2.2",
-        "vitest": "^5.1.0"
+        "vitest": "^5.1.1"
     },
     "overrides": {
         "markdownlint-cli": {
