@@ -78,6 +78,9 @@ vi.mock('../../core/config.js', () => ({
             market_listingAge: { type: 'select', value: 'both' },
             inv_valueBadges: { type: 'select', value: 'alwaysAsk' },
             itemTooltip_selfUseAlchemy: { type: 'checkbox', isTrue: true },
+            sellQueue: { type: 'checkbox', isTrue: true },
+            market_itemHop: { type: 'checkbox', isTrue: false },
+            guildCreditExchangeAdvisor: { type: 'checkbox', isTrue: true },
         },
         getSetting: () => true,
         setSetting: (id, value) => world.restored.push([id, value]),
@@ -316,5 +319,79 @@ describe('iron cow mode already on when a setting joins its list', () => {
         await ironCowMode.reconcile();
 
         expect(world.restored).toEqual([]);
+    });
+});
+
+describe('iron cow mode locks the marketplace-screen tools', () => {
+    const MARKET_TOOLS = ['sellQueue', 'market_itemHop', 'guildCreditExchangeAdvisor'];
+
+    beforeEach(() => {
+        world.characterId = 'char1';
+        world.store = new Map();
+        world.deleted = [];
+        world.restored = [];
+        world.switchOnRead = false;
+        world.switchOnWrite = false;
+        world.readFails = false;
+        world.writeFails = false;
+    });
+
+    test('every marketplace tool is on the locked list, valued trackers are not', () => {
+        for (const id of [
+            'sellQueue',
+            'market_multiplierButtons',
+            'market_showOwnedInBuyModal',
+            'market_listingRefreshNavigator',
+            'market_itemHop',
+            'market_tradeLedger',
+            'market_staleCapital',
+            'market_overbidPanel',
+            'market_depthCapEnabled',
+            'market_collectableListingsToTop',
+            'market_raiseBuyPriceToCoverQuantity',
+            'market_consumableBuyOpenRecommended',
+            'chestKeyMarketButton',
+            'guildCreditExchangeAdvisor',
+        ]) {
+            expect(IRON_COW_SETTINGS.has(id), id).toBe(true);
+        }
+        for (const id of ['lootLogStats', 'treasureTracker', 'watchlist', 'enhanceSim', 'goalPlanner']) {
+            expect(IRON_COW_SETTINGS.has(id), id).toBe(false);
+        }
+    });
+
+    test('turning the mode on snapshots the player value then forces the tools off; turning it off restores', async () => {
+        await ironCowMode.enable();
+        const snapshot = world.store.get('settings::toolasha_ironCowSnapshot_char1');
+        expect(snapshot.sellQueue).toEqual({ type: 'checkbox', value: true });
+        expect(snapshot.market_itemHop).toEqual({ type: 'checkbox', value: false });
+        const forced = Object.fromEntries(world.restored);
+        for (const id of MARKET_TOOLS) expect(forced[id], id).toBe(false);
+
+        world.restored = [];
+        await ironCowMode.disable();
+        const back = Object.fromEntries(world.restored);
+        expect(back.sellQueue).toBe(true);
+        expect(back.market_itemHop).toBe(false);
+        expect(back.guildCreditExchangeAdvisor).toBe(true);
+    });
+
+    test('a mode already on at upgrade snapshots the newly locked tools before forcing them, and restores them', async () => {
+        // Snapshot written by a build whose list lacked the marketplace tools
+        world.store.set('settings::toolasha_ironCowSnapshot_char1', { invWorth: { type: 'checkbox', value: false } });
+
+        await ironCowMode.reconcile();
+
+        const snapshot = world.store.get('settings::toolasha_ironCowSnapshot_char1');
+        expect(snapshot.sellQueue).toEqual({ type: 'checkbox', value: true });
+        expect(snapshot.guildCreditExchangeAdvisor).toEqual({ type: 'checkbox', value: true });
+        const forced = Object.fromEntries(world.restored);
+        for (const id of MARKET_TOOLS) expect(forced[id], id).toBe(false);
+
+        world.restored = [];
+        await ironCowMode.disable();
+        const back = Object.fromEntries(world.restored);
+        expect(back.sellQueue).toBe(true);
+        expect(back.guildCreditExchangeAdvisor).toBe(true);
     });
 });

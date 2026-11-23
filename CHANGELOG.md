@@ -14,6 +14,10 @@ Combat, Market and Guild can now be ticked together on top of Essentials and app
 
 Labyrinth Room Logs, Trial Abilities, Production Arbitrage, the dungeon token spend plan, and the Overbid table now open from the command palette, and the pooled price panel is listed as Price History. Panels that also have an Overlay tile are listed once, under their own name, and leave the palette when their feature is off. Command hints are now searched too.
 
+### Iron Cow mode also turns off marketplace tools
+
+Iron Cow mode now also switches off tools that only work on the marketplace, such as Sell Queue, item hop, the trade ledger and the buy and sell dialog helpers. Your own choices come back when you turn the mode off.
+
 ### Settings take effect without a reload
 
 About 30 switches, among them pop-out chat, mention tracking, alchemy profit, output totals and the best crafting plan, now start or stop as soon as you change them. The few that still need a reload are tagged so in the settings panel.
