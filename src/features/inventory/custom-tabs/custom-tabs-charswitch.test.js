@@ -170,6 +170,8 @@ beforeEach(async () => {
     dm.characterName = null;
     dm.gameMode = 'standard';
     dm.characterItems = [];
+    // An import over existing tabs asks first; the player says yes unless a test says otherwise
+    globalThis.confirm = vi.fn(() => true);
 });
 
 afterEach(() => {
@@ -353,6 +355,27 @@ describe('self-sufficient reload', () => {
         expect(document.querySelector('.toolasha-ct-modal-overlay')).toBeNull();
     });
 
+    test('a character switch closes the tab editor, and its Confirm Delete never reaches the arrival', async () => {
+        // Both characters hold the same id, as an import made before imports re-id'd tabs left them
+        store('ironChar', config([{ id: 'shared', name: 'Ironman Gear' }]));
+        store('mainChar', config([{ id: 'shared', name: 'Main Gear' }]));
+        await startUI();
+        ui._openEditor('shared');
+        const deleteBtn = document.querySelector('.toolasha-ct-delete-btn');
+        deleteBtn.click(); // "Confirm Delete?"
+
+        dm.charId = 'mainChar';
+        await dm.emit('character_initialized', { _isCharacterSwitch: true });
+        expect(document.querySelector('.toolasha-ct-modal-overlay')).toBeNull();
+
+        // A press that still reaches the departed editor's button is refused
+        deleteBtn.click();
+        await flushConfigWrites();
+        expect(tabIds(ui._config)).toEqual(['shared']);
+        expect(tabIds(stored('mainChar'))).toEqual(['shared']);
+        expect(stored('mainChar').clearedAll).toBeUndefined();
+    });
+
     test('the loadout-binding cache is rebuilt for the arriving character', async () => {
         // `_boundBaseHrids` is baseHrid → Map<loadoutName, level>, derived from
         // `_config`'s loadoutBindings and rebuilt only when it is null. The reload
@@ -504,6 +527,41 @@ describe('Export / Import across characters', () => {
         expect(ui._config.tabs.map((t) => t.name)).toEqual(['Ores', 'Gear']);
         // The file's own tombstones are gone; the only deletion on file is the layout the import replaced
         expect(Object.keys(ui._config.removed ?? {})).toEqual(['mc-tab']);
+    });
+
+    test('an import over existing tabs asks first, and a cancel writes nothing', async () => {
+        store(
+            'mainChar',
+            config([
+                { id: 'mc-tab', name: 'Main Gear' },
+                { id: 'mc-two', name: 'Ores' },
+            ])
+        );
+        dm.charId = 'mainChar';
+        await startUI();
+        const before = structuredClone(stored('mainChar'));
+        globalThis.confirm = vi.fn(() => false);
+
+        const file = JSON.stringify({ _toolasha: 'tabs-v1', version: 1, tabs: [{ id: 'x', name: 'New', items: [] }] });
+        await ui._handleImportFile(new File([file], 'toolasha-tabs.json', { type: 'application/json' }));
+        await flushConfigWrites();
+
+        expect(globalThis.confirm).toHaveBeenCalledTimes(1);
+        expect(globalThis.confirm.mock.calls[0][0]).toContain('Replace your 2 custom tabs');
+        expect(globalThis.confirm.mock.calls[0][0]).toContain('other synced devices');
+        expect(tabIds(ui._config)).toEqual(['mc-tab', 'mc-two']);
+        expect(stored('mainChar')).toEqual(before);
+    });
+
+    test('an import over no tabs does not ask', async () => {
+        dm.charId = 'mainChar';
+        await startUI();
+        const file = JSON.stringify({ _toolasha: 'tabs-v1', version: 1, tabs: [{ id: 'x', name: 'New', items: [] }] });
+        await ui._handleImportFile(new File([file], 'toolasha-tabs.json', { type: 'application/json' }));
+        await flushConfigWrites();
+
+        expect(globalThis.confirm).not.toHaveBeenCalled();
+        expect(stored('mainChar').tabs.map((t) => t.name)).toEqual(['New']);
     });
 
     test('a tab deleted from the panel stays deleted when a gist still holds it unstamped', async () => {

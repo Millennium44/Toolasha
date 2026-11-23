@@ -106,6 +106,11 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/restored-tab-config.js',
+        // The settings import (core) and the full-backup restore (sync, in ui) both stamp a restored tab config
+        'Pure functions over a config value and a key name; no module state to share.',
+    ],
+    [
         'src/utils/talisman-bonuses.js',
         'Pure talisman arithmetic and constants; the bonus set rides on the equipment Map under a Symbol.for key, which every bundle resolves to the same symbol, so no module state exists to diverge.',
     ],
