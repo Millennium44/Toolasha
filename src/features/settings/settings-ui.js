@@ -754,6 +754,33 @@ class SettingsUI {
     }
 
     /**
+     * Whether a `requires` parent is on AND actually doing something: a parent
+     * that itself `requires` another setting counts as off while that one is off,
+     * so a grandchild greys with the grandparent (Dungeon pace under the panel
+     * under the tracker). `disabledBy` is not followed: it only paints a lock.
+     *
+     * @param {string} parentId - The setting id named by `requires`
+     * @returns {boolean}
+     */
+    _requiredSettingIsOn(parentId) {
+        const seen = new Set();
+        let id = parentId;
+        while (id && !seen.has(id)) {
+            if (!this._parentSettingIsOn(id)) return false;
+            seen.add(id);
+            let next = null;
+            for (const group of Object.values(settingsGroups)) {
+                if (group.settings[id]) {
+                    next = group.settings[id].requires || null;
+                    break;
+                }
+            }
+            id = next;
+        }
+        return true;
+    }
+
+    /**
      * Apply disabled/greyed-out state for settings controlled by a parent setting.
      *
      * Two directions, and they are opposites. `disabledBy` greys a row while its
@@ -796,7 +823,7 @@ class SettingsUI {
 
                 const disabled = settingDef.disabledBy
                     ? this._parentSettingIsOn(settingDef.disabledBy)
-                    : !this._parentSettingIsOn(settingDef.requires);
+                    : !this._requiredSettingIsOn(settingDef.requires);
                 const settingEl = document.querySelector(`.toolasha-setting[data-setting-id="${settingId}"]`);
                 if (!settingEl) continue;
 

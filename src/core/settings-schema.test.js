@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import process from 'node:process';
 import { describe, test, expect, vi } from 'vitest';
-import { getSettingDefinition } from './settings-schema.js';
+import { getSettingDefinition, settingsGroups } from './settings-schema.js';
 import { isTestServer } from '../utils/game-server.js';
 
 describe('character card extra auras', () => {
@@ -454,6 +454,81 @@ describe('Major Patch 1 settings stay off the live settings UI', () => {
             expect(fresh.getSettingDefinition(id).hidden).toBe(false);
         } finally {
             vi.unstubAllGlobals();
+        }
+    });
+});
+
+describe('requires and disabledBy parent links', () => {
+    const rows = Object.values(settingsGroups).flatMap((group) => Object.entries(group.settings));
+    const byId = Object.fromEntries(rows);
+
+    test('every link names an existing setting that can be switched on or off', () => {
+        for (const [id, def] of rows) {
+            for (const key of ['requires', 'disabledBy']) {
+                if (def[key] === undefined) continue;
+                expect(typeof def[key], `${id}.${key} is one setting id`).toBe('string');
+                const parent = byId[def[key]];
+                expect(parent, `${id}.${key} -> ${def[key]} exists`).toBeDefined();
+                expect(
+                    ['checkbox', 'checkboxWithButton', 'select', 'text'],
+                    `${id}.${key} -> ${def[key]} is a switch or choice`
+                ).toContain(parent.type);
+                expect(def[key], `${id} names itself`).not.toBe(id);
+            }
+        }
+    });
+
+    test('following requires never loops', () => {
+        for (const [id] of rows) {
+            const seen = new Set([id]);
+            let next = byId[id].requires;
+            while (next) {
+                expect(seen.has(next), `${id} loops back through ${next}`).toBe(false);
+                seen.add(next);
+                next = byId[next]?.requires;
+            }
+        }
+    });
+
+    test('sub-settings that only act inside a feature name it as their parent', () => {
+        const pairs = {
+            labyrinthPathStepper: 'labyrinthClearRate',
+            labyrinthBeaconCount: 'labyrinthClearRate',
+            labyrinthAutoPathOnReveal: 'labyrinthAutoPath',
+            labyrinthLiveCombatSim: 'labyrinthLiveProgress',
+            labyrinthRoomLogSize: 'labyrinthRoomLogs',
+            dungeonPace: 'dungeonTrackerUI',
+            combatDpsHitTape: 'combatDpsPanel',
+            combatConsumableRunway: 'combatStats',
+            guildTrialTracking: 'guildTrialsInfo',
+            notifications_trialAudience: 'notifications_trialStarting',
+            guildTrialKeepInputs: 'guildTrialSim',
+            guildMembersShowLastXPH: 'guildXPDisplay',
+            insights_calibrationBadges: 'insights_calibration',
+            itemTooltip_effectivePrices: 'itemTooltip_prices',
+            itemTooltip_craftCostSubMaterials: 'itemTooltip_detailedProfit',
+            enhancementTracker_autoCombine: 'enhancementTracker_autoResume',
+            market_bulkSellQueueDays: 'market_bulkSellAssistant',
+            invSort_collapseAll: 'invSort',
+            inventoryTabs_tileGap: 'inventoryTabs',
+            combatScalePlayers: 'combatScale',
+        };
+        for (const [id, parent] of Object.entries(pairs)) {
+            expect(getSettingDefinition(id).requires, id).toBe(parent);
+        }
+    });
+
+    test('settings that also work without the feature they sit beside stay unlinked', () => {
+        // Each is read by a second consumer that does not need the obvious parent
+        for (const id of [
+            'combatMeterHistory', // the guild trial damage board saves history too
+            'combatDpsGraph', // the trial board draws it
+            'combatDpsPanel', // reads the damage tracker, not Combat DPS
+            'combatDeathRecapLabyrinth', // "applies whether or not Death Recap is on"
+            'taskSorter_sortAfterRead', // the reroll walk sorts through it
+            'notifications_combatConsumableLowHours', // the consumable runway reads it too
+        ]) {
+            expect(getSettingDefinition(id).requires, id).toBeUndefined();
         }
     });
 });

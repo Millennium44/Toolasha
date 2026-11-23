@@ -283,6 +283,14 @@ describe('calibrationBadgeFor', () => {
         expect(calibrationBadgeFor('milking')).toBeNull();
     });
 
+    it('is silent when Prediction Calibration itself is off, whatever the badge row says', async () => {
+        store.ledger = runs('/actions/milking/cow', 10, 0.5);
+        await loadCalibrationBadges();
+        expect(calibrationBadgeFor('milking')).not.toBeNull();
+        store.settings.insights_calibration = false;
+        expect(calibrationBadgeFor('milking')).toBeNull();
+    });
+
     it('forgets one character’s ledger when another logs in', async () => {
         store.ledger = runs('/actions/milking/cow', 10, 0.5);
         await loadCalibrationBadges();

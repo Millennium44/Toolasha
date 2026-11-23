@@ -158,6 +158,13 @@ const schema = {
                 default: true,
                 requires: 'dungeonTracker',
             },
+            dungeonPace: {
+                id: 'dungeonPace',
+                label: 'Dungeon pace chip',
+                type: 'checkbox',
+                default: true,
+                requires: 'dungeonTrackerUI',
+            },
             mobileMode: {
                 id: 'mobileMode',
                 label: 'Mobile mode',
@@ -2223,6 +2230,25 @@ describe('a sub-setting whose parent feature is off', () => {
 
         expect(mocks.written).toEqual([]);
         expect(mocks.settingsMap['dungeonTrackerUI'].isTrue).toBe(true);
+    });
+
+    test('a grandchild greys with the grandparent even while its own parent is still ticked', () => {
+        // Dungeon pace requires the panel, which requires the tracker. The panel's own box can stay
+        // ticked under an off tracker, and the pace chip is exactly as dead as the panel
+        mocks.settingsMap['dungeonTracker'].isTrue = false;
+        mocks.settingsMap['dungeonTrackerUI'].isTrue = true;
+        drawPanel();
+
+        expect(row('dungeonPace').style.opacity).toBe('0.4');
+        expect(row('dungeonPace').style.pointerEvents).toBe('none');
+
+        mocks.settingsMap['dungeonTracker'].isTrue = true;
+        settingsUI.applyDisabledByState();
+        expect(row('dungeonPace').style.opacity).toBe('');
+
+        mocks.settingsMap['dungeonTrackerUI'].isTrue = false;
+        settingsUI.applyDisabledByState();
+        expect(row('dungeonPace').style.opacity).toBe('0.4');
     });
 
     test('the parent being on leaves the row alone, so it is not greyed by accident', () => {

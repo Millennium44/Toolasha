@@ -217,7 +217,12 @@ export function badgeElement(badge) {
  */
 export function calibrationBadgesEnabled() {
     try {
-        return config.getSetting(BADGE_SETTING, true) !== false;
+        // The badges are a view of what Prediction Calibration recorded: with it off they have no
+        // ledger being kept, and the settings row greys under it (`requires`)
+        return (
+            config.getSetting(BADGE_SETTING, true) !== false &&
+            config.getSetting('insights_calibration', true) !== false
+        );
     } catch {
         return true;
     }

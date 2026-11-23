@@ -98,6 +98,7 @@ export const settingsGroups = {
                 label: 'Chat: Max messages to retain per tab',
                 type: 'text',
                 default: '150',
+                requires: 'chatHistoryExtender',
             },
             chat_24hrTimestamps: {
                 id: 'chat_24hrTimestamps',
@@ -517,6 +518,7 @@ export const settingsGroups = {
                     'Adds a button above the queue that simulates each queued fight solo for 24 hours in the loadout it ' +
                     'uses, so counted fights can be timed and valued. Fights with a fresh rate are skipped. Needs the ' +
                     'Combat Simulator on.',
+                requires: 'actionQueue',
             },
             actionQueue_valueMode: {
                 id: 'actionQueue_valueMode',
@@ -546,6 +548,7 @@ export const settingsGroups = {
                     'the footer. Fights use the last combat simulation; other actions work it out from game data ' +
                     'including wisdom, Charm Experience and efficiency. A row with no figure marks the total "+ [?]" ' +
                     'rather than counting zero.',
+                requires: 'actionQueue',
             },
             actionQueue_completionTimeStyle: {
                 id: 'actionQueue_completionTimeStyle',
@@ -603,6 +606,7 @@ export const settingsGroups = {
                     { value: 'chainOwnStock', label: 'Full decompose chain per hour, items you hold (Decompose tab)' },
                 ],
                 help: 'Which figure the best items table ranks by. The chain modes decompose the item and everything it yields and sell what is left after tax, on the sides your Buy/Sell pricing settings trade on; the full chain buys the item, the items-you-hold one uses copies you already hold; the buttons in the table change this too.',
+                requires: 'alchemy_bestItems',
             },
             alchemy_bestItems_shopPrices: {
                 id: 'alchemy_bestItems_shopPrices',
@@ -610,6 +614,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Buys the item at the NPC shop price when that is below the market price, or when the market has no price at all. Only shop offers paid in coins count, only on the buy side, and only in Best Items. The same box sits in the table.',
+                requires: 'alchemy_bestItems',
             },
             alchemy_bestItems_gearOnly: {
                 id: 'alchemy_bestItems_gearOnly',
@@ -617,6 +622,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Hides every Decompose row whose item is not gear. Lumber, cheese, hide, tea, fiber and core only yield essences, and bury the gear chains. The same box sits in the table.',
+                requires: 'alchemy_bestItems',
             },
             alchemyBestItems_prefillLevelFilter: {
                 id: 'alchemyBestItems_prefillLevelFilter',
@@ -725,6 +731,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'When enabled, missing materials calculation only considers current action request, ignoring materials already reserved by queued actions. Default (off) accounts for queue.',
+                requires: 'actions_missingMaterialsButton',
             },
             actions_budgetCalculator: {
                 id: 'actions_budgetCalculator',
@@ -901,6 +908,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: "The game's Opened Loot dialog says what you got; this says whether it was good, item by item, against what the drop table owed",
+                requires: 'treasureTracker',
             },
             treasureTracker: {
                 id: 'treasureTracker',
@@ -922,6 +930,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Puts a Track / Untrack button beside Sell when you click an inventory item. Off by default because it changes a menu you use for other things — the Watchlist panel has the same switch',
+                requires: 'watchlist',
             },
             watchlist_inventoryDots: {
                 id: 'watchlist_inventoryDots',
@@ -929,6 +938,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Puts a small dot in the corner of every inventory tile holding a tracked item, so you see the watchlist while browsing your inventory. Turn it off if the grid is too busy. The Watchlist panel has the same switch.',
+                requires: 'watchlist',
             },
             equipmentSavings_menuButton: {
                 id: 'equipmentSavings_menuButton',
@@ -1005,6 +1015,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'In the Loot & XP Analytics table, gives every Labyrinth run its own row, labeled with when it started, instead of one row adding up every run. Every other action is grouped as before. Off by default because it changes how the table groups',
+                requires: 'lootLogPivot',
             },
             lootLogDropLuck: {
                 id: 'lootLogDropLuck',
@@ -1039,6 +1050,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Shows what you actually receive after the marketplace tax next to ask/bid prices in item tooltips',
+                requires: 'itemTooltip_prices',
             },
             itemTooltip_artisanPrices: {
                 id: 'itemTooltip_artisanPrices',
@@ -1046,6 +1058,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'When viewing a recipe on an action panel, adjusts the total price to reflect actual material cost after Artisan Tea reduction',
+                requires: 'itemTooltip_prices',
             },
             itemTooltip_profit: {
                 id: 'itemTooltip_profit',
@@ -1080,6 +1093,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a "Best plan" row to the detailed materials table that prices the craft by buying or crafting each ingredient, whichever is cheaper. Shown only when it differs from Total; a sub-material with no price marks it as a floor (≥). Profit/hr always uses Total. Not shown while "direct recipe only" is on. Needs "Show detailed materials breakdown in profit display".',
+                requires: 'itemTooltip_detailedProfit',
             },
             itemTooltip_detailedProfitFlat: {
                 id: 'itemTooltip_detailedProfitFlat',
@@ -1297,6 +1311,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: "When you hover an item, also list the gathering zones where it is a rare drop (under 1%), shown as items per day. For example, hovering Thread of Expertise lists Asteroid Belt. Requires 'Show gathering sources and profit'.",
+                requires: 'itemTooltip_gathering',
             },
             itemTooltip_abilityStatus: {
                 id: 'itemTooltip_abilityStatus',
@@ -1363,6 +1378,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Accounts for the marketplace seller tax so listing at minimum sell still nets your target rate after tax',
+                requires: 'itemTooltip_enhancingHourlyRate',
             },
             itemTooltip_pinTop: {
                 id: 'itemTooltip_pinTop',
@@ -1678,6 +1694,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Hide tracker when not on the Enhancing screen',
+                requires: 'enhancementTracker',
             },
             enhancementTracker_autoResume: {
                 id: 'enhancementTracker_autoResume',
@@ -1685,6 +1702,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'A new enhancing run with the same item, target level and protection setup as the most recent session, starting at the level it ended at, adds to that session instead of starting a new one. Only active enhancing time counts. Matches by item and level only, so another copy at that level also resumes it.',
+                requires: 'enhancementTracker',
             },
             enhancementTracker_autoCombine: {
                 id: 'enhancementTracker_autoCombine',
@@ -1692,6 +1710,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Works with auto-resume. When a new run matches the most recent session in everything except the protection item, it still continues that session, which lists the protection used per item. A different target, protect-from level or starting level starts a new session.',
+                requires: 'enhancementTracker_autoResume',
             },
             enhancementXPH: {
                 id: 'enhancementXPH',
@@ -1705,12 +1724,14 @@ export const settingsGroups = {
                 label: 'Enhancement XPH: Default max enhancement level (1–20)',
                 type: 'text',
                 default: '6',
+                requires: 'enhancementXPH',
             },
             enhancementXPH_protectFrom: {
                 id: 'enhancementXPH_protectFrom',
                 label: 'Enhancement XPH: Default protect from level (0 = no protection)',
                 type: 'text',
                 default: '0',
+                requires: 'enhancementXPH',
             },
         },
     },
@@ -1732,6 +1753,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'The "Risk of Ruin" button pinned to the bottom-right corner. Turn it off (or press its ✕) to get the corner back — the ⧉ Risk of Ruin tab beside Inventory still opens the calculator.',
+                requires: 'riskOfRuin',
             },
             riskOfRuin_trials: {
                 id: 'riskOfRuin_trials',
@@ -1739,6 +1761,7 @@ export const settingsGroups = {
                 type: 'text',
                 default: '10000',
                 help: 'Higher trial counts give a more precise probability estimate at the cost of a slower calculation.',
+                requires: 'riskOfRuin',
             },
         },
     },
@@ -1785,6 +1808,7 @@ export const settingsGroups = {
                     { value: 'decomposeChainPerHour', label: 'Full decompose chain per hour' },
                 ],
                 help: 'Which figure the marketplace sort button ranks by (the dropdown next to the button changes it too). Alchemy modes buy on your Buy side, run the best alchemy action and sell the outputs on your Sell side; the chain mode decomposes the item and what it yields, selling after tax.',
+                requires: 'marketSort',
             },
             fillMarketOrderPrice: {
                 id: 'fillMarketOrderPrice',
@@ -1846,6 +1870,7 @@ export const settingsGroups = {
                 type: 'text',
                 default: '',
                 help: 'Comma-separated preset values (e.g. 50,500,5000). Leave blank for defaults (10, 100, 1000). Max 8 values.',
+                requires: 'market_quickInputButtons',
             },
             market_multiplierButtons: {
                 id: 'market_multiplierButtons',
@@ -1891,6 +1916,7 @@ export const settingsGroups = {
                 max: 1,
                 step: 0.05,
                 help: 'How transparent item tiles appear when you own zero of that item',
+                requires: 'market_visibleItemCount',
             },
             market_visibleItemCountIncludeEquipped: {
                 id: 'market_visibleItemCountIncludeEquipped',
@@ -1898,6 +1924,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Include currently equipped items in the displayed count',
+                requires: 'market_visibleItemCount',
             },
             market_showListingPrices: {
                 id: 'market_showListingPrices',
@@ -1955,6 +1982,7 @@ export const settingsGroups = {
                 min: 0,
                 max: 30,
                 help: 'If the oldest sell listing on an item has been waiting longer than this many days (the queue is not moving), the Bulk Sell Assistant insta-sells to the best bid instead of joining the queue. 0 turns this rule off. Default: 2.',
+                requires: 'market_bulkSellAssistant',
             },
             market_bulkSellSupplyRatio: {
                 id: 'market_bulkSellSupplyRatio',
@@ -1964,6 +1992,7 @@ export const settingsGroups = {
                 min: 0,
                 max: 100,
                 help: 'Insta-sell when sell-order supply exceeds buy-order demand × this ratio. 1 = insta-sell whenever sell orders outnumber buy orders; 2 = only when supply is at least double demand; 0 turns this rule off (only the queue-age rule insta-sells). Default: 1.',
+                requires: 'market_bulkSellAssistant',
             },
             market_bulkSellMaxSpreadPct: {
                 id: 'market_bulkSellMaxSpreadPct',
@@ -1973,6 +2002,7 @@ export const settingsGroups = {
                 min: 0,
                 max: 100,
                 help: 'Insta-sell when the gap between best ask and best bid is at most this percentage of the ask, since a listing earns only a sliver more. E.g. 2 insta-sells when ask and bid are within 2%. 0 turns this rule off. Default: 0.',
+                requires: 'market_bulkSellAssistant',
             },
             market_bulkSellMinPatientPremium: {
                 id: 'market_bulkSellMinPatientPremium',
@@ -1981,6 +2011,7 @@ export const settingsGroups = {
                 default: 0,
                 min: 0,
                 help: 'Insta-sell when waiting in the sell queue would earn less than this many coins over selling now: (ask − bid) × count, after market tax. 0 turns this rule off. Default: 0.',
+                requires: 'market_bulkSellAssistant',
             },
             consumables_labPerRunBasis: {
                 id: 'consumables_labPerRunBasis',
@@ -2048,6 +2079,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: "When the vendor pays at least as much as the market after tax, the Bulk Sell Assistant opens the item's inventory menu with All selected, so one click vendors the stack. Unenhanced items only.",
+                requires: 'market_bulkSellAssistant',
             },
             market_bulkSellMinListingValue: {
                 id: 'market_bulkSellMinListingValue',
@@ -2056,6 +2088,7 @@ export const settingsGroups = {
                 default: 1500000,
                 min: 0,
                 help: 'Stacks worth less than this (count × ask price) are insta-sold to the best bid instead of using up a sell listing slot. 0 turns this rule off. Default: 1,500,000.',
+                requires: 'market_bulkSellAssistant',
             },
             market_bulkSellHoldFavorites: {
                 id: 'market_bulkSellHoldFavorites',
@@ -2063,6 +2096,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'The Bulk Sell Assistant never sells items you have marked Favorite in the game. Off: Favorite items are sold like any other item. Food and drinks used by your saved loadouts are always held back.',
+                requires: 'market_bulkSellAssistant',
             },
             market_tradeHistory: {
                 id: 'market_tradeHistory',
@@ -2081,6 +2115,7 @@ export const settingsGroups = {
                     { value: 'listing', label: 'Orders' },
                 ],
                 help: 'Instant: Compare to instant buy/sell prices. Orders: Compare to buy/sell orders.',
+                requires: 'market_tradeHistory',
             },
             market_tradeLedger: {
                 id: 'market_tradeLedger',
@@ -2525,6 +2560,7 @@ export const settingsGroups = {
                 label: 'Enable sorting for Equipment category',
                 type: 'checkbox',
                 default: false,
+                requires: 'invSort',
             },
             invSort_collapseAll: {
                 id: 'invSort_collapseAll',
@@ -2532,6 +2568,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a button next to the sort buttons that folds every category heading of the inventory tab you are looking at, or opens them all again',
+                requires: 'invSort',
             },
             invCategoryTotals: {
                 id: 'invCategoryTotals',
@@ -2712,6 +2749,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Show an "Unorganized" section containing all items not assigned to any tab.',
+                requires: 'inventoryTabs',
             },
             inventoryTabs_categoryAddAll: {
                 id: 'inventoryTabs_categoryAddAll',
@@ -2720,6 +2758,7 @@ export const settingsGroups = {
                 default: false,
                 hidden: true,
                 help: 'When adding a category to a tab, add every item in that category (including items not in your inventory). When disabled, only items currently in your inventory are added.',
+                requires: 'inventoryTabs',
             },
             inventoryTabs_defaultTab: {
                 id: 'inventoryTabs_defaultTab',
@@ -2727,6 +2766,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Opens the inventory on the Toolasha tab. Where the inventory has its own tab row, the Toolasha tab sits first in it and nothing is hidden; otherwise this also hides the native Inventory tab in the character panel.',
+                requires: 'inventoryTabs',
             },
             inventoryTabs_iconRowTab: {
                 id: 'inventoryTabs_iconRowTab',
@@ -2734,6 +2774,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Off keeps Toolasha as its own tab in the character panel (next to Inventory), which takes less space on small screens.',
+                requires: 'inventoryTabs',
             },
             inventoryTabs_tileGap: {
                 id: 'inventoryTabs_tileGap',
@@ -2744,6 +2785,7 @@ export const settingsGroups = {
                 max: 20,
                 step: 1,
                 help: "Pixel gap between item tiles, on the Toolasha tab and in the game's own Inventory view. 4 matches the game.",
+                requires: 'inventoryTabs',
             },
             inventoryTabs_loadoutIncludeConsumables: {
                 id: 'inventoryTabs_loadoutIncludeConsumables',
@@ -2751,6 +2793,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'When adding items from a loadout to a tab, also include food and drink items.',
+                requires: 'inventoryTabs',
             },
             inventoryTabs_topTabPriority: {
                 id: 'inventoryTabs_topTabPriority',
@@ -2758,6 +2801,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'When an item appears in multiple tabs, it only shows in the highest (topmost) tab that contains it. When disabled, collapsing a tab releases its items to lower tabs.',
+                requires: 'inventoryTabs',
             },
         },
     },
@@ -2836,6 +2880,7 @@ export const settingsGroups = {
                 type: 'number',
                 default: 24,
                 help: 'Show an amber warning on drink time displays when remaining supply falls below this many hours.',
+                requires: 'drinkTimer',
             },
             skillingOptimizer: {
                 id: 'skillingOptimizer',
@@ -2909,6 +2954,7 @@ export const settingsGroups = {
                 min: 10,
                 max: 600,
                 help: 'How long the automatic recording runs before it saves itself',
+                requires: 'combatRecorder_autoStart',
             },
             replayCheck: {
                 id: 'replayCheck',
@@ -3006,6 +3052,7 @@ export const settingsGroups = {
                 type: 'text',
                 default: 'Be Elite. Do your Elite achievements.',
                 help: 'Message pre-filled into chat when the Elite achievement reminder icon is clicked.',
+                requires: 'eliteAchievementReminder',
             },
             dungeonTracker: {
                 id: 'dungeonTracker',
@@ -3046,6 +3093,7 @@ export const settingsGroups = {
                 min: 0,
                 max: 500,
                 help: 'The average beside each run in party chat is lifetime by default, so build changes show up slowly. Set a window (20 is a good start) and each line averages only the last runs, labeled with how many. "Avg from here" in the dungeon panel does the same once.',
+                requires: 'dungeonTracker',
             },
             labyrinthRunLedger: {
                 id: 'labyrinthRunLedger',
@@ -3102,6 +3150,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a step button beside Path and Beacons that carries out the plan one game action per press (arm the shroud or beacon, then pick the next room). Checks the live map first and stops if the plan no longer matches. Never presses on its own.',
+                requires: 'labyrinthClearRate',
             },
             labyrinthGridScaleControl: {
                 id: 'labyrinthGridScaleControl',
@@ -3197,6 +3246,7 @@ export const settingsGroups = {
                 max: 100,
                 step: 1,
                 help: 'Clear chance at or above which the labyrinth path planner treats a tile as clearable without a shroud (separate from the skip recommendation target)',
+                requires: 'labyrinthClearRate',
             },
             labyrinthPathUnknownMode: {
                 id: 'labyrinthPathUnknownMode',
@@ -3209,6 +3259,7 @@ export const settingsGroups = {
                     { value: 'avoid', label: 'Impassable (route revealed rooms only)' },
                 ],
                 help: 'How the labyrinth path planner costs rooms whose contents are not revealed yet',
+                requires: 'labyrinthClearRate',
             },
             labyrinthBeaconCount: {
                 id: 'labyrinthBeaconCount',
@@ -3219,6 +3270,7 @@ export const settingsGroups = {
                 max: 20,
                 step: 1,
                 help: 'Beacons the beacon planner places on the floor in view, sited to cover a revealed path to the exit first, a second independent route next, and the most rooms with what is left — 0 uses the fewest that cover a path, which every new floor resets to',
+                requires: 'labyrinthClearRate',
             },
             labyrinthBeaconPlanFor: {
                 id: 'labyrinthBeaconPlanFor',
@@ -3229,6 +3281,7 @@ export const settingsGroups = {
                 max: 20,
                 step: 1,
                 help: 'Plan for this many beacons on the floor in all while placing only the beacon count now: the plan is ordered so the beacons placed first are the best start toward the full set, and the rest are drawn dashed as "later" — 0 plans only the beacons placed now',
+                requires: 'labyrinthClearRate',
             },
             labyrinthBeaconPriority: {
                 id: 'labyrinthBeaconPriority',
@@ -3240,6 +3293,7 @@ export const settingsGroups = {
                     { value: 'holes', label: 'Fewest holes' },
                 ],
                 help: 'What the beacon planner ranks placements on once a path to the exit and its routes are covered: the most rooms revealed, or the fewest dark pockets left walled in by lit rooms (then rooms). Also in the labyrinth toolbar gear panel',
+                requires: 'labyrinthClearRate',
             },
             labyrinthBeaconRoutes: {
                 id: 'labyrinthBeaconRoutes',
@@ -3251,6 +3305,7 @@ export const settingsGroups = {
                     { value: '2', label: '2 routes' },
                 ],
                 help: 'Independent covered routes to the exit the beacon planner aims for: two means no single room can block the way out, one frees beacons for rooms. Also in the labyrinth toolbar gear panel',
+                requires: 'labyrinthClearRate',
             },
             labyrinthBeaconNearExit: {
                 id: 'labyrinthBeaconNearExit',
@@ -3258,6 +3313,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Once a path to the exit and its routes are covered, the beacon planner prefers rooms close to the straight line from the entrance to the exit over rooms in the far corners. Also in the labyrinth toolbar gear panel',
+                requires: 'labyrinthClearRate',
             },
             labyrinthBeaconPathFirst: {
                 id: 'labyrinthBeaconPathFirst',
@@ -3265,6 +3321,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Numbers the beacons the way out depends on first (B1, B2...) and the ones only there for rooms last, so the first beacons placed open the route. Also in the labyrinth toolbar gear panel',
+                requires: 'labyrinthClearRate',
             },
             labyrinthRoomDistribution: {
                 id: 'labyrinthRoomDistribution',
@@ -3272,6 +3329,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a Spread button to the floor map controls that opens a panel charting how the floor’s calculated rooms are spread across clear chance, with rooms not yet calculated counted apart. Takes effect the next time the floor map controls are drawn.',
+                requires: 'labyrinthClearRate',
             },
             labyrinthDistributionBinWidth: {
                 id: 'labyrinthDistributionBinWidth',
@@ -3282,6 +3340,7 @@ export const settingsGroups = {
                 max: 100,
                 step: 5,
                 help: 'Width of each clear-chance bin in the distribution panel, in percentage points. The panel has its own selector that changes this same value.',
+                requires: 'labyrinthRoomDistribution',
             },
             labyrinthSkipEditAutofill: {
                 id: 'labyrinthSkipEditAutofill',
@@ -3289,6 +3348,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: "Clicking a skip threshold's Edit button fills the input with the recommended threshold (or the current value when no recommendation exists), replacing whatever is in it",
+                requires: 'labyrinthClearRate',
             },
             labyrinthLiveProgress: {
                 id: 'labyrinthLiveProgress',
@@ -3303,6 +3363,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Replays the fight in progress hundreds of times from its current health and remaining time, instead of extrapolating from how fast health is being lost. Slower but far more accurate, since it runs the real combat engine',
+                requires: 'labyrinthLiveProgress',
             },
             labyrinthRoomLogs: {
                 id: 'labyrinthRoomLogs',
@@ -3319,6 +3380,7 @@ export const settingsGroups = {
                 min: 20,
                 max: 500,
                 help: 'A floor is around thirty rooms, so anything near that shows barely one floor and nothing to compare it against. 120 keeps roughly three floors. Each room is a few hundred bytes, and the long-term accuracy record is kept separately and never trimmed',
+                requires: 'labyrinthRoomLogs',
             },
             labyrinthAutoCalcTiles: {
                 id: 'labyrinthAutoCalcTiles',
@@ -3326,6 +3388,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Automatically calculates clear chances for newly revealed labyrinth tiles without clicking Calc Tiles',
+                requires: 'labyrinthClearRate',
             },
             labyrinthAutoPath: {
                 id: 'labyrinthAutoPath',
@@ -3333,6 +3396,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Works out the labyrinth path after a beacon reveals rooms on the floor, whether or not a path is shown yet (once per reveal, after any room calculation it triggers)',
+                requires: 'labyrinthClearRate',
             },
             labyrinthAutoPathOnReveal: {
                 id: 'labyrinthAutoPathOnReveal',
@@ -3340,6 +3404,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Needs Auto-path above. Also works out the path again when clearing a room lights up a new room beside it (no beacon spent). Turn this off to re-path only after a beacon.',
+                requires: 'labyrinthAutoPath',
             },
             labyrinthBeaconDots: {
                 id: 'labyrinthBeaconDots',
@@ -3347,6 +3412,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Marks every room a planned beacon will reveal with a small dot (filled for a beacon placed now, a ring for one planned for later), so the reach still shows under a path tile. Also in the labyrinth toolbar gear panel',
+                requires: 'labyrinthClearRate',
             },
             combatBattleCounter: {
                 id: 'combatBattleCounter',
@@ -3445,6 +3511,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'A strip under the DPS graph with one bar per hit you landed in the last minute: height is damage, a gold cap is a crit, a hollow stub is a miss, purple is damage over time, orange is reflected. Only hits credited to you alone. Needs the Per-player panel on.',
+                requires: 'combatDpsPanel',
             },
             combatMeterHistory: {
                 id: 'combatMeterHistory',
@@ -3473,6 +3540,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'A small duration under each icon in the in-battle Consumables grid: how long that stock lasts at the rate it is used, red under the low-consumable warning hours, infinity for a filled slot not being drunk. Needs Combat Statistics on. Off by default.',
+                requires: 'combatStats',
             },
             portraitDpsPosition: {
                 id: 'portraitDpsPosition',
@@ -3548,6 +3616,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'A chip on the in-progress dungeon panel — "pace +6% vs your avg" — comparing this run\'s average wave time against your stored history for the same dungeon, green when faster. No stored history, or fewer than three waves in, shows nothing',
+                requires: 'dungeonTrackerUI',
             },
             dungeonKeyRunway: {
                 id: 'dungeonKeyRunway',
@@ -3555,6 +3624,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds "(~1h 20m)" beside the Keys count on the in-progress dungeon panel: held entry keys times your average recent clear of this dungeon, tier and team (up to 20, within the Dungeon Tracker window). Needs at least three clears; nothing with no keys.',
+                requires: 'dungeonTrackerUI',
             },
             combatSim: {
                 id: 'combatSim',
@@ -3967,6 +4037,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Shows which dungeons contain the monster (requires Task Icons enabled)',
+                requires: 'taskIcons',
             },
             taskSorter: {
                 id: 'taskSorter',
@@ -3995,6 +4066,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Hides the Sort Tasks button while keeping auto-sort functional',
+                requires: 'taskSorter',
             },
             taskSorter_sortMode: {
                 id: 'taskSorter_sortMode',
@@ -4031,6 +4103,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Adds a Zone Task Progress section to Task Statistics: per zone with active combat tasks, the fights and time to clear them and the slowest monster. Runs one combat simulation per zone each time the popup opens; click a zone to open it with the fight count filled in.',
+                requires: 'taskStatistics',
             },
             taskClaimCollector: {
                 id: 'taskClaimCollector',
@@ -4105,6 +4178,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Removes the green outline/glow from protected tasks while keeping the reroll confirmation active.',
+                requires: 'taskRerollProtection',
             },
             taskAutoReroll: {
                 id: 'taskAutoReroll',
@@ -4122,6 +4196,7 @@ export const settingsGroups = {
                     'With the reminder on, also give the red border and a "Below par" badge to any task whose ' +
                     'rate sits below the board median by more than its next reroll would cost. Off (the default) ' +
                     'leaves only your auto-reroll list flagged.',
+                requires: 'taskAutoReroll',
             },
             tasks_rerollWalk: {
                 id: 'tasks_rerollWalk',
@@ -4141,6 +4216,7 @@ export const settingsGroups = {
                     { value: 'coin', label: 'Prefer coins' },
                 ],
                 help: 'Cheapest values a cowbell through the Bag of 10 Cowbells and picks whichever of the two rerolls costs less in coins. Either preference falls back to the other currency when its own is blocked. A free reroll is always taken first.',
+                requires: 'tasks_rerollWalk',
             },
             tasks_rerollWalkBarPosition: {
                 id: 'tasks_rerollWalkBarPosition',
@@ -4152,6 +4228,7 @@ export const settingsGroups = {
                     { value: 'floating', label: 'Floating' },
                 ],
                 help: 'In the toolbar docks a compact walk button beside Sort Tasks on the Task Board tab, so it never covers a task card. Floating is the movable panel. Either way it shows only on the Task Board tab.',
+                requires: 'tasks_rerollWalk',
             },
             tasks_mergedCraftingWalk: {
                 id: 'tasks_mergedCraftingWalk',
@@ -4166,6 +4243,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'When both the coin and the cowbell reroll would cost at or over the shield popup’s "Block rerolls at" thresholds, offer to discard the task (the red trash can) rather than leaving it on the board. Turn off to skip past it instead.',
+                requires: 'tasks_rerollWalk',
             },
         },
     },
@@ -4266,6 +4344,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a Search entry to the left navigation on a phone, which has no Ctrl+K, that opens the command palette. Needs the Command palette above',
+                requires: 'commandPalette',
             },
             commandPaletteSettingsButton: {
                 id: 'commandPaletteSettingsButton',
@@ -4273,6 +4352,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a Command Palette button at the top of the game Settings page, beside Philo Gamba, that opens the command palette. Needs the Command palette above',
+                requires: 'commandPalette',
             },
             goalPlanner: {
                 id: 'goalPlanner',
@@ -4504,6 +4584,7 @@ export const settingsGroups = {
                 min: 25,
                 max: 200,
                 help: 'Size of your own combat units. 100 leaves them as the game draws them',
+                requires: 'combatScale',
             },
             combatScaleMonsters: {
                 id: 'combatScaleMonsters',
@@ -4513,6 +4594,7 @@ export const settingsGroups = {
                 min: 25,
                 max: 200,
                 help: 'Size of the enemy combat units, set separately from yours — a wave of ten and a single boss want opposite things',
+                requires: 'combatScale',
             },
             combatScaleMethod: {
                 id: 'combatScaleMethod',
@@ -4524,6 +4606,7 @@ export const settingsGroups = {
                     { value: 'transform', label: 'Transform — scales in place, leaves a gap' },
                 ],
                 help: 'Zoom changes the layout size, so a shrunk side actually gives its space back. Transform only redraws smaller and leaves the original box behind; use it if zoom misbehaves in your browser',
+                requires: 'combatScale',
             },
             combatScaleOrigin: {
                 id: 'combatScaleOrigin',
@@ -4536,6 +4619,7 @@ export const settingsGroups = {
                     { value: 'center', label: 'Center' },
                 ],
                 help: 'Which corner a scaled side shrinks toward. Only used when resizing by transform',
+                requires: 'combatScale',
             },
             combatScaleLayout: {
                 id: 'combatScaleLayout',
@@ -4548,6 +4632,7 @@ export const settingsGroups = {
                     { value: 'stack', label: 'Force stacked' },
                 ],
                 help: 'Forcing a layout overrides how the game arranges the two sides at your window width, so it can fight future game changes. Leave it alone unless you want the override',
+                requires: 'combatScale',
             },
             combatScalePanelHeight: {
                 id: 'combatScalePanelHeight',
@@ -4557,6 +4642,7 @@ export const settingsGroups = {
                 min: 0,
                 max: 100,
                 help: 'Height of the inventory/equipment panel beside the fight, as a percentage of the window, up to all the room the game gives it. Set it shorter to give the fight room. 0 leaves the height the game picks',
+                requires: 'combatScale',
             },
             updateCheck: {
                 id: 'updateCheck',
@@ -4595,6 +4681,7 @@ export const settingsGroups = {
                 help:
                     'How long a checked answer is trusted before the network is asked again, on page load and while a tab ' +
                     'stays open. At 0 every page load asks the network (the in-tab repeat still waits at least an hour).',
+                requires: 'updateCheck',
             },
         },
     },
@@ -4665,6 +4752,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Saves trial loadouts and profiles while the capture helper is open, and restores the current guild/week after a refresh. Keeps the latest capture for up to eight guild/week sets per character locally. Captures retain their dates and can become outdated.',
+                requires: 'guildTrialSim',
             },
             guildTrialTracking: {
                 id: 'guildTrialTracking',
@@ -4672,6 +4760,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Reads the trial fight stream from the In Progress fight view and splits damage, healing and kills per player. Turning it off stops that at once, no reload: an open recording is filed and the live figures are dropped.',
+                requires: 'guildTrialsInfo',
             },
             guildTrialBossDebuffs: {
                 id: 'guildTrialBossDebuffs',
@@ -4679,6 +4768,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Shows the debuffs the party has on the boss, with a countdown, on the boss tile in the In Progress fight view. The stream carries no buff state, so timers start when a debuffing ability is seen to hit; a stun lasts as long as the stream says the boss is stunned.',
+                requires: 'guildTrialsInfo',
             },
             guildTrialPackUnits: {
                 id: 'guildTrialPackUnits',
@@ -4686,6 +4776,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: "Keeps trial party members in a fixed order (combat: by role, then name; skilling: by name) so they stop jumping around at tier changes. Players who don't fit beside your card wrap into rows under it.",
+                requires: 'guildTrialsInfo',
             },
             guildTrialAutoRecord: {
                 id: 'guildTrialAutoRecord',
@@ -4696,6 +4787,7 @@ export const settingsGroups = {
                     'Starts a recording session by itself when a trial fight is seen or the In Progress tab ' +
                     'shows a live reading, so the whole hour is captured without having to press anything. ' +
                     'The Record button on the trials block starts and stops one by hand either way.',
+                requires: 'guildTrialsInfo',
             },
             guildTrialAutoOpenScoreboard: {
                 id: 'guildTrialAutoOpenScoreboard',
@@ -4703,6 +4795,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: "Opens the per-player damage board when a trial fight starts being watched, once per trial; closing it keeps it closed until the next trial, reloads included. A button beside the guild panel's tabs opens or closes it by hand.",
+                requires: 'guildTrialsInfo',
             },
             guildTrialDiagnosticTrace: {
                 id: 'guildTrialDiagnosticTrace',
@@ -4710,6 +4803,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Records every trial battle message as it arrives, for exporting as a file a reviewer can reconstruct the fight from. The file is large (thousands of ticks an hour) and includes participant names. Nothing is uploaded; the trace stays in memory until you export or clear it.',
+                requires: 'guildTrialsInfo',
             },
             guildTrialsBuildersHallBonus: {
                 id: 'guildTrialsBuildersHallBonus',
@@ -4762,6 +4856,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Shows recent XP/hr tracked by Toolasha (Contributions tab).',
+                requires: 'guildXPDisplay',
             },
             guildMembersShowLastDayXPH: {
                 id: 'guildMembersShowLastDayXPH',
@@ -4769,6 +4864,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Shows 24-hour average XP/hr tracked by Toolasha (Contributions tab).',
+                requires: 'guildXPDisplay',
             },
             guildTokenCreditRate: {
                 id: 'guildTokenCreditRate',
@@ -4791,6 +4887,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'When the selected item is not the cheapest option, shows whether selling it and rebuying the best item would yield more credits (accounts for the market seller tax). Needs "Guild Shop: Show gold cost per credit table".',
+                requires: 'guildCreditValue',
             },
             guildShrineUpgradePlanner: {
                 id: 'guildShrineUpgradePlanner',
@@ -4798,6 +4895,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a shrine upgrade planner to the guild credit exchange panel, showing total credit and token costs to upgrade from your current level to a target level. Needs "Guild Shop: Show gold cost per credit table".',
+                requires: 'guildCreditValue',
             },
             guildTrialLedger: {
                 id: 'guildTrialLedger',
@@ -4833,6 +4931,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Marks profit forecasts (action panel, action bar, alchemy rankings, all-zones sim) with how that forecast has fared against finished runs — e.g. “−12% over 40 runs” when it has run hot, or “on target”. Nothing is shown until enough runs are measured.',
+                requires: 'insights_calibration',
             },
         },
     },
@@ -4867,6 +4966,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds Last XP/h and Last day XP/h columns to the player Leaderboard panel. Needs "Track player XP over time from Leaderboard".',
+                requires: 'leaderboardXPTracker',
             },
             leaderboardRankBadges: {
                 id: 'leaderboardRankBadges',
@@ -5072,6 +5172,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: "Notifies when the next guild trial's countdown is inside the lead time below, and again when it starts. The schedule is only read while the guild panel is open.",
+                requires: 'guildTrialsInfo',
             },
             notifications_trialStartLeadMinutes: {
                 id: 'notifications_trialStartLeadMinutes',
@@ -5081,6 +5182,7 @@ export const settingsGroups = {
                 min: 1,
                 max: 120,
                 help: 'How long before a scheduled guild trial to announce it.',
+                requires: 'notifications_trialStarting',
             },
             notifications_trialAudience: {
                 id: 'notifications_trialAudience',
@@ -5092,6 +5194,7 @@ export const settingsGroups = {
                     { value: 'signedUp', label: 'Only when I am signed up this week' },
                 ],
                 help: 'Applies to the “about to start” and “has started” alerts above; the results alert is unchanged. When the guild panel has not shown this character’s sign-up yet, the alert fires anyway rather than stay silent.',
+                requires: 'notifications_trialStarting',
             },
             notifications_trialResults: {
                 id: 'notifications_trialResults',
@@ -5099,6 +5202,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Announces the Guild Points banked and the token payout — every eligible member’s share and a participant’s — as soon as the guild panel reports the cycle complete.',
+                requires: 'guildTrialsInfo',
             },
             notifications_taskSlotsFull: {
                 id: 'notifications_taskSlotsFull',
@@ -5445,6 +5549,7 @@ export const settingsGroups = {
                 label: 'Collection Favorites: Show favorites section at top of grid',
                 type: 'checkbox',
                 default: true,
+                requires: 'collectionFavorites',
             },
             collectionFilters_skillingBadges: {
                 id: 'collectionFilters_skillingBadges',
