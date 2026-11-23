@@ -262,13 +262,21 @@ Every brief to a sub-agent carries these lines:
   game never sends: `enhancementLevelTotalBonusMultiplierTable` counts 2% steps (+20 = 50), was read as
   a fraction in 3.76.0, and every skilling figure went 100x off. The real table lives in
   `src/__fixtures__/wire/enhancement-scaling.js`.
-- **A new setting is placed, linked and reachable in the same change.** A default-on checkbox goes in
-  the presets it belongs to (`setting-presets.js`, several is fine) or in `LEFT_OUT` with a reason; a
-  sub-setting gets `requires: '<parent>'`; a registry entry whose key is not its setting id gets a
-  `customCheck`, and `liveStop: true` when its `disable()` removes everything (else the setting gets
-  `requiresRefresh: true`); a new panel registers a Ctrl+K command. `setting-presets.test.js`,
-  `settings-schema.test.js`, `feature-registry-gates.test.js` and `panel-command-coverage.test.js`
-  fail until it is.
+- **A new setting is placed, linked and reachable in the same change.** Tests fail until it is:
+    - A default-on checkbox goes in the presets it belongs to (`setting-presets.js`, several is fine) or
+      in `LEFT_OUT` with a reason. One that shows prices declares `needsPrices: true`, which keeps it out
+      of Essentials and in Market, and must be in Iron Cow's `IRON_COW_SETTINGS` or
+      `IRON_COW_UNLOCKED_PRICED`.
+    - A sub-setting gets `requires: '<parent>'`, unless another feature also reads it.
+    - A registry entry gated on settings declares `setting: '<id>'` (or an any-of array) and an explicit
+      `liveStop: true|false` (true only when its `disable()` removes everything; otherwise tag the
+      setting `requiresRefresh: true`). `customCheck` is for genuinely custom gates.
+    - A panel with an Overlay tile is already in Ctrl+K; a panel without one registers a command, and a
+      command for a tiled panel carries `row: '<tile key>'` so the palette lists it once.
+    - `help` stays at 300 characters or fewer, in American spelling, or goes in `LONG_HELP_ALLOWED`
+      with a reason.
+    - Guards: `setting-presets.test.js`, `settings-schema.test.js`, `feature-registry-gates.test.js`,
+      `panel-command-coverage.test.js`, `iron-cow-mode.priced.test.js`, `settings-help-lint.test.js`.
 - **Pull with `git pull --rebase`**, never a merge.
 - **A changed settings default applies to new users only.** Never migrate existing users' settings
   unless the maintainer asks. New features may default **on**; default one off only when it is

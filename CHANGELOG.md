@@ -10,9 +10,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Combat, Market and Guild can now be ticked together on top of Essentials and applied as one, which Restore undoes. Presets no longer switch off about 125 features their players use, such as the command palette, task sorter and Enhancement Simulator. The skilling optimizer and house upgrade costs now come with Market, since they need prices. Ticked chips show as pressed and clear once applied.
 
-### Every panel opens from Ctrl+K
+### More panels in Ctrl+K, each listed once
 
-About 30 panels that only opened from an Overlay tile now have a command palette entry, among them Account, Party damage, Watchlist, Guild Roster, Trial Ledger and Net worth history.
+Labyrinth Room Logs, Trial Abilities, Production Arbitrage, the dungeon token spend plan, and the Overbid table now open from the command palette, and the pooled price panel is listed as Price History. Panels that also have an Overlay tile are listed once, under their own name, and leave the palette when their feature is off. Command hints are now searched too.
 
 ### Settings take effect without a reload
 
