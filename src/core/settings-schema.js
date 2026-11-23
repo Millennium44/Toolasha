@@ -42,7 +42,7 @@ export const settingsGroups = {
                 default: false,
                 help:
                     'When an update introduces a new on-by-default switch, keep it off until you turn it on ' +
-                    'yourself. Numbers and dropdowns keep their defaults — only behaviour switches are held back.',
+                    'yourself. Numbers and dropdowns keep their defaults — only behavior switches are held back.',
             },
             mobileMode: {
                 id: 'mobileMode',
@@ -60,10 +60,10 @@ export const settingsGroups = {
             },
             chatCommands: {
                 id: 'chatCommands',
-                label: 'Enable chat commands (/item, /wiki, /market)',
+                label: 'Enable chat commands (/item, /wiki, /market, /shrines)',
                 type: 'checkbox',
                 default: true,
-                help: 'Type /item, /wiki, or /market followed by an item name in chat. Example: /item radiant fiber',
+                help: 'Type /item, /wiki, or /market followed by an item name in chat (/shrines takes no name). Example: /item radiant fiber',
             },
             chat_mentionTracker: {
                 id: 'chat_mentionTracker',
@@ -602,7 +602,7 @@ export const settingsGroups = {
                     { value: 'decomposeChainPerHour', label: 'Full decompose chain per hour (Decompose tab)' },
                     { value: 'chainOwnStock', label: 'Full decompose chain per hour, items you hold (Decompose tab)' },
                 ],
-                help: 'Which figure the best items table ranks by. The chain mode buys the item, decomposes it and everything it yields, and sells what is left after tax, on the sides your Buy/Sell pricing settings trade on; the buttons in the table change this too.',
+                help: 'Which figure the best items table ranks by. The chain modes decompose the item and everything it yields and sell what is left after tax, on the sides your Buy/Sell pricing settings trade on; the full chain buys the item, the items-you-hold one uses copies you already hold; the buttons in the table change this too.',
             },
             alchemy_bestItems_shopPrices: {
                 id: 'alchemy_bestItems_shopPrices',
@@ -997,7 +997,7 @@ export const settingsGroups = {
                 label: 'Loot Log: Analytics pivot table (📊 button beside Refresh)',
                 type: 'checkbox',
                 default: false,
-                help: "A sortable table over the current session plus stored history, built from what your runs actually paid: one row per action and difficulty tier, with time spent, drop value at ask and bid, and XP/hr per skill. Adds a button to the game's own panel. Off by default.",
+                help: "A sortable table over the current session plus stored history (needs the Loot Log history setting on), built from what your runs actually paid: one row per action and difficulty tier, with time spent, drop value at ask and bid, and XP/hr per skill. Adds a button to the game's own panel. Off by default.",
             },
             lootLogPivotSplitLabyrinth: {
                 id: 'lootLogPivotSplitLabyrinth',
@@ -1079,7 +1079,7 @@ export const settingsGroups = {
                 label: 'Craft cost includes crafting sub-materials',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a "Best plan" row to the detailed materials table that prices the craft by buying or crafting each ingredient, whichever is cheaper. Shown only when it differs from Total; a sub-material with no price marks it as a floor (≥). Profit/hr always uses Total. Not shown while "direct recipe only" is on.',
+                help: 'Adds a "Best plan" row to the detailed materials table that prices the craft by buying or crafting each ingredient, whichever is cheaper. Shown only when it differs from Total; a sub-material with no price marks it as a floor (≥). Profit/hr always uses Total. Not shown while "direct recipe only" is on. Needs "Show detailed materials breakdown in profit display".',
             },
             itemTooltip_detailedProfitFlat: {
                 id: 'itemTooltip_detailedProfitFlat',
@@ -1348,7 +1348,7 @@ export const settingsGroups = {
                 label: 'Quote enhancement predictions at pro rates instead of your stats',
                 type: 'checkbox',
                 default: false,
-                help: 'Prices the enhancement path and milestones as a top-end enhancer (level 140, Observatory 8, ultra + blessed tea, +13 Celestial enhancer, +10 gear) instead of your own gear. Also toggled from the "Yours / Pro" chip on the tooltip header, or with P while the tooltip is open.',
+                help: 'Prices the enhancement path and milestones as a top-end enhancer (level 140, Observatory 8, ultra + blessed tea, +15 Celestial enhancer, +10 to +12 gear) instead of your own gear. Also toggled from the "Yours / Pro" chip on the tooltip header, or with P while the tooltip is open.',
             },
             itemTooltip_enhancingHourlyRate: {
                 id: 'itemTooltip_enhancingHourlyRate',
@@ -1428,14 +1428,14 @@ export const settingsGroups = {
                 default: 0,
                 min: 0,
                 max: 20,
-                help: "When non-zero, automatically sets the Target Level input to this value whenever you open an item's enhancement panel. Re-applies each time you switch items.",
+                help: "When non-zero, automatically sets the Target Level input to this value whenever you open an item's enhancement panel. Re-applies each time you switch items. Works even with the enhancement simulator calculations off.",
             },
             enhanceSim_autoProtectFrom: {
                 id: 'enhanceSim_autoProtectFrom',
                 label: 'Enhancement: Auto-fill optimal protect-from level when protection item is set',
                 type: 'checkbox',
                 default: false,
-                help: 'When enabled, automatically fills the Protect From Level input with the optimal (cheapest) value whenever a protection item is placed in the slot.',
+                help: 'When enabled, automatically fills the Protect From Level input with the optimal (cheapest) value whenever a protection item is placed in the slot. Works even with the enhancement simulator calculations off.',
             },
             enhanceSim_protectFromStock: {
                 id: 'enhanceSim_protectFromStock',
@@ -1515,10 +1515,10 @@ export const settingsGroups = {
             },
             enhanceSim_achievement: {
                 id: 'enhanceSim_achievement',
-                label: 'Achievement bonus (+0.2%)',
+                label: 'Achievement bonus',
                 type: 'checkbox',
                 default: true,
-                help: 'Include enhancing achievement success bonus',
+                help: 'Include your enhancing achievement success bonus',
                 disabledBy: 'enhanceSim_autoDetect',
             },
             // --- GEAR (compact rows: checkbox + optional tier + enhancement level) ---
@@ -2132,7 +2132,7 @@ export const settingsGroups = {
                 label: 'Market: Sidebar badge only for finished listings',
                 type: 'checkbox',
                 default: false,
-                help: 'Limits the Marketplace sidebar badge to finished listings (filled completely, or cancelled and holding a refund), instead of the game badging anything collectable, such as a partly filled buy order. The badge on the My Listings tab is left alone.',
+                help: 'Limits the Marketplace sidebar badge to finished listings (filled completely, or canceled and holding a refund), instead of the game badging anything collectable, such as a partly filled buy order. The badge on the My Listings tab is left alone.',
             },
             market_pooledHistory: {
                 id: 'market_pooledHistory',
@@ -2553,8 +2553,8 @@ export const settingsGroups = {
                     'Order book prices your items from the live ask/bid using the pricing mode below. Game’s market value ' +
                     'uses the value the game publishes behind the inventory’s Total Market Value (refreshed about ' +
                     'hourly), so the net-worth total matches the game. It applies at every enhancement level, so the ' +
-                    'enhancement-cost setting below does not apply to items the game values. Takes effect once the ' +
-                    'marketplace update is live.',
+                    'enhancement-cost setting below does not apply to items the game values. On an Iron Cow character, ' +
+                    'the Iron Cow valuation outranks it.',
             },
             networth_pricingMode: {
                 id: 'networth_pricingMode',
@@ -2828,7 +2828,7 @@ export const settingsGroups = {
                 label: 'Drink timer: Show remaining drink supply time in skill panels',
                 type: 'checkbox',
                 default: true,
-                help: 'Shows how long your drink stock lasts and whether it covers the queued actions. This switch existed internally but was never in the settings panel, so the feature could not be turned off.',
+                help: 'Shows how long your drink stock lasts and whether it covers the queued actions.',
             },
             drinkTimer_warningThreshold: {
                 id: 'drinkTimer_warningThreshold',
@@ -3973,7 +3973,7 @@ export const settingsGroups = {
                 label: 'Task sorter: Sort tasks by skill type',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds the sort button and sorting machinery to the task panel. This switch existed internally but was never in the settings panel, so the feature could not be turned off.',
+                help: 'Adds the sort button and sorting machinery to the task panel.',
             },
             taskSorter_autoSort: {
                 id: 'taskSorter_autoSort',
@@ -4399,7 +4399,7 @@ export const settingsGroups = {
                 label: 'Left sidebar: Show external tool links',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds quick links to Combat Sim, Market Tracker, Enhancelator, and Milkonomy',
+                help: 'Adds quick links to external tools in the left sidebar, such as the combat sims, market trackers and Enhancelator',
             },
             hideLabyrinthBadge: {
                 id: 'hideLabyrinthBadge',
@@ -4531,9 +4531,9 @@ export const settingsGroups = {
                 type: 'select',
                 default: 'top center',
                 options: [
-                    { value: 'top center', label: 'Top centre' },
+                    { value: 'top center', label: 'Top center' },
                     { value: 'top left', label: 'Top left' },
-                    { value: 'center', label: 'Centre' },
+                    { value: 'center', label: 'Center' },
                 ],
                 help: 'Which corner a scaled side shrinks toward. Only used when resizing by transform',
             },
@@ -4564,7 +4564,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help:
-                    'On page load, compares the running version with the latest release and shows a toast with an install ' +
+                    'On page load, asks api.github.com for the latest release, compares it with the running version and shows a toast with an install ' +
                     'link when a newer one exists. The answer is cached, so the network is asked only as often as the ' +
                     'interval below allows.',
             },
@@ -4643,11 +4643,12 @@ export const settingsGroups = {
             },
             guildTrialsInfo: {
                 id: 'guildTrialsInfo',
-                label: 'Guild Trials: Show rates, pace and payout on the In Progress tab',
+                label: 'Guild Trials: Enable (rates, pace and payout on In Progress, plus trial tools)',
                 type: 'checkbox',
                 default: true,
                 help:
-                    'Measures the pool fill rate or party DPS off the trial cards and adds the ETA to clear the ' +
+                    'Master switch for the Guild Trials features; the other Guild Trials settings need it on. Shows rates, pace and payout ' +
+                    'on the In Progress tab: measures the pool fill rate or party DPS off the trial cards and adds the ETA to clear the ' +
                     'current tier, how many tiers the hour is on pace for, the next tier’s projected size, and the ' +
                     'Guild Points and token payout the week’s tiers are worth.',
             },
@@ -4775,7 +4776,7 @@ export const settingsGroups = {
                 type: 'number',
                 default: 1,
                 min: 0,
-                help: 'Guild tokens aren\'t on the market, so they are priced through the Guild Shop exchange: credits per token × the gold value of a credit. This number is only the last resort, used before any exchange dialog has been opened with a Guild Token selected; figures from it say "assumed rate". Set to 0 to leave tokens unpriced.',
+                help: 'Guild tokens aren\'t on the market, so they are priced through the Guild Shop exchange: credits per token × the gold value of a credit. This number is used only until a Guild Shop exchange dialog has been read with a Guild Token selected; figures from it say "assumed rate". Set to 0 to leave tokens unpriced.',
             },
             guildCreditValue: {
                 id: 'guildCreditValue',
@@ -4789,14 +4790,14 @@ export const settingsGroups = {
                 label: 'Guild Shop: Show exchange advisor (sell → rebuy comparison)',
                 type: 'checkbox',
                 default: true,
-                help: 'When the selected item is not the cheapest option, shows whether selling it and rebuying the best item would yield more credits (accounts for the market seller tax).',
+                help: 'When the selected item is not the cheapest option, shows whether selling it and rebuying the best item would yield more credits (accounts for the market seller tax). Needs "Guild Shop: Show gold cost per credit table".',
             },
             guildShrineUpgradePlanner: {
                 id: 'guildShrineUpgradePlanner',
                 label: 'Guild Shop: Show shrine upgrade planner',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a shrine upgrade planner to the guild credit exchange panel, showing total credit and token costs to upgrade from your current level to a target level.',
+                help: 'Adds a shrine upgrade planner to the guild credit exchange panel, showing total credit and token costs to upgrade from your current level to a target level. Needs "Guild Shop: Show gold cost per credit table".',
             },
             guildTrialLedger: {
                 id: 'guildTrialLedger',
@@ -4865,7 +4866,7 @@ export const settingsGroups = {
                 label: 'Show XP/hr columns on Leaderboard',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds Last XP/h and Last day XP/h columns to the player Leaderboard panel.',
+                help: 'Adds Last XP/h and Last day XP/h columns to the player Leaderboard panel. Needs "Track player XP over time from Leaderboard".',
             },
             leaderboardRankBadges: {
                 id: 'leaderboardRankBadges',
@@ -4892,7 +4893,7 @@ export const settingsGroups = {
                 default: false,
                 help:
                     'With Local only rank badges, Steam boards you open also count toward badges, kept apart from the ' +
-                    'global boards and labelled Standard (Steam) or Ironcow (Steam) in the tooltip. No effect with the ' +
+                    'global boards and labeled Standard (Steam) or Ironcow (Steam) in the tooltip. No effect with the ' +
                     'MWITools data server or Off.',
             },
             leaderboardRankBadgesSteamMark: {
@@ -4950,7 +4951,7 @@ export const settingsGroups = {
                 label: 'Notify when a market listing finishes',
                 type: 'checkbox',
                 default: false,
-                help: "Notifies when the count of finished listings goes up: an order that filled completely, or a cancelled one holding a refund. Partly filled orders don't count. Works whether or not the Marketplace badge filter is on.",
+                help: "Notifies when the count of finished listings goes up: an order that filled completely, or a canceled one holding a refund. Partly filled orders don't count. Works whether or not the Marketplace badge filter is on.",
             },
             notifications_marketListingUndercut: {
                 id: 'notifications_marketListingUndercut',
@@ -5369,7 +5370,7 @@ export const settingsGroups = {
                 label: 'XP Rate Text',
                 type: 'color',
                 default: '#ffffff',
-                help: 'Color for XP/hr rate text on skill bars in left navigation',
+                help: 'Color for XP/hr rate text on skill bars in left navigation, and for XP figures in the enhancement tables and tooltip',
             },
             color_hours_to_level: {
                 id: 'color_hours_to_level',
@@ -5489,7 +5490,8 @@ export const settingsGroups = {
                 help:
                     'Syncs your Toolasha data between browsers through a private GitHub gist you own (one for the live ' +
                     'game, a separate one for the test server). Nothing goes to any server of ours, and nothing is sent ' +
-                    'until you press Push or turn on automatic sync below. Shared by every character on this device.',
+                    'until you press Push, turn on automatic sync below, or the game is taken over elsewhere (push on ' +
+                    'switch). Shared by every character on this device.',
             },
             sync_token: {
                 id: 'sync_token',
