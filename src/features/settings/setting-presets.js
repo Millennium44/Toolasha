@@ -209,7 +209,6 @@ const COMBAT_EXTRAS = [
     'combatDeathRecap',
     'combatPlayerColors',
     'combatDpsGraph',
-    'combatDpsHitTape',
     'combatMeterHistory',
     'combatClassOverride',
     'dungeonPace',
@@ -316,8 +315,6 @@ const MARKET_EXTRAS = [
     'market_raiseBuyPriceToCoverQuantity',
     'market_itemHop',
     'market_collectableListingsToTop',
-    'market_bulkSellVendorCheck',
-    'market_bulkSellHoldFavorites',
     'market_tradeLedger',
     'market_staleCapital',
     'market_overbidPanel',
@@ -338,7 +335,6 @@ const MARKET_EXTRAS = [
     'actions_craftEnhance',
     'itemTooltip_ownUseCompare',
     'itemTooltip_heldCraftCompare',
-    'itemTooltip_craftCostSubMaterials',
     'itemTooltip_multiActionProfit',
     'itemTooltip_alchemyInsteadOfSelling',
     'dungeonTokenTooltips_crafts',
@@ -409,6 +405,10 @@ export const LEFT_OUT = {
         'child of the default-off price history panel, which calls a third-party server and so needs its own opt-in',
     enhancementTracker_autoCombine: 'child of the default-off Enhancement Tracker',
     tasks_rerollWalkTrashAtLimit: 'child of the default-off reroll walk',
+    combatDpsHitTape: 'child of the default-off per-player damage panel',
+    itemTooltip_craftCostSubMaterials: 'child of the default-off detailed profit table',
+    market_bulkSellVendorCheck: 'child of the default-off Bulk Sell Assistant',
+    market_bulkSellHoldFavorites: 'child of the default-off Bulk Sell Assistant',
 };
 
 /** Presets that can be ticked together. Essentials is always the base of a combined apply. */
