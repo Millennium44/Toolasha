@@ -364,7 +364,7 @@ describe('reload log and data-change auto-reload settings', () => {
 describe('modules that gate themselves on a setting their registry key does not name', () => {
     /**
      * Registry key -> the setting its module's initialize() returns early on. The key is not a setting, so
-     * with no customCheck the registry marked the feature started at boot even when initialize() did nothing,
+     * with no `setting:` the registry marked the feature started at boot even when initialize() did nothing,
      * and switching the setting on later never started it: the panel promises every untagged setting applies
      * at once, and these waited for a reload.
      */
@@ -399,7 +399,7 @@ describe('modules that gate themselves on a setting their registry key does not 
             expect(start, key).toBeGreaterThan(-1);
             const nextKey = entrypoint.indexOf("key: '", start + 1);
             const entry = entrypoint.slice(start, nextKey === -1 ? undefined : nextKey);
-            expect(entry, key).toContain(`customCheck: () => config.getSetting('${setting}')`);
+            expect(entry, key).toContain(`setting: '${setting}'`);
         }
     });
 });

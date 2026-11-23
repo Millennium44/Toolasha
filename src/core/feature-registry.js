@@ -534,7 +534,7 @@ async function runFeatureInitialization() {
 
         const isEnabled = (() => {
             try {
-                return feature.customCheck ? feature.customCheck() : config.isFeatureEnabled(feature.key);
+                return evaluateGate(feature);
             } catch (error) {
                 console.error(`[Toolasha] Enabled check for ${feature.name} threw:`, error);
                 return false;
@@ -673,7 +673,7 @@ function checkFeatureHealth() {
         // Skip if feature is not enabled
         const isEnabled = (() => {
             try {
-                return feature.customCheck ? feature.customCheck() : config.isFeatureEnabled(feature.key);
+                return evaluateGate(feature);
             } catch (error) {
                 console.error(`[Toolasha] Enabled check for ${feature.name} threw:`, error);
                 return false;
@@ -954,13 +954,34 @@ function setupCharacterSwitchHandler(onInitFailures, onBeforeSettingsLoad) {
 }
 
 /**
+ * The one place a registry entry's gate is evaluated (startup, health pass, live start and stop).
+ *
+ * An entry is gated, in order of precedence, by:
+ * - `customCheck()`, for a gate no setting names (a module's own `shouldEnable()`, an AND of settings, a
+ *   select compared to a value);
+ * - `setting`: a settings-schema id, or an array of ids of which any one on opens the gate;
+ * - `config.isFeatureEnabled(key)`, which answers true for a key that is not a schema setting.
+ * @param {Object} feature - Registry entry
+ * @returns {*} Truthy when the gate is open
+ */
+function evaluateGate(feature) {
+    if (feature.customCheck) return feature.customCheck();
+    if (feature.setting !== undefined) {
+        return (Array.isArray(feature.setting) ? feature.setting : [feature.setting]).some((id) =>
+            config.getSetting(id)
+        );
+    }
+    return config.isFeatureEnabled(feature.key);
+}
+
+/**
  * Whether a feature's gate is open right now.
  * @param {Object} feature - Registry entry
  * @returns {boolean} True when its customCheck (or its config switch) says it should run
  */
 function isGateOpen(feature) {
     try {
-        return Boolean(feature.customCheck ? feature.customCheck() : config.isFeatureEnabled(feature.key));
+        return Boolean(evaluateGate(feature));
     } catch (error) {
         console.error(`[Toolasha] Enabled check for ${feature.name} threw:`, error);
         return false;

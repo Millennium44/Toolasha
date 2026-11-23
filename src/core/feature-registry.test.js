@@ -6,6 +6,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 const state = vi.hoisted(() => ({
     isCharacterSwitching: false,
     enabledFeatures: new Set(),
+    settings: {},
     currentCharacterId: null,
     handlers: {},
     calls: [],
@@ -16,6 +17,7 @@ const state = vi.hoisted(() => ({
 vi.mock('./config.js', () => ({
     default: {
         isFeatureEnabled: (key) => state.enabledFeatures.has(key),
+        getSetting: (key) => state.settings[key] ?? false,
         clearSettingsCache: () => state.calls.push('clearCache'),
         loadSettings: async () => state.calls.push('loadSettings'),
         applyColorSettings: () => state.calls.push('applyColors'),
@@ -57,6 +59,7 @@ const featureRegistry = (await import('./feature-registry.js')).default;
 beforeEach(() => {
     state.isCharacterSwitching = false;
     state.enabledFeatures = new Set();
+    state.settings = {};
     state.currentCharacterId = null;
     state.handlers = {};
     state.calls = [];
@@ -94,6 +97,35 @@ describe('initializeFeatures', () => {
         featureRegistry.replaceFeatures([{ key: 'custom', name: 'Custom', initialize, customCheck: () => true }]);
         await featureRegistry.initializeFeatures();
         expect(initialize).toHaveBeenCalledTimes(1);
+    });
+
+    describe('setting: the gate derived from schema ids', () => {
+        const run = async (entry) => {
+            const initialize = vi.fn();
+            featureRegistry.replaceFeatures([{ key: 'gated', name: 'Gated', initialize, ...entry }]);
+            await featureRegistry.initializeFeatures();
+            return initialize.mock.calls.length;
+        };
+
+        test('a single id opens the gate when that setting is on, and ignores the key switch', async () => {
+            state.enabledFeatures.add('gated');
+            expect(await run({ setting: 'a' })).toBe(0);
+            state.settings.a = true;
+            expect(await run({ setting: 'a' })).toBe(1);
+        });
+
+        test('an array opens the gate when any one id is on, and only then', async () => {
+            expect(await run({ setting: ['a', 'b'] })).toBe(0);
+            state.settings.b = true;
+            expect(await run({ setting: ['a', 'b'] })).toBe(1);
+            state.settings = { a: true };
+            expect(await run({ setting: ['a', 'b'] })).toBe(1);
+        });
+
+        test('customCheck wins when both are given', async () => {
+            state.settings.a = true;
+            expect(await run({ setting: 'a', customCheck: () => false })).toBe(0);
+        });
     });
 
     test('collects an error entry when a feature initializer throws, and continues to the next feature', async () => {
@@ -761,6 +793,28 @@ describe('a setting switched on mid-session', () => {
         await settle();
 
         expect(initialize).toHaveBeenCalledTimes(1);
+    });
+
+    test('a setting: gate starts live on a switch-on and, with liveStop, stops live on a switch-off', async () => {
+        const fresh = await freshRegistry();
+        const initialize = vi.fn();
+        const disable = vi.fn();
+        fresh.replaceFeatures([
+            { key: 'gated', name: 'Gated', initialize, disable, setting: ['a', 'b'], liveStop: true },
+        ]);
+        fresh.setupLiveFeatureStart();
+        await fresh.initializeFeatures();
+        expect(initialize).not.toHaveBeenCalled();
+
+        state.settings.b = true;
+        for (const listener of [...state.anySettingListeners]) listener('b', true);
+        await settle();
+        expect(initialize).toHaveBeenCalledTimes(1);
+
+        state.settings.b = false;
+        for (const listener of [...state.anySettingListeners]) listener('b', false);
+        await settle();
+        expect(disable).toHaveBeenCalledTimes(1);
     });
 
     test('several changes in one tick start it once', async () => {

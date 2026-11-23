@@ -160,7 +160,7 @@ describe('entrypoint.js registry gate for combatScore', () => {
     // instead, so a regression back to a bare config.isFeatureEnabled('combatScore')
     // check — which is what silently disabled abilitiesTriggers before this
     // fix — fails this test rather than shipping unnoticed.
-    test("the 'combatScore' entry's customCheck ORs combatScore and abilitiesTriggers", () => {
+    test("the 'combatScore' entry's setting list ORs combatScore and abilitiesTriggers", () => {
         const here = path.dirname(fileURLToPath(import.meta.url));
         const entrypointSrc = readFileSync(path.join(here, '..', '..', 'entrypoint.js'), 'utf8');
 
@@ -169,11 +169,8 @@ describe('entrypoint.js registry gate for combatScore', () => {
 
         // The entry runs from its key to the next entry's key (or closing brace)
         const entryText = entrypointSrc.slice(keyIndex, keyIndex + 600);
-        const customCheckMatch = entryText.match(/customCheck:\s*\(\)\s*=>\s*([^\n]+)/);
-        expect(customCheckMatch).not.toBeNull();
-        expect(customCheckMatch[1]).toContain("config.getSetting('combatScore')");
-        expect(customCheckMatch[1]).toContain("config.getSetting('abilitiesTriggers')");
-        expect(customCheckMatch[1]).toContain('||');
+        // `setting:` with several ids is an any-of gate (the registry's `evaluateGate`)
+        expect(entryText).toMatch(/setting:\s*\['combatScore',\s*'abilitiesTriggers'\]/);
     });
 });
 

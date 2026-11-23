@@ -703,6 +703,8 @@ describe('enhancement lifecycle through its actual entrypoint entry and the real
 
 describe('labyrinth clear rate gate', () => {
     const entry = () => registered.find((feature) => feature.key === 'labyrinthClearRate');
+    // The registry derives the gate from `setting`: any named setting on opens it
+    const gate = () => [].concat(entry().setting).some((id) => settings[id]);
 
     afterEach(() => {
         delete settings.labyrinthClearRate;
@@ -710,18 +712,21 @@ describe('labyrinth clear rate gate', () => {
     });
 
     test('opens on the live clear chance alone, so it runs with the room-tile calculator off', () => {
-        expect(typeof entry()?.customCheck, 'labyrinthClearRate has no customCheck').toBe('function');
+        expect(entry()?.setting, 'labyrinthClearRate has no setting').toEqual([
+            'labyrinthClearRate',
+            'labyrinthLiveProgress',
+        ]);
         settings.labyrinthClearRate = false;
         settings.labyrinthLiveProgress = true;
-        expect(entry().customCheck()).toBe(true);
+        expect(gate()).toBe(true);
     });
 
     test('opens on the calculator alone, and closes with both off', () => {
         settings.labyrinthClearRate = true;
         settings.labyrinthLiveProgress = false;
-        expect(entry().customCheck()).toBe(true);
+        expect(gate()).toBe(true);
         settings.labyrinthClearRate = false;
-        expect(entry().customCheck()).toBe(false);
+        expect(gate()).toBe(false);
     });
 
     test('asks the module whether it is running, so switching on the second half starts it', () => {
@@ -1420,14 +1425,14 @@ describe('the registry entries the entrypoint hands over', () => {
         const entry = registered.find((e) => e.key === 'emptyQueueNotification');
 
         expect(entry, 'emptyQueueNotification is no longer registered').toBeTruthy();
-        expect(typeof entry.customCheck).toBe('function');
+        expect(entry.setting).toBe('notifiEmptyAction');
     });
 
     test('the overbid table is gated on its own setting and live-stopped', () => {
         const entry = registered.find((e) => e.key === 'overbidPanel');
 
         expect(entry, 'overbidPanel is no longer registered').toBeTruthy();
-        expect(typeof entry.customCheck).toBe('function');
+        expect(entry.setting).toBe('market_overbidPanel');
         expect(entry.liveStop).toBe(true);
     });
 

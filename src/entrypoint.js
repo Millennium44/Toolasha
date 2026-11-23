@@ -901,7 +901,8 @@ function registerFeatures() {
             module: Market.itemCountDisplay,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_visibleItemCount'),
+            setting: 'market_visibleItemCount',
+            liveStop: false,
             healthCheck: () =>
                 whenSetting('market_visibleItemCount', () =>
                     injectedInto('[class*="MarketplacePanel_marketItems"] use', '.mwi-item-count')
@@ -921,7 +922,8 @@ function registerFeatures() {
             module: Market.listingPriceDisplay,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_showListingPrices'),
+            setting: 'market_showListingPrices',
+            liveStop: false,
         },
         {
             key: 'market_listingDragOrder',
@@ -937,7 +939,8 @@ function registerFeatures() {
             module: Market.collectableListingsSort,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_collectableListingsToTop'),
+            setting: 'market_collectableListingsToTop',
+            liveStop: false,
         },
         {
             key: 'marketplaceBadgeFilter',
@@ -946,9 +949,7 @@ function registerFeatures() {
             module: Market.marketplaceBadgeFilter,
             async: false,
             // Either setting is reason to listen; the module returns early when both are off, so the gate follows it (live start and stop)
-            customCheck: () =>
-                config.getSetting('market_badgeOnlyWhenFinished') ||
-                config.getSetting('notifications_marketListingFilled'),
+            setting: ['market_badgeOnlyWhenFinished', 'notifications_marketListingFilled'],
             liveStop: true,
         },
         {
@@ -958,7 +959,8 @@ function registerFeatures() {
             module: Market.marketHistoryPanel,
             async: true,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_pooledHistory'),
+            setting: 'market_pooledHistory',
+            liveStop: false,
         },
         {
             key: 'myListingsPriceRefresh',
@@ -967,7 +969,8 @@ function registerFeatures() {
             module: Market.myListingsPriceRefresh,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_pooledHistory'),
+            setting: 'market_pooledHistory',
+            liveStop: false,
         },
         {
             key: 'queueLengthEstimator',
@@ -976,7 +979,7 @@ function registerFeatures() {
             module: Market.queueLengthEstimator,
             async: false,
             // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
-            customCheck: () => config.getSetting('market_showQueueLength'),
+            setting: 'market_showQueueLength',
             liveStop: true,
         },
         {
@@ -986,7 +989,8 @@ function registerFeatures() {
             module: Market.marketDepthCap,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_depthCapEnabled'),
+            setting: 'market_depthCapEnabled',
+            liveStop: false,
         },
         {
             key: 'instantOrderGap',
@@ -995,7 +999,8 @@ function registerFeatures() {
             module: Market.instantOrderGap,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_instantOrderGap'),
+            setting: 'market_instantOrderGap',
+            liveStop: false,
         },
         {
             key: 'market_enhanceProfitPerHour',
@@ -1018,7 +1023,8 @@ function registerFeatures() {
             module: Market.marketOrderTotals,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_showOrderTotals'),
+            setting: 'market_showOrderTotals',
+            liveStop: false,
             healthCheck: () =>
                 whenSetting('market_showOrderTotals', () =>
                     injectedInto('[class*="Header_totalLevel"]', '.mwi-market-order-totals')
@@ -1031,7 +1037,8 @@ function registerFeatures() {
             module: Market.marketHistoryViewer,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_showHistoryViewer'),
+            setting: 'market_showHistoryViewer',
+            liveStop: false,
         },
         {
             key: 'listingRefreshNavigator',
@@ -1040,7 +1047,8 @@ function registerFeatures() {
             module: Market.listingRefreshNavigator,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_listingRefreshNavigator'),
+            setting: 'market_listingRefreshNavigator',
+            liveStop: false,
         },
         {
             key: 'listingNextNavigator',
@@ -1049,7 +1057,8 @@ function registerFeatures() {
             module: Market.listingNextNavigator,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_listingRefreshNavigator'),
+            setting: 'market_listingRefreshNavigator',
+            liveStop: false,
         },
         {
             key: 'marketItemHop',
@@ -1075,7 +1084,8 @@ function registerFeatures() {
             module: Market.bulkSellAssistant,
             async: true,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_bulkSellAssistant'),
+            setting: 'market_bulkSellAssistant',
+            liveStop: false,
         },
         {
             key: 'philoCalculator',
@@ -1084,7 +1094,8 @@ function registerFeatures() {
             module: Market.philoCalculator,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('market_showPhiloCalculator'),
+            setting: 'market_showPhiloCalculator',
+            liveStop: false,
         },
         { key: 'tradeHistory', name: 'Trade History', category: 'Market', module: Market.tradeHistory, async: false },
         {
@@ -1116,7 +1127,7 @@ function registerFeatures() {
             async: false,
             // Not a schema/feature key, so without this the registry treats it as always enabled and records
             // it as started even when the setting is off
-            customCheck: () => config.getSetting('market_overbidPanel'),
+            setting: 'market_overbidPanel',
             liveStop: true,
         },
         {
@@ -1126,7 +1137,7 @@ function registerFeatures() {
             module: Market.tradeHistoryDisplay,
             async: false,
             // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
-            customCheck: () => config.getSetting('market_tradeHistory'),
+            setting: 'market_tradeHistory',
             liveStop: true,
         },
         {
@@ -1193,7 +1204,8 @@ function registerFeatures() {
             async: false,
             // Either half being on is enough; the module subscribes to nothing
             // when both are off
-            customCheck: () => config.getSetting('combatText_floating') || config.getSetting('combatText_scrolling'),
+            setting: ['combatText_floating', 'combatText_scrolling'],
+            liveStop: false,
         },
         {
             key: 'watchlist',
@@ -1317,10 +1329,12 @@ function registerFeatures() {
             async: false,
             // Any of the three sections it can draw being on is enough; each
             // section is gated on its own setting inside the module.
-            customCheck: () =>
-                config.getSetting('actionPanel_totalTime_quickInputs') ||
-                config.getSetting('actionPanel_showSpeedTime') ||
-                config.getSetting('actionPanel_showLevelProgress'),
+            setting: [
+                'actionPanel_totalTime_quickInputs',
+                'actionPanel_showSpeedTime',
+                'actionPanel_showLevelProgress',
+            ],
+            liveStop: false,
         },
         {
             key: 'outputTotals',
@@ -1329,7 +1343,7 @@ function registerFeatures() {
             module: Actions.outputTotals,
             async: false,
             // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
-            customCheck: () => config.getSetting('actionPanel_outputTotals'),
+            setting: 'actionPanel_outputTotals',
             liveStop: true,
         },
         {
@@ -1354,9 +1368,7 @@ function registerFeatures() {
             // overlaps it rather than queueing behind it.
             concurrent: true,
             // The module returns early from initialize() when neither per-hour line is on, so the gate follows them
-            customCheck: () =>
-                config.getSetting('actionPanel_showProfitPerHour_gathering') ||
-                config.getSetting('actionPanel_showExpPerHour_gathering'),
+            setting: ['actionPanel_showProfitPerHour_gathering', 'actionPanel_showExpPerHour_gathering'],
             liveStop: true,
         },
         {
@@ -1391,7 +1403,8 @@ function registerFeatures() {
             module: Actions.budgetCalculator,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('actions_budgetCalculator'),
+            setting: 'actions_budgetCalculator',
+            liveStop: false,
         },
         {
             key: 'costSummary',
@@ -1407,7 +1420,7 @@ function registerFeatures() {
             module: Actions.scrollChipsPanel,
             async: false,
             // The chips are the way into the scroll simulation, so they follow its switch both ways
-            customCheck: () => config.getSetting('simulateScrollEffects'),
+            setting: 'simulateScrollEffects',
             liveStop: true,
         },
         {
@@ -1417,10 +1430,7 @@ function registerFeatures() {
             module: Actions.craftingPlan,
             async: false,
             // The plan panel and the guided walk each bail on their own setting in initialize(), so the gate follows it (live start and stop)
-            customCheck: () =>
-                config.getSetting('actionPanel_bestCraftingPlan') ||
-                config.getSetting('craftingPlan_guidedWalk') ||
-                config.getSetting('tasks_mergedCraftingWalk'),
+            setting: ['actionPanel_bestCraftingPlan', 'craftingPlan_guidedWalk', 'tasks_mergedCraftingWalk'],
             liveStop: true,
         },
         {
@@ -1429,7 +1439,8 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.productionArbitrageBoard,
             async: false,
-            customCheck: () => config.getSetting('actions_arbitrageBoard'),
+            setting: 'actions_arbitrageBoard',
+            liveStop: false,
             // The button only belongs on a production skill page, so a gathering
             // page (which shares the title class) is not a verdict either way
             healthCheck: () =>
@@ -1447,7 +1458,8 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.craftEnhanceBoard,
             async: false,
-            customCheck: () => config.getSetting('actions_craftEnhance'),
+            setting: 'actions_craftEnhance',
+            liveStop: false,
             // The button only belongs on a gear-making skill page, so any other page is not a verdict either way
             healthCheck: () =>
                 whenSetting('actions_craftEnhance', () => {
@@ -1467,7 +1479,7 @@ function registerFeatures() {
             module: Actions.alchemyProfitDisplay,
             async: false,
             // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
-            customCheck: () => config.getSetting('alchemy_profitDisplay'),
+            setting: 'alchemy_profitDisplay',
             liveStop: true,
         },
         {
@@ -1476,7 +1488,8 @@ function registerFeatures() {
             category: 'Alchemy',
             module: Actions.alchemyBestItems,
             async: false,
-            customCheck: () => config.getSetting('alchemy_bestItems'),
+            setting: 'alchemy_bestItems',
+            liveStop: false,
         },
         {
             key: 'alchemyItemPins',
@@ -1533,7 +1546,8 @@ function registerFeatures() {
             async: true,
             // lootLogHistory (persisting and displaying older entries) does not
             // need the statistics overlays lootLogStats controls, and vice versa.
-            customCheck: () => config.getSetting('lootLogStats') || config.getSetting('lootLogHistory'),
+            setting: ['lootLogStats', 'lootLogHistory'],
+            liveStop: false,
         },
         {
             key: 'lootLogPivot',
@@ -1561,7 +1575,8 @@ function registerFeatures() {
             module: Actions.pinnedActionsPage,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('actions_pinnedPage'),
+            setting: 'actions_pinnedPage',
+            liveStop: false,
         },
         {
             key: 'skillingOptimizer',
@@ -1655,7 +1670,8 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.abilityTooltipTiming,
             async: false,
-            customCheck: () => config.getSetting('abilityTooltip_effectiveTiming'),
+            setting: 'abilityTooltip_effectiveTiming',
+            liveStop: false,
         },
         {
             key: 'abilityDictionaryButton',
@@ -1664,7 +1680,8 @@ function registerFeatures() {
             module: Combat.abilityDictionaryButton,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('abilities_dictionaryButton'),
+            setting: 'abilities_dictionaryButton',
+            liveStop: false,
         },
         {
             key: 'chestKeyMarketButton',
@@ -1699,7 +1716,8 @@ function registerFeatures() {
             async: false,
             // combatScore only hides the score display; abilitiesTriggers renders
             // its own panel from the same module. Either alone must still run it.
-            customCheck: () => config.getSetting('combatScore') || config.getSetting('abilitiesTriggers'),
+            setting: ['combatScore', 'abilitiesTriggers'],
+            liveStop: false,
             // Prefix-matched: anchoring this on the same hashed selector the
             // feature itself uses meant a game rehash blinded check and feature
             // together — the one failure the health pass exists to catch
@@ -1851,7 +1869,8 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.partyProfileButton,
             async: false,
-            customCheck: () => config.getSetting('combatProfileButton'),
+            setting: 'combatProfileButton',
+            liveStop: false,
         },
         {
             key: 'combatStats',
@@ -1909,7 +1928,8 @@ function registerFeatures() {
             module: Combat.labyrinthBestLevel,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('labyrinthTracker'),
+            setting: 'labyrinthTracker',
+            liveStop: false,
         },
         {
             key: 'labyrinthShopPrices',
@@ -1929,7 +1949,8 @@ function registerFeatures() {
             // with the calculator off. Each half starts on its own setting, and
             // `isRunning` sends the registry back in when the second is switched
             // on after the first brought the module up.
-            customCheck: () => config.getSetting('labyrinthClearRate') || config.getSetting('labyrinthLiveProgress'),
+            setting: ['labyrinthClearRate', 'labyrinthLiveProgress'],
+            liveStop: false,
             isRunning: () => Combat.labyrinthClearRate.isRunning(),
         },
         {
@@ -2045,7 +2066,8 @@ function registerFeatures() {
             // Either half being on is enough; each draws under its own setting
             // inside the module (itemIconLevel for equipment/ability-book text,
             // showsKeyInfoInIcon for key/fragment zone text).
-            customCheck: () => config.getSetting('itemIconLevel') || config.getSetting('showsKeyInfoInIcon'),
+            setting: ['itemIconLevel', 'showsKeyInfoInIcon'],
+            liveStop: false,
         },
         {
             key: 'alchemyItemDimming',
@@ -2084,7 +2106,7 @@ function registerFeatures() {
             module: UI.externalLinks,
             async: false,
             // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
-            customCheck: () => config.getSetting('ui_externalLinks'),
+            setting: 'ui_externalLinks',
             liveStop: true,
         },
         {
@@ -2273,7 +2295,7 @@ function registerFeatures() {
             async: false,
             // No entry in config's own feature map, so the schema switch is what
             // decides — without this the palette would be on regardless
-            customCheck: () => config.getSetting('commandPalette'),
+            setting: 'commandPalette',
             liveStop: true,
         },
         {
@@ -2361,7 +2383,8 @@ function registerFeatures() {
             module: UI.chatProfileLink,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('chat_profileLink'),
+            setting: 'chat_profileLink',
+            liveStop: false,
         },
         {
             key: 'mentionTracker',
@@ -2370,7 +2393,7 @@ function registerFeatures() {
             module: UI.mentionTracker,
             async: true,
             // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
-            customCheck: () => config.getSetting('chat_mentionTracker'),
+            setting: 'chat_mentionTracker',
             liveStop: true,
         },
         {
@@ -2380,7 +2403,7 @@ function registerFeatures() {
             module: UI.popOutChat,
             async: true,
             // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
-            customCheck: () => config.getSetting('chat_popOut'),
+            setting: 'chat_popOut',
             liveStop: true,
         },
         { key: 'chatBlockList', name: 'Chat Block List', category: 'Chat', module: UI.chatBlockList, async: false },
@@ -2589,7 +2612,8 @@ function registerFeatures() {
             // level has its own, and the module gates each part itself. Gating
             // on the key alone took the tooltip away from anyone who hid the
             // sidebar rates.
-            customCheck: () => config.getSetting('xpTracker') || config.getSetting('xpTracker_timeTillLevel'),
+            setting: ['xpTracker', 'xpTracker_timeTillLevel'],
+            liveStop: false,
             // Every listener it owns - `character_initialized`,
             // `action_completed`, `actions_updated`, `cancel_character_action`
             // - is registered *before* its first await, so deferring the wait
@@ -2649,7 +2673,8 @@ function registerFeatures() {
             module: UI.transmuteHistoryViewer,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('alchemy_transmuteHistory'),
+            setting: 'alchemy_transmuteHistory',
+            liveStop: false,
         },
         {
             key: 'alchemy_coinifyHistory',
@@ -2665,7 +2690,8 @@ function registerFeatures() {
             module: UI.coinifyHistoryViewer,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('alchemy_coinifyHistory'),
+            setting: 'alchemy_coinifyHistory',
+            liveStop: false,
         },
         {
             key: 'alchemy_decomposeHistory',
@@ -2681,7 +2707,8 @@ function registerFeatures() {
             module: UI.decomposeHistoryViewer,
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
-            customCheck: () => config.getSetting('alchemy_decomposeHistory'),
+            setting: 'alchemy_decomposeHistory',
+            liveStop: false,
         },
         {
             key: 'alchemy_actionProtection',
@@ -2713,7 +2740,7 @@ function registerFeatures() {
             async: false,
             // The registry key has no setting of its own. A canceled startup must
             // be restartable, and switching off retires its pending reads and UI.
-            customCheck: () => config.getSetting('enhancementTracker'),
+            setting: 'enhancementTracker',
             isRunning: () => UI.enhancementFeature.isInitialized,
             liveStop: true,
         },
@@ -2750,7 +2777,8 @@ function registerFeatures() {
             category: 'Enhancement',
             module: UI.wideEnhancingPanel,
             async: false,
-            customCheck: () => config.getSetting('enhancingPanel_wide'),
+            setting: 'enhancingPanel_wide',
+            liveStop: false,
         },
         {
             key: 'riskOfRuin',
@@ -2848,7 +2876,7 @@ function registerFeatures() {
             async: true,
             // No feature-map entry under this key, so the gate used to be always open: the schema setting is
             // the real switch, and without this it neither started live nor could be stopped live.
-            customCheck: () => config.getSetting('notifiEmptyAction'),
+            setting: 'notifiEmptyAction',
             liveStop: true,
         },
         {
@@ -2859,7 +2887,8 @@ function registerFeatures() {
             async: true,
             // No entry in config's feature map, so the schema setting is the
             // only gate — an unknown registry key would otherwise default to on
-            customCheck: () => config.getSetting('notifications_communityBuffExpiring'),
+            setting: 'notifications_communityBuffExpiring',
+            liveStop: false,
         },
         {
             key: 'labyrinthRunAlerts',
@@ -2869,7 +2898,7 @@ function registerFeatures() {
             async: true,
             // As above: no feature-map entry, so the schema setting is the only
             // gate and an unknown registry key would otherwise default to on
-            customCheck: () => config.getSetting('notifications_labyrinthRunFinished'),
+            setting: 'notifications_labyrinthRunFinished',
             liveStop: true,
         },
         {
@@ -2879,7 +2908,7 @@ function registerFeatures() {
             module: UI.combatConsumableAlerts,
             async: true,
             // Schema setting is the only gate; no feature-map entry
-            customCheck: () => config.getSetting('notifications_combatConsumableLow'),
+            setting: 'notifications_combatConsumableLow',
             liveStop: true,
         },
         {
@@ -2889,7 +2918,7 @@ function registerFeatures() {
             module: UI.labyrinthEntryAlerts,
             async: true,
             // Schema setting is the only gate; no feature-map entry.
-            customCheck: () => config.getSetting('notifications_labyrinthEntryAvailable'),
+            setting: 'notifications_labyrinthEntryAvailable',
             liveStop: true,
         },
         {
@@ -2898,7 +2927,7 @@ function registerFeatures() {
             category: 'Notifications',
             module: UI.combatDeathAlerts,
             async: true,
-            customCheck: () => config.getSetting('notifications_combatDeath'),
+            setting: 'notifications_combatDeath',
             liveStop: true,
         },
         {
@@ -2907,7 +2936,7 @@ function registerFeatures() {
             category: 'Combat',
             module: UI.combatDeathRecap,
             async: true,
-            customCheck: () => config.getSetting('combatDeathRecap'),
+            setting: 'combatDeathRecap',
             liveStop: true,
         },
         {
@@ -2917,7 +2946,8 @@ function registerFeatures() {
             module: UI.skillLevelUpAlerts,
             async: true,
             // Schema setting is the only gate; no feature-map entry.
-            customCheck: () => config.getSetting('notifications_skillLevelUp'),
+            setting: 'notifications_skillLevelUp',
+            liveStop: false,
         },
         {
             key: 'ttlTargetAlerts',
@@ -2926,7 +2956,7 @@ function registerFeatures() {
             module: UI.ttlTargetAlerts,
             async: true,
             // Schema setting is the only gate; no feature-map entry.
-            customCheck: () => config.getSetting('notifications_ttlTargetReached'),
+            setting: 'notifications_ttlTargetReached',
             liveStop: true,
         },
         {
@@ -2936,7 +2966,7 @@ function registerFeatures() {
             module: UI.bestiaryPointsAlerts,
             async: true,
             // Schema setting is the only gate; no feature-map entry.
-            customCheck: () => config.getSetting('notifications_bestiaryPointsTarget'),
+            setting: 'notifications_bestiaryPointsTarget',
             // Clearing the setting must take the combat handlers down: left installed they keep
             // crediting kills while check() returns early, and re-enabling announces an old crossing.
             liveStop: true,
@@ -2948,8 +2978,7 @@ function registerFeatures() {
             module: UI.marketUndercutAlerts,
             async: true,
             // The overbid table reads the same observations, so it keeps the module running too
-            customCheck: () =>
-                config.getSetting('notifications_marketListingUndercut') || config.getSetting('market_overbidPanel'),
+            setting: ['notifications_marketListingUndercut', 'market_overbidPanel'],
             // Both consumers (the notification and the overbid table) can be switched off mid-session; once
             // neither wants the price observations the module must stop gathering them, not wait for a reload.
             // Switching either on is already a live start: the gate opens and the registry initializes it.
@@ -2963,7 +2992,7 @@ function registerFeatures() {
             // Equipment Savings panel's costed lists, which live there.
             module: Market.savingsGoalAlerts,
             async: true,
-            customCheck: () => config.getSetting('notifications_savingsGoalReached'),
+            setting: 'notifications_savingsGoalReached',
             // Its armed bits only follow the market while the check runs; switching it off must drop them,
             // or re-enabling inherits a bit set before the goal was spent and re-saved for, and says nothing.
             liveStop: true,
@@ -2977,7 +3006,7 @@ function registerFeatures() {
             // dataset, both of which live there.
             module: Market.priceTargetAlerts,
             async: true,
-            customCheck: () => config.getSetting('notifications_priceTargetReached'),
+            setting: 'notifications_priceTargetReached',
             // As the savings-goal alert: the armed bits and the refresh timer must not outlive the setting.
             liveStop: true,
         },
@@ -2987,7 +3016,7 @@ function registerFeatures() {
             category: 'Notifications',
             module: UI.enhancementTargetAlerts,
             async: true,
-            customCheck: () => config.getSetting('notifications_enhancementTarget'),
+            setting: 'notifications_enhancementTarget',
             liveStop: true,
         },
         {
@@ -2996,7 +3025,7 @@ function registerFeatures() {
             category: 'Notifications',
             module: UI.philoStoneAlerts,
             async: true,
-            customCheck: () => config.getSetting('notifications_philosophersStone'),
+            setting: 'notifications_philosophersStone',
             liveStop: true,
         },
         {
@@ -3006,7 +3035,7 @@ function registerFeatures() {
             module: UI.partyStatusAlerts,
             async: true,
             // Schema setting is the only gate; no feature-map entry
-            customCheck: () => config.getSetting('notifications_partyStatus'),
+            setting: 'notifications_partyStatus',
             liveStop: true,
         },
         {
@@ -3015,7 +3044,7 @@ function registerFeatures() {
             category: 'Notifications',
             module: UI.taskSlotAlerts,
             async: true,
-            customCheck: () => config.getSetting('notifications_taskSlotsFull'),
+            setting: 'notifications_taskSlotsFull',
             liveStop: true,
         },
         {
@@ -3173,6 +3202,8 @@ function registerFeatures() {
             // initializers are async.)
             concurrent: feature.concurrent || undefined,
             customCheck: feature.customCheck || undefined,
+            // A settings-schema id (or any-of array) the registry derives the gate from; see `evaluateGate`
+            setting: feature.setting || undefined,
             isRunning: feature.isRunning || undefined,
             // Without this the checks above would be dropped on the way into the
             // registry, and `checkFeatureHealth` would go on finding nothing

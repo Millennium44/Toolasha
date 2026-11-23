@@ -18,7 +18,7 @@ import { getSettingDefinition } from './settings-schema.js';
 /**
  * Entries with no setting gate. Each needs a one-line reason; a module that reads its setting only at
  * runtime (when it draws) or restarts itself from its own onSettingChange listener belongs here, one that
- * returns early from initialize() does not (give it a customCheck instead).
+ * returns early from initialize() does not (give it `setting:` instead).
  */
 const NO_GATE_NEEDED = {
     autoFillPrice: 'Registers its own onSettingChange listener at import and starts or stops itself on it.',
@@ -66,8 +66,15 @@ function hasSettingSwitch(key) {
     return Boolean(feature?.settingKey && getSettingDefinition(feature.settingKey));
 }
 
+/** The schema ids an entry's `setting:` field names (a string or an any-of array), or null when it has none. */
+function settingIdsOf(entry) {
+    const hit = /\bsetting: (?:'([^']+)'|\[([^\]]*)\])/.exec(entry.text);
+    if (!hit) return null;
+    return hit[1] ? [hit[1]] : [...hit[2].matchAll(/'([^']+)'/g)].map((id) => id[1]);
+}
+
 function isSelfGated(entry) {
-    return /\bcustomCheck:/.test(entry.text) || /\bisRunning:/.test(entry.text);
+    return /\bcustomCheck:/.test(entry.text) || /\bisRunning:/.test(entry.text) || settingIdsOf(entry) !== null;
 }
 
 describe('feature registry gates', () => {
@@ -87,8 +94,9 @@ describe('feature registry gates', () => {
             ungated,
             `Registry entries with no switch: ${ungated.join(', ')}. isFeatureEnabled() answers true for a key that is ` +
                 `not a settings-schema id, so the registry starts the feature at login and never again. If the module ` +
-                `returns early from initialize() on a setting, add \`customCheck: () => config.getSetting('<setting id>')\` ` +
-                `(and \`liveStop: true\` when disable()/cleanup() removes everything) to its entry in ` +
+                `returns early from initialize() on a setting, add \`setting: '<setting id>'\` (or an array of ids, any ` +
+                `one on opens the gate) and \`liveStop: true|false\` (true when disable()/cleanup() removes everything) ` +
+                `to its entry in ` +
                 `src/entrypoint.js. If it reads its setting only when it draws, or restarts itself from its own ` +
                 `onSettingChange listener, add the key to NO_GATE_NEEDED in this file with a one-line reason.`
         ).toEqual([]);
@@ -150,7 +158,30 @@ describe('feature registry gates', () => {
     ])('%s is gated on %s, the setting its module reads', (key, setting) => {
         const entry = entries.find((candidate) => candidate.key === key);
         expect(getSettingDefinition(setting), setting).toBeTruthy();
-        expect(entry.text, key).toContain(`config.getSetting('${setting}')`);
+        const named = [
+            ...(settingIdsOf(entry) ?? []),
+            ...[...entry.text.matchAll(/getSetting\('([^']+)'/g)].map((m) => m[1]),
+        ];
+        expect(named, key).toContain(setting);
+    });
+
+    test('every `setting:` names existing schema ids, is not combined with customCheck, and states its liveStop', () => {
+        const withSetting = entries.filter((entry) => settingIdsOf(entry) !== null);
+        expect(withSetting.length).toBeGreaterThan(40);
+        for (const entry of withSetting) {
+            const ids = settingIdsOf(entry);
+            expect(ids.length, `${entry.key}: empty setting array`).toBeGreaterThan(0);
+            for (const id of ids) {
+                expect(getSettingDefinition(id), `${entry.key}: '${id}' is not a settings-schema id`).toBeTruthy();
+            }
+            expect(entry.text, `${entry.key}: use setting: or customCheck:, not both`).not.toMatch(/\bcustomCheck:/);
+            expect(
+                entry.text,
+                `${entry.key}: state \`liveStop: true\` (its disable()/cleanup() removes everything it drew and resets ` +
+                    `its init flag, so the registry stops it when the setting goes off) or \`liveStop: false\`. The ` +
+                    `registry does not default it: a teardown that leaves something behind must not be stopped live.`
+            ).toMatch(/\bliveStop: (true|false)\b/);
+        }
     });
 
     test('the allowlist names only entries that exist and still have no gate', () => {

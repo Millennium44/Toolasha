@@ -71,16 +71,15 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
 }));
 
 describe('entrypoint.js registry gate for lootLogStats', () => {
-    test("the 'lootLogStats' entry's customCheck includes lootLogHistory", () => {
+    test("the 'lootLogStats' entry's setting list includes lootLogHistory", () => {
         const here = path.dirname(fileURLToPath(import.meta.url));
         const entrypointSrc = readFileSync(path.join(here, '..', '..', 'entrypoint.js'), 'utf8');
 
         const keyIndex = entrypointSrc.indexOf("key: 'lootLogStats',");
         expect(keyIndex).toBeGreaterThan(-1);
         const entryText = entrypointSrc.slice(keyIndex, keyIndex + 500);
-        expect(entryText).toContain("config.getSetting('lootLogStats')");
-        expect(entryText).toContain("config.getSetting('lootLogHistory')");
-        expect(entryText).toMatch(/customCheck:\s*\(\)\s*=>[^\n]*\|\|/);
+        // `setting:` with several ids is an any-of gate (the registry's `evaluateGate`)
+        expect(entryText).toMatch(/setting:\s*\['lootLogStats',\s*'lootLogHistory'\]/);
     });
 });
 
