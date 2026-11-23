@@ -11,11 +11,22 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-vi.mock('../../core/config.js', () => ({ default: { isFeatureEnabled: () => true, getSettingValue: () => null } }));
-vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterName: () => 'Tester' } }));
-vi.mock('../../core/feature-registry.js', () => ({
-    default: { getAllFeatures: () => [], checkFeatureHealth: () => [] },
+vi.mock('../../core/config.js', () => ({
+    default: { isFeatureEnabled: () => true, getSettingValue: () => null, getSetting: (id) => id === 'onSetting' },
 }));
+vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterName: () => 'Tester' } }));
+vi.mock('../../core/feature-registry.js', async () => {
+    const config = (await import('../../core/config.js')).default;
+    // The registry's own gate rule, over the mocked config
+    const evaluateGate = (feature) => {
+        if (feature.customCheck) return feature.customCheck();
+        if (feature.setting !== undefined) {
+            return [].concat(feature.setting).some((id) => config.getSetting(id));
+        }
+        return config.isFeatureEnabled(feature.key);
+    };
+    return { default: { getAllFeatures: () => [], checkFeatureHealth: () => [], evaluateGate } };
+});
 vi.mock('../dev/health-status.js', () => ({
     buildDiagnosticReport: () => 'health report (mocked)',
     refreshStorageFacts: async () => {},
@@ -333,9 +344,11 @@ describe('helpers', () => {
             { key: 'networth', name: 'Net Worth' },
             { key: 'palette', name: 'Command Palette' },
             { key: 'offSwitch', name: 'Off By Custom Check', customCheck: () => false },
+            { key: 'namedOn', name: 'Named Setting On', setting: 'onSetting' },
+            { key: 'namedOff', name: 'Named Setting Off', setting: ['offSetting', 'alsoOff'] },
         ];
         try {
-            expect(readEnabledFeatureNames()).toEqual(['Command Palette', 'Net Worth']);
+            expect(readEnabledFeatureNames()).toEqual(['Command Palette', 'Named Setting On', 'Net Worth']);
         } finally {
             featureRegistry.getAllFeatures = original;
         }

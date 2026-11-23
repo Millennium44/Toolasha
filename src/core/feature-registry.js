@@ -1268,6 +1268,7 @@ export default {
     setupCharacterSwitchHandler,
     setupLiveFeatureStart,
     checkFeatureHealth,
+    evaluateGate,
     retryFailedFeatures,
     getFeature,
     getAllFeatures,

@@ -18,7 +18,6 @@
  * modules.
  */
 
-import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import featureRegistry from '../../core/feature-registry.js';
 import * as defaultErrorLog from '../../core/error-log.js';
@@ -73,7 +72,7 @@ export function buildStampFrom(version) {
  */
 function featureEnabled(feature) {
     try {
-        return feature.customCheck ? Boolean(feature.customCheck()) : Boolean(config.isFeatureEnabled(feature.key));
+        return Boolean(featureRegistry.evaluateGate(feature));
     } catch {
         return false;
     }
