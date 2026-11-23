@@ -12,9 +12,17 @@ class CustomTabsFeature {
     }
 
     async initialize() {
+        // A retry (`retryFailedFeatures`, or a start whose bounded wait ran out) can call this again without a
+        // disable() in between. The UI it would replace is torn down first, half-built or not: two instances both
+        // draw a tab bar and both write the config. Its cleanup also stops an initialize() still waiting on its load.
+        if (this.ui) {
+            this.ui.cleanup();
+            this.ui = null;
+        }
         if (!config.getSetting('inventoryTabs')) return;
-        this.ui = new CustomTabsUI();
-        await this.ui.initialize();
+        const ui = new CustomTabsUI();
+        this.ui = ui;
+        await ui.initialize();
     }
 
     disable() {

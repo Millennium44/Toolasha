@@ -502,7 +502,55 @@ describe('Export / Import across characters', () => {
         await flushConfigWrites();
 
         expect(ui._config.tabs.map((t) => t.name)).toEqual(['Ores', 'Gear']);
-        expect(ui._config.removed).toBeUndefined();
+        // The file's own tombstones are gone; the only deletion on file is the layout the import replaced
+        expect(Object.keys(ui._config.removed ?? {})).toEqual(['mc-tab']);
+    });
+
+    test('a fold with the pre-import copy (an old gist) leaves one set of tabs, not both', async () => {
+        const preImport = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [
+                // A pre-3.22.0 tab (no stamp) and a stamped one
+                { id: 'old-ores', name: 'Ores', items: ['/items/iron_ore'], children: [] },
+                { id: 'old-gear', name: 'Gear', items: [], children: [], updatedAt: Date.now() - 60_000 },
+            ],
+        };
+        store('mainChar', preImport);
+        dm.charId = 'mainChar';
+        await startUI();
+
+        const file = JSON.stringify({
+            _toolasha: 'tabs-v1',
+            version: 1,
+            selectedTabId: null,
+            tabs: [
+                { id: 'old-ores', name: 'Ores', items: ['/items/iron_ore'], children: [] },
+                { id: 'old-gear', name: 'Gear', items: [], children: [] },
+            ],
+        });
+        await ui._handleImportFile(new File([file], 'toolasha-tabs.json', { type: 'application/json' }));
+        await flushConfigWrites();
+
+        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
+        const registration = mergeForKey('settings', KEY('mainChar'));
+        // A pull of a gist still holding the replaced layout, and a push over it, in both argument orders
+        const pulled = registration.foldPull(structuredClone(stored('mainChar')), structuredClone(preImport));
+        const pushed = registration.merge(structuredClone(preImport), structuredClone(stored('mainChar')));
+        const pushedOther = registration.merge(structuredClone(stored('mainChar')), structuredClone(preImport));
+        for (const folded of [pulled, pushed, pushedOther]) {
+            expect(folded.tabs.map((t) => t.name)).toEqual(['Ores', 'Gear']);
+            expect(tabIds(folded)).not.toContain('old-ores');
+            expect(tabIds(folded)).not.toContain('old-gear');
+        }
+
+        // And the next page load after the pull wrote its fold
+        store('mainChar', pulled);
+        dm.charId = 'otherChar';
+        await dm.emit('character_initialized', { _isCharacterSwitch: true });
+        dm.charId = 'mainChar';
+        await dm.emit('character_initialized', { _isCharacterSwitch: true });
+        expect(ui._config.tabs.map((t) => t.name)).toEqual(['Ores', 'Gear']);
     });
 });
 

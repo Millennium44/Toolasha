@@ -59,7 +59,7 @@ import {
     syncLoadoutBinding,
     cleanOrphanedBindings,
     getBaseHrid,
-    sanitizeImportedConfig,
+    importLayout,
     tombstoneItem,
     clearItemTombstone,
     LINEBREAK_HRID,
@@ -2712,8 +2712,8 @@ ${NATIVE_PANEL_SEL} { padding-left: 0; padding-right: 0; }`
                 return;
             }
             const { _toolasha: _, ...raw } = parsed;
-            // Never adopt a file verbatim — see sanitizeImportedConfig
-            this._config = sanitizeImportedConfig(raw);
+            // Never adopt a file verbatim, and record the replaced layout as removed — see importLayout
+            this._config = importLayout(this._config, raw);
             // Apply layout immediately — save to IndexedDB in the background
             this._removeInjectedEls();
             const invContainer = this._findInvContainer();

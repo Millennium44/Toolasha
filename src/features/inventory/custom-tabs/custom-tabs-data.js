@@ -1122,6 +1122,31 @@ export function sanitizeImportedConfig(parsed, now = Date.now()) {
 }
 
 /**
+ * Replace a layout with an imported file: the file made safe (`sanitizeImportedConfig`), and every tab of the layout
+ * it replaces recorded as removed, as Clear All records it (`clearAllTabs`).
+ *
+ * The imported tabs carry fresh ids, so without a record for the old ones the next fold with any copy still holding
+ * them (the gist, another device, the read-back of the pre-import copy) unioned both id sets and the player had every
+ * tab twice. The replaced layout's own deletion records are kept, so a tab deleted before the import stays deleted.
+ * @param {Object|null} current - The layout being replaced
+ * @param {Object} parsed - The parsed layout file, minus its `_toolasha` marker
+ * @param {number} [now]
+ * @returns {Object} The config to hold and save
+ */
+export function importLayout(current, parsed, now = Date.now()) {
+    const imported = sanitizeImportedConfig(parsed, now);
+    if (!current || typeof current !== 'object' || !Array.isArray(current.tabs)) return imported;
+    const cleared = clearAllTabs(current, now);
+    const out = { ...imported };
+    for (const field of ['removed', 'removedItems', 'clearedAll']) {
+        const value = cleared[field];
+        if (value && typeof value === 'object' && Object.keys(value).length > 0) out[field] = value;
+    }
+    out.orderUpdatedAt = Math.max(Number(imported.orderUpdatedAt) || 0, Number(cleared.orderUpdatedAt) || 0);
+    return out;
+}
+
+/**
  * Test-only: drop every per-character record held here.
  *
  * The records are keyed by character id and deliberately outlive any one panel,
@@ -1312,10 +1337,38 @@ export function removeTab(config, tabId) {
     if (!result) return c;
     const now = Date.now();
     tombstone(c, result.tab, now);
+    recordRemoval(c, result.tab, now);
     const parentId = result.parent?.id ?? null;
     _removeFromArray(c.tabs, tabId);
     if (parentId) stampTab(c, parentId, now);
     return c;
+}
+
+/**
+ * Record a hand deletion as a one-operation removal record in `clearedAll` (the shape `clearAllTabs` writes),
+ * naming the removed tab and every descendant and nothing else.
+ *
+ * The tombstone alone cannot carry this deletion to an UNSTAMPED (pre-3.22.0) copy: `applyTombstones` keeps an
+ * unstamped tab and forgets the tombstone, so the next pull of a gist still holding that tab unstamped brought it
+ * back as a second copy next to its stamped twin. A record names exactly the ids the player removed, and
+ * `applyClears` deletes every copy of them stamped before it, unstamped ones included; a copy edited after it (on
+ * another device) survives as it does a tombstone. Its `at` is placed past every stamp in the removed subtree, so a
+ * copy no newer than the one the player saw is reached even when that copy was stamped by a clock running ahead.
+ * One new record per removal under a fresh id: records are unioned by operation id and never edited.
+ * @param {Object} config - Mutated in place
+ * @param {Object} tab - The tab being removed
+ * @param {number} now
+ */
+function recordRemoval(config, tab, now) {
+    const ids = [];
+    let at = now;
+    _walkTabs([tab], (node) => {
+        if (node?.id == null) return;
+        ids.push(node.id);
+        at = Math.max(at, stampOf(node) + 1);
+    });
+    if (ids.length === 0) return;
+    config.clearedAll = { ...clearRecordsOf(config), [makeId()]: { at, ids, prior: [] } };
 }
 
 /**
