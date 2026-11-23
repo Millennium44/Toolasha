@@ -2976,3 +2976,28 @@ describe('the alchemy gold rate folds into the crafting plan gold/hr', () => {
         expect(settings[NEW].value).toBe(750000);
     });
 });
+
+describe('SettingsStorage.importSettings of a custom-tab config', () => {
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('stamps every restored tab as changed now, nested ones included', async () => {
+        const before = Date.now();
+        const result = await settingsStorage.importSettings(
+            JSON.stringify({
+                alice_inventoryTabs_config: {
+                    version: 1,
+                    tabs: [{ id: 'a', name: 'Gear', items: [], children: [{ id: 'k', items: [], children: [] }] }],
+                },
+            })
+        );
+
+        expect(result).toEqual({ imported: 1, skipped: 0 });
+        const tabs = stored.get('json:alice_inventoryTabs_config').tabs;
+        expect(tabs[0].updatedAt).toBeGreaterThanOrEqual(before);
+        expect(tabs[0].children[0].updatedAt).toBeGreaterThanOrEqual(before);
+    });
+});

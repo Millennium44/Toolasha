@@ -234,3 +234,55 @@ describe('a character switch landing inside the tabs config read', () => {
         expect(document.head.querySelectorAll('style')).toHaveLength(0);
     });
 });
+
+describe('initialize() called again without a disable() in between (a registry retry)', () => {
+    beforeEach(() => {
+        customTabsFeature.disable();
+        for (const store of storageMock.stores.values()) store.clear();
+        live.observers = [];
+        live.settingSubs = 0;
+        live.sortSubs = 0;
+        live.loadoutSubs = 0;
+        live.events = {};
+        world.gate = null;
+        world.charId = 'char1';
+        document.body.innerHTML = '';
+        document.head.innerHTML = '';
+    });
+
+    afterEach(() => {
+        customTabsFeature.disable();
+    });
+
+    test('a second initialize leaves one UI, every part of it removable', async () => {
+        await customTabsFeature.initialize();
+        const once = registrations();
+        expect(once).toBeGreaterThan(0);
+
+        await customTabsFeature.initialize();
+        expect(registrations()).toBe(once);
+        expect(document.head.querySelectorAll('style')).toHaveLength(1);
+
+        customTabsFeature.disable();
+        expect(registrations()).toBe(0);
+        expect(document.head.querySelectorAll('style')).toHaveLength(0);
+    });
+
+    test('a second initialize landing while the first waits on its read leaves one UI', async () => {
+        let release;
+        world.gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const first = customTabsFeature.initialize();
+        await settle();
+        world.gate = null;
+        const second = customTabsFeature.initialize();
+        release();
+        await Promise.all([first, second]);
+
+        expect(document.head.querySelectorAll('style')).toHaveLength(1);
+        customTabsFeature.disable();
+        expect(registrations()).toBe(0);
+        expect(document.head.querySelectorAll('style')).toHaveLength(0);
+    });
+});

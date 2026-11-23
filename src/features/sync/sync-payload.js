@@ -41,6 +41,7 @@ import {
 } from '../../utils/sync-merge-registry.js';
 import { GistError } from './gist-client.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
+import { isTabConfigKey, restampRestoredTabConfig } from '../../utils/restored-tab-config.js';
 import { syncPhase } from './sync-phase.js';
 
 /** Matches the full-backup format, because that is what this produces */
@@ -2173,6 +2174,11 @@ export function restampRestoredSettings(payload, now = Date.now()) {
     const settings = payload?.stores?.[SETTINGS_STORE];
     if (!settings || typeof settings !== 'object') return;
     for (const [key, value] of Object.entries(settings)) {
+        // A restored tab is newer than any deletion the gist still carries for it (see restored-tab-config.js)
+        if (isTabConfigKey(key)) {
+            settings[key] = restampRestoredTabConfig(value, now);
+            continue;
+        }
         if (!key.startsWith('script_settingsMap')) continue;
         let map = value;
         if (typeof value === 'string') {

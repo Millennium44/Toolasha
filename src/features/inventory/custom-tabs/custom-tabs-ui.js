@@ -59,7 +59,7 @@ import {
     syncLoadoutBinding,
     cleanOrphanedBindings,
     getBaseHrid,
-    sanitizeImportedConfig,
+    importLayout,
     tombstoneItem,
     clearItemTombstone,
     LINEBREAK_HRID,
@@ -1051,6 +1051,12 @@ export default class CustomTabsUI {
     async _reloadForCurrentCharacter() {
         const charId = dataManager.getCurrentCharacterId();
         if (charId === this._configCharId) return;
+
+        // An open tab editor is wired to the departing character's tab: once the arriving config is in hand its
+        // Confirm Delete (or any other button) would edit that config instead. Closed before anything loads
+        document.querySelectorAll('.toolasha-ct-modal-overlay').forEach((el) => el.remove());
+        this._editorTabId = null;
+        this._deleteConfirmId = null;
 
         // Every reload takes a generation. Two rules hang off it, and together
         // they are what guarantees the latch always ends up SET:
@@ -2712,8 +2718,18 @@ ${NATIVE_PANEL_SEL} { padding-left: 0; padding-right: 0; }`
                 return;
             }
             const { _toolasha: _, ...raw } = parsed;
-            // Never adopt a file verbatim — see sanitizeImportedConfig
-            this._config = sanitizeImportedConfig(raw);
+            // The import replaces the layout on every synced device too (importLayout records the old tabs as
+            // removed), so it asks first, as Clear All does. Cancel writes nothing
+            const replacing = this._config?.tabs?.length || 0;
+            if (replacing > 0) {
+                const message =
+                    `Replace your ${replacing} custom tab${replacing === 1 ? '' : 's'} with the imported layout?\n\n` +
+                    'This also replaces them on your other synced devices and cannot be undone. ' +
+                    'To keep a copy, cancel and use Export first.';
+                if (!confirm(message)) return;
+            }
+            // Never adopt a file verbatim, and record the replaced layout as removed — see importLayout
+            this._config = importLayout(this._config, raw);
             // Apply layout immediately — save to IndexedDB in the background
             this._removeInjectedEls();
             const invContainer = this._findInvContainer();
@@ -3613,6 +3629,8 @@ ${unpricedTitle(unpriced)}`;
         const result = findTab(this._config, tabId);
         if (!result) return;
         const tab = result.tab;
+        // The character whose tab this editor edits; a delete for anyone else's config is refused
+        const editorCharId = this._configCharId;
 
         const overlay = document.createElement('div');
         overlay.className = 'toolasha-ct-modal-overlay';
@@ -3789,6 +3807,11 @@ ${unpricedTitle(unpriced)}`;
 
         const deleteBtn = modal.querySelector('.toolasha-ct-delete-btn');
         deleteBtn.addEventListener('click', () => {
+            if (this._configCharId !== editorCharId || !this._isConfigForCurrentCharacter()) {
+                console.warn('[CustomTabs] Refusing a delete from an editor opened for another character');
+                overlay.remove();
+                return;
+            }
             if (this._deleteConfirmId === tabId) {
                 this._config = removeTab(this._config, tabId);
                 this._save();
@@ -4654,8 +4677,8 @@ ${unpricedTitle(unpriced)}`;
      * that key, so writing the wrong character's config here does not merely
      * overwrite: it unions the departed character's tabs into the arriving
      * character's list, and a tombstone the departed character wrote can delete
-     * a same-id tab (Export/Import legitimately shares ids across characters)
-     * the arriving one still has. Refusing is safe — the edit is lost, the tabs
+     * a same-id tab the arriving one still has (an import made before imports
+     * re-id'd every tab left two characters sharing ids). Refusing is safe — the edit is lost, the tabs
      * are not — and the reload that follows a switch brings the right config in.
      * @returns {Promise<boolean|undefined>}
      */

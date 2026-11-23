@@ -5,6 +5,7 @@
 
 import storage from './storage.js';
 import { settingsGroups } from './settings-schema.js';
+import { isTabConfigKey, restampRestoredTabConfig } from '../utils/restored-tab-config.js';
 
 /**
  * Whether a schema type stores its state as a boolean (.isTrue)
@@ -2212,7 +2213,13 @@ class SettingsStorage {
                 const before = isMap ? await storage.getJSON(key, this.storageArea, null) : null;
                 const written = isMap
                     ? await this._writeMapWithStamps(key, value, before, { absentIsChange: true }, parseMap(value))
-                    : (await storage.setJSON(key, value, this.storageArea, true)) !== false;
+                    : (await storage.setJSON(
+                          key,
+                          // Restored tabs are newer than any deletion the gist still carries (restored-tab-config.js)
+                          isTabConfigKey(key) ? restampRestoredTabConfig(value) : value,
+                          this.storageArea,
+                          true
+                      )) !== false;
                 if (!written) {
                     await this.reconcileKeyMigrationState(importedKeys);
                     console.error(`[Settings Storage] Import stopped: ${key} could not be written`);

@@ -18,6 +18,10 @@ The alchemy Profitability section now reads "Profitability unavailable: no marke
 
 Iron Cow mode now also switches off the skill page's pricing mode, craft and sell-tax buttons, which only change pricing settings it already locks. Your own choices come back when you turn the mode off.
 
+### Custom tabs no longer come back doubled
+
+A custom tab you delete, or a layout replaced by an import, now stays gone after a sync, even for tabs made before 3.22.0, so cleared duplicates stop returning. Importing asks first when you already have tabs, and tabs restored from a backup are kept.
+
 ### Presets can be combined, and a Guild preset is added
 
 Combat, Market and Guild can now be ticked together on top of Essentials and applied as one, which Restore undoes. Presets no longer switch off about 125 features their players use, such as the command palette, task sorter and Enhancement Simulator. The skilling optimizer and house upgrade costs now come with Market, since they need prices. Ticked chips show as pressed and clear once applied.
