@@ -1386,6 +1386,16 @@ describe('the lifetime of a plan’s claim', () => {
         expect([...ledger.owners]).toEqual(['craftingPlan:/items/wooden_bow']);
     });
 
+    test('switched on with a plan panel already open, that panel gets its plan', () => {
+        const panel = mountPanel();
+        panels.resolvedActionHrid = '/actions/crafting/wooden_bow';
+
+        craftingPlanDisplay.initialize();
+
+        // Nothing dispatched to the new subscriber, yet the open panel is attached
+        expect(panels.attachCalls.map((call) => call.panel)).toContain(panel);
+    });
+
     test('moving to another item’s plan leaves no claim behind for the first', async () => {
         craftingPlanDisplay.initialize();
         const first = mountPanel();

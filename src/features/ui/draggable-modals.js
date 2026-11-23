@@ -90,14 +90,19 @@ class DraggableModals {
 
         // Watch Modal_modalContent — unique to the inner dialog content element.
         // Its parentElement is Modal_modal (the box we apply transform to).
-        this.unregisterObserver = domObserver.onClass('DraggableModals', 'Modal_modalContent', (contentEl) => {
+        const attach = (contentEl) => {
             const modalBox = contentEl.parentElement;
             if (!modalBox) return;
             // Guard against double-processing (e.g. if observer fires twice)
             if (modalBox.dataset.mwiDraggable) return;
             modalBox.dataset.mwiDraggable = '1';
             this._makeDraggable(modalBox, contentEl);
-        });
+        };
+        this.unregisterObserver = domObserver.onClass('DraggableModals', 'Modal_modalContent', attach);
+
+        // The observer only reports modals that open later. Switched on from the settings modal, the
+        // open settings modal (and any other already on screen) would stay fixed until it was reopened.
+        document.querySelectorAll('[class*="Modal_modalContent"]').forEach(attach);
 
         this.initialized = true;
     }

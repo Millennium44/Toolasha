@@ -54,6 +54,12 @@ class OutputTotals {
         this.unregisterObserver = onDetailPanel((context) => {
             this.attachToActionPanel(context.panel);
         });
+
+        // A panel already open when this starts (switched back on mid-session)
+        // never dispatches to a new subscriber, so attach to it directly
+        document
+            .querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]')
+            .forEach((panel) => this.attachToActionPanel(panel));
     }
 
     /**

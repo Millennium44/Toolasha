@@ -66,6 +66,10 @@ class QueueLengthEstimator {
         this.setupWebSocketListeners();
         this.setupObserver();
         this.setupVolumeStatsListener();
+
+        // The order books cached before a switch-off stay in hand, so an order book already open is
+        // redrawn now rather than on the next order-book push
+        this.repaint();
     }
 
     /**

@@ -1083,6 +1083,12 @@ class CraftingPlanDisplay {
         const unregister = onDetailPanel((context) => this._processPanel(context));
         this.unregisterHandlers.push(unregister);
 
+        // The dispatcher only reports panels that appear after this subscribes. Switched back on with a
+        // detail panel already open, that panel would get no plan until it was closed and reopened.
+        document
+            .querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]')
+            .forEach((panel) => this._processPanel({ ...resolveDetailPanel(panel), panel }));
+
         // The count field has its own listener (below, in `_attachToPanel`) for
         // the common case of the player typing. This shared refresh catches
         // the rest: the action queue changing underneath an open panel, and —

@@ -487,3 +487,14 @@ describe('combined counts text size', () => {
         expect(render().style.fontSize).toBe('0.95rem');
     });
 });
+
+describe('switched back on with an order book already open', () => {
+    test('initialize repaints from the books cached before the switch-off', () => {
+        const repainted = vi.spyOn(queueLengthEstimator, 'repaint').mockImplementation(() => {});
+        queueLengthEstimator.disable();
+        queueLengthEstimator.initialize();
+        expect(repainted).toHaveBeenCalledTimes(1);
+        repainted.mockRestore();
+        queueLengthEstimator.disable();
+    });
+});
