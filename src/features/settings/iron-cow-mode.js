@@ -69,6 +69,10 @@ export const IRON_COW_SETTINGS = new Set([
     'actionPanel_showProfitDetail',
     'actionPanel_foragingTotal',
     'actionPanel_hideNegativeProfit',
+    // Skill-page buttons that flip the pricing, craft-upgrade and sell-tax settings Iron Cow already locks
+    'actionPanel_showPricingMode',
+    'actionPanel_showCraftToggle',
+    'actionPanel_showSellTaxToggle',
     'actionQueue_showValue',
     'actionQueue_valueMode',
     'alchemy_profitDisplay',
@@ -143,9 +147,6 @@ export const IRON_COW_SETTINGS = new Set([
  */
 export const IRON_COW_UNLOCKED_PRICED = new Set([
     'profitCalc_craftUpgradeItems',
-    'actionPanel_showPricingMode',
-    'actionPanel_showCraftToggle',
-    'actionPanel_showSellTaxToggle',
     'itemTooltip_artisanPrices',
     'expectedValue_includeCowbells',
     'itemTooltip_enhancementPath',

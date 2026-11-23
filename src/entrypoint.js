@@ -902,7 +902,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_visibleItemCount',
-            liveStop: false,
+            liveStop: true,
             healthCheck: () =>
                 whenSetting('market_visibleItemCount', () =>
                     injectedInto('[class*="MarketplacePanel_marketItems"] use', '.mwi-item-count')
@@ -923,7 +923,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_showListingPrices',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'market_listingDragOrder',
@@ -940,7 +940,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_collectableListingsToTop',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'marketplaceBadgeFilter',
@@ -960,7 +960,7 @@ function registerFeatures() {
             async: true,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_pooledHistory',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'myListingsPriceRefresh',
@@ -970,7 +970,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_pooledHistory',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'queueLengthEstimator',
@@ -990,7 +990,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_depthCapEnabled',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'instantOrderGap',
@@ -1000,7 +1000,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_instantOrderGap',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'market_enhanceProfitPerHour',
@@ -1024,7 +1024,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_showOrderTotals',
-            liveStop: false,
+            liveStop: true,
             healthCheck: () =>
                 whenSetting('market_showOrderTotals', () =>
                     injectedInto('[class*="Header_totalLevel"]', '.mwi-market-order-totals')
@@ -1038,7 +1038,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_showHistoryViewer',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'listingRefreshNavigator',
@@ -1048,7 +1048,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_listingRefreshNavigator',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'listingNextNavigator',
@@ -1058,7 +1058,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_listingRefreshNavigator',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'marketItemHop',
@@ -1085,7 +1085,7 @@ function registerFeatures() {
             async: true,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_bulkSellAssistant',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'philoCalculator',
@@ -1095,7 +1095,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'market_showPhiloCalculator',
-            liveStop: false,
+            liveStop: true,
         },
         { key: 'tradeHistory', name: 'Trade History', category: 'Market', module: Market.tradeHistory, async: false },
         {
@@ -1205,7 +1205,7 @@ function registerFeatures() {
             // Either half being on is enough; the module subscribes to nothing
             // when both are off
             setting: ['combatText_floating', 'combatText_scrolling'],
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'watchlist',
@@ -1334,6 +1334,7 @@ function registerFeatures() {
                 'actionPanel_showSpeedTime',
                 'actionPanel_showLevelProgress',
             ],
+            // Left false deliberately: disable() removes every `.mwi-collapsible-section` on the page, which the profit display and scroll chips also draw, so a live stop would take their sections off an open panel.
             liveStop: false,
         },
         {
@@ -1404,7 +1405,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'actions_budgetCalculator',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'costSummary',
@@ -1440,7 +1441,7 @@ function registerFeatures() {
             module: Actions.productionArbitrageBoard,
             async: false,
             setting: 'actions_arbitrageBoard',
-            liveStop: false,
+            liveStop: true,
             // The button only belongs on a production skill page, so a gathering
             // page (which shares the title class) is not a verdict either way
             healthCheck: () =>
@@ -1459,7 +1460,7 @@ function registerFeatures() {
             module: Actions.craftEnhanceBoard,
             async: false,
             setting: 'actions_craftEnhance',
-            liveStop: false,
+            liveStop: true,
             // The button only belongs on a gear-making skill page, so any other page is not a verdict either way
             healthCheck: () =>
                 whenSetting('actions_craftEnhance', () => {
@@ -1489,7 +1490,7 @@ function registerFeatures() {
             module: Actions.alchemyBestItems,
             async: false,
             setting: 'alchemy_bestItems',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'alchemyItemPins',
@@ -1547,6 +1548,7 @@ function registerFeatures() {
             // lootLogHistory (persisting and displaying older entries) does not
             // need the statistics overlays lootLogStats controls, and vice versa.
             setting: ['lootLogStats', 'lootLogHistory'],
+            // Left false: the module already follows both of its settings live (syncParts), so nothing stays on screen when they go off.
             liveStop: false,
         },
         {
@@ -1576,7 +1578,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'actions_pinnedPage',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'skillingOptimizer',
@@ -1671,7 +1673,7 @@ function registerFeatures() {
             module: Combat.abilityTooltipTiming,
             async: false,
             setting: 'abilityTooltip_effectiveTiming',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'abilityDictionaryButton',
@@ -1681,7 +1683,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'abilities_dictionaryButton',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'chestKeyMarketButton',
@@ -1717,7 +1719,7 @@ function registerFeatures() {
             // combatScore only hides the score display; abilitiesTriggers renders
             // its own panel from the same module. Either alone must still run it.
             setting: ['combatScore', 'abilitiesTriggers'],
-            liveStop: false,
+            liveStop: true,
             // Prefix-matched: anchoring this on the same hashed selector the
             // feature itself uses meant a game rehash blinded check and feature
             // together — the one failure the health pass exists to catch
@@ -1870,7 +1872,7 @@ function registerFeatures() {
             module: Combat.partyProfileButton,
             async: false,
             setting: 'combatProfileButton',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'combatStats',
@@ -1929,7 +1931,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'labyrinthTracker',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'labyrinthShopPrices',
@@ -1950,6 +1952,7 @@ function registerFeatures() {
             // `isRunning` sends the registry back in when the second is switched
             // on after the first brought the module up.
             setting: ['labyrinthClearRate', 'labyrinthLiveProgress'],
+            // Left false: the module already follows both halves live (watchHalfSettings), so nothing stays on screen when they go off.
             liveStop: false,
             isRunning: () => Combat.labyrinthClearRate.isRunning(),
         },
@@ -2067,7 +2070,7 @@ function registerFeatures() {
             // inside the module (itemIconLevel for equipment/ability-book text,
             // showsKeyInfoInIcon for key/fragment zone text).
             setting: ['itemIconLevel', 'showsKeyInfoInIcon'],
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'alchemyItemDimming',
@@ -2384,7 +2387,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'chat_profileLink',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'mentionTracker',
@@ -2613,6 +2616,7 @@ function registerFeatures() {
             // on the key alone took the tooltip away from anyone who hid the
             // sidebar rates.
             setting: ['xpTracker', 'xpTracker_timeTillLevel'],
+            // Left false deliberately: a live stop and restart rebuilds the combat session baseline (its rate for the fight in progress) and leaves a gap in the recorded history.
             liveStop: false,
             // Every listener it owns - `character_initialized`,
             // `action_completed`, `actions_updated`, `cancel_character_action`
@@ -2674,7 +2678,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'alchemy_transmuteHistory',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'alchemy_coinifyHistory',
@@ -2691,7 +2695,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'alchemy_coinifyHistory',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'alchemy_decomposeHistory',
@@ -2708,7 +2712,7 @@ function registerFeatures() {
             async: false,
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             setting: 'alchemy_decomposeHistory',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'alchemy_actionProtection',
@@ -2778,7 +2782,7 @@ function registerFeatures() {
             module: UI.wideEnhancingPanel,
             async: false,
             setting: 'enhancingPanel_wide',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'riskOfRuin',
@@ -2888,7 +2892,7 @@ function registerFeatures() {
             // No entry in config's feature map, so the schema setting is the
             // only gate — an unknown registry key would otherwise default to on
             setting: 'notifications_communityBuffExpiring',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'labyrinthRunAlerts',
@@ -2947,7 +2951,7 @@ function registerFeatures() {
             async: true,
             // Schema setting is the only gate; no feature-map entry.
             setting: 'notifications_skillLevelUp',
-            liveStop: false,
+            liveStop: true,
         },
         {
             key: 'ttlTargetAlerts',

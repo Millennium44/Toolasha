@@ -346,6 +346,8 @@ class PhiloCalculator {
         try {
             unregisterCommand('Philo Gamba');
             this.closeModal();
+            this._ensureSettingsButton = null;
+            document.querySelectorAll('.mwi-philo-calc-button').forEach((button) => button.remove());
             this.isInitialized = false;
         } catch (error) {
             console.error('[Philo Calculator] Disable failed part-way:', error);
@@ -373,6 +375,9 @@ class PhiloCalculator {
      */
     addSettingsButton() {
         const ensureButtonExists = () => {
+            // The settings panel's callback list cannot drop an entry, so this is hooked once and reads the
+            // current function: switched off, the hook does nothing and the button stays gone
+            if (!this.isInitialized) return;
             const settingsPanel = document.querySelector('[class*="SettingsPanel"]');
             if (!settingsPanel) return;
 
@@ -400,9 +405,11 @@ class PhiloCalculator {
             }
         };
 
+        this._ensureSettingsButton = ensureButtonExists;
         const settingsUI = sharedSettingsUI();
-        if (settingsUI && typeof settingsUI.onSettingsPanelAppear === 'function') {
-            settingsUI.onSettingsPanelAppear(ensureButtonExists);
+        if (!this._settingsPanelHooked && settingsUI && typeof settingsUI.onSettingsPanelAppear === 'function') {
+            settingsUI.onSettingsPanelAppear(() => this._ensureSettingsButton?.());
+            this._settingsPanelHooked = true;
         }
 
         ensureButtonExists();

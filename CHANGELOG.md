@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### More switches turn off without a reload
+
+Turning off features such as Item Count Display, Listing Price Display, Market History, Bulk Sell Assistant, Budget Calculator, the Ability Dictionary button and Chat Profile Link now removes them right away. Quick input buttons and the XP tracker are tagged as needing a reload.
+
+### Alchemy says when an item has no price
+
+The alchemy Profitability section now reads "Profitability unavailable: no market price for …" instead of showing nothing when the selected item has no market price. Items the game draws without an icon, such as Focus Orb, now get their profit figures too.
+
+### Iron Cow hides skill-page pricing buttons
+
+Iron Cow mode now also switches off the skill page's pricing mode, craft and sell-tax buttons, which only change pricing settings it already locks. Your own choices come back when you turn the mode off.
+
 ### Custom tabs no longer come back doubled
 
 A custom tab you delete, or a layout replaced by an import, now stays gone after a sync, even for tabs made before 3.22.0, so cleared duplicates stop returning. Importing asks first when you already have tabs, and tabs restored from a backup are kept.

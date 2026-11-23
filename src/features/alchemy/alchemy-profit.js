@@ -19,8 +19,18 @@
 
 import dataManager from '../../core/data-manager.js';
 import { runningAction } from '../../utils/combat-actions.js';
+import { getItemHridFromName } from '../../utils/game-lookups.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 import { ALCHEMY_TAB_TYPES, getAlchemyTabElements, readAlchemyTabType } from './alchemy-tabs.js';
+
+/**
+ * The display name an item container draws, '' when it draws none (an empty slot).
+ * @param {Element} element - Item container
+ * @returns {string}
+ */
+function itemNameOf(element) {
+    return element.querySelector('[class*="Item_name"]')?.textContent?.trim() || '';
+}
 
 export { ALCHEMY_TAB_TYPES, getAlchemyTabElements, readAlchemyTabType };
 
@@ -193,15 +203,13 @@ class AlchemyProfit {
         try {
             // Get item HRID from SVG use element
             const use = element.querySelector('svg use');
-            if (!use) return null;
+            const href = use?.getAttribute('href');
+            const itemId = href ? href.split('#')[1] : null;
 
-            const href = use.getAttribute('href');
-            if (!href) return null;
-
-            const itemId = href.split('#')[1];
-            if (!itemId) return null;
-
-            const itemHrid = `/items/${itemId}`;
+            // An item the sprite sheet has no icon for (a Focus Orb, an Eternal Milk) is drawn as its
+            // name alone, with no svg. Read the hrid from the name rather than losing the selection
+            const itemHrid = itemId ? `/items/${itemId}` : getItemHridFromName(itemNameOf(element));
+            if (!itemHrid) return null;
 
             // Get enhancement level
             let enhancementLevel = 0;
@@ -312,7 +320,8 @@ class AlchemyProfit {
                 document.querySelectorAll('[class*="SkillActionDetail_itemRequirements"] [class*="Item_itemContainer"]')
             )
                 .map((el) => {
-                    const href = el.querySelector('svg use')?.getAttribute('href') || 'empty';
+                    // An icon-less item has no href: tell two of them apart by name, an empty slot by neither
+                    const href = el.querySelector('svg use')?.getAttribute('href') || itemNameOf(el) || 'empty';
                     const enh = el.querySelector('[class*="Item_enhancementLevel"]')?.textContent || '0';
                     return `${href}${enh}`;
                 })

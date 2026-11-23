@@ -24,11 +24,12 @@
 
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
-import { addStyles } from '../../utils/dom.js';
+import { addStyles, removeStyles } from '../../utils/dom.js';
 import { PARTY_STATUS_PHRASES } from '../../utils/game-text.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
 const NAME_CLASS = 'mwi-chat-profile-name';
+const STYLE_ID = 'mwi-chat-profile-link-style';
 // "<Name> has <verb> …" announcements; names are single tokens in MWI.
 // The `(?!Guild has\b)` guard skips the guild-wide broadcast "Guild has reached
 // level N!" — "Guild" is the guild there, not a player, so it must not become a
@@ -127,7 +128,7 @@ class ChatProfileLink {
         addStyles(
             `.${NAME_CLASS} { color: #4a9eff; cursor: pointer; }
              .${NAME_CLASS}:hover { text-decoration: underline; }`,
-            'mwi-chat-profile-link-style'
+            STYLE_ID
         );
 
         this.delegatedClickHandler = (e) => {
@@ -145,6 +146,13 @@ class ChatProfileLink {
         if (!config.getSetting('chat_profileLink')) return;
         this.observerActive = true;
         this._ensureActive();
+
+        // Links another feature drew before a switch-off come back as they were
+        for (const el of document.querySelectorAll('[data-mwi-profile-dormant]')) {
+            const name = el.dataset.mwiProfileDormant;
+            delete el.dataset.mwiProfileDormant;
+            markAsProfileLink(el, name);
+        }
 
         this.unregisterObserver = domObserver.onClass('ChatProfileLink', 'ChatMessage_chatMessage', (messageEl) =>
             this._decorateMessage(messageEl)
@@ -192,6 +200,35 @@ class ChatProfileLink {
         }
         this.stylesActive = false;
         this.observerActive = false;
+        this._undecorate();
+    }
+
+    /**
+     * Take the links already drawn back off the page. Without it the names stayed blue with nothing
+     * behind them once the click listener was gone, and a message decorated before the switch-off
+     * was skipped when it came back on. Only the names this module wrapped are unwrapped; an element
+     * another feature marked through `markAsProfileLink` keeps its own text and loses the link look.
+     */
+    _undecorate() {
+        for (const wrap of document.querySelectorAll('[data-mwi-profile-wrap]')) {
+            wrap.replaceWith(...wrap.childNodes);
+        }
+        // What is left after the unwrapping was marked by another feature (the dungeon key-count names).
+        // That feature does not decorate a message twice, so the name is kept dormant on the element
+        // and `initialize()` puts the link back.
+        for (const el of document.querySelectorAll(`.${NAME_CLASS}`)) {
+            const name = el.dataset.mwiProfileName;
+            el.classList.remove(NAME_CLASS);
+            delete el.dataset.mwiProfileName;
+            if (name) el.dataset.mwiProfileDormant = name;
+            if (name && el.title === `Open ${name}'s profile`) el.removeAttribute('title');
+        }
+        for (const el of document.querySelectorAll('[data-mwi-profile-link]')) {
+            // Adjacent text nodes the unwrapping left are one again, so a later pass finds the name whole
+            el.normalize();
+            delete el.dataset.mwiProfileLink;
+        }
+        removeStyles(STYLE_ID);
     }
 }
 
@@ -208,16 +245,23 @@ const chatProfileLink = new ChatProfileLink();
  * @param {{name: string, afterPrefixes?: string[], beforeSuffix?: string}} target
  */
 function wrapNameOccurrence(root, { name, afterPrefixes, beforeSuffix }) {
+    // The guards read the whole line, not just the text node: a name sitting alone in its own node
+    // (a restored message whose old link span was unwrapped, or any split by other markup) has its
+    // " has ..." in the next node
+    const fullText = root.textContent || '';
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let node;
+    let offset = 0;
     while ((node = walker.nextNode())) {
-        if (node.parentElement?.classList.contains(NAME_CLASS)) continue;
         const content = node.textContent;
+        const nodeStart = offset;
+        offset += content.length;
+        if (node.parentElement?.classList.contains(NAME_CLASS)) continue;
         let from = 0;
         let idx;
         while ((idx = content.indexOf(name, from)) !== -1) {
-            const before = content.slice(0, idx);
-            const after = content.slice(idx + name.length);
+            const before = fullText.slice(0, nodeStart + idx);
+            const after = fullText.slice(nodeStart + idx + name.length);
             const beforeOk = !beforeSuffix || before.endsWith(beforeSuffix);
             const afterOk = !afterPrefixes || afterPrefixes.some((prefix) => after.startsWith(prefix));
             if (beforeOk && afterOk) {
@@ -225,6 +269,7 @@ function wrapNameOccurrence(root, { name, afterPrefixes, beforeSuffix }) {
                 range.setStart(node, idx);
                 range.setEnd(node, idx + name.length);
                 const span = document.createElement('span');
+                span.dataset.mwiProfileWrap = '1';
                 markAsProfileLink(span, name);
                 range.surroundContents(span);
                 return;

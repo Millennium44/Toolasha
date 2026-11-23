@@ -414,6 +414,7 @@ export const settingsGroups = {
                 label: 'Action panel: Quick input buttons (hours, count presets, Max)',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
             },
             actionPanel_quickInputs_countPresets: {
                 id: 'actionPanel_quickInputs_countPresets',
@@ -461,6 +462,7 @@ export const settingsGroups = {
                 label: 'Action panel: Show level progress',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
                 help: 'Displays XP and level progress estimates inside action panels',
             },
             actionPanel_showSpeedTime: {
@@ -468,6 +470,7 @@ export const settingsGroups = {
                 label: 'Action panel: Show action speed & time',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
                 help: 'Displays speed breakdown, efficiency, and total time inside action panels',
             },
             requiredMaterials: {
@@ -2970,6 +2973,7 @@ export const settingsGroups = {
                 label: 'Left sidebar: Show XP/hr rate on skill bars',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
                 help: 'Displays live XP/hr rate under each skill bar in the navigation panel',
             },
             xpTracker_timeTillLevel: {
@@ -2977,6 +2981,7 @@ export const settingsGroups = {
                 label: 'Skill tooltip: Show time till next level',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
                 help: 'Shows estimated time remaining until the next level in the skill hover tooltip (based on current XP/hr)',
             },
             skillRemainingXP: {

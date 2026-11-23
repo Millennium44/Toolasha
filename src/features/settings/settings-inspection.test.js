@@ -128,7 +128,16 @@ describe('the settings that honestly need a reload', () => {
     // against a synthetic map so a future genuinely-refresh-only setting has
     // somewhere to prove itself.
     test('only the settings that are read once at startup are tagged', () => {
-        expect(refreshRequiredIds().sort()).toEqual(['pricing_useLivePrices', 'updateCheck', 'updateCheckHours']);
+        expect(refreshRequiredIds().sort()).toEqual([
+            'actionPanel_showLevelProgress',
+            'actionPanel_showSpeedTime',
+            'actionPanel_totalTime_quickInputs',
+            'pricing_useLivePrices',
+            'updateCheck',
+            'updateCheckHours',
+            'xpTracker',
+            'xpTracker_timeTillLevel',
+        ]);
     });
 
     test('the mechanism itself: flags exactly the tagged ids, in schema order', () => {
