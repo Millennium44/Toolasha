@@ -2031,11 +2031,15 @@ class GuildCreditValue {
         body.appendChild(suggestEl);
 
         // Track target inputs for cost recalculation
-        const planInputs = []; // [{buffHrid, currentLevel, capLevel, inputEl}]
+        const planInputs = []; // [{buffHrid, currentLevel, capLevel, builtLevel, label, inputEl}]
 
         const totalsEl = document.createElement('div');
         totalsEl.style.cssText =
             'margin-top:8px; padding:6px; border-radius:4px; border:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.2);';
+
+        // The whole bill for the targets, before anything held comes off it
+        const grossEl = document.createElement('div');
+        grossEl.className = 'mwi-shrine-plan-total';
 
         // The marketplace hand-off for whatever the totals still owe. Its own
         // element rather than part of `totalsEl`, so the button is not rebuilt
@@ -2045,13 +2049,17 @@ class GuildCreditValue {
 
         const recalculate = () => {
             const plans = planInputs
-                .map(({ buffHrid, currentLevel, inputEl }) => ({
+                .map(({ buffHrid, currentLevel, builtLevel, label, inputEl }) => ({
                     buffHrid,
                     fromLevel: currentLevel,
                     toLevel: Math.min(parseInt(inputEl.value, 10) || currentLevel, parseInt(inputEl.max, 10)),
+                    builtLevel,
+                    label,
                 }))
                 .filter(({ fromLevel, toLevel }) => toLevel > fromLevel);
 
+            grossEl.innerHTML = '';
+            grossEl.style.cssText = '';
             totalsEl.innerHTML = '';
             matsEl.innerHTML = '';
 
@@ -2123,6 +2131,7 @@ class GuildCreditValue {
             const topConversions = buildTopConversions(itemDetailMap, 1);
             const goldPerToken = goldPerTokenFor(itemDetailMap);
             const mode = spendMode();
+            renderPlanTotal(plans, tokens.total, credits, topConversions, goldPerToken);
             // A ticked color is settled with tokens whatever the mode says —
             // per color, through the same applySpendMode the mode goes
             // through, so a covered color with no rate still falls back to the
@@ -2396,6 +2405,60 @@ class GuildCreditValue {
         }
 
         /**
+         * The whole bill for the targets: every token and credit the levels cost, nothing held taken off,
+         * with the credits at the gold their cheapest materials ask and the tokens through the shop exchange.
+         * Under it, each target the guild's shrine is not yet built for.
+         *
+         * @param {Array<Object>} plans - The targets above their current level
+         * @param {number} tokenTotal - Guild tokens the levels cost
+         * @param {Object<string, number>} credits - creditHrid → credits the levels cost
+         * @param {Object} topConversions - From `buildTopConversions`
+         * @param {number|null} goldPerToken - From `goldPerTokenFor`
+         */
+        function renderPlanTotal(plans, tokenTotal, credits, topConversions, goldPerToken) {
+            let creditGold = 0;
+            let unpriced = false;
+            for (const [itemHrid, count] of Object.entries(credits)) {
+                const perCredit = (topConversions?.[itemHrid] || [])[0]?.askGPC ?? null;
+                if (perCredit > 0) creditGold += perCredit * count;
+                else unpriced = true;
+            }
+            const tokenGold = goldPerToken > 0 ? tokenTotal * goldPerToken : null;
+            if (tokenTotal > 0 && tokenGold === null) unpriced = true;
+            const atLeast = unpriced ? '≥' : '≈';
+            const parts = [];
+            if (tokenTotal > 0) {
+                parts.push(
+                    `${tokenTotal.toLocaleString()} tokens${tokenGold === null ? '' : ` (≈${formatKMB(tokenGold)})`}`
+                );
+            }
+            if (Object.keys(credits).length > 0) parts.push(`credits ${atLeast}${formatKMB(creditGold)}`);
+            const allIn = creditGold + (tokenGold || 0);
+
+            grossEl.style.cssText =
+                'margin-top:8px; padding:6px; border-radius:4px; border:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.2);';
+            const line = document.createElement('div');
+            line.className = 'mwi-shrine-plan-total-line';
+            line.style.cssText = 'font-size:12px; color:#e0e0e0; white-space:normal; overflow-wrap:anywhere;';
+            line.textContent = `Total cost: ${parts.join(' + ')} = ${atLeast}${formatKMB(allIn)} gold`;
+            line.title =
+                'Everything these targets cost from your current levels, before anything you hold is taken off. ' +
+                'Credits at the ask price of the cheapest materials that exchange for them; tokens at their gold ' +
+                'value through the guild shop exchange.' +
+                (unpriced ? ' Something here has no price, so the gold figure is a lower bound.' : '');
+            grossEl.appendChild(line);
+
+            for (const plan of plans) {
+                if (!(plan.toLevel > plan.builtLevel)) continue;
+                const note = document.createElement('div');
+                note.className = 'mwi-shrine-plan-needs-shrine';
+                note.style.cssText = 'font-size:10px; color:#fbbf24; white-space:normal; overflow-wrap:anywhere;';
+                note.textContent = `${plan.label} to ${plan.toLevel}: the guild's shrine is built to ${plan.builtLevel} and has to reach ${plan.toLevel} first.`;
+                grossEl.appendChild(note);
+            }
+        }
+
+        /**
          * @param {Array<{itemHrid: string, name: string, count: number}>} missingMats - What to buy
          */
         function renderMissingMatsButton(missingMats) {
@@ -2437,7 +2500,7 @@ class GuildCreditValue {
             const shrineTitleEl = document.createElement('div');
             shrineTitleEl.style.cssText =
                 'color:#c4b5fd; font-size:11px; font-weight:600; margin-bottom:3px; padding:2px 0;';
-            shrineTitleEl.textContent = `${shrineLabel} Shrine${shrineCapLevel > 0 ? ` (cap: ${shrineCapLevel})` : ''}`;
+            shrineTitleEl.textContent = `${shrineLabel} Shrine${shrineCapLevel > 0 ? ` (built to ${shrineCapLevel})` : ''}`;
             shrineSection.appendChild(shrineTitleEl);
 
             for (const { buffHrid, buff } of buffs.sort((a, b) => a.buffHrid.localeCompare(b.buffHrid))) {
@@ -2445,12 +2508,14 @@ class GuildCreditValue {
                 const buffLabel = isCombat ? 'Combat' : 'Skilling';
                 const currentLevel = dataManager.getCharacterGuildBuffLevel(buffHrid);
                 const maxLevel = Math.max(...Object.keys(buff.levelCosts).map(Number));
-                const rawCap = shrineCapLevel > 0 ? Math.min(shrineCapLevel, maxLevel) : maxLevel;
                 // Buildings and shrines cap at level 20 in-game (Buildings tab:
                 // "Lv. x / 20") — a different ladder from the 21 trial tiers, and a
                 // shrine level or levelCosts table that claims more than that is
                 // not one to plan an upgrade past.
-                const capLevel = Math.min(rawCap, maxGuildShrineLevel());
+                const capLevel = Math.min(maxLevel, maxGuildShrineLevel());
+                // What the guild's shrine lets a member buy today. A target may go past it — the plan
+                // then says which shrine the guild has to build first — but a next buy may not.
+                const builtLevel = shrineCapLevel > 0 ? Math.min(shrineCapLevel, capLevel) : capLevel;
 
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex; align-items:center; gap:6px; padding:2px 0; font-size:11px;';
@@ -2481,7 +2546,7 @@ class GuildCreditValue {
                 // The cost of this buff's next level only, for the suggestions
                 // above — a buff already at its shrine's cap has no next level
                 // and is left out.
-                if (currentLevel < capLevel) {
+                if (currentLevel < builtLevel) {
                     const nextCost = buff.levelCosts?.[String(currentLevel + 1)];
                     if (nextCost) {
                         nextBuys.push({
@@ -2504,12 +2569,20 @@ class GuildCreditValue {
                 row.appendChild(capLabel);
                 shrineSection.appendChild(row);
 
-                planInputs.push({ buffHrid, currentLevel, capLevel, inputEl: input });
+                planInputs.push({
+                    buffHrid,
+                    currentLevel,
+                    capLevel,
+                    builtLevel,
+                    label: `${shrineLabel} ${buffLabel}`,
+                    inputEl: input,
+                });
             }
 
             body.appendChild(shrineSection);
         }
 
+        body.appendChild(grossEl);
         body.appendChild(totalsEl);
         body.appendChild(matsEl);
 

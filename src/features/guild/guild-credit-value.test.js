@@ -1442,6 +1442,53 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         expect(game.storage['settings:guildShrinePlan_char1'].targets[TEMPO]).toBe(Number(input.max));
     });
 
+    test('a target may go past what the guild shrine is built to, and the plan says so', () => {
+        // Rarity: buff 5, shrine built to 5, costs listed to 10
+        const modal = openModal();
+        const input = inputFor(modal, RARITY);
+        expect(input.max).toBe('10');
+        input.value = '7';
+        input.dispatchEvent(new Event('input'));
+
+        const notes = Array.from(modal.querySelectorAll('.mwi-shrine-plan-needs-shrine')).map((n) => n.textContent);
+        expect(notes).toEqual(["Rarity Combat to 7: the guild's shrine is built to 5 and has to reach 7 first."]);
+        // Two levels at 1,000 tokens each, no credits
+        expect(modal.querySelector('.mwi-shrine-plan-total-line').textContent).toMatch(/^Total cost: 2,000 tokens/);
+        // Nothing past the built level is offered as a next buy
+        expect(nextBuyRows(modal).some((row) => row.textContent.includes('Rarity'))).toBe(false);
+    });
+
+    test('the total cost is the whole bill, with held credits not taken off', () => {
+        game.inventory = [
+            { itemHrid: '/items/guild_credit_1', count: 50, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        const modal = openModal();
+        const input = inputFor(modal, FORCE);
+        input.value = '3';
+        input.dispatchEvent(new Event('input'));
+
+        // 300 tokens and 50 Trade Credits at 150 gold each (5 iron bars at 30)
+        const total = modal.querySelector('.mwi-shrine-plan-total-line').textContent;
+        expect(total).toMatch(/^Total cost: 300 tokens( \(≈[\d.]+[KM]?\))? \+ credits ≈7\.5K = /);
+        expect(modal.querySelector('.mwi-shrine-plan-needs-shrine')).toBeNull();
+    });
+
+    test('a credit nothing converts into makes the total a lower bound', () => {
+        const modal = openModal();
+        const input = inputFor(modal, FORCE);
+        input.value = '4';
+        input.dispatchEvent(new Event('input'));
+
+        const line = modal.querySelector('.mwi-shrine-plan-total-line');
+        expect(line.textContent).toMatch(/^Total cost: 700 tokens.* \+ credits ≥7\.5K = ≥/);
+        expect(line.title).toContain('lower bound');
+    });
+
+    test('with no target above its level the total box is empty', () => {
+        const modal = openModal();
+        expect(modal.querySelector('.mwi-shrine-plan-total').childElementCount).toBe(0);
+    });
+
     test('the expanded/collapsed state of the planner body persists', async () => {
         const modal = openModal();
         const body = modal.querySelector('.mwi-shrine-planner > div:nth-child(2)');

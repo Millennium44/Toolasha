@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Each "Instead of selling" tooltip line now ends with how much more than selling the alchemy route earns per hour, so it can be read against the other hourly figures. With "Your time value" set, it is what is left over that rate.
 
+### Shrine planner: plan past the guild's shrine level, with a total cost
+
+Shrine Upgrade Planner targets now go up to level 20 instead of stopping at the level your guild's shrine is built to, with a note when the shrine has to be built up first. A new "Total cost" line shows the whole bill in tokens and gold before anything you hold is taken off.
+
 ### More switches turn off without a reload
 
 Turning off features such as Item Count Display, Listing Price Display, Market History, Bulk Sell Assistant, Budget Calculator, the Ability Dictionary button and Chat Profile Link now removes them right away. Quick input buttons and the XP tracker are tagged as needing a reload.
