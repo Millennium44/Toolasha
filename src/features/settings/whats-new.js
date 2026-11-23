@@ -28,7 +28,8 @@ import { getAllSettingIds, getSettingDefinition } from '../../core/settings-sche
 import {
     SETTING_PRESETS,
     DEFAULT_PRESET_ID,
-    applyPreset,
+    COMBINABLE_PRESET_IDS,
+    applyPresets,
     getPreset,
     captureBulkOwner,
     isBulkOwnerCurrent,
@@ -60,6 +61,55 @@ import forkOverview from 'virtual:fork-overview';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 import { parseShorthandAmount } from '../../utils/number-parser.js';
+
+/** The "apply the ticked presets" button's value in the first-run questions. */
+const APPLY_TICKED = 'applyTicked';
+
+/**
+ * What the preset questions add to their button list: a button that applies Essentials plus whatever is ticked, and
+ * the tick boxes for the presets that combine.
+ * @returns {{buttons: Object[], checkboxes: Object[]}}
+ */
+function presetQuestionParts() {
+    const essentials = getPreset('essentials');
+    return {
+        buttons: [
+            { value: essentials.id, label: essentials.label, hint: essentials.description },
+            {
+                value: APPLY_TICKED,
+                label: 'Apply ticked',
+                hint: 'Essentials plus every preset ticked above. Anything in none of them is switched off.',
+            },
+        ],
+        checkboxes: COMBINABLE_PRESET_IDS.map((id) => getPreset(id)).map((preset) => ({
+            value: preset.id,
+            label: preset.label,
+            hint: preset.description,
+        })),
+    };
+}
+
+/**
+ * The preset ids an answer means: one preset's id, or the ticked boxes.
+ * @param {string|null} answer
+ * @param {Set<string>} checked
+ * @returns {string[]|null} null when the answer is not a preset
+ */
+function answerPresetIds(answer, checked) {
+    if (answer === APPLY_TICKED) {
+        const ids = COMBINABLE_PRESET_IDS.filter((id) => checked.has(id));
+        return ids.length > 0 ? ids : ['essentials'];
+    }
+    return answer && getPreset(answer) ? [answer] : null;
+}
+
+/**
+ * @param {string[]} ids
+ * @returns {string}
+ */
+function presetLabels(ids) {
+    return ids.map((id) => getPreset(id)?.label || id).join(' + ');
+}
 
 const STATE_KEY_PREFIX = 'whatsNew_state';
 
@@ -560,7 +610,11 @@ class WhatsNew {
      */
     async _offerFirstRunChoice(inherited, current, canCopy = false) {
         const conservative = conservativeOverrides(inherited, getSettingDefinition);
+        const parts = presetQuestionParts();
+        const checked = new Set();
         const answer = await askChoice({
+            checkboxes: parts.checkboxes,
+            checked,
             title: `Welcome to ${current.fork}`,
             message:
                 `This build has ${inherited.length} setting${inherited.length === 1 ? '' : 's'} that did not exist ` +
@@ -578,7 +632,8 @@ class WhatsNew {
                         'until you turn them on.',
                 },
                 ...(canCopy ? [this._copyChoice()] : []),
-                ...SETTING_PRESETS.map((preset) => ({
+                ...parts.buttons,
+                ...SETTING_PRESETS.filter((preset) => preset.id === DEFAULT_PRESET_ID).map((preset) => ({
                     value: preset.id,
                     label: preset.label,
                     hint: preset.description,
@@ -596,17 +651,17 @@ class WhatsNew {
         // A real preset id — and only a real preset id — takes the preset path.
         // `keepCurrent` and dismissal (null) both fall through to the safe path,
         // because the user asked for either "no change" or nothing at all.
-        const chosenPreset = getPreset(answer);
-        if (chosenPreset) {
+        const chosenIds = answerPresetIds(answer, checked);
+        if (chosenIds) {
             const owner = captureBulkOwner();
-            const applied = await applyPreset(chosenPreset.id);
+            const applied = await applyPresets(chosenIds);
             // The character changed mid-write and nothing was written: announce nothing
             if (!isBulkOwnerCurrent(owner)) return;
             // A null result means nothing was written (the undo snapshot could not be saved); fall to the
             // keep-current path below rather than announcing a switch that did not happen
             if (applied) {
                 this._pending = {
-                    headline: `Switched to ${current.fork} ${current.version} — ${chosenPreset.label} preset`,
+                    headline: `Switched to ${current.fork} ${current.version} — ${presetLabels(chosenIds)} preset`,
                     forkChanged: true,
                     newIds: [],
                     turnedOff: new Set(),
@@ -665,10 +720,14 @@ class WhatsNew {
     async _offerFirstRunPreset(current, canCopy = false) {
         try {
             const defaults = getPreset(DEFAULT_PRESET_ID);
+            const parts = presetQuestionParts();
+            const checked = new Set();
             const answer = await askChoice({
+                checkboxes: parts.checkboxes,
+                checked,
                 title: `Welcome to ${current.fork}`,
                 message:
-                    'Toolasha ships several hundred features. Pick a starting point and the rest stay out of your ' +
+                    'Toolasha ships several hundred features. Pick a starting point (tick several to combine them) and the rest stay out of your ' +
                     'way — you can change any of it, or apply a different preset, from the Toolasha tab in ' +
                     'Settings.',
                 choices: [
@@ -679,11 +738,7 @@ class WhatsNew {
                         hint: 'Close without changing anything — leave every setting exactly as it is now.',
                     },
                     ...(canCopy ? [this._copyChoice()] : []),
-                    ...SETTING_PRESETS.filter((preset) => preset.id !== DEFAULT_PRESET_ID).map((preset) => ({
-                        value: preset.id,
-                        label: preset.label,
-                        hint: preset.description,
-                    })),
+                    ...parts.buttons,
                 ],
             });
 
@@ -694,15 +749,15 @@ class WhatsNew {
                 return;
             }
 
-            const chosen = getPreset(answer);
-            if (chosen) {
+            const chosenIds = answerPresetIds(answer, checked);
+            if (chosenIds) {
                 const owner = captureBulkOwner();
-                const applied = await applyPreset(chosen.id);
+                const applied = await applyPresets(chosenIds);
                 if (!isBulkOwnerCurrent(owner)) return;
                 // Nothing was written when the undo snapshot failed: fall through to the "no change" announcement
                 if (applied) {
                     this._pending = {
-                        headline: `Installed ${current.fork} ${current.version} — ${chosen.label} preset`,
+                        headline: `Installed ${current.fork} ${current.version} — ${presetLabels(chosenIds)} preset`,
                         forkChanged: false,
                         newIds: [],
                         turnedOff: new Set(),

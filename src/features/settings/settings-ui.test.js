@@ -595,6 +595,15 @@ function presetButton(presetId) {
     return document.querySelector(`[data-preset-id="${presetId}"]`);
 }
 
+/**
+ * Tick the combinable presets and press Apply ticked.
+ * @param {...string} presetIds - Combinable preset ids
+ */
+function applyTicked(...presetIds) {
+    for (const id of presetIds) presetButton(id).click();
+    document.querySelector('[data-preset-apply]').click();
+}
+
 /** Let the click handlers' promises settle. @returns {Promise<void>} */
 async function settle() {
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -690,6 +699,11 @@ describe('the Iron Cow chip', () => {
         expect(chip().textContent).toContain('Iron Cow Mode');
 
         for (const button of row.querySelectorAll('[data-preset-id]')) {
+            if (['combat', 'market', 'guild'].includes(button.dataset.presetId)) {
+                expect(button.dataset.presetKind).toBe('toggle');
+                expect(button.getAttribute('aria-pressed')).toBe('false');
+                continue;
+            }
             expect(button.dataset.presetKind).toBe('oneShot');
             expect(button.getAttribute('aria-pressed')).toBe(null);
         }
@@ -763,6 +777,42 @@ describe('the Iron Cow chip', () => {
     });
 });
 
+describe('presets combine', () => {
+    test('Combat, Market and Guild are toggle chips beside an Apply ticked button', () => {
+        drawPanel();
+        for (const id of ['combat', 'market', 'guild']) {
+            expect(presetButton(id).dataset.presetKind, id).toBe('toggle');
+        }
+        expect(document.querySelector('[data-preset-apply]')).not.toBe(null);
+        expect(presetButton('guild')).not.toBe(null);
+    });
+
+    test('ticking a chip presses it, and ticking again releases it', () => {
+        drawPanel();
+        presetButton('combat').click();
+        expect(presetButton('combat').getAttribute('aria-pressed')).toBe('true');
+        presetButton('combat').click();
+        expect(presetButton('combat').getAttribute('aria-pressed')).toBe('false');
+    });
+
+    test('Apply ticked with Combat and Market ticked turns on both sides', async () => {
+        mocks.settingsMap.combatSim.isTrue = false;
+        drawPanel();
+        applyTicked('combat', 'market');
+        await settle();
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(true);
+        expect(mocks.settingsMap.itemTooltip_profit.isTrue).toBe(true);
+    });
+
+    test('Apply ticked with nothing ticked applies Essentials only', async () => {
+        drawPanel();
+        applyTicked();
+        await settle();
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(false);
+        expect(mocks.settingsMap.actionBar_enabled.isTrue).toBe(true);
+    });
+});
+
 describe('a mode stacks with a preset', () => {
     test('applying a one-shot leaves the mode on and its chip pressed', async () => {
         drawPanel();
@@ -788,7 +838,7 @@ describe('a mode stacks with a preset', () => {
         chip().click();
         await settle();
 
-        presetButton('combat').click();
+        applyTicked('combat');
         await settle();
 
         expect(mocks.settingsMap.combatSim.isTrue).toBe(true);
@@ -804,7 +854,7 @@ describe('a mode stacks with a preset', () => {
         chip().click();
         await settle();
 
-        presetButton('market').click();
+        applyTicked('market');
         await settle();
 
         // The preset wrote true, and the mode's reapply put it straight back

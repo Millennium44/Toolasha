@@ -27,6 +27,7 @@ globalThis.document = domWindow.document;
 
 const mocks = vi.hoisted(() => ({
     answer: null,
+    tick: [],
     lastChoiceOptions: null,
     written: [],
     appliedPresets: [],
@@ -58,6 +59,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../utils/choice-dialog.js', () => ({
     askChoice: async (options) => {
         mocks.lastChoiceOptions = options;
+        for (const id of mocks.tick) options.checked?.add(id);
         return mocks.answer;
     },
 }));
@@ -115,8 +117,8 @@ vi.mock('./setting-presets.js', async (importOriginal) => {
     const actual = await importOriginal();
     return {
         ...actual,
-        applyPreset: async (id) => {
-            mocks.appliedPresets.push(id);
+        applyPresets: async (ids) => {
+            mocks.appliedPresets.push(ids.length === 1 ? ids[0] : ids.join('+'));
             if (mocks.switchOnApply) mocks.characterId = mocks.switchOnApply;
             return mocks.presetResult;
         },
@@ -159,7 +161,7 @@ vi.mock('../ui/command-palette.js', () => ({
 }));
 
 const { default: whatsNew, renderForkMarkdown, COPY_FROM_CHARACTER, NO_CHANGE } = await import('./whats-new.js');
-const { SETTING_PRESETS, DEFAULT_PRESET_ID } = await import('./setting-presets.js');
+const { DEFAULT_PRESET_ID } = await import('./setting-presets.js');
 const { conservativeOverrides } = await import('./whats-new-core.js');
 
 const CURRENT = { fork: 'Toolasha', version: '2.90.0' };
@@ -176,6 +178,7 @@ function defineSchema(onIds = [], offIds = []) {
 
 beforeEach(() => {
     mocks.answer = null;
+    mocks.tick = [];
     mocks.lastChoiceOptions = null;
     mocks.written = [];
     mocks.appliedPresets = [];
@@ -291,9 +294,9 @@ describe('the returning-user picker', () => {
         expect(choices[0].tone).toBe('primary');
 
         const values = choices.map((choice) => choice.value);
-        for (const preset of SETTING_PRESETS) expect(values).toContain(preset.id);
-        // keepCurrent plus every preset, and nothing else
-        expect(values).toEqual(['keepCurrent', ...SETTING_PRESETS.map((preset) => preset.id)]);
+        // keepCurrent, Essentials, the apply-ticked button and Defaults; Combat, Market and Guild are tick boxes
+        expect(values).toEqual(['keepCurrent', 'essentials', 'applyTicked', DEFAULT_PRESET_ID]);
+        expect(mocks.lastChoiceOptions.checkboxes.map((box) => box.value)).toEqual(['combat', 'market', 'guild']);
         // Exactly one primary button, the safe one
         expect(choices.filter((choice) => choice.tone === 'primary').map((choice) => choice.value)).toEqual([
             'keepCurrent',
@@ -442,6 +445,30 @@ describe('reopening the update popup', () => {
     });
 });
 
+describe('ticked presets in the first-run questions', () => {
+    test('Apply ticked applies the ticked boxes together, in schema order', async () => {
+        mocks.answer = 'applyTicked';
+        mocks.tick = ['market', 'combat'];
+        await whatsNew._offerFirstRunPreset(CURRENT);
+        expect(mocks.appliedPresets).toEqual(['combat+market']);
+        expect(whatsNew._pending.headline).toContain('Combat + Market & trading preset');
+    });
+
+    test('Apply ticked with nothing ticked applies Essentials', async () => {
+        mocks.answer = 'applyTicked';
+        mocks.tick = [];
+        await whatsNew._offerFirstRunPreset(CURRENT);
+        expect(mocks.appliedPresets).toEqual(['essentials']);
+    });
+
+    test('the returning-user question combines too', async () => {
+        mocks.answer = 'applyTicked';
+        mocks.tick = ['guild', 'combat'];
+        await whatsNew._offerFirstRunChoice(['newFeatureA'], CURRENT);
+        expect(mocks.appliedPresets).toEqual(['combat+guild']);
+    });
+});
+
 describe('the fresh-install picker', () => {
     test('Defaults comes first and is primary, No change follows, then the other presets', async () => {
         mocks.answer = DEFAULT_PRESET_ID;
@@ -449,8 +476,8 @@ describe('the fresh-install picker', () => {
 
         const choices = mocks.lastChoiceOptions.choices;
         const values = choices.map((choice) => choice.value);
-        const otherPresets = SETTING_PRESETS.filter((preset) => preset.id !== DEFAULT_PRESET_ID).map((p) => p.id);
-        expect(values).toEqual([DEFAULT_PRESET_ID, NO_CHANGE, ...otherPresets]);
+        expect(values).toEqual([DEFAULT_PRESET_ID, NO_CHANGE, 'essentials', 'applyTicked']);
+        expect(mocks.lastChoiceOptions.checkboxes.map((box) => box.value)).toEqual(['combat', 'market', 'guild']);
 
         const primary = choices.filter((choice) => choice.tone === 'primary').map((choice) => choice.value);
         expect(primary).toEqual([DEFAULT_PRESET_ID]);
@@ -496,8 +523,7 @@ describe('copy from another character', () => {
         await whatsNew._offerFirstRunPreset(CURRENT, true);
 
         const values = mocks.lastChoiceOptions.choices.map((choice) => choice.value);
-        const otherPresets = SETTING_PRESETS.filter((preset) => preset.id !== DEFAULT_PRESET_ID).map((p) => p.id);
-        expect(values).toEqual([DEFAULT_PRESET_ID, NO_CHANGE, COPY_FROM_CHARACTER, ...otherPresets]);
+        expect(values).toEqual([DEFAULT_PRESET_ID, NO_CHANGE, COPY_FROM_CHARACTER, 'essentials', 'applyTicked']);
     });
 
     test('the returning-user picker offers copy after keepCurrent, before the presets', async () => {
@@ -505,7 +531,7 @@ describe('copy from another character', () => {
         await whatsNew._offerFirstRunChoice(['newFeatureA'], CURRENT, true);
 
         const values = mocks.lastChoiceOptions.choices.map((choice) => choice.value);
-        expect(values).toEqual(['keepCurrent', COPY_FROM_CHARACTER, ...SETTING_PRESETS.map((preset) => preset.id)]);
+        expect(values).toEqual(['keepCurrent', COPY_FROM_CHARACTER, 'essentials', 'applyTicked', DEFAULT_PRESET_ID]);
     });
 
     test('choosing copy in the fresh-install picker copies the picked source, no preset', async () => {

@@ -66,6 +66,9 @@ const {
     defaultCheckboxValues,
     resolvePresetValues,
     applyPreset,
+    applyPresets,
+    presetsForSelection,
+    LEFT_OUT,
     writeCheckboxValues,
     bulkSnapshotKey,
     loadBulkSnapshot,
@@ -409,5 +412,152 @@ describe('applying a preset', () => {
         const second = bulkSnapshotKey();
         mocks.characterId = 'char-1';
         expect(bulkSnapshotKey()).not.toBe(second);
+    });
+});
+
+describe('combining presets', () => {
+    beforeEach(() => {
+        mocks.written = [];
+        mocks.storageWrites = [];
+        mocks.characterId = 'char-1';
+        mocks.snapshotWrite = true;
+        mocks.snapshotGate = null;
+        mocks.settingsMap = {};
+        for (const group of Object.values(settingsGroups)) {
+            for (const [id, definition] of Object.entries(group.settings)) {
+                const type = definition.type || 'checkbox';
+                mocks.settingsMap[id] = BOOLEAN_TYPES.has(type)
+                    ? { id, type, isTrue: definition.default ?? false }
+                    : { id, type, value: definition.default ?? '' };
+            }
+        }
+    });
+
+    test('the union is Essentials plus each ticked preset, and the rest is off', async () => {
+        const applied = await applyPresets(['combat', 'market']);
+        const combat = new Set(getPreset('combat').settings);
+        const market = new Set(getPreset('market').settings);
+        for (const [id, value] of Object.entries(applied)) {
+            expect(value, id).toBe(combat.has(id) || market.has(id));
+        }
+        expect(applied.combatSim).toBe(true);
+        expect(applied.itemTooltip_profit).toBe(true);
+        // Guild was not ticked
+        expect(applied.guildRoster).toBe(false);
+    });
+
+    test('ticking one preset alone matches applying it by name', async () => {
+        const single = resolvePresetValues(getPreset('guild'));
+        expect(await applyPresets(['guild'])).toEqual(single);
+    });
+
+    test('Essentials is the base even when it is not named', () => {
+        const values = resolvePresetValues(presetsForSelection(['guild']));
+        for (const id of getPreset('essentials').settings) expect(values[id], id).toBe(true);
+    });
+
+    test('Defaults is a single choice and cannot be combined', async () => {
+        expect(presetsForSelection([DEFAULT_PRESET_ID, 'combat'])).toBe(null);
+        expect(await applyPresets([DEFAULT_PRESET_ID, 'combat'])).toBe(null);
+        expect(mocks.written).toEqual([]);
+        expect(await applyPresets([DEFAULT_PRESET_ID])).toEqual(defaultCheckboxValues());
+    });
+
+    test('an unknown or empty selection changes nothing', async () => {
+        expect(await applyPresets(['combat', 'nope'])).toBe(null);
+        expect(await applyPresets([])).toBe(null);
+        expect(mocks.written).toEqual([]);
+        expect(mocks.storageWrites).toEqual([]);
+    });
+
+    test('one snapshot is taken for the whole combined apply, and Restore puts every switch back', async () => {
+        mocks.settingsMap.combatSim.isTrue = false;
+        mocks.settingsMap.guildRoster.isTrue = true;
+        const before = Object.fromEntries(presetTargetIds().map((id) => [id, mocks.settingsMap[id].isTrue]));
+
+        await applyPresets(['combat', 'market']);
+        expect(mocks.storageWrites.length).toBe(1);
+        const [, snapshot] = mocks.storageWrites[0];
+        expect(snapshot).toEqual(before);
+        expect(mocks.settingsMap.guildRoster.isTrue).toBe(false);
+
+        // Restore writes the snapshot back through the same path
+        writeCheckboxValues(snapshot);
+        const after = Object.fromEntries(presetTargetIds().map((id) => [id, mocks.settingsMap[id].isTrue]));
+        expect(after).toEqual(before);
+    });
+
+    test('a character who arrived while the snapshot saved gets nothing from a combined apply', async () => {
+        let release;
+        mocks.snapshotGate = new Promise((resolve) => (release = resolve));
+        const pending = applyPresets(['combat', 'market']);
+        mocks.characterId = 'char-2';
+        release();
+        expect(await pending).toBe(null);
+        expect(mocks.written).toEqual([]);
+        expect(mocks.storageWrites.map(([key]) => key)).toEqual([bulkSnapshotKey('char-1')]);
+    });
+
+    test('applyPreset is a wrapper over a one-preset combination', async () => {
+        const viaWrapper = await applyPreset('combat');
+        expect(viaWrapper).toEqual(resolvePresetValues(presetsForSelection(['combat'])));
+    });
+});
+
+describe('every default-on switch belongs to a preset', () => {
+    const visibleCheckboxes = [];
+    for (const group of Object.values(settingsGroups)) {
+        for (const [id, definition] of Object.entries(group.settings)) {
+            if (definition.hidden) continue;
+            if (!BOOLEAN_TYPES.has(definition.type || 'checkbox')) continue;
+            if (PRESET_EXCLUDED_IDS.has(id)) continue;
+            visibleCheckboxes.push([id, definition]);
+        }
+    }
+    const listed = new Set(SETTING_PRESETS.flatMap((preset) => preset.settings || []));
+
+    test('a visible switch that ships on is in a preset or on the LEFT_OUT list', () => {
+        const missing = visibleCheckboxes
+            .filter(([id, definition]) => (definition.default ?? false) && !listed.has(id) && !(id in LEFT_OUT))
+            .map(([id]) => id);
+        expect(
+            missing,
+            `New default-on switch(es) in no preset: ${missing.join(', ')}. A preset switches off everything it ` +
+                'does not list, so add each to ESSENTIALS (reads the game, no prices), COMBAT_EXTRAS, MARKET_EXTRAS ' +
+                '(needs a price) or GUILD_EXTRAS in setting-presets.js, in every preset whose players would use it. ' +
+                'If it belongs in none, add it to LEFT_OUT with a reason.'
+        ).toEqual([]);
+    });
+
+    test('LEFT_OUT names real switches, with a reason, that are in no preset', () => {
+        for (const [id, reason] of Object.entries(LEFT_OUT)) {
+            expect(getSettingDefinition(id), `${id} is not in the schema`).not.toBe(null);
+            expect(reason.length, id).toBeGreaterThan(5);
+            expect(listed.has(id), `${id} is both listed in a preset and left out`).toBe(false);
+        }
+    });
+
+    test('a listed child comes with its parent in the same preset', () => {
+        for (const preset of SETTING_PRESETS) {
+            const ids = new Set(preset.settings || []);
+            for (const id of ids) {
+                const parent = getSettingDefinition(id)?.requires;
+                if (!parent) continue;
+                expect(ids.has(parent), `${preset.id} lists ${id} but not its parent ${parent}`).toBe(true);
+            }
+        }
+    });
+
+    test('Essentials is the base of every combination, so it holds nothing priced or simulated', () => {
+        const essentials = new Set(getPreset('essentials').settings);
+        for (const id of ['itemTooltip_prices', 'networth', 'combatSim', 'houseUpgradeCosts', 'skillingOptimizer']) {
+            expect(essentials.has(id), id).toBe(false);
+        }
+    });
+
+    test('Guild is Essentials plus guild switches', () => {
+        const guild = new Set(getPreset('guild').settings);
+        expect(guild.has('guildRoster')).toBe(true);
+        expect(guild.has('combatSim')).toBe(false);
     });
 });

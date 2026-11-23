@@ -40,6 +40,12 @@ const SNAPSHOT_KEY_PREFIX = 'toolasha_allOffSnapshot';
  */
 export const PRESET_EXCLUDED_IDS = new Set(['ironCow_enabled']);
 
+/** @param {string[]} ids
+ * @returns {string[]} */
+function unique(ids) {
+    return [...new Set(ids)];
+}
+
 /**
  * Core quality-of-life: the things that make the game easier to read without
  * calculating a price, simulating a fight or tracking a history.
@@ -93,7 +99,6 @@ const ESSENTIALS = [
     'skillRemainingXP_blackBorder',
     'skillbook',
     'drinkTimer',
-    'skillingOptimizer',
     // UI
     'overlayPanel',
     'overlayTabButton',
@@ -118,8 +123,43 @@ const ESSENTIALS = [
     'collectionFavorites',
     'collectionFavoritesSection',
     'collectionFilters_skillingBadges',
-    // House
-    'houseUpgradeCosts',
+    // Things that read the game rather than price it
+    'chat_popOut',
+    'tokenShopShortcuts',
+    'characterSelect_activityStatus',
+    'actionBar_showActionsPerHour',
+    'shop_maxBuyButton',
+    'invSort_collapseAll',
+    'inventoryTabs_iconRowTab',
+    'inventoryTooltipBeside',
+    'itemTooltip_wheelScroll',
+    'itemTooltip_loadoutMarks',
+    'abilityTooltip_effectiveTiming',
+    'enhancementItemPins',
+    'actionPanelLayout',
+    'alchemyItemPins',
+    'alchemyItemSort',
+    'alchemyCatalystMark',
+    'alchemyItemDimming',
+    'simulateScrollEffects',
+    // Tasks
+    'taskSpeedBreakdown',
+    'taskSorter',
+    'taskInventoryHighlighter',
+    'taskStatistics',
+    'taskClaimCollector',
+    'taskRerollProtection',
+    // Highlights tasks you marked for reroll; it never rerolls anything itself
+    'taskAutoReroll',
+    // Account-wide helpers
+    'equipmentMismatchWarning',
+    'accountView',
+    'sessionBriefing',
+    'commandPalette',
+    'commandPaletteNavEntry',
+    'commandPaletteSettingsButton',
+    'leaderboardXPTracker',
+    'leaderboardXPDisplay',
 ];
 
 /** Everything the combat side of the game wants, on top of the essentials. */
@@ -161,6 +201,36 @@ const COMBAT_EXTRAS = [
     'actionQueue_zoneSimButton',
     'combatSim_sharedSeed',
     'labSim_keepReplacedGear',
+    // Fight and party tools
+    'combatSessionRestore',
+    'partyLint_live',
+    'replayCheck',
+    'combatProfileButton',
+    'combatDeathRecap',
+    'combatPlayerColors',
+    'combatDpsGraph',
+    'combatDpsHitTape',
+    'combatMeterHistory',
+    'combatClassOverride',
+    'dungeonPace',
+    'dungeonKeyRunway',
+    'combatSim_partyFinder',
+    'combatSim_bestiary',
+    'eliteAchievementReminder',
+    'taskCombatEstimate',
+    // Labyrinth
+    'labyrinthRunLedger',
+    'labyrinthPathStepper',
+    'labyrinthGridScaleControl',
+    'labyrinthBeaconPathFirst',
+    'labyrinthRoomDistribution',
+    'labyrinthAutoPath',
+    'labyrinthAutoPathOnReveal',
+    'labyrinthBeaconDots',
+    // Buttons that open the marketplace for a combat player's supplies (Market has them too)
+    'combatBuySuppliesButton',
+    'labyrinthMissingSuppliesButton',
+    'chestKeyMarketButton',
 ];
 
 /** Everything that needs a price to be worth anything. */
@@ -186,7 +256,6 @@ const MARKET_EXTRAS = [
     'market_showHistoryViewer',
     'market_showPhiloCalculator',
     'market_showQueueLength',
-    'market_volumeStats',
     // Pricing & profit
     'profitCalc_craftUpgradeItems',
     'actionPanel_showPricingMode',
@@ -222,15 +291,10 @@ const MARKET_EXTRAS = [
     // Alchemy & crafting economics
     'alchemy_profitDisplay',
     'alchemy_bestItems',
-    'alchemyItemPins',
-    'alchemyItemSort',
-    'alchemyCatalystMark',
-    'alchemyItemDimming',
     'alchemy_transmuteHistory',
     'alchemy_coinifyHistory',
     'alchemy_decomposeHistory',
     'alchemy_actionProtection',
-    'actionPanelLayout',
     'actions_missingMaterialsButton',
     'actions_budgetCalculator',
     'actions_costSummary',
@@ -241,7 +305,114 @@ const MARKET_EXTRAS = [
     // Guild economy
     'guildCreditValue',
     'guildCreditExchangeAdvisor',
+    // Prices and values
+    'houseUpgradeCosts',
+    'skillingOptimizer',
+    'chestKeyMarketButton',
+    'combatBuySuppliesButton',
+    'skillingBuySuppliesButton',
+    'labyrinthMissingSuppliesButton',
+    'labyrinthShopPrices',
+    'market_raiseBuyPriceToCoverQuantity',
+    'market_itemHop',
+    'market_collectableListingsToTop',
+    'market_bulkSellVendorCheck',
+    'market_bulkSellHoldFavorites',
+    'market_tradeLedger',
+    'market_staleCapital',
+    'market_overbidPanel',
+    'market_depthCapEnabled',
+    'market_enhanceProfitPerHour',
+    'profitCalc_liquidityCap',
+    'offlineProgressEconomics',
+    'networth_abilityBooksAsInventory',
+    'networth_goldSources',
+    'scrollPlanner',
+    'skillTiles_simulatedScrolls',
+    'consumables_idleLoadoutPlan',
+    'market_consumableBuyOpenRecommended',
+    'teaRecommendation_xpFloor',
+    'alchemy_catalystWhatIf',
+    'alchemy_bestItems_shopPrices',
+    'actions_arbitrageBoard',
+    'actions_craftEnhance',
+    'itemTooltip_ownUseCompare',
+    'itemTooltip_heldCraftCompare',
+    'itemTooltip_craftCostSubMaterials',
+    'itemTooltip_multiActionProfit',
+    'itemTooltip_alchemyInsteadOfSelling',
+    'dungeonTokenTooltips_crafts',
+    'shopTokenValues',
+    'upgradeAdvisor_compareRoutes',
+    'enhanceSim',
+    'enhanceSim_baseItemCraftingCost',
+    'enhanceSim_protectionMarketplaceButton',
+    'enhanceSim_achievement',
+    'enhanceSim_blessedTea',
+    'enhancementXPH',
+    'goalPlanner',
+    'insights_calibration',
+    'insights_calibrationBadges',
+    'taskRerollTracker',
+    'taskRerollSpendBadge',
+    'achievementFinisher',
+    'lootLogDropLuck',
+    // Values shown by trackers that Combat also carries
+    'lootLogStats',
+    'treasureTracker',
+    'treasureTracker_popup',
+    'watchlist',
+    'watchlist_inventoryDots',
 ];
+
+/**
+ * Guild play: the guild panels and trials. Priced guild items (credit value, exchange advisor) are here because
+ * a guild player who spends credits needs the prices; Guild is meant to be combined with Market or Combat.
+ */
+const GUILD_EXTRAS = [
+    'guildXPTracker',
+    'guildXPDisplay',
+    'guildIdleDisplay',
+    'guildTrialSignupDisplay',
+    'guildTrialsInfo',
+    'guildTrialTracking',
+    'guildTrialBossDebuffs',
+    'guildTrialPackUnits',
+    'guildTrialAutoRecord',
+    'guildMembersShowGameMode',
+    'guildMembersShowJoined',
+    'guildMembersShowLastXPH',
+    'guildMembersShowLastDayXPH',
+    'guildShrineUpgradePlanner',
+    'guildTrialLedger',
+    'guildRoster',
+    'guildCreditValue',
+    'guildCreditExchangeAdvisor',
+];
+
+/**
+ * Visible switches that ship on and are in no preset, each with the reason. A new default-on switch must go in a
+ * preset list or here: `setting-presets.test.js` fails otherwise, because a preset switches off everything it does
+ * not list. Default-off switches need no entry (a preset leaves them off, which is what they ship as).
+ *
+ * @type {Object<string, string>}
+ */
+export const LEFT_OUT = {
+    ironCowFarm: 'a mode helper for Iron Cow; a preset must not decide it',
+    notifications_communityBuff_experience: 'child of a default-off parent (community buff notices)',
+    notifications_communityBuff_gatheringQuantity: 'child of a default-off parent (community buff notices)',
+    notifications_communityBuff_productionEfficiency: 'child of a default-off parent (community buff notices)',
+    notifications_communityBuff_enhancingSpeed: 'child of a default-off parent (community buff notices)',
+    notifications_communityBuff_combatDropQuantity: 'child of a default-off parent (community buff notices)',
+    market_historyBaseValue: 'child of the default-off price history panel (third-party opt-in)',
+    market_volumeStats:
+        'child of the default-off price history panel, which calls a third-party server and so needs its own opt-in',
+    enhancementTracker_autoCombine: 'child of the default-off Enhancement Tracker',
+    tasks_rerollWalkTrashAtLimit: 'child of the default-off reroll walk',
+};
+
+/** Presets that can be ticked together. Essentials is always the base of a combined apply. */
+export const COMBINABLE_PRESET_IDS = ['combat', 'market', 'guild'];
 
 /** The preset picked when somebody dismisses the question rather than answering it. */
 export const DEFAULT_PRESET_ID = 'everything';
@@ -260,7 +431,7 @@ export const SETTING_PRESETS = [
         label: 'Essentials',
         description:
             'Core quality of life only — action timers, XP rates, inventory sorting, tooltips that describe items. ' +
-            'No prices, no simulators, no trackers.',
+            'No market prices or fight simulators. The base of every combination.',
         settings: ESSENTIALS,
     },
     {
@@ -268,16 +439,24 @@ export const SETTING_PRESETS = [
         label: 'Combat',
         description:
             'The essentials plus the combat side: damage and drop tracking, dungeon and labyrinth tools, and the ' +
-            'combat and labyrinth simulators. Marketplace extras stay off.',
-        settings: [...ESSENTIALS, ...COMBAT_EXTRAS],
+            'simulators. Market, guild and everything else is switched off unless you tick it too.',
+        settings: unique([...ESSENTIALS, ...COMBAT_EXTRAS]),
     },
     {
         id: 'market',
         label: 'Market & trading',
         description:
             'The essentials plus everything that needs a price: profit calculators, listing tools, net worth, ' +
-            'inventory values and crafting economics.',
-        settings: [...ESSENTIALS, ...MARKET_EXTRAS],
+            'crafting economics. Combat, guild and everything else is switched off unless you tick it too.',
+        settings: unique([...ESSENTIALS, ...MARKET_EXTRAS]),
+    },
+    {
+        id: 'guild',
+        label: 'Guild',
+        description:
+            'The essentials plus guild panels, trials and rosters, with guild credit prices. Everything else is ' +
+            'switched off unless you tick it too.',
+        settings: unique([...ESSENTIALS, ...GUILD_EXTRAS]),
     },
     {
         id: DEFAULT_PRESET_ID,
@@ -396,15 +575,34 @@ export function defaultCheckboxValues(groups = settingsGroups) {
  * @returns {Object<string, boolean>} id → value
  */
 export function resolvePresetValues(preset, groups = settingsGroups) {
-    if (!preset) return {};
-    if (preset.useDefaults) return defaultCheckboxValues(groups);
+    const presets = (Array.isArray(preset) ? preset : [preset]).filter(Boolean);
+    if (presets.length === 0) return {};
+    if (presets.length === 1 && presets[0].useDefaults) return defaultCheckboxValues(groups);
 
-    const wanted = new Set(preset.settings || []);
+    // A union: listed by any chosen preset means on. A "defaults" preset has no list, so inside a combination it adds nothing.
+    const wanted = new Set();
+    for (const entry of presets) {
+        for (const id of entry.settings || []) wanted.add(id);
+    }
     const values = {};
     for (const id of presetTargetIds(groups)) {
         values[id] = wanted.has(id);
     }
     return values;
+}
+
+/**
+ * The presets a combined apply writes: Essentials as the base, then each chosen combinable preset once.
+ * @param {string[]} presetIds
+ * @returns {Object[]|null} Presets, or null when an id is unknown or Defaults is mixed with others
+ */
+export function presetsForSelection(presetIds) {
+    const ids = [...new Set(presetIds || [])];
+    if (ids.length === 0) return null;
+    if (ids.includes(DEFAULT_PRESET_ID)) return ids.length === 1 ? [getPreset(DEFAULT_PRESET_ID)] : null;
+    const chosen = ids.map((id) => getPreset(id));
+    if (chosen.some((preset) => !preset || !preset.settings)) return null;
+    return ids.includes('essentials') ? chosen : [getPreset('essentials'), ...chosen];
 }
 
 /**
@@ -509,27 +707,23 @@ export function writeCheckboxValues(values) {
 }
 
 /**
- * Apply a named preset.
+ * Apply one or several presets as a single write: one snapshot, one union of their lists (Essentials is always
+ * the base), everything in none of them off. Restore undoes the whole combined apply.
  *
- * Snapshots first, so the Restore button can undo it exactly the way it undoes
- * All Off — a preset is a large change, and a large change a person cannot walk
- * back is one they will not risk making.
- *
- * @param {string} presetId - An id from `SETTING_PRESETS`
- * @returns {Promise<Object<string, boolean>|null>} The values written, or null
- *   when the preset is unknown, its undo snapshot could not be saved, or the
- *   character changed mid-write (nothing is written in any of those)
+ * @param {string[]} presetIds - Ids from `SETTING_PRESETS`; Defaults only on its own
+ * @returns {Promise<Object<string, boolean>|null>} The values written, or null when an id is unknown, Defaults was
+ *   mixed with others, the undo snapshot could not be saved, or the character changed mid-write (nothing is written)
  */
-export async function applyPreset(presetId) {
+export async function applyPresets(presetIds) {
     try {
-        const preset = getPreset(presetId);
-        if (!preset) {
-            console.error(`[SettingPresets] Unknown preset: ${presetId}`);
+        const presets = presetsForSelection(presetIds);
+        if (!presets) {
+            console.error(`[SettingPresets] Unknown or uncombinable presets: ${(presetIds || []).join(', ')}`);
             return null;
         }
 
         const owner = captureBulkOwner();
-        const values = resolvePresetValues(preset);
+        const values = resolvePresetValues(presets);
         await saveBulkSnapshot(owner);
         if (!isBulkOwnerCurrent(owner)) {
             // The character changed while the snapshot was saving; these values were chosen for the old one
@@ -542,4 +736,18 @@ export async function applyPreset(presetId) {
         console.error('[SettingPresets] Applying a preset failed:', error);
         return null;
     }
+}
+
+/**
+ * Apply a named preset.
+ *
+ * Snapshots first, so the Restore button can undo it exactly the way it undoes
+ * All Off — a preset is a large change, and a large change a person cannot walk
+ * back is one they will not risk making.
+ *
+ * @param {string} presetId - An id from `SETTING_PRESETS`
+ * @returns {Promise<Object<string, boolean>|null>} See `applyPresets`
+ */
+export async function applyPreset(presetId) {
+    return applyPresets([presetId]);
 }

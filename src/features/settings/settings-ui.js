@@ -51,7 +51,9 @@ import {
 import {
     MODE_PRESETS,
     SETTING_PRESETS,
-    applyPreset,
+    COMBINABLE_PRESET_IDS,
+    applyPresets,
+    getPreset,
     presetTargetIds,
     saveBulkSnapshot,
     loadBulkSnapshot,
@@ -1628,7 +1630,8 @@ class SettingsUI {
 
         const note = document.createElement('div');
         note.textContent =
-            'A preset turns feature switches on and off in one go. Numbers, dropdowns and colors are left alone, ' +
+            'A preset turns feature switches on and off in one go. Tick Combat, Market and Guild to combine them ' +
+            '(Essentials is always included), then press Apply ticked. Numbers, dropdowns and colors are left alone, ' +
             'and Restore undoes the last one. A mode — the pressed-in chip — is not a one-off: it stays on ' +
             'alongside whichever preset you pick.';
         note.style.cssText =
@@ -1638,18 +1641,40 @@ class SettingsUI {
         const row = document.createElement('div');
         row.className = 'toolasha-utility-buttons';
 
+        this._tickedPresets = new Set();
+        const combinable = new Set(COMBINABLE_PRESET_IDS);
+
         for (const preset of SETTING_PRESETS) {
             const button = document.createElement('button');
             button.textContent = preset.label;
             button.className = 'toolasha-utility-button toolasha-preset-chip';
             button.title = preset.description;
             button.dataset.presetId = preset.id;
-            // A one-shot is an action, never a state: it has no pressed look and
-            // says so, so the one chip that *is* a state reads as different
-            button.dataset.presetKind = 'oneShot';
-            button.addEventListener('click', () => this.handleApplyPreset(preset));
+            if (combinable.has(preset.id)) {
+                // Combat, Market and Guild are ticked, then applied together on top of Essentials
+                button.dataset.presetKind = 'toggle';
+                button.setAttribute('aria-pressed', 'false');
+                button.addEventListener('click', () => this._toggleTickedPreset(preset.id, button));
+            } else {
+                // A one-shot is an action, never a state: it has no pressed look and
+                // says so, so the one chip that *is* a state reads as different
+                button.dataset.presetKind = 'oneShot';
+                button.addEventListener('click', () => this.handleApplyPresets([preset.id]));
+            }
             row.appendChild(button);
         }
+
+        const applyTicked = document.createElement('button');
+        applyTicked.textContent = 'Apply ticked';
+        applyTicked.className = 'toolasha-utility-button toolasha-preset-apply';
+        applyTicked.dataset.presetApply = 'true';
+        applyTicked.title =
+            'Essentials plus every ticked preset (Combat, Market, Guild). Everything in none of them is switched off.';
+        applyTicked.addEventListener('click', () => {
+            const ids = COMBINABLE_PRESET_IDS.filter((id) => this._tickedPresets.has(id));
+            this.handleApplyPresets(ids.length > 0 ? ids : ['essentials']);
+        });
+        row.appendChild(applyTicked);
 
         for (const mode of MODE_PRESETS) {
             row.appendChild(this.createModeChip(mode));
@@ -1743,19 +1768,33 @@ class SettingsUI {
     }
 
     /**
-     * Apply a preset, after asking — it rewrites a few hundred switches.
-     * @param {Object} preset - Entry from SETTING_PRESETS
+     * Tick or untick a combinable preset chip.
+     * @param {string} presetId - Combat, Market or Guild
+     * @param {HTMLElement} button - Its chip
      */
-    async handleApplyPreset(preset) {
+    _toggleTickedPreset(presetId, button) {
+        if (this._tickedPresets.has(presetId)) this._tickedPresets.delete(presetId);
+        else this._tickedPresets.add(presetId);
+        button.setAttribute('aria-pressed', String(this._tickedPresets.has(presetId)));
+        button.dataset.ticked = String(this._tickedPresets.has(presetId));
+    }
+
+    /**
+     * Apply one or several presets as one write, after asking — it rewrites a few hundred switches.
+     * @param {string[]} presetIds - Ids from SETTING_PRESETS (Essentials is always the base of a combination)
+     */
+    async handleApplyPresets(presetIds) {
+        const labels = presetIds.map((id) => getPreset(id)?.label || id).join(' + ');
+        const descriptions = presetIds.map((id) => getPreset(id)?.description || '').join('\n\n');
         const confirmed = confirm(
-            `Apply the "${preset.label}" preset?\n\n${preset.description}\n\n` +
-                'Every other feature switch is turned off. Numbers, dropdowns and colors are left alone, and ' +
-                'Restore puts your current switches back.'
+            `Apply the "${labels}" preset?\n\n${descriptions}\n\n` +
+                'Every feature switch in none of them is turned off. Numbers, dropdowns and colors are left alone, ' +
+                'and Restore puts your current switches back.'
         );
         if (!confirmed) return;
 
         const owner = captureBulkOwner();
-        const applied = await applyPreset(preset.id);
+        const applied = await applyPresets(presetIds);
         // Applied for a character that is no longer on screen: applyPreset wrote nothing, so say nothing
         if (!isBulkOwnerCurrent(owner)) return;
         if (!applied) {

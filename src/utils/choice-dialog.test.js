@@ -123,3 +123,24 @@ describe('askChoice look', () => {
         expect(await promise).toBe('wipe');
     });
 });
+
+describe('askChoice checkboxes', () => {
+    test('ticked boxes are written into the passed set whichever button is pressed', async () => {
+        const checked = new Set();
+        const promise = askChoice({
+            title: 'T',
+            checkboxes: [
+                { value: 'a', label: 'A' },
+                { value: 'b', label: 'B', hint: 'second' },
+            ],
+            checked,
+            choices: [{ value: 'go', label: 'Go' }],
+        });
+        const boxes = document.body.querySelectorAll('input[type="checkbox"]');
+        expect(boxes).toHaveLength(2);
+        boxes[1].click();
+        document.body.querySelector('button').click();
+        expect(await promise).toBe('go');
+        expect([...checked]).toEqual(['b']);
+    });
+});

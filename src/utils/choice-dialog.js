@@ -31,9 +31,12 @@ const DANGER = { rest: 'var(--color-warning, #db3333)', hover: 'var(--color-warn
  * @param {string} [options.message] - Body text; newlines become line breaks
  * @param {Array<{value: string, label: string, hint?: string, tone?: string}>} options.choices -
  *   Buttons, in order. `tone` may be `'primary'`, `'danger'` or left off.
+ * @param {Array<{value: string, label: string, hint?: string}>} [options.checkboxes] - Tick boxes shown above the
+ *   buttons; the ticked values are written into `options.checked` (a Set the caller passes) whichever button is pressed
+ * @param {Set<string>} [options.checked] - Receives the ticked checkbox values
  * @returns {Promise<string|null>} The chosen value, or null when dismissed
  */
-export function askChoice({ title, message = '', choices = [] }) {
+export function askChoice({ title, message = '', choices = [], checkboxes = [], checked = new Set() }) {
     return new Promise((resolve) => {
         const backdrop = document.createElement('div');
         Object.assign(backdrop.style, {
@@ -76,6 +79,29 @@ export function askChoice({ title, message = '', choices = [] }) {
                 whiteSpace: 'pre-wrap',
             });
             dialog.appendChild(body);
+        }
+
+        if (checkboxes.length > 0) {
+            const list = document.createElement('div');
+            list.dataset.choiceChecks = 'true';
+            Object.assign(list.style, { display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '12px' });
+            for (const box of checkboxes) {
+                const row = document.createElement('label');
+                Object.assign(row.style, { display: 'flex', gap: '6px', alignItems: 'flex-start', cursor: 'pointer' });
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.dataset.choiceCheck = box.value;
+                input.checked = checked.has(box.value);
+                input.addEventListener('change', () => {
+                    if (input.checked) checked.add(box.value);
+                    else checked.delete(box.value);
+                });
+                const text = document.createElement('span');
+                text.textContent = box.hint ? `${box.label} — ${box.hint}` : box.label;
+                row.append(input, text);
+                list.appendChild(row);
+            }
+            dialog.appendChild(list);
         }
 
         const buttons = document.createElement('div');
