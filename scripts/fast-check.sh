@@ -33,5 +33,19 @@ if [ "${#jsfiles[@]}" -gt 0 ]; then
         code=1
     }
 fi
+# A changed test that vi.mock()s bundle-bridge must stub the accessors every mock of it carries; the guard
+# test that says so only ran in the full gates (2026-11-21 and 2026-11-23, both caught there).
+mapfile -t bridgeMocks < <(printf '%s\n' "${jsfiles[@]}" | grep -E '\.test\.js$' | while read -r f; do
+    grep -lE "vi\.mock\([^)]*bundle-bridge" "$f" 2>/dev/null
+done)
+if [ "${#bridgeMocks[@]}" -gt 0 ]; then
+    "$bin/vitest" run src/utils/bundle-bridge-mocks.test.js >/tmp/fast-check-bridge.$$ 2>&1 || {
+        grep -E '^\s*\+\s+"|FAIL' /tmp/fast-check-bridge.$$ >&2
+        echo "[fast-check] a bundle-bridge mock is missing a required stub (see bundle-bridge-mocks.test.js)" >&2
+        code=1
+    }
+    rm -f /tmp/fast-check-bridge.$$
+fi
+
 [ "$code" = 0 ] && echo "[fast-check] ${#files[@]} changed files pass Prettier and ESLint"
 exit "$code"

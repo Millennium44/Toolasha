@@ -192,6 +192,9 @@ Every brief to a sub-agent carries these lines:
   stack on that PR: a stack cut from its old head has to be restacked every time it moves. The integrator
   resolves the overlap once, at landing.
 - **Run only the tests your change reaches, never the full gates** — the integrator runs those once.
+- **In a `.claude/worktrees` checkout, run the main checkout's tools** (`C:/dev/Toollennium/Toolasha/node_modules/.bin/vitest`,
+  `prettier`, `eslint`, `commitlint`): imports resolve from the main checkout's `node_modules`. Never link `node_modules`
+  into the worktree; cleanup can delete through the link. Claude's `guard-bash` hook refuses both the link and `npx`.
 - **Run them at the default heap.** Never raise `NODE_OPTIONS=--max-old-space-size` to get a suite through: the
   gates and CI run the default, so a file that only passes with more memory fails there. A worker that exits
   mid-file ("Worker exited unexpectedly") means the file has outgrown it; split a self-contained `describe` into
