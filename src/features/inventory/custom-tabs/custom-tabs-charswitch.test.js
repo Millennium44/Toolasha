@@ -506,6 +506,27 @@ describe('Export / Import across characters', () => {
         expect(Object.keys(ui._config.removed ?? {})).toEqual(['mc-tab']);
     });
 
+    test('a tab deleted from the panel stays deleted when a gist still holds it unstamped', async () => {
+        const legacy = { id: 'a1', name: 'Gear', items: ['/items/sword'], children: [] };
+        const twin = { id: 'a2', name: 'Gear', items: ['/items/sword'], children: [], updatedAt: Date.now() - 1000 };
+        store('mainChar', { version: 1, selectedTabId: null, tabs: [legacy, twin] });
+        dm.charId = 'mainChar';
+        await startUI();
+
+        ui._onDeleteTab('a1');
+        await flushConfigWrites();
+        expect(Object.values(stored('mainChar').clearedAll).map((r) => r.ids)).toEqual([['a1']]);
+
+        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
+        const gist = { version: 1, selectedTabId: null, tabs: [structuredClone(legacy), structuredClone(twin)] };
+        store('mainChar', mergeForKey('settings', KEY('mainChar')).foldPull(structuredClone(stored('mainChar')), gist));
+        dm.charId = 'otherChar';
+        await dm.emit('character_initialized', { _isCharacterSwitch: true });
+        dm.charId = 'mainChar';
+        await dm.emit('character_initialized', { _isCharacterSwitch: true });
+        expect(tabIds(ui._config)).toEqual(['a2']);
+    });
+
     test('a fold with the pre-import copy (an old gist) leaves one set of tabs, not both', async () => {
         const preImport = {
             version: 1,
