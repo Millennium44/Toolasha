@@ -405,3 +405,24 @@ describe('switching the feature off while messages are on screen', () => {
         expect(other.textContent).toBe('Mate');
     });
 });
+
+describe('a name that sits alone in its own text node', () => {
+    // Shape seen live in a restored history line after the feature was switched off and on: the old link
+    // span was left behind as a plain span, so the name is its own text node and " has reached ..." is the next
+    test('is linked again when its context is in the next node', () => {
+        settings.chat_profileLink = true;
+        document.body.innerHTML =
+            '<div class="Chat_chatInputContainer"><input /></div>' +
+            '<div class="ChatMessage_chatMessage ChatMessage_systemMessage">' +
+            '<span class="ChatMessage_timestamp">[11/19 10:56:35 AM] </span>' +
+            '<span><span>Zmfei</span> has reached level 150 Cheesesmithing!</span></div>';
+
+        chatProfileLinkFeature.initialize();
+
+        const links = document.querySelectorAll('.mwi-chat-profile-name');
+        expect(links).toHaveLength(1);
+        expect(links[0].textContent).toBe('Zmfei');
+
+        chatProfileLinkFeature.disable();
+    });
+});

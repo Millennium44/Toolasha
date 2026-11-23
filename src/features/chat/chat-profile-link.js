@@ -234,16 +234,23 @@ const chatProfileLink = new ChatProfileLink();
  * @param {{name: string, afterPrefixes?: string[], beforeSuffix?: string}} target
  */
 function wrapNameOccurrence(root, { name, afterPrefixes, beforeSuffix }) {
+    // The guards read the whole line, not just the text node: a name sitting alone in its own node
+    // (a restored message whose old link span was unwrapped, or any split by other markup) has its
+    // " has ..." in the next node
+    const fullText = root.textContent || '';
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let node;
+    let offset = 0;
     while ((node = walker.nextNode())) {
-        if (node.parentElement?.classList.contains(NAME_CLASS)) continue;
         const content = node.textContent;
+        const nodeStart = offset;
+        offset += content.length;
+        if (node.parentElement?.classList.contains(NAME_CLASS)) continue;
         let from = 0;
         let idx;
         while ((idx = content.indexOf(name, from)) !== -1) {
-            const before = content.slice(0, idx);
-            const after = content.slice(idx + name.length);
+            const before = fullText.slice(0, nodeStart + idx);
+            const after = fullText.slice(nodeStart + idx + name.length);
             const beforeOk = !beforeSuffix || before.endsWith(beforeSuffix);
             const afterOk = !afterPrefixes || afterPrefixes.some((prefix) => after.startsWith(prefix));
             if (beforeOk && afterOk) {
