@@ -651,10 +651,11 @@ export const settingsGroups = {
                 help:
                     'Off by default because it holds a button press. Pressing an alchemy Start or Queue button without ' +
                     'the most profitable catalyst selected does nothing and says which option is best and what your ' +
-                    'choice costs per hour; pressing again within 15 seconds goes ahead. Only speaks up when your choice ' +
-                    'earns at least 10K coins an hour and at least 5% less than the best. Stays quiet when figures are ' +
-                    'missing or unpriced, options tie, or an Iron Cow does not own the best catalyst. The message has ' +
-                    'Skip until reload and Turn this check off. Never picks a catalyst or starts anything for you.',
+                    'choice costs per hour; one more press within 15 seconds goes ahead, and that setup is not asked ' +
+                    'about again for a minute. Only speaks up when your choice earns at least 10K coins an hour less ' +
+                    "and the gap is at least 5% of the best option's hourly figure, gain or loss. Stays quiet when " +
+                    'figures are missing or unpriced, a catalyst has an empty order book, options tie, or an Iron Cow ' +
+                    'does not own the best catalyst. Never picks a catalyst or starts anything for you.',
             },
             alchemyItemSort: {
                 id: 'alchemyItemSort',
@@ -4227,8 +4228,8 @@ export const settingsGroups = {
                 help:
                     'Test server only. Pick up to six lines you want, how many you need and which are required; the ' +
                     'advisor shows the next move (which orb, when to lock a line, whether to use a new roll) and the ' +
-                    'average orbs the best strategy spends. Do next step presses the advised game button, one action per ' +
-                    'click.',
+                    'average orbs the best strategy spends. A coin cost shows only when every orb used has a price. Do ' +
+                    'next step presses the advised game button, one action per click.',
             },
             overlayPanel: {
                 id: 'overlayPanel',
@@ -4970,7 +4971,7 @@ export const settingsGroups = {
                 label: 'Notify when a watchlist price target is reached',
                 type: 'checkbox',
                 default: false,
-                help: 'Notifies when a pinned item on the price history panel reaches the target you set with the ◎ button on its chip (an ask at or under your price, or a bid at or above it). Needs "Price history panel (pooled data)" on. Sightings older than 15 minutes fire nothing. Once per target; re-arms when the price moves back or you change the target.',
+                help: 'Notifies when a pinned item on the price history panel reaches the target you set with the ◎ button on its chip (an ask at or under your price, or a bid at or above it). Needs "Market: Price history panel" on and stays quiet without its pooled data. Sightings older than 15 minutes fire nothing. Once per target; re-arms when the price moves back or you change the target.',
             },
             notifications_otherCharacterIdle: {
                 id: 'notifications_otherCharacterIdle',
