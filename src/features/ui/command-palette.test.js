@@ -360,6 +360,19 @@ describe('the palette in the page', () => {
         expect(philo.instance.openModal).toHaveBeenCalled();
     });
 
+    test('a command is found by the plain words in its hint', () => {
+        registerCommand({
+            name: 'DPs',
+            hint: 'Damage per second, dealt by each player and by each monster',
+            run: () => {},
+        });
+
+        palette.initialize();
+        palette.open();
+        type('damage per second');
+        expect(drawnLabels()[0]).toBe('DPs');
+    });
+
     test('a command its feature never registered is not offered', () => {
         // The property the old hand-written list only half kept: a feature
         // that never initialised never registers, so nothing offers it

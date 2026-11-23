@@ -143,4 +143,38 @@ describe('askChoice checkboxes', () => {
         expect(await promise).toBe('go');
         expect([...checked]).toEqual(['b']);
     });
+
+    test('a needsTick button is disabled until a box is ticked, and again when it is cleared', async () => {
+        const promise = askChoice({
+            title: 'T',
+            checkboxes: [{ value: 'a', label: 'A' }],
+            choices: [
+                { value: 'keep', label: 'Keep' },
+                { value: 'go', label: 'Go', needsTick: true },
+            ],
+        });
+        const [keep, go] = document.body.querySelectorAll('button');
+        const box = document.body.querySelector('input[type="checkbox"]');
+        expect(keep.disabled).toBe(false);
+        expect(go.disabled).toBe(true);
+        box.click();
+        expect(go.disabled).toBe(false);
+        box.click();
+        expect(go.disabled).toBe(true);
+        keep.click();
+        expect(await promise).toBe('keep');
+    });
+
+    test('a box ticked beforehand enables a needsTick button from the start', async () => {
+        const promise = askChoice({
+            title: 'T',
+            checkboxes: [{ value: 'a', label: 'A' }],
+            checked: new Set(['a']),
+            choices: [{ value: 'go', label: 'Go', needsTick: true }],
+        });
+        const go = document.body.querySelector('button');
+        expect(go.disabled).toBe(false);
+        go.click();
+        expect(await promise).toBe('go');
+    });
 });

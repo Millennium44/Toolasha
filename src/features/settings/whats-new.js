@@ -78,6 +78,7 @@ function presetQuestionParts() {
             {
                 value: APPLY_TICKED,
                 label: 'Apply ticked',
+                needsTick: true,
                 hint: 'Essentials plus every preset ticked above. Anything in none of them is switched off.',
             },
         ],

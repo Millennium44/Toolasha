@@ -760,7 +760,9 @@ class CommandPalette {
         // about to do
         for (const entry of registeredCommands()) {
             const group = entry.kind === 'verb' ? 'Action' : 'Panel';
-            commands.push(this._command(group, entry.name, entry.hint, entry.run, '', entry.kind));
+            // The hint is searchable too: it says in plain words what the panel shows, which the name may not
+            // ("DPs" is found by typing "damage per second")
+            commands.push(this._command(group, entry.name, entry.hint, entry.run, entry.hint, entry.kind));
         }
 
         // A retired row is offered only while it is on, as it is in the picker

@@ -29,8 +29,9 @@ const DANGER = { rest: 'var(--color-warning, #db3333)', hover: 'var(--color-warn
  * @param {Object} options - The question
  * @param {string} options.title - Heading
  * @param {string} [options.message] - Body text; newlines become line breaks
- * @param {Array<{value: string, label: string, hint?: string, tone?: string}>} options.choices -
- *   Buttons, in order. `tone` may be `'primary'`, `'danger'` or left off.
+ * @param {Array<{value: string, label: string, hint?: string, tone?: string, needsTick?: boolean}>} options.choices -
+ *   Buttons, in order. `tone` may be `'primary'`, `'danger'` or left off. `needsTick: true` keeps the button
+ *   disabled until at least one checkbox is ticked.
  * @param {Array<{value: string, label: string, hint?: string}>} [options.checkboxes] - Tick boxes shown above the
  *   buttons; the ticked values are written into `options.checked` (a Set the caller passes) whichever button is pressed
  * @param {Set<string>} [options.checked] - Receives the ticked checkbox values
@@ -95,6 +96,7 @@ export function askChoice({ title, message = '', choices = [], checkboxes = [], 
                 input.addEventListener('change', () => {
                     if (input.checked) checked.add(box.value);
                     else checked.delete(box.value);
+                    syncTickButtons();
                 });
                 const text = document.createElement('span');
                 text.textContent = box.hint ? `${box.label} — ${box.hint}` : box.label;
@@ -106,6 +108,17 @@ export function askChoice({ title, message = '', choices = [], checkboxes = [], 
 
         const buttons = document.createElement('div');
         Object.assign(buttons.style, { display: 'flex', gap: '8px', justifyContent: 'flex-end', flexWrap: 'wrap' });
+
+        // Buttons that mean nothing without a tick stay disabled until one box is ticked
+        const tickButtons = [];
+        const syncTickButtons = () => {
+            const any = checkboxes.some((box) => checked.has(box.value));
+            for (const button of tickButtons) {
+                button.disabled = !any;
+                button.style.opacity = any ? '' : '0.5';
+                button.style.cursor = any ? '' : 'not-allowed';
+            }
+        };
 
         let settled = false;
         const finish = (value) => {
@@ -147,7 +160,9 @@ export function askChoice({ title, message = '', choices = [], checkboxes = [], 
             }
             button.addEventListener('click', () => finish(choice.value));
             buttons.appendChild(button);
+            if (choice.needsTick) tickButtons.push(button);
         }
+        syncTickButtons();
 
         dialog.appendChild(buttons);
         backdrop.appendChild(dialog);

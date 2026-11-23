@@ -795,6 +795,26 @@ describe('presets combine', () => {
         expect(presetButton('combat').getAttribute('aria-pressed')).toBe('false');
     });
 
+    test('a ticked chip looks different from an unticked one, and the ticks clear after Apply ticked', async () => {
+        drawPanel();
+        const plain = presetButton('combat').style.cssText;
+        presetButton('combat').click();
+        expect(presetButton('combat').dataset.ticked).toBe('true');
+        expect(presetButton('combat').style.cssText).not.toBe(plain);
+        expect(presetButton('market').style.cssText).toBe(plain);
+
+        applyTicked();
+        await settle();
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(true);
+        expect(presetButton('combat').dataset.ticked).toBe('false');
+        expect(presetButton('combat').getAttribute('aria-pressed')).toBe('false');
+        expect(presetButton('combat').style.cssText).toBe(plain);
+        // A second Apply ticked is now Essentials alone
+        applyTicked();
+        await settle();
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(false);
+    });
+
     test('Apply ticked with Combat and Market ticked turns on both sides', async () => {
         mocks.settingsMap.combatSim.isTrue = false;
         drawPanel();

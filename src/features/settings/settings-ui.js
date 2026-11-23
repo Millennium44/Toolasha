@@ -1775,8 +1775,30 @@ class SettingsUI {
     _toggleTickedPreset(presetId, button) {
         if (this._tickedPresets.has(presetId)) this._tickedPresets.delete(presetId);
         else this._tickedPresets.add(presetId);
-        button.setAttribute('aria-pressed', String(this._tickedPresets.has(presetId)));
-        button.dataset.ticked = String(this._tickedPresets.has(presetId));
+        this._paintTickedChip(button, this._tickedPresets.has(presetId));
+    }
+
+    /**
+     * Show whether a combinable preset chip is ticked: a filled, pressed-in chip against the plain one.
+     * @param {HTMLElement} button - The chip
+     * @param {boolean} ticked - Whether it is ticked
+     */
+    _paintTickedChip(button, ticked) {
+        button.setAttribute('aria-pressed', String(ticked));
+        button.dataset.ticked = String(ticked);
+        button.style.cssText = ticked
+            ? 'background: linear-gradient(135deg, #1f4d7a, #2f7bc4); border: 1px solid #8cc4f5; ' +
+              'box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45); color: #f2f8ff; font-weight: 700;'
+            : '';
+    }
+
+    /** Untick every combinable preset chip, after a preset was applied. */
+    _clearTickedPresets() {
+        this._tickedPresets.clear();
+        for (const id of COMBINABLE_PRESET_IDS) {
+            const chip = document.querySelector(`.toolasha-preset-chip[data-preset-id="${id}"]`);
+            if (chip) this._paintTickedChip(chip, false);
+        }
     }
 
     /**
@@ -1805,6 +1827,9 @@ class SettingsUI {
         for (const [id, value] of Object.entries(applied)) {
             if (this.currentSettings[id]) this.currentSettings[id].isTrue = value;
         }
+
+        // The ticks were an instruction, and it has been carried out; a leftover tick would read as a state
+        this._clearTickedPresets();
 
         // A preset writes stored values even for settings the mode locks;
         // re-force them so Iron Cow wins immediately, not on its next apply

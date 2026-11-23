@@ -273,8 +273,11 @@ describe('what a preset resolves to', () => {
     });
 
     test('it covers every setting a bulk write owns, and nothing else', () => {
+        // ...except the LEFT_OUT switches, which no preset decides (the "Defaults" preset resets them like the rest)
+        const decided = presetTargetIds().filter((id) => !(id in LEFT_OUT));
         for (const preset of SETTING_PRESETS) {
-            expect(Object.keys(resolvePresetValues(preset)).sort()).toEqual([...presetTargetIds()].sort());
+            const expected = preset.useDefaults ? presetTargetIds() : decided;
+            expect(Object.keys(resolvePresetValues(preset)).sort(), preset.id).toEqual([...expected].sort());
         }
     });
 
@@ -303,7 +306,11 @@ describe('applying a preset', () => {
 
     test('it decides a value for every setting it owns', async () => {
         const applied = await applyPreset('essentials');
-        expect(Object.keys(applied).sort()).toEqual([...presetTargetIds()].sort());
+        expect(Object.keys(applied).sort()).toEqual(
+            presetTargetIds()
+                .filter((id) => !(id in LEFT_OUT))
+                .sort()
+        );
         // Every setting either already held its wanted value or was written to it
         for (const [id, value] of Object.entries(applied)) {
             expect(mocks.settingsMap[id].isTrue, id).toBe(value);
@@ -485,6 +492,24 @@ describe('combining presets', () => {
         writeCheckboxValues(snapshot);
         const after = Object.fromEntries(presetTargetIds().map((id) => [id, mocks.settingsMap[id].isTrue]));
         expect(after).toEqual(before);
+    });
+
+    test('a LEFT_OUT switch keeps its value through a combined apply and through Restore', async () => {
+        // Ships on as the child of a default-off feature; the player may have turned it off on purpose
+        mocks.settingsMap.market_bulkSellHoldFavorites.isTrue = true;
+        mocks.settingsMap.market_bulkSellVendorCheck.isTrue = false;
+
+        const applied = await applyPresets(['combat', 'market']);
+        expect(applied).not.toHaveProperty('market_bulkSellHoldFavorites');
+        expect(applied).not.toHaveProperty('market_bulkSellVendorCheck');
+        expect(mocks.written.map(([id]) => id)).not.toContain('market_bulkSellHoldFavorites');
+        expect(mocks.settingsMap.market_bulkSellHoldFavorites.isTrue).toBe(true);
+        expect(mocks.settingsMap.market_bulkSellVendorCheck.isTrue).toBe(false);
+
+        const [, snapshot] = mocks.storageWrites[0];
+        writeCheckboxValues(snapshot);
+        expect(mocks.settingsMap.market_bulkSellHoldFavorites.isTrue).toBe(true);
+        expect(mocks.settingsMap.market_bulkSellVendorCheck.isTrue).toBe(false);
     });
 
     test('a character who arrived while the snapshot saved gets nothing from a combined apply', async () => {

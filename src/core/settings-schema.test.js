@@ -499,7 +499,6 @@ describe('requires and disabledBy parent links', () => {
             labyrinthRoomLogSize: 'labyrinthRoomLogs',
             dungeonPace: 'dungeonTrackerUI',
             combatDpsHitTape: 'combatDpsPanel',
-            combatConsumableRunway: 'combatStats',
             guildTrialTracking: 'guildTrialsInfo',
             notifications_trialAudience: 'notifications_trialStarting',
             guildTrialKeepInputs: 'guildTrialSim',
@@ -527,6 +526,8 @@ describe('requires and disabledBy parent links', () => {
             'combatDeathRecapLabyrinth', // "applies whether or not Death Recap is on"
             'taskSorter_sortAfterRead', // the reroll walk sorts through it
             'notifications_combatConsumableLowHours', // the consumable runway reads it too
+            'combatConsumableRunway', // has its own registry key and runs with Combat Statistics off
+            'leaderboardXPDisplay', // has its own registry key and runs with the XP tracker off
         ]) {
             expect(getSettingDefinition(id).requires, id).toBeUndefined();
         }

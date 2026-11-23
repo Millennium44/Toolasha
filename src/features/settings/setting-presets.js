@@ -567,6 +567,8 @@ export function defaultCheckboxValues(groups = settingsGroups) {
 /**
  * What a preset means, expressed as a value for every setting it owns.
  *
+ * Switches on `LEFT_OUT` are not in the result of a combination: a preset leaves them as they are.
+ *
  * Pure — no config, no storage — because "what does Combat mean" is the part
  * that has to stay right as the schema grows, and it is the part worth testing.
  *
@@ -586,6 +588,9 @@ export function resolvePresetValues(preset, groups = settingsGroups) {
     }
     const values = {};
     for (const id of presetTargetIds(groups)) {
+        // A left-out switch is one no preset decides: it ships on as the opt-in child of a feature that ships off.
+        // Writing it false here would silently drop it when the player later turns the parent on.
+        if (Object.hasOwn(LEFT_OUT, id)) continue;
         values[id] = wanted.has(id);
     }
     return values;

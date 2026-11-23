@@ -285,6 +285,14 @@ describe('the returning-user picker', () => {
         expect(mocks.written).toEqual([]);
     });
 
+    test('Apply ticked waits for a tick box in the first-run question', async () => {
+        mocks.answer = 'keepCurrent';
+        await whatsNew._offerFirstRunChoice(['newFeatureA'], CURRENT);
+        const apply = mocks.lastChoiceOptions.choices.find((choice) => choice.value === 'applyTicked');
+        expect(apply.needsTick).toBe(true);
+        expect(mocks.lastChoiceOptions.choices.filter((choice) => choice.needsTick)).toHaveLength(1);
+    });
+
     test('keepCurrent is the first, primary option and every preset follows', async () => {
         mocks.answer = 'keepCurrent';
         await whatsNew._offerFirstRunChoice(['newFeatureA'], CURRENT);

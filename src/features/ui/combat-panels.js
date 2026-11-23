@@ -2125,7 +2125,7 @@ profitPanel.restore();
 // behind (the DPS tile behind `combatDps`, the rest behind the Statistics tab's).
 registerCommand({
     name: dpsPanel.title,
-    hint: 'Damage dealt per second, by player and by monster',
+    hint: 'Damage per second, dealt by each player and by each monster',
     run: () => dpsPanel.toggle(),
     when: () => config.getSetting('combatDps', true),
 });

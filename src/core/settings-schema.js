@@ -3540,8 +3540,7 @@ export const settingsGroups = {
                 label: 'Consumable runway: Show how long each food and drink lasts on the battle grid',
                 type: 'checkbox',
                 default: false,
-                help: 'A small duration under each icon in the in-battle Consumables grid: how long that stock lasts at the rate it is used, red under the low-consumable warning hours, infinity for a filled slot not being drunk. Needs Combat Statistics on. Off by default.',
-                requires: 'combatStats',
+                help: 'A small duration under each icon in the in-battle Consumables grid: how long that stock lasts at the rate it is used, red under the low-consumable warning hours, infinity for a filled slot not being drunk. Off by default.',
             },
             portraitDpsPosition: {
                 id: 'portraitDpsPosition',
@@ -4968,8 +4967,7 @@ export const settingsGroups = {
                 label: 'Show XP/hr columns on Leaderboard',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds Last XP/h and Last day XP/h columns to the player Leaderboard panel. Needs "Track player XP over time from Leaderboard".',
-                requires: 'leaderboardXPTracker',
+                help: 'Adds Last XP/h and Last day XP/h columns to the player Leaderboard panel.',
             },
             leaderboardRankBadges: {
                 id: 'leaderboardRankBadges',
