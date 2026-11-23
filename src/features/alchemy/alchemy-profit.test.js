@@ -149,3 +149,50 @@ describe('readAlchemyTabType positional identity', () => {
         expect(readAlchemyTabType()).toBeNull();
     });
 });
+
+describe('an input the sprite sheet has no icon for', () => {
+    // Shape observed live on the test server (Coinify, Focus Orb selected): the requirement row draws the
+    // name alone, with no svg, so there is no icon href to read the hrid from
+    function mountRequirement(name, enhancement = null) {
+        document.body.innerHTML = `<div class="SkillActionDetail_itemRequirements__x">
+            <span class="SkillActionDetail_itemRequirementCell__x SkillActionDetail_inventoryCount__x">158</span>
+            <span class="SkillActionDetail_itemRequirementCell__x SkillActionDetail_inputCount__x"> / 1 </span>
+            <div class="Item_itemContainer__x"><div><div><div class="Item_item__x Item_clickable__x Item_inline__x">
+                ${enhancement ? `<div class="Item_enhancementLevel__x">+${enhancement}</div>` : ''}
+                <div class="Item_name__x">${name}</div>
+            </div></div></div></div></div>`;
+    }
+
+    beforeEach(() => {
+        game.initClientData = {
+            itemDetailMap: {
+                '/items/focus_orb': { name: 'Focus Orb' },
+                '/items/eternal_milk': { name: 'Eternal Milk' },
+            },
+        };
+    });
+
+    test('extractRequirements reads the hrid and enhancement from the name', async () => {
+        mountRequirement('Eternal Milk', 3);
+        expect(await alchemyProfit.extractRequirements()).toEqual([
+            { itemHrid: '/items/eternal_milk', enhancementLevel: 3, count: 1 },
+        ]);
+    });
+
+    test('an unknown name or an empty slot yields no requirement', async () => {
+        mountRequirement('Not An Item');
+        expect(await alchemyProfit.extractRequirements()).toEqual([]);
+        mountRequirement('');
+        expect(await alchemyProfit.extractRequirements()).toEqual([]);
+    });
+
+    test('the fingerprint tells two icon-less items, and an empty slot, apart', () => {
+        mountRequirement('Focus Orb');
+        const orb = alchemyProfit.getStateFingerprint();
+        mountRequirement('Eternal Milk');
+        const milk = alchemyProfit.getStateFingerprint();
+        mountRequirement('');
+        const empty = alchemyProfit.getStateFingerprint();
+        expect(new Set([orb, milk, empty]).size).toBe(3);
+    });
+});
