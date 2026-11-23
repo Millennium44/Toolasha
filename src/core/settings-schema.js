@@ -6,6 +6,13 @@
 import { loadoutSnapshot } from '../utils/bundle-bridge.js';
 import { isTestServer } from '../utils/game-server.js';
 
+/**
+ * `needsPrices: true` on a setting means the feature shows market prices or is not worth having without a price
+ * feed (a priced tooltip, a profit figure, a listing tool, a value tracker). Declare it next to the setting and the
+ * rest follows: Essentials must hold none, every default-on one must be in the Market preset (or on LEFT_OUT), and
+ * Iron Cow mode must either lock it (IRON_COW_SETTINGS) or record that it leaves it alone
+ * (IRON_COW_UNLOCKED_PRICED). Leave it off a setting that merely reads a price as an optional input.
+ */
 export const settingsGroups = {
     ironCow: {
         title: 'Iron Cow Mode',
@@ -313,18 +320,21 @@ export const settingsGroups = {
             },
             actionPanel_showPricingMode: {
                 id: 'actionPanel_showPricingMode',
+                needsPrices: true,
                 label: 'Skill page: Pricing mode button',
                 type: 'checkbox',
                 default: true,
             },
             actionPanel_showCraftToggle: {
                 id: 'actionPanel_showCraftToggle',
+                needsPrices: true,
                 label: 'Skill page: Craft toggle button',
                 type: 'checkbox',
                 default: true,
             },
             actionPanel_showSellTaxToggle: {
                 id: 'actionPanel_showSellTaxToggle',
+                needsPrices: true,
                 label: 'Skill page: Sell tax toggle button',
                 type: 'checkbox',
                 default: false,
@@ -342,6 +352,7 @@ export const settingsGroups = {
             },
             actionPanel_showProfitPerHour_gathering: {
                 id: 'actionPanel_showProfitPerHour_gathering',
+                needsPrices: true,
                 label: 'Action page: Show profit/hr on gathering tiles',
                 type: 'checkbox',
                 default: true,
@@ -349,6 +360,7 @@ export const settingsGroups = {
             },
             actionPanel_showProfitPerHour_production: {
                 id: 'actionPanel_showProfitPerHour_production',
+                needsPrices: true,
                 label: 'Action page: Show profit/hr on production tiles',
                 type: 'checkbox',
                 default: true,
@@ -370,6 +382,7 @@ export const settingsGroups = {
             },
             actionPanel_hideNegativeProfit: {
                 id: 'actionPanel_hideNegativeProfit',
+                needsPrices: true,
                 label: 'Action panel: Hide actions with negative profit',
                 type: 'checkbox',
                 default: false,
@@ -416,6 +429,7 @@ export const settingsGroups = {
             },
             actionPanel_foragingTotal: {
                 id: 'actionPanel_foragingTotal',
+                needsPrices: true,
                 label: 'Action panel: Overall profit for multi-outcome foraging',
                 type: 'checkbox',
                 default: true,
@@ -436,6 +450,7 @@ export const settingsGroups = {
             },
             actionPanel_showProfitDetail: {
                 id: 'actionPanel_showProfitDetail',
+                needsPrices: true,
                 label: 'Action panel: Show profitability detail',
                 type: 'checkbox',
                 default: true,
@@ -464,6 +479,7 @@ export const settingsGroups = {
             },
             teaRecommendation_xpFloor: {
                 id: 'teaRecommendation_xpFloor',
+                needsPrices: true,
                 label: 'Tea recommendation: Show an "almost as fast" choice',
                 type: 'checkbox',
                 default: true,
@@ -505,6 +521,7 @@ export const settingsGroups = {
             },
             actionQueue_showValue: {
                 id: 'actionQueue_showValue',
+                needsPrices: true,
                 label: 'Queued actions: Show profit/value for queued actions',
                 type: 'checkbox',
                 default: true,
@@ -522,6 +539,7 @@ export const settingsGroups = {
             },
             actionQueue_valueMode: {
                 id: 'actionQueue_valueMode',
+                needsPrices: true,
                 label: 'Queued actions: Value calculation mode',
                 type: 'select',
                 default: 'profit',
@@ -571,6 +589,7 @@ export const settingsGroups = {
         settings: {
             alchemy_profitDisplay: {
                 id: 'alchemy_profitDisplay',
+                needsPrices: true,
                 label: 'Alchemy panel: Show profit calculator',
                 type: 'checkbox',
                 default: true,
@@ -578,6 +597,7 @@ export const settingsGroups = {
             },
             alchemy_catalystWhatIf: {
                 id: 'alchemy_catalystWhatIf',
+                needsPrices: true,
                 label: 'Alchemy panel: Catalyst what-if picker in Profitability',
                 type: 'checkbox',
                 default: true,
@@ -589,6 +609,7 @@ export const settingsGroups = {
             },
             alchemy_bestItems: {
                 id: 'alchemy_bestItems',
+                needsPrices: true,
                 label: 'Alchemy panel: Show best items button',
                 type: 'checkbox',
                 default: true,
@@ -610,6 +631,7 @@ export const settingsGroups = {
             },
             alchemy_bestItems_shopPrices: {
                 id: 'alchemy_bestItems_shopPrices',
+                needsPrices: true,
                 label: 'Alchemy panel: Best Items include shop prices',
                 type: 'checkbox',
                 default: true,
@@ -672,6 +694,7 @@ export const settingsGroups = {
             },
             alchemy_transmuteHistory: {
                 id: 'alchemy_transmuteHistory',
+                needsPrices: true,
                 label: 'Alchemy panel: Track and view transmute session history',
                 type: 'checkbox',
                 default: true,
@@ -679,6 +702,7 @@ export const settingsGroups = {
             },
             alchemy_coinifyHistory: {
                 id: 'alchemy_coinifyHistory',
+                needsPrices: true,
                 label: 'Alchemy panel: Track and view coinify session history',
                 type: 'checkbox',
                 default: true,
@@ -686,6 +710,7 @@ export const settingsGroups = {
             },
             alchemy_decomposeHistory: {
                 id: 'alchemy_decomposeHistory',
+                needsPrices: true,
                 label: 'Alchemy panel: Track and view decompose session history',
                 type: 'checkbox',
                 default: true,
@@ -693,6 +718,7 @@ export const settingsGroups = {
             },
             alchemy_actionProtection: {
                 id: 'alchemy_actionProtection',
+                needsPrices: true,
                 label: 'Alchemy panel: Protect categories from accidental alchemy actions',
                 type: 'checkbox',
                 default: true,
@@ -720,6 +746,7 @@ export const settingsGroups = {
             },
             actions_missingMaterialsButton: {
                 id: 'actions_missingMaterialsButton',
+                needsPrices: true,
                 label: 'Show "Missing Mats Marketplace" button on production, enhancing and alchemy panels',
                 type: 'checkbox',
                 default: true,
@@ -727,6 +754,7 @@ export const settingsGroups = {
             },
             actions_missingMaterialsButton_ignoreQueue: {
                 id: 'actions_missingMaterialsButton_ignoreQueue',
+                needsPrices: true,
                 label: 'Ignore queued actions when calculating missing materials',
                 type: 'checkbox',
                 default: false,
@@ -735,6 +763,7 @@ export const settingsGroups = {
             },
             actions_budgetCalculator: {
                 id: 'actions_budgetCalculator',
+                needsPrices: true,
                 label: 'Action panel: Budget calculator',
                 type: 'checkbox',
                 default: true,
@@ -742,6 +771,7 @@ export const settingsGroups = {
             },
             actions_costSummary: {
                 id: 'actions_costSummary',
+                needsPrices: true,
                 label: 'Action panel: Show cost summary',
                 type: 'checkbox',
                 default: true,
@@ -749,6 +779,7 @@ export const settingsGroups = {
             },
             actions_arbitrageBoard: {
                 id: 'actions_arbitrageBoard',
+                needsPrices: true,
                 label: 'Skill pages: Production arbitrage board',
                 type: 'checkbox',
                 default: true,
@@ -760,6 +791,7 @@ export const settingsGroups = {
             },
             actions_craftEnhance: {
                 id: 'actions_craftEnhance',
+                needsPrices: true,
                 label: 'Skill pages: Craft & Enhance window',
                 type: 'checkbox',
                 default: true,
@@ -800,6 +832,7 @@ export const settingsGroups = {
             },
             actionPanel_bestCraftingPlan: {
                 id: 'actionPanel_bestCraftingPlan',
+                needsPrices: true,
                 label: 'Action panel: Show best crafting plan',
                 type: 'checkbox',
                 default: true,
@@ -904,6 +937,7 @@ export const settingsGroups = {
         settings: {
             treasureTracker_popup: {
                 id: 'treasureTracker_popup',
+                needsPrices: true,
                 label: "Treasure Tracker: Pop up what an opening paid, beside the game's loot dialog",
                 type: 'checkbox',
                 default: true,
@@ -912,6 +946,7 @@ export const settingsGroups = {
             },
             treasureTracker: {
                 id: 'treasureTracker',
+                needsPrices: true,
                 label: 'Treasure Tracker: Record chest openings and compare against expected value',
                 type: 'checkbox',
                 default: true,
@@ -919,6 +954,7 @@ export const settingsGroups = {
             },
             watchlist: {
                 id: 'watchlist',
+                needsPrices: true,
                 label: "Watchlist: Track chosen items, a zone's drops, or a chest's contents",
                 type: 'checkbox',
                 default: true,
@@ -934,6 +970,7 @@ export const settingsGroups = {
             },
             watchlist_inventoryDots: {
                 id: 'watchlist_inventoryDots',
+                needsPrices: true,
                 label: 'Watchlist: Dot tracked items in the inventory',
                 type: 'checkbox',
                 default: true,
@@ -949,6 +986,7 @@ export const settingsGroups = {
             },
             upgradeAdvisor_compareRoutes: {
                 id: 'upgradeAdvisor_compareRoutes',
+                needsPrices: true,
                 label: 'Upgrade advisors: Price upgrades by your preferred route',
                 type: 'checkbox',
                 default: true,
@@ -990,6 +1028,7 @@ export const settingsGroups = {
             },
             lootLogStats: {
                 id: 'lootLogStats',
+                needsPrices: true,
                 label: 'Loot Log Statistics',
                 type: 'checkbox',
                 default: true,
@@ -1019,6 +1058,7 @@ export const settingsGroups = {
             },
             lootLogDropLuck: {
                 id: 'lootLogDropLuck',
+                needsPrices: true,
                 label: 'Loot Log: Drop luck percentile for gathering runs',
                 type: 'checkbox',
                 default: true,
@@ -1040,6 +1080,7 @@ export const settingsGroups = {
         settings: {
             itemTooltip_prices: {
                 id: 'itemTooltip_prices',
+                needsPrices: true,
                 label: 'Show 24-hour average market prices',
                 type: 'checkbox',
                 default: true,
@@ -1054,6 +1095,7 @@ export const settingsGroups = {
             },
             itemTooltip_artisanPrices: {
                 id: 'itemTooltip_artisanPrices',
+                needsPrices: true,
                 label: 'Adjust tooltip prices for Artisan Tea reduction',
                 type: 'checkbox',
                 default: true,
@@ -1062,12 +1104,14 @@ export const settingsGroups = {
             },
             itemTooltip_profit: {
                 id: 'itemTooltip_profit',
+                needsPrices: true,
                 label: 'Show production cost and profit',
                 type: 'checkbox',
                 default: true,
             },
             itemTooltip_ownUseCompare: {
                 id: 'itemTooltip_ownUseCompare',
+                needsPrices: true,
                 label: 'Show make-vs-buy line for own use (no sales tax)',
                 type: 'checkbox',
                 default: true,
@@ -1075,6 +1119,7 @@ export const settingsGroups = {
             },
             itemTooltip_heldCraftCompare: {
                 id: 'itemTooltip_heldCraftCompare',
+                needsPrices: true,
                 label: 'Show craft-vs-sell line for materials you already hold',
                 type: 'checkbox',
                 default: true,
@@ -1082,6 +1127,7 @@ export const settingsGroups = {
             },
             itemTooltip_detailedProfit: {
                 id: 'itemTooltip_detailedProfit',
+                needsPrices: true,
                 label: 'Show detailed materials breakdown in profit display',
                 type: 'checkbox',
                 default: false,
@@ -1104,6 +1150,7 @@ export const settingsGroups = {
             },
             itemTooltip_multiActionProfit: {
                 id: 'itemTooltip_multiActionProfit',
+                needsPrices: true,
                 label: 'Show profit comparison for all item actions',
                 type: 'checkbox',
                 default: true,
@@ -1111,6 +1158,7 @@ export const settingsGroups = {
             },
             itemTooltip_selfUseAlchemy: {
                 id: 'itemTooltip_selfUseAlchemy',
+                needsPrices: true,
                 label: 'Show self-use alchemy lines (no sales tax)',
                 type: 'checkbox',
                 default: false,
@@ -1118,6 +1166,7 @@ export const settingsGroups = {
             },
             itemTooltip_selfUseKeepChip: {
                 id: 'itemTooltip_selfUseKeepChip',
+                needsPrices: true,
                 label: 'Show the Keep for self-use chip on tooltips',
                 type: 'checkbox',
                 default: false,
@@ -1143,6 +1192,7 @@ export const settingsGroups = {
             },
             itemTooltip_alchemyInsteadOfBuying: {
                 id: 'itemTooltip_alchemyInsteadOfBuying',
+                needsPrices: true,
                 label: 'Show cheaper alchemy routes instead of buying',
                 type: 'checkbox',
                 default: false,
@@ -1163,6 +1213,7 @@ export const settingsGroups = {
             },
             itemTooltip_alchemyInsteadOfSelling: {
                 id: 'itemTooltip_alchemyInsteadOfSelling',
+                needsPrices: true,
                 label: 'Show alchemy routes that beat selling an item you hold',
                 type: 'checkbox',
                 default: true,
@@ -1170,6 +1221,7 @@ export const settingsGroups = {
             },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',
+                needsPrices: true,
                 label: 'Show expected value for openable containers',
                 type: 'checkbox',
                 default: true,
@@ -1177,6 +1229,7 @@ export const settingsGroups = {
             },
             expectedValue_showDrops: {
                 id: 'expectedValue_showDrops',
+                needsPrices: true,
                 label: 'Expected value drop display',
                 type: 'select',
                 default: 'All',
@@ -1189,6 +1242,7 @@ export const settingsGroups = {
             },
             expectedValue_respectPricingMode: {
                 id: 'expectedValue_respectPricingMode',
+                needsPrices: true,
                 label: 'Use pricing mode for dungeon token valuation',
                 help: 'Only affects how dungeon tokens (Chimerical, Sinister, Enchanted, Pirate) are valued. Ordinary drops are always priced at sell, regardless of this setting.',
                 type: 'checkbox',
@@ -1196,6 +1250,7 @@ export const settingsGroups = {
             },
             expectedValue_includeCowbells: {
                 id: 'expectedValue_includeCowbells',
+                needsPrices: true,
                 label: 'Include cowbell value in expected value calculations',
                 type: 'checkbox',
                 default: true,
@@ -1208,12 +1263,14 @@ export const settingsGroups = {
             },
             dungeonTokenTooltips: {
                 id: 'dungeonTokenTooltips',
+                needsPrices: true,
                 label: 'Currency tooltips: Show shop values for tokens, scrolls, and cowbells',
                 type: 'checkbox',
                 default: true,
             },
             dungeonTokenTooltips_crafts: {
                 id: 'dungeonTokenTooltips_crafts',
+                needsPrices: true,
                 label: 'Dungeon token tooltips: best crafts from that dungeon',
                 type: 'checkbox',
                 default: true,
@@ -1243,6 +1300,7 @@ export const settingsGroups = {
             },
             shopTokenValues: {
                 id: 'shopTokenValues',
+                needsPrices: true,
                 label: 'Shop: Show value per token',
                 type: 'checkbox',
                 default: true,
@@ -1250,6 +1308,7 @@ export const settingsGroups = {
             },
             dungeonShopPlanner: {
                 id: 'dungeonShopPlanner',
+                needsPrices: true,
                 label: 'Dungeon shop: Plan token spend (volume-capped)',
                 type: 'checkbox',
                 default: true,
@@ -1353,6 +1412,7 @@ export const settingsGroups = {
             },
             itemTooltip_enhancementPath: {
                 id: 'itemTooltip_enhancementPath',
+                needsPrices: true,
                 label: 'Show enhancement path on enhanced items',
                 type: 'checkbox',
                 default: true,
@@ -1396,6 +1456,7 @@ export const settingsGroups = {
             },
             itemDictionary_transmuteRates: {
                 id: 'itemDictionary_transmuteRates',
+                needsPrices: true,
                 label: 'Item Dictionary: Show transmutation success rates',
                 type: 'checkbox',
                 default: true,
@@ -1403,6 +1464,7 @@ export const settingsGroups = {
             },
             itemDictionary_transmuteIncludeBaseRate: {
                 id: 'itemDictionary_transmuteIncludeBaseRate',
+                needsPrices: true,
                 label: 'Item Dictionary: Include base success rate in transmutation percentages',
                 type: 'checkbox',
                 default: true,
@@ -1417,12 +1479,14 @@ export const settingsGroups = {
         settings: {
             enhanceSim: {
                 id: 'enhanceSim',
+                needsPrices: true,
                 label: 'Show enhancement simulator calculations',
                 type: 'checkbox',
                 default: true,
             },
             enhanceSim_baseItemCraftingCost: {
                 id: 'enhanceSim_baseItemCraftingCost',
+                needsPrices: true,
                 label: 'Enhancement path: Use crafting cost for base item if cheaper',
                 type: 'checkbox',
                 // Ships on because it has always behaved as on: its only readers
@@ -1475,6 +1539,7 @@ export const settingsGroups = {
             },
             enhanceSim_protectionMarketplaceButton: {
                 id: 'enhanceSim_protectionMarketplaceButton',
+                needsPrices: true,
                 label: 'Protection item picker: Show "Buy Cheapest" marketplace button',
                 type: 'checkbox',
                 default: true,
@@ -1531,6 +1596,7 @@ export const settingsGroups = {
             },
             enhanceSim_achievement: {
                 id: 'enhanceSim_achievement',
+                needsPrices: true,
                 label: 'Achievement bonus',
                 type: 'checkbox',
                 default: true,
@@ -1659,6 +1725,7 @@ export const settingsGroups = {
             },
             enhanceSim_blessedTea: {
                 id: 'enhanceSim_blessedTea',
+                needsPrices: true,
                 label: 'Blessed Tea active',
                 type: 'checkbox',
                 default: true,
@@ -1714,6 +1781,7 @@ export const settingsGroups = {
             },
             enhancementXPH: {
                 id: 'enhancementXPH',
+                needsPrices: true,
                 label: 'Enhancement: XPH calculator',
                 type: 'checkbox',
                 default: true,
@@ -1772,6 +1840,7 @@ export const settingsGroups = {
         settings: {
             sellQueue: {
                 id: 'sellQueue',
+                needsPrices: true,
                 label: 'Sell Queue (Shift+RightClick inventory items)',
                 type: 'checkbox',
                 default: true,
@@ -1779,18 +1848,21 @@ export const settingsGroups = {
             },
             networkAlert: {
                 id: 'networkAlert',
+                needsPrices: true,
                 label: 'Show alert when market price data cannot be fetched',
                 type: 'checkbox',
                 default: true,
             },
             marketFilter: {
                 id: 'marketFilter',
+                needsPrices: true,
                 label: 'Marketplace: Filter by level, class, slot',
                 type: 'checkbox',
                 default: true,
             },
             marketSort: {
                 id: 'marketSort',
+                needsPrices: true,
                 label: 'Marketplace: Sort items by profitability',
                 type: 'checkbox',
                 default: true,
@@ -1812,12 +1884,14 @@ export const settingsGroups = {
             },
             fillMarketOrderPrice: {
                 id: 'fillMarketOrderPrice',
+                needsPrices: true,
                 label: 'Auto-fill marketplace orders with optimal price',
                 type: 'checkbox',
                 default: true,
             },
             market_raiseBuyPriceToCoverQuantity: {
                 id: 'market_raiseBuyPriceToCoverQuantity',
+                needsPrices: true,
                 label: 'Auto-filled purchases: raise the price until it covers the whole quantity',
                 type: 'checkbox',
                 default: true,
@@ -1825,6 +1899,7 @@ export const settingsGroups = {
             },
             market_autoFillSellStrategy: {
                 id: 'market_autoFillSellStrategy',
+                needsPrices: true,
                 label: 'Auto-fill sell price strategy',
                 type: 'select',
                 default: 'match',
@@ -1836,6 +1911,7 @@ export const settingsGroups = {
             },
             market_autoFillBuyStrategy: {
                 id: 'market_autoFillBuyStrategy',
+                needsPrices: true,
                 label: 'Auto-fill buy price strategy',
                 type: 'select',
                 // 'match' applies to new installs only. This deliberately has no
@@ -1852,6 +1928,7 @@ export const settingsGroups = {
             },
             market_autoClickMax: {
                 id: 'market_autoClickMax',
+                needsPrices: true,
                 label: 'Auto-click Max button on sell listing dialogs',
                 type: 'checkbox',
                 default: true,
@@ -1859,6 +1936,7 @@ export const settingsGroups = {
             },
             market_quickInputButtons: {
                 id: 'market_quickInputButtons',
+                needsPrices: true,
                 label: 'Marketplace: Quick input buttons on order dialogs',
                 type: 'checkbox',
                 default: true,
@@ -1874,6 +1952,7 @@ export const settingsGroups = {
             },
             market_multiplierButtons: {
                 id: 'market_multiplierButtons',
+                needsPrices: true,
                 label: 'Marketplace: ÷2 and ×2 buttons on order dialogs',
                 type: 'checkbox',
                 default: true,
@@ -1881,6 +1960,7 @@ export const settingsGroups = {
             },
             market_showOwnedInBuyModal: {
                 id: 'market_showOwnedInBuyModal',
+                needsPrices: true,
                 label: 'Marketplace: Show owned count in buy dialogs',
                 type: 'checkbox',
                 default: true,
@@ -1888,6 +1968,7 @@ export const settingsGroups = {
             },
             market_instantOrderGap: {
                 id: 'market_instantOrderGap',
+                needsPrices: true,
                 label: 'Marketplace: Warn when Buy Now / Sell Now is more than one price step from the best listing',
                 type: 'checkbox',
                 default: true,
@@ -1895,6 +1976,7 @@ export const settingsGroups = {
             },
             market_marketplaceShortcuts: {
                 id: 'market_marketplaceShortcuts',
+                needsPrices: true,
                 label: 'Marketplace: Show "Marketplace Action" button on item menus',
                 type: 'checkbox',
                 default: true,
@@ -1902,6 +1984,7 @@ export const settingsGroups = {
             },
             market_visibleItemCount: {
                 id: 'market_visibleItemCount',
+                needsPrices: true,
                 label: 'Market: Show inventory count on items',
                 type: 'checkbox',
                 default: true,
@@ -1909,6 +1992,7 @@ export const settingsGroups = {
             },
             market_visibleItemCountOpacity: {
                 id: 'market_visibleItemCountOpacity',
+                needsPrices: true,
                 label: 'Market: Opacity for items not in inventory',
                 type: 'slider',
                 default: 0.25,
@@ -1920,6 +2004,7 @@ export const settingsGroups = {
             },
             market_visibleItemCountIncludeEquipped: {
                 id: 'market_visibleItemCountIncludeEquipped',
+                needsPrices: true,
                 label: 'Market: Count equipped items',
                 type: 'checkbox',
                 default: true,
@@ -1928,6 +2013,7 @@ export const settingsGroups = {
             },
             market_showListingPrices: {
                 id: 'market_showListingPrices',
+                needsPrices: true,
                 label: 'Market: Show prices on individual listings',
                 type: 'checkbox',
                 default: true,
@@ -1935,6 +2021,7 @@ export const settingsGroups = {
             },
             market_listingRefreshNavigator: {
                 id: 'market_listingRefreshNavigator',
+                needsPrices: true,
                 label: 'Market: Show Refresh/Next buttons for cycling My Listings',
                 type: 'checkbox',
                 default: true,
@@ -1944,6 +2031,7 @@ export const settingsGroups = {
             },
             market_itemHop: {
                 id: 'market_itemHop',
+                needsPrices: true,
                 label: 'Market: Step between items without going back to the list',
                 type: 'checkbox',
                 default: true,
@@ -1951,6 +2039,7 @@ export const settingsGroups = {
             },
             market_collectableListingsToTop: {
                 id: 'market_collectableListingsToTop',
+                needsPrices: true,
                 label: 'Market: Move collectable listings to top of My Listings',
                 type: 'checkbox',
                 default: true,
@@ -2028,6 +2117,7 @@ export const settingsGroups = {
             },
             consumables_idleLoadoutPlan: {
                 id: 'consumables_idleLoadoutPlan',
+                needsPrices: true,
                 label: 'Consumables: plan from the default loadout while idle',
                 type: 'checkbox',
                 default: true,
@@ -2068,6 +2158,7 @@ export const settingsGroups = {
             },
             market_consumableBuyOpenRecommended: {
                 id: 'market_consumableBuyOpenRecommended',
+                needsPrices: true,
                 label: 'Market: Consumables buy links open the recommended order form',
                 type: 'checkbox',
                 default: true,
@@ -2100,6 +2191,7 @@ export const settingsGroups = {
             },
             market_tradeHistory: {
                 id: 'market_tradeHistory',
+                needsPrices: true,
                 label: 'Market: Show personal trade history',
                 type: 'checkbox',
                 default: true,
@@ -2107,6 +2199,7 @@ export const settingsGroups = {
             },
             market_tradeHistoryComparisonMode: {
                 id: 'market_tradeHistoryComparisonMode',
+                needsPrices: true,
                 label: 'Market: Trade history comparison mode',
                 type: 'select',
                 default: 'instant',
@@ -2119,6 +2212,7 @@ export const settingsGroups = {
             },
             market_tradeLedger: {
                 id: 'market_tradeLedger',
+                needsPrices: true,
                 label: 'Market: Record trade ledger (realized flip profit)',
                 type: 'checkbox',
                 default: true,
@@ -2126,6 +2220,7 @@ export const settingsGroups = {
             },
             market_staleCapital: {
                 id: 'market_staleCapital',
+                needsPrices: true,
                 label: 'Market: Show stale capital tab',
                 type: 'checkbox',
                 default: true,
@@ -2133,6 +2228,7 @@ export const settingsGroups = {
             },
             market_overbidPanel: {
                 id: 'market_overbidPanel',
+                needsPrices: true,
                 label: 'Market: Show overbid table',
                 type: 'checkbox',
                 default: true,
@@ -2140,6 +2236,7 @@ export const settingsGroups = {
             },
             market_listingPricePrecision: {
                 id: 'market_listingPricePrecision',
+                needsPrices: true,
                 label: 'Market: Listing price decimal precision',
                 type: 'number',
                 default: 1,
@@ -2149,6 +2246,7 @@ export const settingsGroups = {
             },
             market_listingAge: {
                 id: 'market_listingAge',
+                needsPrices: true,
                 label: 'Market: Where to show listing age',
                 type: 'select',
                 default: 'both',
@@ -2178,6 +2276,7 @@ export const settingsGroups = {
             },
             market_volumeStats: {
                 id: 'market_volumeStats',
+                needsPrices: true,
                 label: 'Market: 1d/3d/5d trade stats on the order book',
                 type: 'checkbox',
                 default: true,
@@ -2213,6 +2312,7 @@ export const settingsGroups = {
             },
             market_listingAgeFormat: {
                 id: 'market_listingAgeFormat',
+                needsPrices: true,
                 label: 'Market: Listing age display format',
                 type: 'select',
                 default: 'datetime',
@@ -2248,6 +2348,7 @@ export const settingsGroups = {
             },
             market_showOrderTotals: {
                 id: 'market_showOrderTotals',
+                needsPrices: true,
                 label: 'Market: Show order totals in header',
                 type: 'checkbox',
                 default: true,
@@ -2255,6 +2356,7 @@ export const settingsGroups = {
             },
             market_showHistoryViewer: {
                 id: 'market_showHistoryViewer',
+                needsPrices: true,
                 label: 'Market: Show history viewer button in settings',
                 type: 'checkbox',
                 default: true,
@@ -2262,6 +2364,7 @@ export const settingsGroups = {
             },
             market_showPhiloCalculator: {
                 id: 'market_showPhiloCalculator',
+                needsPrices: true,
                 label: 'Market: Show Philo Gamba calculator button in settings',
                 type: 'checkbox',
                 default: true,
@@ -2269,6 +2372,7 @@ export const settingsGroups = {
             },
             market_showQueueLength: {
                 id: 'market_showQueueLength',
+                needsPrices: true,
                 label: 'Market: Show queue length estimates',
                 type: 'checkbox',
                 default: true,
@@ -2276,6 +2380,7 @@ export const settingsGroups = {
             },
             market_depthCapEnabled: {
                 id: 'market_depthCapEnabled',
+                needsPrices: true,
                 label: 'Market: Show sell depth cap (Risk of Ruin)',
                 type: 'checkbox',
                 default: true,
@@ -2283,6 +2388,7 @@ export const settingsGroups = {
             },
             market_enhanceProfitPerHour: {
                 id: 'market_enhanceProfitPerHour',
+                needsPrices: true,
                 label: 'Market: Show enhance-to-sell Profit/h on enhanced order books',
                 type: 'checkbox',
                 default: true,
@@ -2331,6 +2437,7 @@ export const settingsGroups = {
             },
             profitCalc_pricingMode: {
                 id: 'profitCalc_pricingMode',
+                needsPrices: true,
                 label: 'Profit calculation pricing mode',
                 type: 'select',
                 default: 'hybrid',
@@ -2364,6 +2471,7 @@ export const settingsGroups = {
             },
             profitCalc_patientTickBuy: {
                 id: 'profitCalc_patientTickBuy',
+                needsPrices: true,
                 label: 'Patient buys: +1 tick',
                 type: 'checkbox',
                 default: false,
@@ -2376,6 +2484,7 @@ export const settingsGroups = {
             },
             profitCalc_patientTickSell: {
                 id: 'profitCalc_patientTickSell',
+                needsPrices: true,
                 label: 'Patient sells: −1 tick',
                 type: 'checkbox',
                 default: false,
@@ -2426,6 +2535,7 @@ export const settingsGroups = {
             },
             profitCalc_pricingNaming: {
                 id: 'profitCalc_pricingNaming',
+                needsPrices: true,
                 label: 'Pricing mode naming convention',
                 type: 'checkbox',
                 default: false,
@@ -2433,6 +2543,7 @@ export const settingsGroups = {
             },
             profitCalc_keyPricingMode: {
                 id: 'profitCalc_keyPricingMode',
+                needsPrices: true,
                 label: 'Key pricing mode',
                 type: 'select',
                 default: 'ask',
@@ -2452,6 +2563,7 @@ export const settingsGroups = {
             },
             profitCalc_liquidityCap: {
                 id: 'profitCalc_liquidityCap',
+                needsPrices: true,
                 label: 'Profit: Cap displayed rates by market volume',
                 type: 'checkbox',
                 default: true,
@@ -2470,6 +2582,7 @@ export const settingsGroups = {
             },
             profitCalc_craftUpgradeItems: {
                 id: 'profitCalc_craftUpgradeItems',
+                needsPrices: true,
                 label: 'Profit: Use crafting cost for upgrade items if cheaper',
                 type: 'checkbox',
                 default: true,
@@ -2489,6 +2602,7 @@ export const settingsGroups = {
             },
             offlineProgressEconomics: {
                 id: 'offlineProgressEconomics',
+                needsPrices: true,
                 label: 'Offline Progress: Show Revenue/Cost/Profit summary',
                 type: 'checkbox',
                 default: true,
@@ -2506,6 +2620,7 @@ export const settingsGroups = {
         settings: {
             networth: {
                 id: 'networth',
+                needsPrices: true,
                 label: 'Net worth tracking (and gold count in the header)',
                 type: 'checkbox',
                 default: true,
@@ -2513,6 +2628,7 @@ export const settingsGroups = {
             },
             invWorth: {
                 id: 'invWorth',
+                needsPrices: true,
                 label: 'Below inventory: Show net worth breakdown',
                 type: 'checkbox',
                 default: true,
@@ -2527,6 +2643,7 @@ export const settingsGroups = {
             },
             inv_valueBadges: {
                 id: 'inv_valueBadges',
+                needsPrices: true,
                 label: 'Value badges on inventory items',
                 type: 'select',
                 default: 'sorting',
@@ -2548,6 +2665,7 @@ export const settingsGroups = {
             },
             invSort_netOfTax: {
                 id: 'invSort_netOfTax',
+                needsPrices: true,
                 label: 'Show badge values net of market tax',
                 type: 'checkbox',
                 default: false,
@@ -2573,6 +2691,7 @@ export const settingsGroups = {
             },
             invCategoryTotals: {
                 id: 'invCategoryTotals',
+                needsPrices: true,
                 label: 'Show category totals in inventory',
                 type: 'checkbox',
                 default: true,
@@ -2607,6 +2726,7 @@ export const settingsGroups = {
             },
             networth_highEnhancementUseCost: {
                 id: 'networth_highEnhancementUseCost',
+                needsPrices: true,
                 label: 'Use enhancement cost for highly enhanced items',
                 type: 'checkbox',
                 default: true,
@@ -2614,6 +2734,7 @@ export const settingsGroups = {
             },
             networth_highEnhancementMinLevel: {
                 id: 'networth_highEnhancementMinLevel',
+                needsPrices: true,
                 label: 'Minimum enhancement level to use cost',
                 type: 'select',
                 default: 13,
@@ -2628,6 +2749,7 @@ export const settingsGroups = {
             },
             networth_includeCowbells: {
                 id: 'networth_includeCowbells',
+                needsPrices: true,
                 label: 'Include cowbells in net worth',
                 type: 'checkbox',
                 default: false,
@@ -2636,6 +2758,7 @@ export const settingsGroups = {
             },
             networth_includeTaskTokens: {
                 id: 'networth_includeTaskTokens',
+                needsPrices: true,
                 label: 'Include task tokens in net worth',
                 type: 'checkbox',
                 default: true,
@@ -2644,6 +2767,7 @@ export const settingsGroups = {
             },
             networth_includeLabyrinthTokens: {
                 id: 'networth_includeLabyrinthTokens',
+                needsPrices: true,
                 label: 'Include labyrinth tokens and scrolls in net worth and inventory totals',
                 type: 'checkbox',
                 default: false,
@@ -2655,6 +2779,7 @@ export const settingsGroups = {
             },
             networth_includeGuildTokens: {
                 id: 'networth_includeGuildTokens',
+                needsPrices: true,
                 label: 'Include guild tokens in net worth',
                 type: 'checkbox',
                 default: false,
@@ -2663,6 +2788,7 @@ export const settingsGroups = {
             },
             networth_includeGuildCredits: {
                 id: 'networth_includeGuildCredits',
+                needsPrices: true,
                 label: 'Value guild credits (net worth, inventory totals)',
                 type: 'checkbox',
                 default: true,
@@ -2670,6 +2796,7 @@ export const settingsGroups = {
             },
             networth_abilityBooksAsInventory: {
                 id: 'networth_abilityBooksAsInventory',
+                needsPrices: true,
                 label: 'Count ability books as inventory (Current Assets)',
                 type: 'checkbox',
                 default: true,
@@ -2678,6 +2805,7 @@ export const settingsGroups = {
             },
             networth_historyChart: {
                 id: 'networth_historyChart',
+                needsPrices: true,
                 label: 'Enable net worth history chart',
                 type: 'checkbox',
                 default: true,
@@ -2696,6 +2824,7 @@ export const settingsGroups = {
             },
             networth_goldSources: {
                 id: 'networth_goldSources',
+                needsPrices: true,
                 label: 'Enable gold source attribution',
                 type: 'checkbox',
                 default: true,
@@ -2722,6 +2851,7 @@ export const settingsGroups = {
             },
             scrollPlanner: {
                 id: 'scrollPlanner',
+                needsPrices: true,
                 label: 'Scroll Planner: plan and step through opening scrolls',
                 type: 'checkbox',
                 default: true,
@@ -2824,6 +2954,7 @@ export const settingsGroups = {
             },
             skillTiles_simulatedScrolls: {
                 id: 'skillTiles_simulatedScrolls',
+                needsPrices: true,
                 label: 'Skill page: Action tiles use simulated scrolls',
                 type: 'checkbox',
                 default: true,
@@ -2885,6 +3016,7 @@ export const settingsGroups = {
             },
             skillingOptimizer: {
                 id: 'skillingOptimizer',
+                needsPrices: true,
                 label: 'Skilling Simulator/Optimizer: Enable Optimizer tab in character panel',
                 type: 'checkbox',
                 default: true,
@@ -3020,6 +3152,7 @@ export const settingsGroups = {
             },
             chestKeyMarketButton: {
                 id: 'chestKeyMarketButton',
+                needsPrices: true,
                 label: 'Chests: Add Buy Keys on Marketplace to chest menus',
                 type: 'checkbox',
                 default: true,
@@ -3112,6 +3245,7 @@ export const settingsGroups = {
             },
             labyrinthShopPrices: {
                 id: 'labyrinthShopPrices',
+                needsPrices: true,
                 label: 'Labyrinth Shop: Show market prices',
                 type: 'checkbox',
                 default: true,
@@ -3126,6 +3260,7 @@ export const settingsGroups = {
             },
             labyrinthMissingSuppliesButton: {
                 id: 'labyrinthMissingSuppliesButton',
+                needsPrices: true,
                 label: 'Labyrinth: Show "Buy supplies" button',
                 type: 'checkbox',
                 default: true,
@@ -3133,6 +3268,7 @@ export const settingsGroups = {
             },
             combatBuySuppliesButton: {
                 id: 'combatBuySuppliesButton',
+                needsPrices: true,
                 label: 'Combat: Show "Buy supplies" button',
                 type: 'checkbox',
                 default: true,
@@ -3140,6 +3276,7 @@ export const settingsGroups = {
             },
             skillingBuySuppliesButton: {
                 id: 'skillingBuySuppliesButton',
+                needsPrices: true,
                 label: 'Skilling: Show "Buy supplies" button',
                 type: 'checkbox',
                 default: true,
@@ -3941,6 +4078,7 @@ export const settingsGroups = {
         settings: {
             taskProfitCalculator: {
                 id: 'taskProfitCalculator',
+                needsPrices: true,
                 label: 'Show total profit for gathering/production tasks',
                 type: 'checkbox',
                 default: true,
@@ -3974,6 +4112,7 @@ export const settingsGroups = {
             },
             taskEfficiencyRating: {
                 id: 'taskEfficiencyRating',
+                needsPrices: true,
                 label: 'Show task efficiency rating (tokens/profit per hour)',
                 type: 'checkbox',
                 default: true,
@@ -4013,6 +4152,7 @@ export const settingsGroups = {
             },
             taskRerollTracker: {
                 id: 'taskRerollTracker',
+                needsPrices: true,
                 label: 'Track task reroll costs',
                 type: 'checkbox',
                 default: true,
@@ -4121,6 +4261,7 @@ export const settingsGroups = {
             },
             taskRerollSpendBadge: {
                 id: 'taskRerollSpendBadge',
+                needsPrices: true,
                 label: 'Show total reroll spend next to the task slot count',
                 type: 'checkbox',
                 default: true,
@@ -4356,6 +4497,7 @@ export const settingsGroups = {
             },
             goalPlanner: {
                 id: 'goalPlanner',
+                needsPrices: true,
                 label: 'Goal Planner: Ordered steps, cost and time to reach a goal',
                 type: 'checkbox',
                 default: true,
@@ -4878,6 +5020,7 @@ export const settingsGroups = {
             },
             guildCreditValue: {
                 id: 'guildCreditValue',
+                needsPrices: true,
                 label: 'Guild Shop: Show gold cost per credit table',
                 type: 'checkbox',
                 default: true,
@@ -4885,6 +5028,7 @@ export const settingsGroups = {
             },
             guildCreditExchangeAdvisor: {
                 id: 'guildCreditExchangeAdvisor',
+                needsPrices: true,
                 label: 'Guild Shop: Show exchange advisor (sell → rebuy comparison)',
                 type: 'checkbox',
                 default: true,
@@ -4922,6 +5066,7 @@ export const settingsGroups = {
         settings: {
             insights_calibration: {
                 id: 'insights_calibration',
+                needsPrices: true,
                 label: 'Prediction Calibration: Check profit forecasts against finished runs',
                 type: 'checkbox',
                 default: true,
@@ -4929,6 +5074,7 @@ export const settingsGroups = {
             },
             insights_calibrationBadges: {
                 id: 'insights_calibrationBadges',
+                needsPrices: true,
                 label: 'Prediction Calibration: Show track-record badges beside forecasts',
                 type: 'checkbox',
                 default: true,
@@ -4944,6 +5090,7 @@ export const settingsGroups = {
         settings: {
             houseUpgradeCosts: {
                 id: 'houseUpgradeCosts',
+                needsPrices: true,
                 label: 'House: Show room upgrade costs with market prices and inventory comparison',
                 type: 'checkbox',
                 default: true,
@@ -5493,6 +5640,7 @@ export const settingsGroups = {
             },
             color_invBadge_ask: {
                 id: 'color_invBadge_ask',
+                needsPrices: true,
                 label: 'Inventory Badge: Ask Price',
                 type: 'color',
                 default: '#047857',
@@ -5500,6 +5648,7 @@ export const settingsGroups = {
             },
             color_invBadge_bid: {
                 id: 'color_invBadge_bid',
+                needsPrices: true,
                 label: 'Inventory Badge: Bid Price',
                 type: 'color',
                 default: '#60a5fa',
@@ -5514,6 +5663,7 @@ export const settingsGroups = {
             },
             color_queueLength_known: {
                 id: 'color_queueLength_known',
+                needsPrices: true,
                 label: 'Queue Length: Known Value',
                 type: 'color',
                 default: '#ffffff',
@@ -5521,6 +5671,7 @@ export const settingsGroups = {
             },
             color_queueLength_estimated: {
                 id: 'color_queueLength_estimated',
+                needsPrices: true,
                 label: 'Queue Length: Estimated Value',
                 type: 'color',
                 default: '#60a5fa',
@@ -5561,6 +5712,7 @@ export const settingsGroups = {
             },
             achievementFinisher: {
                 id: 'achievementFinisher',
+                needsPrices: true,
                 label: 'Achievement hints: readiness, Go and Missing Mats on each unfinished achievement card',
                 type: 'checkbox',
                 default: true,

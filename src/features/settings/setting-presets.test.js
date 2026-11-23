@@ -575,9 +575,36 @@ describe('every default-on switch belongs to a preset', () => {
 
     test('Essentials is the base of every combination, so it holds nothing priced or simulated', () => {
         const essentials = new Set(getPreset('essentials').settings);
-        for (const id of ['itemTooltip_prices', 'networth', 'combatSim', 'houseUpgradeCosts', 'skillingOptimizer']) {
+        for (const id of ['combatSim', 'labSim']) {
             expect(essentials.has(id), id).toBe(false);
         }
+        const priced = [...essentials].filter((id) => getSettingDefinition(id)?.needsPrices);
+        expect(
+            priced,
+            `ESSENTIALS holds priced setting(s): ${priced.join(', ')}. Essentials is the base of every combination, ` +
+                'so it must hold nothing that needs a price feed: move them to MARKET_EXTRAS in setting-presets.js, ' +
+                'or drop `needsPrices` from the schema if the setting does not show market prices.'
+        ).toEqual([]);
+    });
+
+    test('a priced default-on switch is in the Market preset, and the Market preset holds only priced extras', () => {
+        const essentials = new Set(getPreset('essentials').settings);
+        const market = new Set(getPreset('market').settings);
+        const missing = visibleCheckboxes
+            .filter(([, definition]) => definition.needsPrices && (definition.default ?? false))
+            .map(([id]) => id)
+            .filter((id) => !market.has(id) && !(id in LEFT_OUT));
+        expect(
+            missing,
+            `Priced default-on switch(es) not in the Market preset: ${missing.join(', ')}. Add each to ` +
+                'MARKET_EXTRAS in setting-presets.js, or to LEFT_OUT with a reason.'
+        ).toEqual([]);
+        const unflagged = [...market].filter((id) => !essentials.has(id) && !getSettingDefinition(id)?.needsPrices);
+        expect(
+            unflagged,
+            `MARKET_EXTRAS lists ${unflagged.join(', ')} but the schema does not declare \`needsPrices: true\` for ` +
+                'it. Add the flag next to the setting (it shows market prices) or move it to another preset.'
+        ).toEqual([]);
     });
 
     test('Guild is Essentials plus guild switches', () => {

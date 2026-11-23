@@ -115,6 +115,88 @@ export const IRON_COW_SETTINGS = new Set([
 ]);
 
 /**
+ * Settings that declare `needsPrices` in the schema but that Iron Cow mode does NOT force off.
+ *
+ * Not a feature list: it is the recorded decision for every priced setting outside
+ * {@link IRON_COW_SETTINGS}, so a new `needsPrices` setting cannot reach Iron Cow players with nobody
+ * having decided whether the mode locks it. `iron-cow-mode.test.js` fails for a flagged setting that is
+ * in neither set. Moving an id into IRON_COW_SETTINGS changes what an existing Iron Cow player loses, so
+ * that is the maintainer's call; the ids below are only what shipped when the flag was introduced (many
+ * are marketplace-screen tools that are inert without a marketplace, some are valued trackers that Iron
+ * Cow valuations still feed).
+ */
+export const IRON_COW_UNLOCKED_PRICED = new Set([
+    'sellQueue',
+    'market_multiplierButtons',
+    'market_showOwnedInBuyModal',
+    'market_listingRefreshNavigator',
+    'profitCalc_craftUpgradeItems',
+    'actionPanel_showPricingMode',
+    'actionPanel_showCraftToggle',
+    'actionPanel_showSellTaxToggle',
+    'itemTooltip_artisanPrices',
+    'expectedValue_includeCowbells',
+    'itemTooltip_enhancementPath',
+    'dungeonTokenTooltips',
+    'itemDictionary_transmuteRates',
+    'itemDictionary_transmuteIncludeBaseRate',
+    'alchemy_bestItems',
+    'alchemy_transmuteHistory',
+    'alchemy_coinifyHistory',
+    'alchemy_decomposeHistory',
+    'alchemy_actionProtection',
+    'actions_budgetCalculator',
+    'actions_costSummary',
+    'actionPanel_bestCraftingPlan',
+    'taskEfficiencyRating',
+    'guildCreditValue',
+    'guildCreditExchangeAdvisor',
+    'houseUpgradeCosts',
+    'skillingOptimizer',
+    'chestKeyMarketButton',
+    'market_raiseBuyPriceToCoverQuantity',
+    'market_itemHop',
+    'market_collectableListingsToTop',
+    'market_tradeLedger',
+    'market_staleCapital',
+    'market_overbidPanel',
+    'market_depthCapEnabled',
+    'profitCalc_liquidityCap',
+    'offlineProgressEconomics',
+    'networth_goldSources',
+    'scrollPlanner',
+    'skillTiles_simulatedScrolls',
+    'consumables_idleLoadoutPlan',
+    'market_consumableBuyOpenRecommended',
+    'teaRecommendation_xpFloor',
+    'alchemy_catalystWhatIf',
+    'alchemy_bestItems_shopPrices',
+    'actions_arbitrageBoard',
+    'actions_craftEnhance',
+    'itemTooltip_ownUseCompare',
+    'itemTooltip_heldCraftCompare',
+    'dungeonTokenTooltips_crafts',
+    'upgradeAdvisor_compareRoutes',
+    'enhanceSim',
+    'enhanceSim_baseItemCraftingCost',
+    'enhanceSim_achievement',
+    'enhanceSim_blessedTea',
+    'enhancementXPH',
+    'goalPlanner',
+    'insights_calibration',
+    'insights_calibrationBadges',
+    'taskRerollTracker',
+    'taskRerollSpendBadge',
+    'achievementFinisher',
+    'lootLogDropLuck',
+    'lootLogStats',
+    'treasureTracker',
+    'treasureTracker_popup',
+    'watchlist',
+    'watchlist_inventoryDots',
+]);
+
+/**
  * Returns the forced-off value for a setting when Iron Cow mode is enabled.
  * Checkboxes → false, sliders → 0, everything else → schema default.
  * @param {string} settingId
