@@ -845,6 +845,7 @@ function registerFeatures() {
             category: 'Inventory',
             module: Market.dungeonTokenTooltips,
             async: true,
+            liveStop: true,
         },
         {
             key: 'itemTooltip_wheelScroll',
@@ -852,6 +853,7 @@ function registerFeatures() {
             category: 'Inventory',
             module: Market.tooltipWheelScroll,
             async: true,
+            liveStop: true,
         },
         {
             key: 'inventoryTooltipBeside',
@@ -859,6 +861,7 @@ function registerFeatures() {
             category: 'Inventory',
             module: Market.inventoryTooltipBeside,
             async: true,
+            liveStop: true,
         },
         {
             key: 'dungeonShopPlanner',
@@ -866,8 +869,16 @@ function registerFeatures() {
             category: 'Inventory',
             module: Market.dungeonShopPlanner,
             async: false,
+            liveStop: true,
         },
-        { key: 'marketFilter', name: 'Market Filter', category: 'Market', module: Market.marketFilter, async: false },
+        {
+            key: 'marketFilter',
+            name: 'Market Filter',
+            category: 'Market',
+            module: Market.marketFilter,
+            async: false,
+            liveStop: true,
+        },
         { key: 'marketSort', name: 'Market Sort', category: 'Market', module: Market.marketSort, async: false },
         {
             key: 'autoFillPrice',
@@ -934,6 +945,11 @@ function registerFeatures() {
             category: 'Market',
             module: Market.marketplaceBadgeFilter,
             async: false,
+            // Either setting is reason to listen; the module returns early when both are off, so the gate follows it (live start and stop)
+            customCheck: () =>
+                config.getSetting('market_badgeOnlyWhenFinished') ||
+                config.getSetting('notifications_marketListingFilled'),
+            liveStop: true,
         },
         {
             key: 'marketHistoryPanel',
@@ -959,6 +975,9 @@ function registerFeatures() {
             category: 'Market',
             module: Market.queueLengthEstimator,
             async: false,
+            // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
+            customCheck: () => config.getSetting('market_showQueueLength'),
+            liveStop: true,
         },
         {
             key: 'marketDepthCap',
@@ -1038,6 +1057,7 @@ function registerFeatures() {
             category: 'Market',
             module: Market.marketItemHop,
             async: false,
+            liveStop: true,
         },
         {
             key: 'marketPricingControls',
@@ -1105,6 +1125,9 @@ function registerFeatures() {
             category: 'Market',
             module: Market.tradeHistoryDisplay,
             async: false,
+            // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
+            customCheck: () => config.getSetting('market_tradeHistory'),
+            liveStop: true,
         },
         {
             key: 'sellQueue',
@@ -1226,6 +1249,7 @@ function registerFeatures() {
             category: 'Inventory',
             module: Market.autoAllButton,
             async: false,
+            liveStop: true,
         },
         {
             key: 'scrollPlanner',
@@ -1298,7 +1322,16 @@ function registerFeatures() {
                 config.getSetting('actionPanel_showSpeedTime') ||
                 config.getSetting('actionPanel_showLevelProgress'),
         },
-        { key: 'outputTotals', name: 'Output Totals', category: 'Actions', module: Actions.outputTotals, async: false },
+        {
+            key: 'outputTotals',
+            name: 'Output Totals',
+            category: 'Actions',
+            module: Actions.outputTotals,
+            async: false,
+            // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
+            customCheck: () => config.getSetting('actionPanel_outputTotals'),
+            liveStop: true,
+        },
         {
             key: 'maxProduceable',
             name: 'Max Produceable',
@@ -1320,6 +1353,11 @@ function registerFeatures() {
             // Waits on the same sort-manager read as max produceable, and
             // overlaps it rather than queueing behind it.
             concurrent: true,
+            // The module returns early from initialize() when neither per-hour line is on, so the gate follows them
+            customCheck: () =>
+                config.getSetting('actionPanel_showProfitPerHour_gathering') ||
+                config.getSetting('actionPanel_showExpPerHour_gathering'),
+            liveStop: true,
         },
         {
             key: 'requiredMaterials',
@@ -1378,6 +1416,12 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.craftingPlan,
             async: false,
+            // The plan panel and the guided walk each bail on their own setting in initialize(), so the gate follows it (live start and stop)
+            customCheck: () =>
+                config.getSetting('actionPanel_bestCraftingPlan') ||
+                config.getSetting('craftingPlan_guidedWalk') ||
+                config.getSetting('tasks_mergedCraftingWalk'),
+            liveStop: true,
         },
         {
             key: 'productionArbitrageBoard',
@@ -1422,6 +1466,9 @@ function registerFeatures() {
             category: 'Alchemy',
             module: Actions.alchemyProfitDisplay,
             async: false,
+            // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
+            customCheck: () => config.getSetting('alchemy_profitDisplay'),
+            liveStop: true,
         },
         {
             key: 'alchemyBestItems',
@@ -1761,6 +1808,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatDPS,
             async: false,
+            liveStop: true,
         },
         {
             key: 'portraitDps',
@@ -2029,13 +2077,23 @@ function registerFeatures() {
                     '.mwi-combat-level-precise'
                 ),
         },
-        { key: 'externalLinks', name: 'External Links', category: 'UI', module: UI.externalLinks, async: false },
+        {
+            key: 'externalLinks',
+            name: 'External Links',
+            category: 'UI',
+            module: UI.externalLinks,
+            async: false,
+            // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
+            customCheck: () => config.getSetting('ui_externalLinks'),
+            liveStop: true,
+        },
         {
             key: 'equipmentMismatchWarning',
             name: 'Equipment Mismatch Warning',
             category: 'UI',
             module: UI.equipmentMismatchWarning,
             async: false,
+            liveStop: true,
         },
         {
             // Test server only: the module returns at once anywhere else
@@ -2059,6 +2117,7 @@ function registerFeatures() {
             category: 'UI',
             module: UI.hideLabyrinthBadge,
             async: false,
+            liveStop: true,
         },
         {
             key: 'hideGuildBadge',
@@ -2066,6 +2125,7 @@ function registerFeatures() {
             category: 'UI',
             module: UI.hideGuildBadge,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatScale',
@@ -2151,6 +2211,7 @@ function registerFeatures() {
             category: 'UI',
             module: UI.panelSizeMemory,
             async: false,
+            liveStop: true,
         },
         {
             key: 'tabReorder',
@@ -2161,6 +2222,7 @@ function registerFeatures() {
             // Waits only on its own stored order and applies it by CSS order
             // with a deferred re-apply; nothing later shares the strip.
             concurrent: true,
+            liveStop: true,
         },
         {
             key: 'overlayPanel',
@@ -2227,6 +2289,7 @@ function registerFeatures() {
             // first, and everything it touches happens when a modal opens,
             // long after any startup batch.
             concurrent: true,
+            liveStop: true,
         },
         {
             key: 'altClickNavigation',
@@ -2241,6 +2304,7 @@ function registerFeatures() {
             category: 'Navigation',
             module: UI.tokenShopShortcuts,
             async: false,
+            liveStop: true,
         },
         {
             key: 'collectionNavigation',
@@ -2248,6 +2312,7 @@ function registerFeatures() {
             category: 'Navigation',
             module: UI.collectionNavigation,
             async: false,
+            liveStop: true,
         },
         {
             key: 'collectionFilters',
@@ -2298,8 +2363,26 @@ function registerFeatures() {
             // Its module only does anything while this is on; the gate lets a live switch-on start it
             customCheck: () => config.getSetting('chat_profileLink'),
         },
-        { key: 'mentionTracker', name: 'Mention Tracker', category: 'Chat', module: UI.mentionTracker, async: true },
-        { key: 'popOutChat', name: 'Pop-Out Chat', category: 'Chat', module: UI.popOutChat, async: true },
+        {
+            key: 'mentionTracker',
+            name: 'Mention Tracker',
+            category: 'Chat',
+            module: UI.mentionTracker,
+            async: true,
+            // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
+            customCheck: () => config.getSetting('chat_mentionTracker'),
+            liveStop: true,
+        },
+        {
+            key: 'popOutChat',
+            name: 'Pop-Out Chat',
+            category: 'Chat',
+            module: UI.popOutChat,
+            async: true,
+            // The module bails in initialize() on this setting, so the gate follows it (live start and stop)
+            customCheck: () => config.getSetting('chat_popOut'),
+            liveStop: true,
+        },
         { key: 'chatBlockList', name: 'Chat Block List', category: 'Chat', module: UI.chatBlockList, async: false },
         {
             key: 'chat_24hrTimestamps',
@@ -2425,6 +2508,7 @@ function registerFeatures() {
             category: 'Tasks',
             module: UI.taskClaimCollector,
             async: false,
+            liveStop: true,
         },
         {
             key: 'taskClaimToast',
@@ -2639,6 +2723,7 @@ function registerFeatures() {
             category: 'Enhancement',
             module: UI.xphCalculator,
             async: false,
+            liveStop: true,
         },
         {
             key: 'enhanceSim_protectionMarketplaceButton',
@@ -2657,6 +2742,7 @@ function registerFeatures() {
             // Waits only on its own pin record; the menu observer it
             // registers afterwards does not race anything else on the panel.
             concurrent: true,
+            liveStop: true,
         },
         {
             key: 'wideEnhancingPanel',

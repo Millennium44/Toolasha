@@ -49,6 +49,7 @@ describe('entrypoint.js registry gate for taskProfitDisplay', () => {
         'taskMaterialsIndicator',
         'taskEfficiencyRating',
         'taskCombatEstimate',
+        'taskSpeedBreakdown',
     ])('shouldEnable() is true with only %s on', (only) => {
         const spy = vi.spyOn(config, 'getSetting').mockImplementation((key) => key === only);
         try {

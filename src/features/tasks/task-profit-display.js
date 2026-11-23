@@ -84,6 +84,7 @@ const TASK_DISPLAY_SETTING_KEYS = [
     'taskMaterialsIndicator',
     'taskEfficiencyRating',
     'taskCombatEstimate',
+    'taskSpeedBreakdown',
 ];
 
 // Compiled regex pattern (created once, reused for performance)

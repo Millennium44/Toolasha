@@ -124,11 +124,11 @@ describe('the settings that honestly need a reload', () => {
     // `liveStop` registry entry (feature-registry.js) whose teardown the
     // registry now runs itself on a setting change, so none of them need the
     // tag any more — see settings-schema.test.js for the roster. The schema
-    // is currently down to zero; the mechanism itself is still worth testing
+    // was down to zero until three settings read once at startup were tagged again (the update check, its interval, and the live-price switch); the mechanism itself is still worth testing
     // against a synthetic map so a future genuinely-refresh-only setting has
     // somewhere to prove itself.
-    test('nothing in the live schema is tagged — every setting applies without a reload', () => {
-        expect(refreshRequiredIds()).toEqual([]);
+    test('only the settings that are read once at startup are tagged', () => {
+        expect(refreshRequiredIds().sort()).toEqual(['pricing_useLivePrices', 'updateCheck', 'updateCheckHours']);
     });
 
     test('the mechanism itself: flags exactly the tagged ids, in schema order', () => {
@@ -143,7 +143,7 @@ describe('the settings that honestly need a reload', () => {
         for (const id of refreshRequiredIds()) {
             const definition = getSettingDefinition(id);
             expect(definition, id).not.toBe(null);
-            expect(definition.type || 'checkbox', id).toBe('checkbox');
+            expect(['checkbox', 'number'], id).toContain(definition.type || 'checkbox');
         }
     });
 

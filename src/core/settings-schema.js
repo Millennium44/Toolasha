@@ -2402,6 +2402,7 @@ export const settingsGroups = {
                 label: 'Use live-server prices on the test server',
                 type: 'checkbox',
                 default: false,
+                requiresRefresh: true,
                 hidden: !isTestServer(),
                 help: "On the test server, price everything from the live server's market instead of the test server's (your own test listings are unaffected). Applies to every character on this device. Takes effect on reload.",
             },
@@ -4649,6 +4650,7 @@ export const settingsGroups = {
                 label: 'Check for a newer Toolasha release',
                 type: 'checkbox',
                 default: false,
+                requiresRefresh: true,
                 help:
                     'On page load, asks api.github.com for the latest release, compares it with the running version and shows a toast with an install ' +
                     'link when a newer one exists. The answer is cached, so the network is asked only as often as the ' +
@@ -4676,6 +4678,7 @@ export const settingsGroups = {
                 label: 'Update check: Hours between checks (0 = every refresh)',
                 type: 'number',
                 default: 6,
+                requiresRefresh: true,
                 min: 0,
                 max: 168,
                 help:

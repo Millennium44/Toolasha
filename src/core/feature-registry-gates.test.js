@@ -1,0 +1,173 @@
+/**
+ * Guard for the registry's live on/off: every entry in `registerFeatures()` (src/entrypoint.js) is either
+ * gated on a setting the registry can read, or is on the allowlist below with the reason it needs no gate.
+ *
+ * Why it matters: `config.isFeatureEnabled(key)` answers true for a key that is neither a schema setting nor
+ * a `config.features` key with a schema `settingKey`. A module whose initialize() bails on its own setting
+ * was then recorded as started at login and never started again, so switching the setting on mid-session did
+ * nothing until a reload (popOutChat, mentionTracker, alchemyProfitDisplay and others).
+ */
+
+import { describe, test, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import config from './config.js';
+import { getSettingDefinition } from './settings-schema.js';
+
+/**
+ * Entries with no setting gate. Each needs a one-line reason; a module that reads its setting only at
+ * runtime (when it draws) or restarts itself from its own onSettingChange listener belongs here, one that
+ * returns early from initialize() does not (give it a customCheck instead).
+ */
+const NO_GATE_NEEDED = {
+    autoFillPrice: 'Registers its own onSettingChange listener at import and starts or stops itself on it.',
+    autoClickMax: 'Registers its own onSettingChange listener at import and starts or stops itself on it.',
+    tradeHistory: 'Registers its own onSettingChange listener at import and starts or stops itself on it.',
+    tradeLedgerStore: 'Registers its own onSettingChange listener at import and starts or stops itself on it.',
+    tradeLedgerView: 'Registers its own onSettingChange listener at import and starts or stops itself on it.',
+    staleCapitalView: 'Registers its own onSettingChange listener at import and starts or stops itself on it.',
+    marketVolumeStats: 'Registers its own onSettingChange listeners at import and starts or stops itself on them.',
+    transmuteRates: 'Registers its own onSettingChange listener at import and starts or stops itself on it.',
+    characterCardButton: 'Registers its own onSettingChange listener at import and starts or stops itself on it.',
+    actionCountdown: 'Registers its own onSettingChange listener before its setting check, so it restarts itself.',
+    maxProduceable: 'initialize() never bails; it reads its settings when it draws and redraws on their listeners.',
+    missingMaterialsButton: 'initialize() never bails; the button reads its setting each time a panel is processed.',
+    costSummary: 'initialize() never bails; the summary reads its setting each time a panel updates.',
+    scrollSimulatorUI: 'initialize() never bails; the button and its redraw follow the setting at runtime.',
+    teaRecommendation: 'No setting switches it; its button is always offered and the settings tune the result.',
+    estimatedListingAge: 'No setting switches it; it only records order-book history other features read.',
+    inventoryBadgeManager: 'Shared infrastructure for the inventory badge features; no setting of its own.',
+    chatBlockList: 'Mirrors the game block list for other chat features; no setting of its own.',
+    housePanelObserver: 'Feeds the house cost display, which has no setting of its own to switch it.',
+    metzPartyLoadoutPublisher: 'No setting of its own, like the loadout capture it reads (see the entry comment).',
+    characterActivityStatus: 'Records the character activity projection other features read; no setting.',
+};
+
+/** Every `{ key, name, ... }` entry of registerFeatures(), with its source text. */
+function readRegistryEntries() {
+    const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'entrypoint.js'), 'utf8');
+    const start = source.indexOf('function registerFeatures()');
+    const end = source.indexOf('featureRegistry.replaceFeatures(features)');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const body = source.slice(start, end);
+    const hits = [...body.matchAll(/key: '([A-Za-z0-9_]+)',\s*name:/g)];
+    return hits.map((hit, n) => ({
+        key: hit[1],
+        text: body.slice(hit.index, n + 1 < hits.length ? hits[n + 1].index : undefined),
+    }));
+}
+
+/** True when `config.isFeatureEnabled(key)` can say false for this key. */
+function hasSettingSwitch(key) {
+    if (getSettingDefinition(key)) return true;
+    const feature = config.features?.[key];
+    return Boolean(feature?.settingKey && getSettingDefinition(feature.settingKey));
+}
+
+function isSelfGated(entry) {
+    return /\bcustomCheck:/.test(entry.text) || /\bisRunning:/.test(entry.text);
+}
+
+describe('feature registry gates', () => {
+    const entries = readRegistryEntries();
+
+    test('the scan finds the registry entries', () => {
+        expect(entries.length).toBeGreaterThan(150);
+        expect(new Set(entries.map((entry) => entry.key)).size).toBe(entries.length);
+    });
+
+    test('every entry is gated on a setting, has a customCheck/isRunning, or is on the allowlist', () => {
+        const ungated = entries
+            .filter((entry) => !hasSettingSwitch(entry.key) && !isSelfGated(entry))
+            .map((entry) => entry.key)
+            .filter((key) => !Object.hasOwn(NO_GATE_NEEDED, key));
+        expect(
+            ungated,
+            `Registry entries with no switch: ${ungated.join(', ')}. isFeatureEnabled() answers true for a key that is ` +
+                `not a settings-schema id, so the registry starts the feature at login and never again. If the module ` +
+                `returns early from initialize() on a setting, add \`customCheck: () => config.getSetting('<setting id>')\` ` +
+                `(and \`liveStop: true\` when disable()/cleanup() removes everything) to its entry in ` +
+                `src/entrypoint.js. If it reads its setting only when it draws, or restarts itself from its own ` +
+                `onSettingChange listener, add the key to NO_GATE_NEEDED in this file with a one-line reason.`
+        ).toEqual([]);
+    });
+
+    // disable()/cleanup() of each removes everything it drew and resets its init flag, so a setting switched
+    // off mid-session stops it live (read from each module when this list was made)
+    const LIVE_STOP = [
+        'tokenShopShortcuts',
+        'collectionNavigation',
+        'enhancementXPH',
+        'enhancementItemPins',
+        'itemTooltip_wheelScroll',
+        'inventoryTooltipBeside',
+        'dungeonTokenTooltips',
+        'dungeonShopPlanner',
+        'marketFilter',
+        'marketItemHop',
+        'hideLabyrinthBadge',
+        'hideGuildBadge',
+        'externalLinks',
+        'tabReorder',
+        'draggableModals',
+        'equipmentMismatchWarning',
+        'taskClaimCollector',
+        'autoAllButton',
+        'panelSizeMemory',
+        'combatDps',
+        'popOutChat',
+        'mentionTracker',
+        'outputTotals',
+        'craftingPlan',
+        'alchemyProfitDisplay',
+        'marketplaceBadgeFilter',
+        'queueLengthEstimator',
+        'tradeHistoryDisplay',
+        'gatheringStats',
+    ];
+
+    test.each(LIVE_STOP)('%s stops live when its setting is switched off', (key) => {
+        const entry = entries.find((candidate) => candidate.key === key);
+        expect(entry, key).toBeTruthy();
+        expect(entry.text, key).toMatch(/liveStop: true/);
+    });
+
+    // initialize() of each returns early on its own setting, which is not the registry key
+    test.each([
+        ['popOutChat', 'chat_popOut'],
+        ['mentionTracker', 'chat_mentionTracker'],
+        ['alchemyProfitDisplay', 'alchemy_profitDisplay'],
+        ['outputTotals', 'actionPanel_outputTotals'],
+        ['craftingPlan', 'actionPanel_bestCraftingPlan'],
+        ['marketplaceBadgeFilter', 'market_badgeOnlyWhenFinished'],
+        ['marketplaceBadgeFilter', 'notifications_marketListingFilled'],
+        ['queueLengthEstimator', 'market_showQueueLength'],
+        ['tradeHistoryDisplay', 'market_tradeHistory'],
+        ['externalLinks', 'ui_externalLinks'],
+        ['gatheringStats', 'actionPanel_showProfitPerHour_gathering'],
+    ])('%s is gated on %s, the setting its module reads', (key, setting) => {
+        const entry = entries.find((candidate) => candidate.key === key);
+        expect(getSettingDefinition(setting), setting).toBeTruthy();
+        expect(entry.text, key).toContain(`config.getSetting('${setting}')`);
+    });
+
+    test('the allowlist names only entries that exist and still have no gate', () => {
+        const byKey = new Map(entries.map((entry) => [entry.key, entry]));
+        for (const key of Object.keys(NO_GATE_NEEDED)) {
+            const entry = byKey.get(key);
+            expect(entry, `${key} is allowlisted but is not a registry entry; remove it`).toBeTruthy();
+            expect(
+                hasSettingSwitch(key) || isSelfGated(entry),
+                `${key} is allowlisted but is now gated; remove it from NO_GATE_NEEDED`
+            ).toBe(false);
+        }
+    });
+
+    test('each reason on the allowlist is a sentence', () => {
+        for (const [key, reason] of Object.entries(NO_GATE_NEEDED)) {
+            expect(reason.length, key).toBeGreaterThan(15);
+        }
+    });
+});
