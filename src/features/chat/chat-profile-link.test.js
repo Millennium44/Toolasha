@@ -404,6 +404,22 @@ describe('switching the feature off while messages are on screen', () => {
         expect(other.classList.contains('mwi-chat-profile-name')).toBe(false);
         expect(other.textContent).toBe('Mate');
     });
+
+    test('a link another feature drew comes back when the setting is switched on again', () => {
+        settings.chat_profileLink = true;
+        document.body.innerHTML = '<div class="ChatMessage_chatMessage__x">Key counts: [<a id="k">Mate</a> - 12]</div>';
+        const link = document.getElementById('k');
+        markAsProfileLink(link, 'Mate');
+
+        chatProfileLinkFeature.disable();
+        expect(link.classList.contains('mwi-chat-profile-name')).toBe(false);
+
+        chatProfileLinkFeature.initialize();
+        expect(link.classList.contains('mwi-chat-profile-name')).toBe(true);
+        expect(link.dataset.mwiProfileName).toBe('Mate');
+        expect(link.dataset.mwiProfileDormant).toBeUndefined();
+        chatProfileLinkFeature.disable();
+    });
 });
 
 describe('a name that sits alone in its own text node', () => {

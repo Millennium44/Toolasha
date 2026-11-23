@@ -147,6 +147,13 @@ class ChatProfileLink {
         this.observerActive = true;
         this._ensureActive();
 
+        // Links another feature drew before a switch-off come back as they were
+        for (const el of document.querySelectorAll('[data-mwi-profile-dormant]')) {
+            const name = el.dataset.mwiProfileDormant;
+            delete el.dataset.mwiProfileDormant;
+            markAsProfileLink(el, name);
+        }
+
         this.unregisterObserver = domObserver.onClass('ChatProfileLink', 'ChatMessage_chatMessage', (messageEl) =>
             this._decorateMessage(messageEl)
         );
@@ -206,10 +213,14 @@ class ChatProfileLink {
         for (const wrap of document.querySelectorAll('[data-mwi-profile-wrap]')) {
             wrap.replaceWith(...wrap.childNodes);
         }
+        // What is left after the unwrapping was marked by another feature (the dungeon key-count names).
+        // That feature does not decorate a message twice, so the name is kept dormant on the element
+        // and `initialize()` puts the link back.
         for (const el of document.querySelectorAll(`.${NAME_CLASS}`)) {
             const name = el.dataset.mwiProfileName;
             el.classList.remove(NAME_CLASS);
             delete el.dataset.mwiProfileName;
+            if (name) el.dataset.mwiProfileDormant = name;
             if (name && el.title === `Open ${name}'s profile`) el.removeAttribute('title');
         }
         for (const el of document.querySelectorAll('[data-mwi-profile-link]')) {
