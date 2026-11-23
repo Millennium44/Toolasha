@@ -1374,6 +1374,11 @@ class TooltipPrices {
             const parts = [`${atLeast}${formatKMB(route.margin)}/unit more than selling`];
             if (route.timeCostPerUnit > 0) parts.push(`after ${formatKMB(route.timeCostPerUnit)} time`);
             parts.push(`${perUnit}/unit`);
+            // Per hour of alchemy, like the "Instead of buying" figure: over the gold rate when one is charged
+            const gainPerHour = route.secondsPerUnit > 0 ? (route.margin * 3600) / route.secondsPerUnit : null;
+            const overRate = route.timeCostPerUnit > 0 ? ' over your gold rate' : '';
+            const hourly = gainPerHour > 0 ? ` (${atLeast}+${formatKMB(gainPerHour)}/hr${overRate})` : '';
+            if (hourly) parts.push(`${atLeast}${formatKMB(gainPerHour)}/hr of alchemy more than selling${overRate}`);
             const caveat = route.partlyUnpriced
                 ? '<span style="opacity: 0.7; font-size: 0.9em;"> (an output unpriced)</span>'
                 : '';
@@ -1381,7 +1386,7 @@ class TooltipPrices {
             html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${hover}">`;
             html += `Instead of selling: ${route.actionType} — `;
             html += `<span style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">${figure}</span>`;
-            html += ` vs ${formatKMB(sellValue)} after tax${caveat}</div>`;
+            html += ` vs ${formatKMB(sellValue)} after tax${hourly}${caveat}</div>`;
         }
         if (!routes.length && bestLoser) {
             const atLeast = bestLoser.partlyUnpriced ? '≥' : '';

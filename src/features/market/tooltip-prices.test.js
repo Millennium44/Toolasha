@@ -1947,13 +1947,24 @@ describe('instead of selling', () => {
         const line = section(await hover());
         expect(line).not.toBeNull();
         // 10.8 cheese at a bid of 9 = 97.2 an action against a sword bid of 45
-        expect(line.textContent).toBe('Instead of selling: decompose — 97/unit vs 45 after tax');
+        // 52 more than selling every 36 s = 5,200 an hour
+        expect(line.textContent).toBe('Instead of selling: decompose — 97/unit vs 45 after tax (+5.2K/hr)');
         expect(line.querySelectorAll('div[style*="font-size: 0.9em"]')).toHaveLength(0);
         const title = line.querySelector('[title^="Instead of selling"]').title;
         expect(title).toContain('52/unit more than selling');
         expect(title).toContain('36s/unit');
+        expect(title).toContain('5.2K/hr of alchemy more than selling');
         // The headline figure takes the profit color
         expect(line.innerHTML).toContain('color: #0f0; font-weight: bold;">97/unit');
+    });
+
+    test('with a gold rate the hourly figure is what is left over it', async () => {
+        // 36 s at 1,000 an hour costs 10 a unit: 42 more than selling, 4,200 an hour
+        settings.goldRate = 1000;
+        const line = section(await hover());
+        expect(line.textContent).toBe(
+            'Instead of selling: decompose — 87/unit vs 45 after tax (+4.2K/hr over your gold rate)'
+        );
     });
 
     test('the setting off draws nothing, even with a winning action', async () => {
@@ -1967,7 +1978,7 @@ describe('instead of selling', () => {
         taxState.rate = 0.5;
         // Cheese at 9 after tax 4.5 × 10.8 = 48.6 against a bid of 45 after tax 22.5
         expect((await hover()).querySelector('.mwi-alchemy-instead-selling').textContent).toBe(
-            'Instead of selling: decompose — 49/unit vs 23 after tax'
+            'Instead of selling: decompose — 49/unit vs 23 after tax (+2.6K/hr)'
         );
     });
 
@@ -2032,7 +2043,9 @@ describe('instead of selling', () => {
         ];
         const line = section(await hover('Twin Sword'));
         // 5 cheese × 9 = 45 against a bid of 40; the cheese sword has no bid, so it adds nothing
-        expect(line.textContent).toBe('Instead of selling: decompose — ≥45/unit vs 40 after tax (an output unpriced)');
+        expect(line.textContent).toBe(
+            'Instead of selling: decompose — ≥45/unit vs 40 after tax (≥+500/hr) (an output unpriced)'
+        );
     });
 
     test('the hover text says every output is sold, whatever the K meaning, with no kept list', async () => {

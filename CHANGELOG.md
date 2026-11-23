@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### "Instead of selling" shows the gain per hour
+
+Each "Instead of selling" tooltip line now ends with how much more than selling the alchemy route earns per hour, so it can be read against the other hourly figures. With "Your time value" set, it is what is left over that rate.
+
 ### More switches turn off without a reload
 
 Turning off features such as Item Count Display, Listing Price Display, Market History, Bulk Sell Assistant, Budget Calculator, the Ability Dictionary button and Chat Profile Link now removes them right away. Quick input buttons and the XP tracker are tagged as needing a reload.
