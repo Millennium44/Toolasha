@@ -1143,6 +1143,7 @@ export default {
 
         registerCommand({
             name: 'Watchlist',
+            row: 'watchlist',
             hint: 'Items you are tracking, with what each is worth now',
             run: () => watchlistPanel.toggle(),
         });

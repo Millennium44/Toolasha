@@ -62,6 +62,7 @@ export default {
 
         registerCommand({
             name: 'Account',
+            row: 'accountView',
             hint: 'Every character at once: networth, idle queues, goals',
             run: () => accountPanel.toggle(),
         });

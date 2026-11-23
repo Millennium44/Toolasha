@@ -449,6 +449,7 @@ class GoalPlannerPanel {
 
         registerCommand({
             name: 'Goal Planner',
+            row: 'goalNextStep',
             hint: 'Ordered steps to a goal, costed',
             run: () => this.toggle(),
         });

@@ -2125,18 +2125,21 @@ profitPanel.restore();
 // behind (the DPS tile behind `combatDps`, the rest behind the Statistics tab's).
 registerCommand({
     name: dpsPanel.title,
+    row: 'dps',
     hint: 'Damage per second, dealt by each player and by each monster',
     run: () => dpsPanel.toggle(),
     when: () => config.getSetting('combatDps', true),
 });
 registerCommand({
     name: deathsPanel.title,
+    row: 'deathsPerHour',
     hint: 'Damage taken and healing received, by player',
     run: () => deathsPanel.toggle(),
     when: () => config.getSetting('combatStats', true),
 });
 registerCommand({
     name: profitPanel.title,
+    row: 'combatRevenue',
     hint: 'Combat income, costs and the MooPass tax',
     run: () => profitPanel.toggle(),
     when: () => config.getSetting('combatStats', true),

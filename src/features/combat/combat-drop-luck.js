@@ -179,6 +179,7 @@ class CombatDropLuck {
         // reached through the bridge, as the overlay row's onOpen does
         registerCommand({
             name: 'Party Luck',
+            row: 'luck',
             hint: 'Every drop this run produced, against what it owed',
             run: () => partyLuckPanel()?.toggle(),
         });

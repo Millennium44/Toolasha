@@ -502,6 +502,7 @@ registerRow({
 // Module scope: the panel has no lifecycle and its tile is ungated
 registerCommand({
     name: 'Charms',
+    row: 'charmValue',
     hint: 'Every tier of the charm you wear, and what each would cost',
     run: () => charmPanel.toggle(),
 });

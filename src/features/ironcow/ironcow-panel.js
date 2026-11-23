@@ -386,6 +386,7 @@ class IronCowFarmPanel {
 
         registerCommand({
             name: 'Iron Bell Farming',
+            row: 'ironBellNextStep',
             hint: 'The cowbell plan, and what it earns',
             run: () => this.toggle(),
         });

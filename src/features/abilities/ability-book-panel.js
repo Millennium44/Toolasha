@@ -942,6 +942,7 @@ export const abilityBookPanel = new AbilityBookPanel();
 // it off, so there is no state in which it is imported but unavailable.
 registerCommand({
     name: 'Ability Book',
+    row: 'skillBooks',
     hint: 'What levelling each ability costs in books',
     run: () => abilityBookPanel.toggle(),
 });

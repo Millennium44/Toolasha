@@ -833,6 +833,7 @@ class TreasureTracker {
 
         registerCommand({
             name: 'Treasure Tracker',
+            row: 'treasure',
             hint: 'Chests opened and what came out',
             run: () => this.toggle(),
         });

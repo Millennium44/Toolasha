@@ -394,6 +394,7 @@ export default stunPersistence;
 // thing to list.
 registerCommand({
     name: 'Stun Persistence',
+    row: 'stunPersistence',
     hint: 'What the stun watch has recorded',
     run: () => stunPersistencePanel.toggle(),
     when: () => config.getSetting('stunPersistenceWatch'),

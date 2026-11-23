@@ -4015,6 +4015,7 @@ export function dungeonWaveTiming({ recording, simResult } = {}) {
 // offer it then.
 registerCommand({
     name: 'Sim Accuracy',
+    row: 'replayCheck',
     hint: 'How closely the simulator reproduced a recorded fight',
     run: () => replayCheckPanel.toggle(),
     when: () => config.getSetting('replayCheck'),

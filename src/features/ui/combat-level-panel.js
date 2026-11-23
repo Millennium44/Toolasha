@@ -1854,6 +1854,7 @@ export const combatLevelPanel = new CombatLevelPanel();
 // has no lifecycle, so it is on offer for the life of the tab
 registerCommand({
     name: 'Combat Level',
+    row: ['combatLevel', 'combatSession', 'experiencePerHour', 'timeToLevel'],
     hint: 'Progress to the next combat level, and how long it takes',
     run: () => combatLevelPanel.toggle(),
 });

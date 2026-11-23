@@ -527,6 +527,7 @@ export default waveGap;
 // thing to list.
 registerCommand({
     name: 'Wave Gap',
+    row: 'waveGap',
     hint: 'What the wave-gap watch has recorded',
     run: () => waveGapPanel.toggle(),
     when: () => config.getSetting('waveGapWatch'),

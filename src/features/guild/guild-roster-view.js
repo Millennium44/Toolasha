@@ -911,6 +911,7 @@ export default {
         registerGuildRosterRow();
         registerCommand({
             name: 'Guild Roster',
+            row: 'guildRoster',
             hint: "Every guildmate's output, and who has gone quiet",
             run: () => guildRosterPanel.toggle(),
         });

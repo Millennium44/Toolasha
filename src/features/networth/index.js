@@ -412,6 +412,7 @@ async function openHistoryChart() {
 // history is recorded only while its setting is on.
 registerCommand({
     name: 'Net worth history',
+    row: ['netWorth', 'coins', 'marketListings', 'inventoryValue'],
     hint: 'Net worth over time, as a chart',
     run: () => openHistoryChart(),
     when: () => config.getSetting('networth_historyChart'),

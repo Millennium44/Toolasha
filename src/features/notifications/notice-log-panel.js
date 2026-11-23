@@ -283,6 +283,7 @@ noticePanel.show = (options) => {
 // Module scope: the panel has no lifecycle, and its tile is ungated
 registerCommand({
     name: 'Notices',
+    row: 'noticeLog',
     hint: 'Everything Toolasha has told you, and what is unread',
     run: () => noticePanel.toggle(),
 });

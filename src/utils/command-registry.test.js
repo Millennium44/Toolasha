@@ -164,4 +164,13 @@ describe('kind', () => {
         expect(names()).toContain('Recompute lab sims');
         expect(registeredCommands()[0].run()).toBe('nothing stale');
     });
+
+    test('a command carries the tile keys it covers, as a list', () => {
+        registerCommand({ name: 'A', hint: '', run: () => {}, row: 'one' });
+        registerCommand({ name: 'B', hint: '', run: () => {}, row: ['two', 'three', 4, ''] });
+        registerCommand({ name: 'C', hint: '', run: () => {} });
+
+        const byName = Object.fromEntries(registeredCommands().map((command) => [command.name, command.row]));
+        expect(byName).toEqual({ A: ['one'], B: ['two', 'three'], C: [] });
+    });
 });

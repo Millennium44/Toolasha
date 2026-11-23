@@ -1093,6 +1093,7 @@ export default {
         registerTrialLedgerRow();
         registerCommand({
             name: 'Trial Ledger',
+            row: 'guildTrialLedger',
             hint: 'Guild trial results, week by week',
             run: () => guildTrialLedgerPanel.toggle(),
         });

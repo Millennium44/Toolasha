@@ -764,6 +764,7 @@ registerRow({
 // Module scope, gated on the same setting `initialize` returns on
 registerCommand({
     name: 'Mana',
+    row: 'manaPerFight',
     hint: 'Mana spent this run and per ability',
     run: () => manaPanel.toggle(),
     when: () => config.getSetting('manaTracker'),

@@ -477,6 +477,7 @@ export default tickPeriod;
 // thing to list.
 registerCommand({
     name: 'Tick Period',
+    row: 'tickPeriod',
     hint: 'What the tick-period watch has recorded',
     run: () => tickPeriodPanel.toggle(),
     when: () => config.getSetting('tickPeriodWatch'),

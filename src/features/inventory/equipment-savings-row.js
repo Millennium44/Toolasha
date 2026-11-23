@@ -4985,6 +4985,7 @@ export default {
     initialize: () => {
         registerCommand({
             name: 'Equipment Watch',
+            row: 'equipmentWatch',
             hint: 'What each piece you are saving for costs, and how far along you are',
             run: () => equipmentSavingsPanel.toggle(),
         });

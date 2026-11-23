@@ -37,6 +37,7 @@ export default {
             registerCalibrationRow();
             registerCommand({
                 name: 'Prediction Calibration',
+                row: 'predictionCalibration',
                 hint: 'How far predicted rates were from what happened',
                 run: () => calibrationPanel.toggle(),
             });

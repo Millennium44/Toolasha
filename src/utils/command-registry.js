@@ -75,7 +75,7 @@
  *
  * Module-level so a feature can register long before the palette exists — the
  * palette is a ui-bundle feature and most registrants are not.
- * @type {Array<{name: string, hint: string, kind: string, run: Function, when: Function|null}>}
+ * @type {Array<{name: string, hint: string, kind: string, run: Function, when: Function|null, row: string[]}>}
  */
 const commands = [];
 
@@ -115,9 +115,16 @@ export const COMMAND_KINDS = ['panel', 'verb'];
  *   initialised" — a setting that can be turned off without disabling anything,
  *   a target that has to be on the page. Omitted means always. Not for a verb
  *   that merely has nothing to do right now: that case is a result string.
+ * @param {string|string[]} [command.row] - The key(s) of the overlay tile(s) whose double-click
+ *   opens this same panel. The palette lists every tile that has an `onOpen` on its own, so a
+ *   command that opens a tile's panel would otherwise be offered twice; naming the tile here
+ *   makes the palette show the command and skip the tile's entry (only while this command is
+ *   offered, so a switched-off feature's tile entry returns as it always did). Names cannot do
+ *   this job, since a tile and its panel are often called different things. A file that has both
+ *   must say so: `panel-command-coverage.test.js` fails otherwise.
  * @returns {boolean} Whether it was accepted
  */
-export function registerCommand({ name, hint = '', run, kind = 'panel', when = null }) {
+export function registerCommand({ name, hint = '', run, kind = 'panel', when = null, row = null }) {
     if (!name || typeof run !== 'function') {
         console.error('[CommandRegistry] A command needs a name and a run function:', name);
         return false;
@@ -129,6 +136,7 @@ export function registerCommand({ name, hint = '', run, kind = 'panel', when = n
         kind: COMMAND_KINDS.includes(kind) ? kind : 'panel',
         run,
         when: typeof when === 'function' ? when : null,
+        row: (Array.isArray(row) ? row : [row]).filter((key) => typeof key === 'string' && key),
     };
     const existing = commands.findIndex((command) => command.name === definition.name);
     if (existing >= 0) commands[existing] = definition;
@@ -168,7 +176,7 @@ export function unregisterCommand(name) {
  * it: the palette calls this every time it opens, and a predicate answered once
  * at import time would be a constant.
  *
- * @returns {Array<{name: string, hint: string, kind: string, run: Function}>}
+ * @returns {Array<{name: string, hint: string, kind: string, run: Function, row: string[]}>}
  */
 export function registeredCommands() {
     return commands
@@ -185,7 +193,13 @@ export function registeredCommands() {
             }
         })
         .sort((a, b) => a.command.name.localeCompare(b.command.name) || a.index - b.index)
-        .map(({ command }) => ({ name: command.name, hint: command.hint, kind: command.kind, run: command.run }));
+        .map(({ command }) => ({
+            name: command.name,
+            hint: command.hint,
+            kind: command.kind,
+            run: command.run,
+            row: command.row,
+        }));
 }
 
 /**

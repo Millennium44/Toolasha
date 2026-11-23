@@ -809,6 +809,7 @@ function housesVersion() {
 // No lifecycle and no setting of its own, so on offer for the life of the tab
 registerCommand({
     name: 'Houses',
+    row: 'houses',
     hint: 'Every room, and what its next level costs',
     run: () => housesPanel.toggle(),
 });

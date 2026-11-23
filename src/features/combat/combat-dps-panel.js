@@ -1411,6 +1411,7 @@ export default {
         getPanel();
         registerCommand({
             name: 'Party damage',
+            row: 'dps',
             hint: 'Damage, damage taken and healing per party member, ranked',
             run: () => getPanel().toggle(),
         });

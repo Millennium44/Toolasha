@@ -758,16 +758,25 @@ class CommandPalette {
         // Verbs sit in their own group rather than under "Panel", which would be
         // a lie in the one place the palette is telling you what a keystroke is
         // about to do
-        for (const entry of registeredCommands()) {
+        const offered = registeredCommands();
+        for (const entry of offered) {
             const group = entry.kind === 'verb' ? 'Action' : 'Panel';
             // The hint is searchable too: it says in plain words what the panel shows, which the name may not
             // ("DPs" is found by typing "damage per second")
             commands.push(this._command(group, entry.name, entry.hint, entry.run, entry.hint, entry.kind));
         }
 
+        // A tile with an `onOpen` is offered too, so a panel with a tile needs no command of its own. One
+        // that has both is listed once: a command names the tiles it covers (`row`), and a tile whose name
+        // equals an offered command's is the same entry under another group. Both only while that command
+        // is offered, so a switched-off feature's tile entry comes back as it always did.
+        const covered = new Set(offered.flatMap((entry) => entry.row || []));
+        const named = new Set(offered.map((entry) => entry.name));
+
         // A retired row is offered only while it is on, as it is in the picker
         for (const row of listedRows(overlayPanel.settings, registeredRows())) {
             if (typeof row.onOpen !== 'function') continue;
+            if (covered.has(row.key) || named.has(row.name)) continue;
             commands.push(this._command('Overlay row', row.name, 'Open what this tile summarises', () => row.onOpen()));
         }
 

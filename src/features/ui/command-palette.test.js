@@ -459,6 +459,72 @@ describe('the palette in the page', () => {
         overlay.settings = undefined;
     });
 
+    test('a command that names a tile hides the tile entry, and lists once', async () => {
+        const tile = vi.fn();
+        const command = vi.fn();
+        rows.current = [
+            { key: 'charmValue', name: 'Next Charm', onOpen: tile },
+            { key: 'dps', name: 'DPS', onOpen: () => {} },
+        ];
+        registerCommand({ name: 'Charms', hint: 'every tier', run: command, row: 'charmValue' });
+
+        palette.initialize();
+        palette.open();
+        await vi.waitFor(() => expect(overlay.listLayouts).toHaveBeenCalled());
+
+        const labels = drawnLabels();
+        expect(labels).toContain('Charms');
+        // Named by key, since the tile and the panel are called different things
+        expect(labels).not.toContain('Next Charm');
+        // A tile nothing links to is still offered
+        expect(labels).toContain('DPS');
+        expect(new Set(labels).size).toBe(labels.length);
+    });
+
+    test('one command can cover several tiles that open the same panel', async () => {
+        rows.current = [
+            { key: 'netWorth', name: 'Net Worth', onOpen: () => {} },
+            { key: 'coins', name: 'Coins', onOpen: () => {} },
+        ];
+        registerCommand({ name: 'Net worth history', hint: '', run: () => {}, row: ['netWorth', 'coins'] });
+
+        palette.initialize();
+        palette.open();
+        await vi.waitFor(() => expect(overlay.listLayouts).toHaveBeenCalled());
+
+        const labels = drawnLabels();
+        expect(labels).not.toContain('Net Worth');
+        expect(labels).not.toContain('Coins');
+    });
+
+    test('the tile entry returns when the linked command is not offered', async () => {
+        let on = false;
+        rows.current = [{ key: 'houses', name: 'Houses tile', onOpen: () => {} }];
+        registerCommand({ name: 'Houses', hint: '', run: () => {}, row: 'houses', when: () => on });
+
+        palette.initialize();
+        palette.open();
+        await vi.waitFor(() => expect(overlay.listLayouts).toHaveBeenCalled());
+        expect(drawnLabels()).toContain('Houses tile');
+        palette.close();
+
+        on = true;
+        palette.open();
+        await vi.waitFor(() => expect(overlay.listLayouts).toHaveBeenCalledTimes(2));
+        expect(drawnLabels()).not.toContain('Houses tile');
+    });
+
+    test('a tile named exactly like an offered command is not listed twice', async () => {
+        rows.current = [{ key: 'noticeLog', name: 'Notices', onOpen: () => {} }];
+        registerCommand({ name: 'Notices', hint: '', run: () => {} });
+
+        palette.initialize();
+        palette.open();
+        await vi.waitFor(() => expect(overlay.listLayouts).toHaveBeenCalled());
+
+        expect(drawnLabels().filter((label) => label === 'Notices')).toHaveLength(1);
+    });
+
     test('saved layouts arrive as their own entries and can be chosen', async () => {
         overlay.listLayouts.mockResolvedValue(['Dungeon', 'Market']);
 

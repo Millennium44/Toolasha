@@ -177,6 +177,7 @@ marketAPI.on(() => {
 // Module scope, like the tile it backs: no lifecycle and no setting of its own
 registerCommand({
     name: 'Task Tokens statistics',
+    row: 'taskTokens',
     hint: 'Every task, what each pays, and the rate it is measured from',
     run: () => toggleStatistics(),
 });

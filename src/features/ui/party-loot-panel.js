@@ -934,6 +934,7 @@ export const partyLootPanel = createPanel({
 // overlay tile (the session timer) sits behind.
 registerCommand({
     name: 'Party Loot',
+    row: ['battleTimer', 'totalProfit'],
     hint: 'What everyone picked up, this run and earlier ones',
     run: () => partyLootPanel.toggle(),
     when: () => config.getSetting('combatStats', true),

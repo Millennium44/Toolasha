@@ -10,12 +10,17 @@
  * `createPanel` shell, `makeResizable`, `makeDraggable`, a registered floating
  * panel, saved panel geometry) and requires one of three things of it:
  *
- * 1. the file calls `registerCommand(` itself, or
+ * 1. the file calls `registerCommand(` itself, or registers an overlay tile with an `onOpen`
+ *    (the palette offers every such tile as an "Overlay row" entry on its own), or
  * 2. its entry in `COMMAND_ELSEWHERE` names the file that registers the command
  *    (and that file must really call `registerCommand(`), or
  * 3. its entry in `NOT_A_PALETTE_PANEL` gives a one-line reason it should not
  *    have a command: it is bound to a page, opened by an event, or is not a
  *    panel at all.
+ *
+ * A file that has both a tile and a command would list the panel twice, so its command must
+ * name the tile it covers with `row: '<tile key>'` (or a list of keys); the palette then shows
+ * the command and skips the tile entry. Every `row:` key must be a tile that exists.
  *
  * An entry that no longer matches a panel file is stale and fails too, so the
  * lists cannot rot into a second place nobody reads.
@@ -53,14 +58,12 @@ const PANEL_SHAPES = [
  * Keyed by path under `src/features`, valued by the file that registers it.
  */
 const COMMAND_ELSEWHERE = {
-    'account/account-panel.js': 'account/index.js',
     'combat-sim/combat-sim-ui.js': 'combat-sim/combat-sim.js',
     'combat-sim/lab-sim-ui.js': 'combat-sim/lab-sim.js',
     'combat/dungeon-tracker-ui-interactions.js': 'combat/dungeon-tracker-ui.js',
     'combat/party-luck-panel.js': 'combat/combat-drop-luck.js',
     'dev/health-status.js': 'ui/command-palette.js',
     'guild/guild-trial-scoreboard.js': 'guild/guild-trials.js',
-    'insights/calibration-panel.js': 'insights/index.js',
     'profile/build-score-panel.js': 'profile/build-score-row.js',
     'queue-monitor/queue-monitor-ui.js': 'queue-monitor/queue-monitor.js',
     'sync/pull-summary-panel.js': 'sync/sync-manager.js',
@@ -113,10 +116,27 @@ function read(path) {
 }
 
 const registers = (source) => /\bregisterCommand\(/.test(source ?? '');
+/** The source without comments, so a doc example of registerRow does not count as a tile */
+const code = (source) => (source ?? '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+/** A tile the palette lists by itself: registered with an `onOpen` that opens something */
+const hasOpenTile = (source) => /\bregisterRow\(\{/.test(code(source)) && /\bonOpen:/.test(code(source));
 const isPanelFile = (source) => PANEL_SHAPES.some((shape) => shape.test(source));
 
 const panelFiles = sourceFiles(FEATURES).filter((path) => isPanelFile(read(path)));
-const unregistered = panelFiles.filter((path) => !registers(read(path)));
+const unregistered = panelFiles.filter((path) => !registers(read(path)) && !hasOpenTile(read(path)));
+
+const allFiles = sourceFiles(FEATURES);
+/** Every tile key registered anywhere under `src/features` */
+const tileKeys = new Set(
+    allFiles.flatMap((path) =>
+        [...code(read(path)).matchAll(/registerRow\(\{\s*key:\s*'([^']+)'/g)].map((match) => match[1])
+    )
+);
+/** The `row:` links in a file's registerCommand calls, as keys */
+const linkedKeys = (source) =>
+    [...(source ?? '').matchAll(/^\s*row:\s*(\[[^\]]*\]|'[^']*')/gm)].flatMap((match) =>
+        [...match[1].matchAll(/'([^']*)'/g)].map((key) => key[1])
+    );
 
 describe('every Toolasha panel can be opened from Ctrl+K', () => {
     test('the scan finds the panels it should', () => {
@@ -168,5 +188,33 @@ describe('every Toolasha panel can be opened from Ctrl+K', () => {
         for (const [path, reason] of Object.entries(NOT_A_PALETTE_PANEL)) {
             expect(reason.length, path).toBeGreaterThan(10);
         }
+    });
+
+    test('a file with both a tile and a command links the tile, so the palette lists the panel once', () => {
+        const unlinked = allFiles.filter((path) => {
+            const source = read(path);
+            return hasOpenTile(source) && registers(source) && linkedKeys(source).length === 0;
+        });
+
+        expect(
+            unlinked,
+            `These files register an overlay tile with an onOpen and a palette command, but the command does not ` +
+                `say which tile it covers, so Ctrl+K lists the panel twice:\n  ${unlinked.join('\n  ')}\n\n` +
+                "Add row: '<tile key>' (or a list of keys) to the registerCommand call. Or drop the command if " +
+                'the tile entry is enough.'
+        ).toEqual([]);
+    });
+
+    test('every row link names a tile that exists', () => {
+        const dangling = allFiles.flatMap((path) =>
+            registers(read(path))
+                ? linkedKeys(read(path))
+                      .filter((key) => !tileKeys.has(key))
+                      .map((key) => `${path}: ${key}`)
+                : []
+        );
+
+        expect(dangling, 'A registerCommand row: names a tile key no registerRow declares').toEqual([]);
+        expect(tileKeys.has('netWorth')).toBe(true);
     });
 });

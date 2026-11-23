@@ -400,6 +400,7 @@ registerRow({
 // out at all with the setting off, so the panel would have nothing to show.
 registerCommand({
     name: 'Build Score',
+    row: 'buildScore',
     hint: 'What your build score is made of',
     run: () => buildScorePanel.toggle(),
     when: () => config.getSetting('combatScore'),

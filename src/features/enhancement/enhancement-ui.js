@@ -224,6 +224,7 @@ class EnhancementUI {
 
         registerCommand({
             name: 'Enhancement Tracker',
+            row: 'enhancementSession',
             hint: 'Show or hide the enhancing cost/luck/worth-it panel',
             run: () => this.toggle(),
         });

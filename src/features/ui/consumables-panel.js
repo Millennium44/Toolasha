@@ -4705,6 +4705,7 @@ for (const key of [
 // that switches it off, so "imported" and "available" are the same thing.
 registerCommand({
     name: 'Consumables',
+    row: 'consumables',
     hint: 'What your teas and food cost, and how long the pile lasts',
     run: () => consumablesPanel.toggle(),
 });

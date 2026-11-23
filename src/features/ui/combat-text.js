@@ -471,6 +471,7 @@ registerRow({
 // scrolling log, which only fills while that setting is on.
 registerCommand({
     name: 'Combat Log',
+    row: 'combatText',
     hint: 'Every hit, heal and miss this fight, not just the last six',
     run: () => combatLogPanel.toggle(),
     when: () => config.getSetting(SCROLLING_SETTING),
