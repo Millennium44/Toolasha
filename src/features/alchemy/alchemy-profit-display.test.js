@@ -36,7 +36,10 @@ const calculator = vi.hoisted(() => ({
     decompose: vi.fn(),
     transmute: vi.fn(),
     unrefine: vi.fn(),
+    inputPrice: vi.fn(),
 }));
+
+const market = vi.hoisted(() => ({ loaded: true }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -82,7 +85,12 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
         calculateDecomposeProfit: (...args) => calculator.decompose(...args),
         calculateTransmuteProfit: (...args) => calculator.transmute(...args),
         calculateUnrefineProfit: (...args) => calculator.unrefine(...args),
+        _inputBuyPrice: (...args) => calculator.inputPrice(...args),
     },
+}));
+
+vi.mock('../../api/marketplace.js', () => ({
+    default: { isLoaded: () => market.loaded },
 }));
 
 vi.mock('../../utils/experience-parser.js', () => ({
@@ -106,6 +114,8 @@ beforeEach(() => {
     calculator.decompose.mockReset().mockReturnValue(someProfit());
     calculator.transmute.mockReset().mockReturnValue(someProfit());
     calculator.unrefine.mockReset().mockReturnValue(someProfit());
+    calculator.inputPrice.mockReset().mockReturnValue(100);
+    market.loaded = true;
 });
 
 afterEach(() => {
@@ -408,6 +418,71 @@ describe('updateDisplay routes to the right calculator', () => {
         await display.updateDisplay(document.createElement('div'));
 
         expect(created.mock.calls[0][3]).toBe('/items/azure_cheese');
+    });
+
+    describe('an input with no market price', () => {
+        const setup = (tab) => {
+            display.removeDisplay.mockRestore();
+            selectTab(tab);
+            panel.requirements = [{ itemHrid: '/items/odd_thing', enhancementLevel: 0 }];
+            game.initClientData = { itemDetailMap: { '/items/odd_thing': { name: 'Odd Thing' } } };
+            calculator.coinify.mockReturnValue(null);
+            calculator.decompose.mockReturnValue(null);
+            calculator.transmute.mockReturnValue(null);
+            calculator.inputPrice.mockReturnValue(null);
+            return document.createElement('div');
+        };
+
+        test.each(['Coinify', 'Decompose', 'Transmute'])(
+            '%s says there is no price instead of drawing nothing',
+            async (tab) => {
+                const container = setup(tab);
+
+                await display.updateDisplay(container);
+
+                const line = container.querySelector('.mwi-alchemy-profit-unavailable');
+                expect(line.textContent).toBe('Profitability unavailable: no market price for Odd Thing.');
+                expect(display.displayElement).toBe(line);
+            }
+        );
+
+        test('a priced item draws the normal section, replacing the line', async () => {
+            const container = setup('Coinify');
+            await display.updateDisplay(container);
+            expect(container.querySelector('.mwi-alchemy-profit-unavailable')).not.toBeNull();
+
+            calculator.coinify.mockReturnValue(someProfit());
+            calculator.inputPrice.mockReturnValue(50);
+            created.mockImplementation((c) => {
+                display.removeDisplay();
+                const quote = document.createElement('div');
+                quote.className = 'normal-profit-quote';
+                c.appendChild(quote);
+                display.displayElement = quote;
+            });
+            await display.updateDisplay(container);
+
+            expect(container.querySelector('.mwi-alchemy-profit-unavailable')).toBeNull();
+            expect(container.querySelector('.normal-profit-quote')).not.toBeNull();
+        });
+
+        test('market data not loaded yet shows nothing', async () => {
+            const container = setup('Coinify');
+            market.loaded = false;
+
+            await display.updateDisplay(container);
+
+            expect(container.querySelector('.mwi-alchemy-profit-unavailable')).toBeNull();
+        });
+
+        test('a null quote with a priced input shows nothing', async () => {
+            const container = setup('Coinify');
+            calculator.inputPrice.mockReturnValue(100);
+
+            await display.updateDisplay(container);
+
+            expect(container.querySelector('.mwi-alchemy-profit-unavailable')).toBeNull();
+        });
     });
 });
 

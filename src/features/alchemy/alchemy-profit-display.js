@@ -6,6 +6,7 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
+import marketAPI from '../../api/marketplace.js';
 import alchemyProfit, { readAlchemyTabType } from './alchemy-profit.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
@@ -593,7 +594,20 @@ class AlchemyProfitDisplay {
                     infoContainer.appendChild(unavailable);
                     this.displayElement = unavailable;
                 } else {
+                    const unpricedName =
+                        !isUnrefine && config.getSetting('actionPanel_showProfitDetail')
+                            ? this._unpricedInputName(requirement)
+                            : null;
                     this.removeDisplay();
+                    if (unpricedName) {
+                        // A missing price is never silent: say why there is no figure
+                        const unavailable = document.createElement('div');
+                        unavailable.className = 'mwi-alchemy-profit-unavailable';
+                        unavailable.dataset.mwiProfitDisplay = 'true';
+                        unavailable.textContent = `Profitability unavailable: no market price for ${unpricedName}.`;
+                        infoContainer.appendChild(unavailable);
+                        this.displayElement = unavailable;
+                    }
                 }
                 publishCatalystWhatIfResult(null);
                 return;
@@ -1976,6 +1990,20 @@ class AlchemyProfitDisplay {
             field.removeEventListener('change', onChange);
             this.profitSummaryInputListeners = null;
         }
+    }
+
+    /**
+     * The name of the selected input when it has no market price, else null. Null as well while
+     * the market data or the item table has not loaded, so nothing flashes during startup.
+     * @param {{itemHrid: string, enhancementLevel?: number}|undefined} requirement - Selected input
+     * @returns {string|null}
+     */
+    _unpricedInputName(requirement) {
+        if (!requirement?.itemHrid || !marketAPI.isLoaded()) return null;
+        const itemDetails = dataManager.getItemDetails(requirement.itemHrid);
+        if (!itemDetails) return null;
+        const price = alchemyProfitCalculator._inputBuyPrice(requirement.itemHrid, requirement.enhancementLevel || 0);
+        return price === null ? itemDetails.name || requirement.itemHrid : null;
     }
 
     /**
