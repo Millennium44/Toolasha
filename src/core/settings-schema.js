@@ -1736,11 +1736,7 @@ export const settingsGroups = {
                     { value: 'alchemyProfitPerHour', label: 'Alchemy profit per hour' },
                     { value: 'decomposeChainPerHour', label: 'Full decompose chain per hour' },
                 ],
-                help:
-                    'Which figure the marketplace sort button ranks by. The alchemy modes buy the item on your Buy side, ' +
-                    'run its best alchemy action, and sell the outputs on your Sell side (the Buy/Sell dropdowns). The chain mode decomposes the item and ' +
-                    'then everything it yields, selling what is left after tax, on the same Buy/Sell pricing settings. ' +
-                    'The dropdown next to the sort button changes this too.',
+                help: 'Which figure the marketplace sort button ranks by (the dropdown next to the button changes it too). Alchemy modes buy on your Buy side, run the best alchemy action and sell the outputs on your Sell side; the chain mode decomposes the item and what it yields, selling after tax.',
             },
             fillMarketOrderPrice: {
                 id: 'fillMarketOrderPrice',
@@ -1753,14 +1749,7 @@ export const settingsGroups = {
                 label: 'Auto-filled purchases: raise the price until it covers the whole quantity',
                 type: 'checkbox',
                 default: true,
-                help:
-                    'Applies to the Buy Now dialogs Toolasha auto-fills for you (missing materials, ability books, ' +
-                    'house costs, guild credit value, combat sim upgrades, the consumables panel, the shopping ' +
-                    'list) — not the plain Buy Now window you open yourself. When a filled buy quantity is more ' +
-                    'than the best ask has in stock, raise the price to the lowest one whose listings add up to ' +
-                    'the whole amount. The price is a limit, not what every unit costs: each listing still sells ' +
-                    'at its own price, so only the units the cheapest listings could not cover pay more. Never ' +
-                    "goes above the modal's tradable range, never lowers a price, and never presses the buy button.",
+                help: "For Buy Now dialogs Toolasha auto-fills (missing materials, ability books, house costs, guild credit value, combat sim upgrades, consumables panel, shopping list), raises the price until listings cover the whole quantity. Never exceeds the modal's tradable range, never lowers a price, never presses buy.",
             },
             market_autoFillSellStrategy: {
                 id: 'market_autoFillSellStrategy',
@@ -1829,7 +1818,7 @@ export const settingsGroups = {
                 label: 'Marketplace: Warn when Buy Now / Sell Now is more than one price step from the best listing',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a line to the Buy Now and Sell Now dialogs when the best sell offer and the best buy offer for the item and enhancement level shown are two or more price steps apart, with what the gap costs per item and for the quantity entered. It stays silent when they are one step apart, and when no recent order book for the item has been seen. Only text: it never changes the dialog or presses anything. Read from English dialog titles.',
+                help: 'Adds a line to the Buy Now and Sell Now dialogs when the best sell and buy offers are two or more price steps apart, showing what the gap costs per item and for your quantity. Text only; silent when no recent order book has been seen. Read from English dialog titles.',
             },
             market_marketplaceShortcuts: {
                 id: 'market_marketplaceShortcuts',
@@ -1883,10 +1872,7 @@ export const settingsGroups = {
                 label: 'Market: Step between items without going back to the list',
                 type: 'checkbox',
                 default: true,
-                help:
-                    "On an item's marketplace page, [ and ] open the previous/next item from the item grid you " +
-                    'came from (respecting any filter you had applied), and Escape goes back to the grid. The same ' +
-                    'steps are on ◀ / ▶ buttons next to Refresh. Stepping stops at the ends of the list.',
+                help: "On an item's marketplace page, [ and ] open the previous/next item from the grid you came from (respecting your filter), and Escape goes back to the grid. ◀ / ▶ buttons next to Refresh do the same. Stops at the ends of the list.",
             },
             market_collectableListingsToTop: {
                 id: 'market_collectableListingsToTop',
@@ -1911,7 +1897,7 @@ export const settingsGroups = {
                 label: 'Market: Bulk Sell Assistant',
                 type: 'checkbox',
                 default: false,
-                help: 'Adds a Bulk Sell button to the marketplace tab bar (next to Market History) that opens a floating panel for selling every tradable inventory item — most valuable stack first, optionally limited to one Toolasha inventory tab — via a prefilled sell modal for each: one confirm click per item, always in the same place. Insta-sells per the queue-age, supply-ratio, minimum-value and spread rules below; otherwise posts a sell listing.',
+                help: 'Adds a Bulk Sell button to the marketplace tab bar (next to Market History) that opens a floating panel for selling tradable inventory, most valuable stack first, optionally one Toolasha inventory tab. One confirm click per item. Insta-sells per the rules below, otherwise posts a sell listing.',
             },
             market_bulkSellQueueDays: {
                 id: 'market_bulkSellQueueDays',
@@ -1938,7 +1924,7 @@ export const settingsGroups = {
                 default: 0,
                 min: 0,
                 max: 100,
-                help: 'Insta-sell when the gap between the best ask and the best bid is at most this percentage of the ask — with the finer price increments, a listing often earns only a sliver over selling instantly, and this rule says that sliver is not worth a listing slot and the wait. E.g. 2 insta-sells whenever ask and bid are within 2% of each other. 0 turns this rule off. Default: 0.',
+                help: 'Insta-sell when the gap between best ask and best bid is at most this percentage of the ask, since a listing earns only a sliver more. E.g. 2 insta-sells when ask and bid are within 2%. 0 turns this rule off. Default: 0.',
             },
             market_bulkSellMinPatientPremium: {
                 id: 'market_bulkSellMinPatientPremium',
@@ -1946,7 +1932,7 @@ export const settingsGroups = {
                 type: 'number',
                 default: 0,
                 min: 0,
-                help: 'The spread rule in absolute coins: what the whole stack would earn by waiting in the sell queue instead of insta-selling — (ask − bid) × count, after market tax. Under this amount the Bulk Sell Assistant insta-sells: the premium is not worth a listing slot and the wait. 0 turns this rule off. Default: 0.',
+                help: 'Insta-sell when waiting in the sell queue would earn less than this many coins over selling now: (ask − bid) × count, after market tax. 0 turns this rule off. Default: 0.',
             },
             consumables_labPerRunBasis: {
                 id: 'consumables_labPerRunBasis',
@@ -1966,7 +1952,7 @@ export const settingsGroups = {
                 label: 'Consumables: plan from the default loadout while idle',
                 type: 'checkbox',
                 default: true,
-                help: "With no combat being measured, the panel plans from the default combat loadout instead of showing nothing: drinks rated arithmetically (buff duration against drink concentration), food rated from the last combat sim's measured use for the zone it simmed — or listed unrated until a sim has run.",
+                help: "With no combat being measured, the Consumables panel plans from the default combat loadout: drinks rated from buff duration and drink concentration, food rated from the last combat sim's measured use for that zone, or listed unrated until a sim has run.",
             },
             market_consumableBuyMaxSpreadPct: {
                 id: 'market_consumableBuyMaxSpreadPct',
@@ -1975,7 +1961,7 @@ export const settingsGroups = {
                 default: 2,
                 min: 0,
                 max: 100,
-                help: 'The bulk-sell spread rule, mirrored for restocking: when the gap between the best ask and the best bid is at most this percentage of the ask, the Consumables panel recommends buying instantly — the saving from a buy order is a sliver not worth the wait. 0 turns this rule off. Default: 2.',
+                help: 'The bulk-sell spread rule, for restocking: when the gap between best ask and best bid is at most this percentage of the ask, the Consumables panel recommends buying instantly. 0 turns this rule off. Default: 2.',
             },
             market_consumableBuyMinSaving: {
                 id: 'market_consumableBuyMinSaving',
@@ -2006,14 +1992,14 @@ export const settingsGroups = {
                 label: 'Market: Consumables buy links open the recommended order form',
                 type: 'checkbox',
                 default: true,
-                help: "A Buy link in the Consumables panel opens the form its ⚡/⏳ recommendation points at — Buy Now for an instant buy, New Buy Listing for a patient order — with the quantity filled in, the way the Bulk Sell Assistant opens sell forms. Nothing is bought until you confirm: with the game's own confirm button, or, in the Buy all walk, with the walk's Buy button, which presses the game's for you once, only for a press of yours, and only while the open form is for that item and quantity. Off: the link just opens the item in the marketplace with the quantity parked, as before (and a walk step opened after that has no Buy button; turning it off while a step is open stops that step's Buy from pressing).",
+                help: "A Buy link in the Consumables panel opens the form its ⚡/⏳ recommendation points at (Buy Now or New Buy Listing) with the quantity filled in. Nothing is bought until you confirm; in the Buy all walk, the walk's Buy button presses the game's confirm once, only on your press. Off: the link just opens the item in the marketplace with the quantity parked.",
             },
             market_bulkSellVendorCheck: {
                 id: 'market_bulkSellVendorCheck',
                 label: 'Market: Bulk sell to vendor when market is no better',
                 type: 'checkbox',
                 default: true,
-                help: 'When the game vendor pays at least as much per item as the market would net after market tax (e.g. vendor 96 vs ask 100 → 96 net at a 4% tax), the Bulk Sell Assistant opens the item\'s inventory menu with "All" selected so one click on "Sell For … Coins" vendors the whole stack instead. Only applies to unenhanced items.',
+                help: "When the vendor pays at least as much as the market after tax, the Bulk Sell Assistant opens the item's inventory menu with All selected, so one click vendors the stack. Unenhanced items only.",
             },
             market_bulkSellMinListingValue: {
                 id: 'market_bulkSellMinListingValue',
@@ -2053,7 +2039,7 @@ export const settingsGroups = {
                 label: 'Market: Record trade ledger (realized flip profit)',
                 type: 'checkbox',
                 default: true,
-                help: 'Passively records every fill on your own listings (partial fills included) and adds a "Ledger" tab to the marketplace showing per-item realized profit — sells matched against your average recorded buy cost, proceeds net of the market tax — with weekly totals and CSV export.',
+                help: 'Records every fill on your own listings (partial fills included) and adds a Ledger tab to the marketplace with per-item realized profit (sells matched against your average buy cost, net of market tax), weekly totals and CSV export.',
             },
             market_staleCapital: {
                 id: 'market_staleCapital',
@@ -2067,7 +2053,7 @@ export const settingsGroups = {
                 label: 'Market: Show overbid table',
                 type: 'checkbox',
                 default: true,
-                help: 'Opens a small movable, minimizable table when a listing of yours is beaten (a sell listing with a cheaper ask in front of it, a buy order with a higher bid in front of it), listing only those items with the price that beats you and your own price. The item name opens its marketplace page. It uses the market data this script already holds, with the same freshness rule as the undercut notification (figures older than 15 minutes are ignored), and closes when nothing is beaten. On its own it makes no requests. If \u201cMarket: Price history panel\u201d is on, it also uses pooled market history to judge items whose game data is old, which asks the server chosen in \u201cMarket: Price history data source\u201d (q7.nainai.eu.org for mooket II, the default; mooket.qi-e.top for mooket I) about the items you have listed; the price history setting is the opt-in, and with it off nothing leaves your machine. Separate from the notification.',
+                help: 'Opens a small movable table when a listing of yours is beaten, showing the price that beats you and your own; the item name opens its marketplace page. Same market data and 15-minute freshness as the undercut notification. With "Market: Price history panel" on, it also asks the "Market: Price history data source" server (q7.nainai.eu.org for mooket II, the default; mooket.qi-e.top for mooket I) about your listed items.',
             },
             market_listingPricePrecision: {
                 id: 'market_listingPricePrecision',
@@ -2091,33 +2077,28 @@ export const settingsGroups = {
                     { value: 'orderBook', label: 'Order book only' },
                     { value: 'both', label: 'Both' },
                 ],
-                help:
-                    'How old each listing is, on the order book (estimated from listing IDs) and/or on My Listings. ' +
-                    'The My Listings side adds two columns: "Listed", the exact age of your own listing, and "Top ' +
-                    'Order Age", the estimated age of the top competing order — both live in the table that "Market: ' +
-                    'Show prices on individual listings" builds, so that setting has to be on for either to appear. ' +
-                    'The format below applies to every one of them.',
+                help: 'Shows how old each listing is, on the order book (estimated from listing IDs) and/or on My Listings, where it adds "Listed" and "Top Order Age" columns. Those columns live in the table built by "Market: Show prices on individual listings", so that setting must be on. The format below applies to all of them.',
             },
             market_badgeOnlyWhenFinished: {
                 id: 'market_badgeOnlyWhenFinished',
                 label: 'Market: Sidebar badge only for finished listings',
                 type: 'checkbox',
                 default: false,
-                help: 'The game badges Marketplace in the sidebar the moment anything is collectable, including a buy order that has taken 30 of 200 units and is still working — collecting those 30 does nothing except silence the badge until the next fill. This limits the sidebar badge to listings that have finished: filled completely, or cancelled and holding a refund. The badge on the My Listings tab is left alone, since once you are in the marketplace knowing there is something to collect is useful.',
+                help: 'Limits the Marketplace sidebar badge to finished listings (filled completely, or cancelled and holding a refund), instead of the game badging anything collectable, such as a partly filled buy order. The badge on the My Listings tab is left alone.',
             },
             market_pooledHistory: {
                 id: 'market_pooledHistory',
                 label: 'Market: Price history panel',
                 type: 'checkbox',
                 default: false,
-                help: 'Adds a History tab to the marketplace: a floating chart of an item\’s ask, bid, average traded price and volume over the last day to six months, plus a row of pinned items. The game shows what an item costs now and nothing about what it cost before, which makes every price impossible to judge. The data comes from the pooled dataset the mooket project (by Q7, MIT) maintains at q7.nainai.eu.org. This talks to a third party in both directions and is off until you turn it on: it tells that server which items you look up, and it sends back the order books you open, which is where the history you read comes from \u2014 reading a pooled dataset without feeding it is what empties it.',
+                help: "Adds a History tab to the marketplace: a floating chart of an item's ask, bid, average traded price and volume over the last day to six months, plus pinned items. Uses the pooled dataset the mooket project (by Q7, MIT) maintains at q7.nainai.eu.org. Off until you turn it on: it tells that server which items you look up and sends back the order books you open.",
             },
             market_volumeStats: {
                 id: 'market_volumeStats',
                 label: 'Market: 1d/3d/5d trade stats on the order book',
                 type: 'checkbox',
                 default: true,
-                help: 'Pins a small table to the current-item card on the order book: average price, median price, volume and an estimated buy/sell split over the last 1, 3 and 5 days. Ported from the "交易量显示" (Trade Volume Display) userscript by baozhi & SukiSukiDaiSuki (greasyfork.org/en/scripts/570243, CC-BY-NC-SA-4.0). Reads through the same pooled dataset as "Market: Price history panel" above — this setting does nothing unless that one is also on, since the data comes from the same third-party server.',
+                help: 'Pins a table to the current-item card on the order book: average price, median price, volume and an estimated buy/sell split over the last 1, 3 and 5 days. Ported from the "交易量显示" (Trade Volume Display) userscript by baozhi & SukiSukiDaiSuki (CC-BY-NC-SA-4.0). Needs "Market: Price history panel" on.',
                 requires: 'market_pooledHistory',
             },
             market_historySource: {
@@ -2129,14 +2110,14 @@ export const settingsGroups = {
                     { value: 'mooket2', label: 'mooket II \u2014 Q7 (q7.nainai.eu.org)' },
                     { value: 'mooket1', label: 'mooket I \u2014 IOMisaka (mooket.qi-e.top)' },
                 ],
-                help: 'Which pooled server the price history, the pinned-item prices and the My Listings "Mooket Refresh" read from \u2014 and, since you feed the pool you read, the one your opened order books are contributed back to. mooket II (the default) carries ask, bid, average traded price and volume. mooket I is a separate community pool: it carries only ask and bid, so on it the chart\’s third line is a computed midpoint of the quotes (shown as "Mid", not a real traded average), there are no volume bars, and the goal planner\u2019s market-volume limits switch off (it has no volume to measure). Both are third parties and both are governed by the switch above.',
+                help: 'Which pooled server the price history, pinned-item prices and My Listings "Mooket Refresh" read from, and the one your opened order books are sent to. mooket II (default) has ask, bid, average traded price and volume. mooket I has only ask and bid: the chart\'s third line is a computed "Mid", with no volume bars, and the goal planner\'s volume limits switch off. Both are third parties, governed by the switch above.',
             },
             market_historyVolumeFromMooket2: {
                 id: 'market_historyVolumeFromMooket2',
                 label: 'Market: With mooket I, also fetch volume from mooket II (q7.nainai.eu.org)',
                 type: 'checkbox',
                 default: false,
-                help: 'Mooket I has no volume. With this on and mooket I picked above, each history lookup also asks mooket II (q7.nainai.eu.org) for the same item, enhancement level and range, and draws its trade volume under mooket I\u2019s prices, matched by hour. Prices stay mooket I\u2019s. This calls a second third-party server, so it is off until you turn it on: it tells q7.nainai.eu.org which items you look up (nothing is sent to it from your order books). If mooket II cannot be reached, mooket I\u2019s prices show with no volume, never a volume of zero. Does nothing while mooket II is the source, or while the price history panel is off.',
+                help: "With mooket I picked above, also asks mooket II (q7.nainai.eu.org) for trade volume and draws it under mooket I's prices. This calls a second third-party server, so it is off until you turn it on; it tells that server which items you look up. If it can't be reached, prices show with no volume, never zero.",
                 requires: 'market_pooledHistory',
             },
             market_historyBaseValue: {
@@ -2144,7 +2125,7 @@ export const settingsGroups = {
                 label: "Price history: show the game's base value in the chart tooltip",
                 type: 'checkbox',
                 default: true,
-                help: "Adds a “Base value” line to the price history chart tooltip: the game's base market value for that day (the median of the day's readings on the longer ranges). Shown only when the history server sends it; older data shows nothing. Needs the price history panel.",
+                help: 'Adds a "Base value" line to the price history chart tooltip: the game\'s base market value for that day (the median of the day\'s readings on longer ranges). Shown only when the history server sends it. Needs the price history panel.',
                 requires: 'market_pooledHistory',
             },
             market_listingAgeFormat: {
@@ -2222,11 +2203,7 @@ export const settingsGroups = {
                 label: 'Market: Show enhance-to-sell Profit/h on enhanced order books',
                 type: 'checkbox',
                 default: true,
-                help:
-                    'On the order book of an enhanced (+1 and up) item, adds a Profit/h column to the sell listings: ' +
-                    "the profit per hour of enhancing the base item to that level yourself and selling it at that row's " +
-                    'ask after tax. Cost and time come from the enhancement calculator with your own enhancing stats ' +
-                    'and the cheapest protection strategy. Hover a value for the breakdown.',
+                help: "On the order book of an enhanced (+1 and up) item, adds a Profit/h column to sell listings: profit per hour of enhancing the base item to that level yourself and selling at that row's ask after tax. Uses your own enhancing stats and the cheapest protection strategy; hover for the breakdown.",
             },
         },
     },
@@ -3854,13 +3831,7 @@ export const settingsGroups = {
                     { value: '90', label: '90%' },
                     { value: '95', label: '95%' },
                 ],
-                help:
-                    'How many fights the zone estimates (the zone line on a combat task card and the Zone Task ' +
-                    'Progress rows in Task Statistics) plan for. At 90% the slowest task in the zone is finished ' +
-                    'by then nine times in ten; the median is shown on hover. Go on a zone task card and a zone ' +
-                    'row fill in the larger of this figure and the zone padded by the Combat pre-fill ' +
-                    'confidence setting (with the Go count buffer as a floor), so they never fill less than ' +
-                    'either.',
+                help: "How many fights the zone estimates (the zone line on a combat task card and Task Statistics' Zone Task Progress rows) plan for. At 90% the slowest task in the zone is finished by then nine times in ten; the median shows on hover. Go and zone rows fill in the larger of this and the zone padded by Combat pre-fill confidence (Go count buffer as floor).",
             },
             taskEfficiencyRating: {
                 id: 'taskEfficiencyRating',
@@ -3990,7 +3961,7 @@ export const settingsGroups = {
                 label: 'Show per-zone combat task progress in task statistics',
                 type: 'checkbox',
                 default: false,
-                help: 'Adds a Zone Task Progress section to the Task Statistics popup: for each zone with active combat tasks, the fights and time needed to clear them and the slowest monster. Runs one combat simulation per zone each time the popup opens; click a zone to open it with the fight count filled in.',
+                help: 'Adds a Zone Task Progress section to Task Statistics: per zone with active combat tasks, the fights and time to clear them and the slowest monster. Runs one combat simulation per zone each time the popup opens; click a zone to open it with the fight count filled in.',
             },
             taskClaimCollector: {
                 id: 'taskClaimCollector',
@@ -4029,14 +4000,7 @@ export const settingsGroups = {
                     { value: 'game', label: 'The tier selected in the game' },
                     { value: 'best', label: 'Best Score (simulates every tier)' },
                 ],
-                help:
-                    'Which difficulty tier a combat task estimate simulates and Go opens the zone at. "The tier ' +
-                    'selected in the game" uses the tier the zone\'s own Difficulty box already has (T0 if you have ' +
-                    'never picked one), and Go never changes it. "Best Score" simulates every tier of the zone and ' +
-                    'picks the best Combat Sim Score (XP/hr and Profit/day, ladder position), leaving out tiers where ' +
-                    'you die or never kill the task monster; Go then sets the box to that tier. It runs one ' +
-                    'simulation per tier, so estimates take several times longer. Task Statistics zone rows always ' +
-                    'use the tier selected in the game.',
+                help: 'Which difficulty tier combat task estimates simulate and Go opens the zone at. "The tier selected in the game" uses the zone\'s own Difficulty box; Go never changes it. "Best Score" simulates every tier, picks the best Combat Sim Score (skipping tiers where you die or never kill the task monster) and Go sets the box to it; estimates take several times longer.',
             },
             taskCombatGoBuffer: {
                 id: 'taskCombatGoBuffer',
@@ -4057,11 +4021,7 @@ export const settingsGroups = {
                 default: 90,
                 min: 0,
                 max: 99,
-                help:
-                    'How often a pre-filled fight count — the task Go button and the Bestiary plan both — should ' +
-                    'actually be enough. At 90 you finish the kills you were after nine runs in ten instead of ' +
-                    'roughly half of them. Small targets get padded much harder than large ones, because that is ' +
-                    'where luck actually swings the result. 0 turns it off and leaves only the flat buffer above.',
+                help: 'How often a pre-filled fight count (task Go button and Bestiary plan) should actually be enough. At 90 you finish the kills nine runs in ten instead of roughly half. Small targets are padded much harder than large ones. 0 turns it off, leaving only the flat buffer above.',
             },
             taskRerollProtection: {
                 id: 'taskRerollProtection',
@@ -4099,12 +4059,7 @@ export const settingsGroups = {
                 label: 'Reroll walk: step through the board one click at a time',
                 type: 'checkbox',
                 default: false,
-                help:
-                    'Adds a floating Reroll walk panel to the Tasks page (and a 🎲 in the task panel header to ' +
-                    'show or hide it). It works down the board using your protection list and that popup’s ' +
-                    '"Block rerolls at" thresholds, and tells you what the next click will do — nothing happens ' +
-                    'until you press it. One click is always exactly one game action: the walk never chains ' +
-                    'clicks, never runs on a timer, and stops the moment a card is not what it planned for.',
+                help: 'Adds a floating Reroll walk panel to the Tasks page (and a 🎲 in the task panel header to show or hide it). It works down the board using your protection list and "Block rerolls at" thresholds and tells you what the next click will do. One click is always exactly one game action; it never chains clicks or runs on a timer.',
             },
             tasks_rerollWalkCurrency: {
                 id: 'tasks_rerollWalkCurrency',
@@ -4134,13 +4089,7 @@ export const settingsGroups = {
                 label: 'Tasks: walk several tasks that share a crafting chain as one',
                 type: 'checkbox',
                 default: false,
-                help:
-                    'Adds a “Merged crafting walk” button to the task panel header. It plans each ' +
-                    'production task on the board, groups the ones whose chains share a craft step, and ' +
-                    'offers one guided walk per group — naming the tasks it covers and how many steps the ' +
-                    'merge saves. A shared intermediate is then crafted once at the combined count instead ' +
-                    'of twice at two part-counts. The walk is the same one the crafting plan uses: it opens ' +
-                    'each step and fills in the count, and never presses the button.',
+                help: 'Adds a "Merged crafting walk" button to the task panel header. It groups production tasks whose chains share a craft step and offers one guided walk per group, naming the tasks and the steps the merge saves, so a shared intermediate is crafted once at the combined count. Opens each step and fills in the count; never presses the button.',
             },
             tasks_rerollWalkTrashAtLimit: {
                 id: 'tasks_rerollWalkTrashAtLimit',
@@ -4612,7 +4561,7 @@ export const settingsGroups = {
                 label: 'Guild Overview: Show idle members list',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays a list of guild members with no action running on the Guild Overview tab (actions keep running while offline, so offline members without one count too — shown dimmed). Members hiding their online status are included; only their action state is shown, never their presence.',
+                help: 'Shows a list of guild members with no action running on the Guild Overview tab; offline members without one count too (shown dimmed). Members hiding their online status are included, but only their action state is shown, never their presence.',
             },
             guildTrialSignupDisplay: {
                 id: 'guildTrialSignupDisplay',
@@ -4660,32 +4609,21 @@ export const settingsGroups = {
                 label: 'Guild Trials: Track trial combat per player (damage, healing, kills)',
                 type: 'checkbox',
                 default: true,
-                help:
-                    'Reads the trial fight stream the In Progress fight view subscribes to and splits it per ' +
-                    'player. Turning it off stops that at once, without a reload: an open recording is closed and ' +
-                    'filed, the live figures are dropped, and nothing more is read until it is turned back on.',
+                help: 'Reads the trial fight stream from the In Progress fight view and splits damage, healing and kills per player. Turning it off stops that at once, no reload: an open recording is filed and the live figures are dropped.',
             },
             guildTrialBossDebuffs: {
                 id: 'guildTrialBossDebuffs',
                 label: 'Guild Trials: Show debuff timers on the trial boss',
                 type: 'checkbox',
                 default: true,
-                help:
-                    'Draws the debuffs the party has on the boss, with a countdown, on the boss tile in the In ' +
-                    'Progress fight view. The trial stream carries no buff state, so a timer starts when a ' +
-                    'debuffing ability is seen to hit, for the duration the game data gives it; a stun is shown ' +
-                    'for as long as the stream says the boss is stunned.',
+                help: 'Shows the debuffs the party has on the boss, with a countdown, on the boss tile in the In Progress fight view. The stream carries no buff state, so timers start when a debuffing ability is seen to hit; a stun lasts as long as the stream says the boss is stunned.',
             },
             guildTrialPackUnits: {
                 id: 'guildTrialPackUnits',
                 label: 'Guild trials: keep party players in a fixed order and wrap extras under your card',
                 type: 'checkbox',
                 default: true,
-                help:
-                    'The game reshuffles the trial party at some tier changes, so players jump around. This keeps ' +
-                    'each one in the same place: in a combat trial grouped by signed-up role (tank, support, ' +
-                    'damage dealer, then no role), then by name; in a skilling trial by name. Players that do not ' +
-                    'fit beside your card go in rows under it. Normal party fights are left as the game draws them.',
+                help: "Keeps trial party members in a fixed order (combat: by role, then name; skilling: by name) so they stop jumping around at tier changes. Players who don't fit beside your card wrap into rows under it.",
             },
             guildTrialAutoRecord: {
                 id: 'guildTrialAutoRecord',
@@ -4702,21 +4640,14 @@ export const settingsGroups = {
                 label: 'Guild Trials: Open the trial damage board when a trial fight starts',
                 type: 'checkbox',
                 default: false,
-                help:
-                    'Pops the per-player damage board open the moment a trial fight starts being watched, once ' +
-                    'per trial — closing it during that trial keeps it closed until the next one, reloads ' +
-                    'included. A button beside the guild panel’s own tabs opens or closes it by hand at any time.',
+                help: "Opens the per-player damage board when a trial fight starts being watched, once per trial; closing it keeps it closed until the next trial, reloads included. A button beside the guild panel's tabs opens or closes it by hand.",
             },
             guildTrialDiagnosticTrace: {
                 id: 'guildTrialDiagnosticTrace',
                 label: 'Guild Trials: Keep a raw diagnostic trace of trial combat',
                 type: 'checkbox',
                 default: false,
-                help:
-                    'Records every trial battle message exactly as it arrives, for exporting as a file an external ' +
-                    'reviewer can reconstruct the fight from. The file is large — an hour of the spectator stream ' +
-                    'is thousands of ticks — and it contains raw combat data, including participant names. ' +
-                    'Nothing is uploaded anywhere; the trace lives in memory until you export or clear it.',
+                help: 'Records every trial battle message as it arrives, for exporting as a file a reviewer can reconstruct the fight from. The file is large (thousands of ticks an hour) and includes participant names. Nothing is uploaded; the trace stays in memory until you export or clear it.',
             },
             guildTrialsBuildersHallBonus: {
                 id: 'guildTrialsBuildersHallBonus',
@@ -4783,16 +4714,7 @@ export const settingsGroups = {
                 type: 'number',
                 default: 1,
                 min: 0,
-                help:
-                    'Guild tokens are never listed on the market, so they are priced through the Guild Shop ' +
-                    'exchange instead: credits per token × the gold value of a credit, taking whichever credit ' +
-                    'color yields the most gold. This number is now the last resort. Opening a Guild Shop ' +
-                    'exchange dialog with a Guild Token selected reads that color’s real rate off the screen ' +
-                    'and remembers it, and client data wins over even that — so in normal play the live rate is ' +
-                    'what gets used and this setting is never consulted. It only stands in before any dialog ' +
-                    'has been opened, and every figure derived from it is labelled “assumed rate”. Run ' +
-                    'Toolasha.debug.tokenExchange() in the console to see every color’s rate and which one was ' +
-                    'picked. Set to 0 to leave tokens unpriced, as they were before.',
+                help: 'Guild tokens aren\'t on the market, so they are priced through the Guild Shop exchange: credits per token × the gold value of a credit. This number is only the last resort, used before any exchange dialog has been opened with a Guild Token selected; figures from it say "assumed rate". Set to 0 to leave tokens unpriced.',
             },
             guildCreditValue: {
                 id: 'guildCreditValue',
@@ -4820,12 +4742,7 @@ export const settingsGroups = {
                 label: 'Guild Trials: Attendance ledger and roster composition planner',
                 type: 'checkbox',
                 default: true,
-                help:
-                    'Keeps a per-member tally of every trial recorded on this client — trials joined, share of ' +
-                    'damage, healing and damage taken, deaths and mana-starved time — for far longer than the ' +
-                    'four cycles the trials panel archives, and adds a Trial Ledger panel with a sortable table, a ' +
-                    'window selector, a CSV export and a pre-sign-up composition check against the kits already ' +
-                    'captured.',
+                help: "Keeps a per-member tally of every trial recorded on this client (trials joined, damage share, healing, damage taken, deaths, mana-starved time) for far longer than the trials panel's four cycles, with a Trial Ledger panel: sortable table, window selector, CSV export and a pre-sign-up composition check.",
             },
             guildRoster: {
                 id: 'guildRoster',
@@ -4953,7 +4870,7 @@ export const settingsGroups = {
                 label: 'Allow desktop notifications',
                 type: 'checkbox',
                 default: false,
-                help: 'Master switch for the desktop-notification channel. Ticking this asks the browser for permission — the ask happens here rather than at page load, because a prompt nobody expects is usually dismissed and a dismissed prompt is remembered. With this off, or permission refused, notifications still arrive as an in-page toast when the tab is visible and as a ❗ on the tab title when it is not.',
+                help: 'Master switch for desktop notifications; asks the browser for permission when you tick it. With this off or permission refused, notifications still show as an in-page toast, and as a ❗ on the tab title when the tab is hidden.',
             },
             notifiEmptyAction: {
                 id: 'notifiEmptyAction',
@@ -4967,56 +4884,56 @@ export const settingsGroups = {
                 label: 'Notify when drinks are running low',
                 type: 'checkbox',
                 default: false,
-                help: 'Fires when the soonest drink to run out falls below the "Drink timer: warning threshold (hours)" setting — the same crossing that turns the drink timer amber. Once per crossing, and it re-arms when you restock above the threshold. Requires the Drink Timer feature, and reads the drink slots of the skill you are currently performing plus any skill panel you have open.',
+                help: 'Notifies when the soonest drink to run out falls below the "Drink timer: warning threshold (hours)" setting, once per crossing; restocking re-arms it. Requires the Drink Timer feature. Covers the skill you are performing and any skill panel you have open.',
             },
             notifications_marketListingFilled: {
                 id: 'notifications_marketListingFilled',
                 label: 'Notify when a market listing finishes',
                 type: 'checkbox',
                 default: false,
-                help: 'Keys on the count of finished listings going up — an order that filled completely, or a cancelled one holding a refund. An order still partly filling is not counted, because collecting it achieves nothing. Same rule as the Marketplace badge filter, and works whether or not that filter is on.',
+                help: "Notifies when the count of finished listings goes up: an order that filled completely, or a cancelled one holding a refund. Partly filled orders don't count. Works whether or not the Marketplace badge filter is on.",
             },
             notifications_marketListingUndercut: {
                 id: 'notifications_marketListingUndercut',
                 label: 'Notify when a market listing of yours is undercut',
                 type: 'checkbox',
                 default: false,
-                help: 'Compares each active sell listing of yours against the current best ask for that item and enhancement level, and each buy order against the best bid — a strictly better price than yours means you have been beaten; matching the best price is still competitive and says nothing. The figures come from the market data this script already holds, which can be up to 15 minutes old: the message carries the age of the figure it used, and data older than that — or an item with no cached price at all — is treated as unknown rather than as an undercut. Once per listing per undercut, re-arming when you reprice the listing or your price is the best again.',
+                help: 'Notifies when a sell listing of yours has a cheaper best ask in front of it, or a buy order has a higher best bid (matching your price is not an undercut). Uses cached market data up to 15 minutes old; items with older or no price are skipped. Once per listing per undercut; re-arms when you reprice.',
             },
             notifications_savingsGoalReached: {
                 id: 'notifications_savingsGoalReached',
                 label: 'Notify when a savings goal becomes affordable',
                 type: 'checkbox',
                 default: false,
-                help: 'Fires the first time a target on the Equipment Savings list — a piece of gear, an ability level or a house room — costs less than what you can spend, using exactly the figures that panel draws (trade-in value of the piece you are replacing, market orders counted or not per your setting, crafts costed from their inputs). Prices come from the market data this script already holds, so the message carries the age of the figures behind the cost and says outright when they are older than the 15-minute cache window. Once per goal, re-arming when you spend back below the cost, when a price puts it out of reach again, or when you change the target. A goal you reached by levelling up or building rather than buying is skipped rather than announced.',
+                help: 'Notifies the first time a target on the Equipment Savings list (gear, ability level or house room) costs less than what you can spend, using the same figures that panel shows. The message states the age of the prices. Once per goal; re-arms when you spend back below the cost or change the target. Goals reached by leveling or building are skipped.',
             },
             notifications_priceTargetReached: {
                 id: 'notifications_priceTargetReached',
                 label: 'Notify when a watchlist price target is reached',
                 type: 'checkbox',
                 default: false,
-                help: 'Fires when a pinned item on the price history panel reaches the target you set on its chip — an ask target when somebody is selling at or under your price, a bid target when somebody is buying at or above it. Set one with the ◎ button on the chip; it opens seeded with the current price, so a click and Enter is enough. The evidence is the pooled price history dataset, which is the only source that dates a sighting honestly, so this needs "Price history panel (pooled data)" switched on — with it off there is nothing to compare against and the alert stays silent. A sighting older than 15 minutes fires nothing, and the message says how old the one it used actually was. Once per target, re-arming when a fresh sighting puts the price back on the other side of it or when you change the target.',
+                help: 'Notifies when a pinned item on the price history panel reaches the target you set with the ◎ button on its chip (an ask at or under your price, or a bid at or above it). Needs "Price history panel (pooled data)" on. Sightings older than 15 minutes fire nothing. Once per target; re-arms when the price moves back or you change the target.',
             },
             notifications_otherCharacterIdle: {
                 id: 'notifications_otherCharacterIdle',
                 label: 'Notify when another character has run out of queue',
                 type: 'checkbox',
                 default: false,
-                help: 'Projected, not observed. Each other character queue is captured when you switch away from it, and this fires once that much time has elapsed — it cannot see a character while you are not logged into it, so anything queued there from elsewhere is invisible to it. Characters with an unbounded action queued are skipped, and a character is announced again only after you next switch away from it.',
+                help: "Projected, not observed: each other character's queue is captured when you switch away from it, and this fires when that much time has passed. Characters with an unbounded action are skipped, and queues changed from elsewhere are invisible. Announced again only after you next switch away.",
             },
             notifications_labyrinthRunFinished: {
                 id: 'notifications_labyrinthRunFinished',
                 label: 'Notify when the labyrinth stops',
                 type: 'checkbox',
                 default: false,
-                help: "Keys on your current action leaving the labyrinth — the queued rooms ran out, or the run ended on a lost fight — and moving on to whatever was queued next, or to nothing. Read off the action queue rather than the run's active flag, because a run whose path has been walked stays active while you wander off, and that is the moment to queue more rooms. Reports the deepest floor reached and what the character is doing instead; it cannot say why, since the payload carries no reason. Once per stop; queuing the labyrinth again re-arms it.",
+                help: 'Notifies when your current action leaves the labyrinth: the queued rooms ran out or a fight was lost. Reports the deepest floor reached and what the character is doing instead (no reason is available). Once per stop; queuing the labyrinth again re-arms it.',
             },
             notifications_combatConsumableLow: {
                 id: 'notifications_combatConsumableLow',
                 label: 'Notify when a combat consumable is running low',
                 type: 'checkbox',
                 default: false,
-                help: "Fires when the soonest food or drink in your current fight to run out falls under the hours below — the same 'stops in …' reading the Consumables panel shows for your character. Your own slots only. Once per crossing; restocking back above the threshold re-arms it.",
+                help: "Notifies when the soonest food or drink in your current fight falls under the hours below, the same 'stops in …' reading as the Consumables panel. Your own slots only; once per crossing, and restocking re-arms it.",
             },
             notifications_combatConsumableLowHours: {
                 id: 'notifications_combatConsumableLowHours',
@@ -5030,42 +4947,42 @@ export const settingsGroups = {
                 label: 'Notify when a labyrinth entry regenerates',
                 type: 'checkbox',
                 default: false,
-                help: 'The Labyrinth holds up to five entries and regenerates one on a cooldown (a couple of days, less with cooldown upgrades). Fires when the stock rises — the server pushes the new count — or when the projected regeneration instant passes on an open tab, computed from lastLabyrinthTimestamp + labyrinthCooldownHours. Once per regeneration; a full stock is announced once so a regenerated entry does not sit wasted at the cap.',
+                help: 'The Labyrinth holds up to five entries and regenerates one on a cooldown. Notifies when the stock rises, or when the projected regeneration time passes on an open tab. Once per regeneration; a full stock is announced once.',
             },
             notifications_combatDeath: {
                 id: 'notifications_combatDeath',
                 label: 'Notify when you die in combat',
                 type: 'checkbox',
                 default: false,
-                help: 'Fires the moment your own character dies, read off your combat tick (HP reaching 0) — not when you respawn. Your deaths only, not the party’s. If a tick was missed (a throttled background tab), the server’s own death count rising on a later battle announces it instead; a death is never announced twice. One message per cooldown rather than one per death, so a zone that is killing you repeatedly says so once. Deaths that happened before you switched this on are not announced.',
+                help: "Notifies the moment your own character dies in combat (not the party's, and not on respawn). One message per cooldown, so a zone that keeps killing you says so once. Deaths from before you switched this on are not announced; a missed tick is caught from the server's death count.",
             },
             notifications_partyStatus: {
                 id: 'notifications_partyStatus',
                 label: 'Notify when your party starts or stops fighting',
                 type: 'checkbox',
                 default: false,
-                help: 'Fires when the party you are in goes into a fight or comes out of one, read off the party status messages the game sends, so it works whoever started or ended it. It cannot say why a party stopped — the message carries a status and no reason. Only a real change is announced: the first party status the tab sees after a login or a character switch is the game reporting where things stand, not a change, so a party that was already fighting when you arrived says nothing, and neither does a start that is the very first status the tab has seen. Your own party only; once per change.',
+                help: 'Notifies when your party starts or stops fighting, whoever started it; no reason is given. Only real changes count: a party already fighting when you log in or switch character says nothing. Your own party only; once per change.',
             },
             notifications_skillLevelUp: {
                 id: 'notifications_skillLevelUp',
                 label: 'Notify when you hit a skill milestone',
                 type: 'checkbox',
                 default: false,
-                help: 'Fires on the skill milestones the game broadcasts to guild chat as “… has reached level …” (100, 105, and so on) — not every single level. It keys off that broadcast itself (the structured system message, not the scraped sentence) and announces only the one whose subject is your character, so it needs a guild and guild chat coming through. One message per milestone.',
+                help: 'Notifies on the skill milestones the game broadcasts to guild chat as "… has reached level …" (100, 105, and so on), only for your own character. Needs a guild and guild chat coming through. One message per milestone.',
             },
             notifications_ttlTargetReached: {
                 id: 'notifications_ttlTargetReached',
                 label: 'Notify when a skill reaches its Time to Level target',
                 type: 'checkbox',
                 default: false,
-                help: 'Reads the target level you set in the Time to Level tile (the Combat Level panel selection) and says so once the skill reaches it. Only a target you actually chose counts — the tile’s default “next level” is left to the level-up notification. Re-arms when you pick a new target; a target already passed when you switched this on is not announced.',
+                help: 'Notifies once a skill reaches the target level you set in the Time to Level tile (Combat Level panel). Only a target you chose counts; the default "next level" is left to the level-up notification. Re-arms on a new target; a target already passed when you switched this on is not announced.',
             },
             notifications_bestiaryPointsTarget: {
                 id: 'notifications_bestiaryPointsTarget',
                 label: 'Notify when your Bestiary points reach a target',
                 type: 'checkbox',
                 default: false,
-                help: 'Fires once when your total Bestiary points first reach the target. Set the target for the current character with the "Notify me at N points" button under the Bestiary plan in the combat simulator (it also turns this on), or give every character without one the default below. The game only sends the Bestiary when something asks for it, and this never asks: open Achievements once (or run the combat sim) to start tracking. Between those readings your points are estimated from the kills it sees, and a crossing found that way says "about"; the next real reading corrects the estimate. A target already reached when the page loads is not announced; raising it re-arms the alert.',
+                help: 'Notifies once when your total Bestiary points reach the target. Set it per character with "Notify me at N points" under the Bestiary plan in the combat simulator, or use the default below. Open Achievements once (or run the combat sim) to start tracking; estimates between readings say "about".',
             },
             notifications_bestiaryPointsTargetDefault: {
                 id: 'notifications_bestiaryPointsTargetDefault',
@@ -5080,7 +4997,7 @@ export const settingsGroups = {
                 label: 'Notify when an item reaches its enhancement target',
                 type: 'checkbox',
                 default: false,
-                help: 'Reads the “enhance until +N” you set in the game’s own enhancing panel, and the level the item is at after each attempt — so it works whether or not the Enhancement Tracker is on. Nothing is announced when no target is set, since there is no ending to announce. Once per item and target, re-arming when that item is seen below the target again.',
+                help: 'Notifies when an item reaches the "enhance until +N" you set in the game\'s enhancing panel; works with the Enhancement Tracker on or off. Nothing is announced when no target is set. Once per item and target; re-arms when the item is seen below the target again.',
             },
             notifications_philosophersStone: {
                 id: 'notifications_philosophersStone',
@@ -5094,7 +5011,7 @@ export const settingsGroups = {
                 label: 'Notify when a guild trial is about to start',
                 type: 'checkbox',
                 default: false,
-                help: 'The guild panel states the next trial’s schedule (“Scheduled Wed 04:00 PM 2h 24m”). This announces it once the countdown is inside the lead time below, and again the moment the trial actually starts. The countdown is only read while the guild panel is open — no socket message carries a trial schedule.',
+                help: "Notifies when the next guild trial's countdown is inside the lead time below, and again when it starts. The schedule is only read while the guild panel is open.",
             },
             notifications_trialStartLeadMinutes: {
                 id: 'notifications_trialStartLeadMinutes',
@@ -5128,7 +5045,7 @@ export const settingsGroups = {
                 label: 'Notify before your task slots fill up',
                 type: 'checkbox',
                 default: false,
-                help: 'A task that arrives with no free slot is simply not given — there is no queue behind the board. This projects when the last free slot fills, from the server’s own slot cap, task cooldown and last-task time, so it works with the task panel closed. It is a projection, not an observation: it assumes the cadence holds and that nothing frees a slot in the meantime, and it can only be as fresh as the last message the game sent this tab. Completing, claiming or discarding a task moves the deadline and re-arms the warning. A board that is already full says so once.',
+                help: 'Warns before your last free task slot fills (a task that arrives with no free slot is simply not given). Works with the task panel closed. A projection, not an observation: it assumes the cadence holds. Completing, claiming or discarding a task re-arms it; an already full board says so once.',
             },
             notifications_taskSlotsLeadHours: {
                 id: 'notifications_taskSlotsLeadHours',
@@ -5144,7 +5061,7 @@ export const settingsGroups = {
                 label: 'Notify before a community buff expires',
                 type: 'checkbox',
                 default: false,
-                help: 'Reads the expiry the server sends with each community buff, so the warning is timed off the real end of the buff rather than a countdown read from the screen. Fires once per expiry; a donation that extends a buff pushes the expiry out and arms the warning again for the new one. Use the per-buff switches below to pick which ones you care about.',
+                help: 'Warns before a community buff expires, timed off the real expiry the server sends. Once per expiry; a donation that extends a buff re-arms it. Pick which buffs count with the per-buff switches below.',
             },
             notifications_communityBuffLeadMinutes: {
                 id: 'notifications_communityBuffLeadMinutes',
@@ -5195,7 +5112,7 @@ export const settingsGroups = {
                 label: 'Digest mode: batch routine notices into one summary',
                 type: 'checkbox',
                 default: false,
-                help: 'Holds low-urgency notices back and delivers them as one line every few minutes — "Market: 3 undercuts (Cheese, Milk, Flax) · Buffs: 1 lapsing" — instead of one toast each. Nothing is lost: every held notice is written to the Notices log individually as it happens, and the categories on the critical allow-list below are never held. Changes only how you are told, never what you are told about.',
+                help: 'Holds low-urgency notices and delivers them as one summary line every few minutes (e.g. "Market: 3 undercuts (Cheese, Milk, Flax) · Buffs: 1 lapsing") instead of one toast each. Every held notice is still written to the Notices log, and critical categories are never held.',
             },
             notifications_digestMinutes: {
                 id: 'notifications_digestMinutes',
@@ -5218,14 +5135,14 @@ export const settingsGroups = {
                 label: 'Never delay or silence these categories (comma-separated)',
                 type: 'text',
                 default: 'combat, queue, consumables',
-                help: 'The allow-list that outranks both digest mode and quiet hours. Dying, running out of queue and running out of drinks are the things worth waking up for, so they interrupt regardless. Same category names as the digest list above; emptying this makes everything digestible and silenceable.',
+                help: 'The allow-list that outranks digest mode and quiet hours: dying, running out of queue and running out of drinks always get through. Uses the same category names as the digest list above; emptying it makes everything digestible and silenceable.',
             },
             notifications_quietHoursEnabled: {
                 id: 'notifications_quietHoursEnabled',
                 label: 'Quiet hours: no desktop notifications in a set window',
                 type: 'checkbox',
                 default: false,
-                help: 'Suppresses the desktop-notification channel between the two times below. Notices are still written to the Notices log, still counted on the overlay tile, and still shown in the page — a toast on a tab you are actively looking at is not what quiet hours are about. Categories on the critical allow-list are unaffected.',
+                help: 'Suppresses desktop notifications between the two times below. Notices still go to the Notices log, the overlay tile count and the in-page toast. Categories on the critical allow-list are unaffected.',
             },
             notifications_quietHoursStart: {
                 id: 'notifications_quietHoursStart',
