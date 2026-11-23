@@ -57,6 +57,7 @@ vi.mock('./action-panel-sort.js', () => ({
             if (world.gate) await world.gate;
         },
         clearAllPanels: () => {},
+        unregisterPanel: () => {},
     },
 }));
 vi.mock('./action-filter.js', () => ({ default: {} }));

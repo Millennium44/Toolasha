@@ -739,13 +739,14 @@ ${SELL_TAX_EXCLUDED_TOOLTIP}`
             }
             actionPanel.style.marginBottom = '';
             actionPanel.style.overflow = '';
+            // Only this module's panels: the sort manager is shared with max-produceable, whose
+            // production tiles must stay registered while it runs. The manager clears every panel
+            // on a character switch itself.
+            actionPanelSort.unregisterPanel(actionPanel);
         }
 
         // Clear all action element references (prevents detached DOM memory leak)
         this.actionElements.clear();
-
-        // Clear shared sort manager's panel references
-        actionPanelSort.clearAllPanels();
     }
 
     /**

@@ -41,10 +41,15 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
+const sortCalls = vi.hoisted(() => ({ cleared: 0, unregistered: [] }));
+
 vi.mock('./action-panel-sort.js', () => ({
     default: {
         initialize: async () => {},
-        clearAllPanels: () => {},
+        clearAllPanels: () => {
+            sortCalls.cleared++;
+        },
+        unregisterPanel: (panel) => sortCalls.unregistered.push(panel),
     },
 }));
 
@@ -78,5 +83,21 @@ describe('cleanup unregisters the setting-change listeners it registered', () =>
         expect(settingListeners.profitCalc_pricingMode).toHaveLength(1);
         expect(settingListeners.actionPanel_showProfitPerHour_gathering).toHaveLength(1);
         expect(settingListeners.actionPanel_showExpPerHour_gathering).toHaveLength(1);
+    });
+});
+
+describe('switching gathering stats off leaves other features’ sort panels alone', () => {
+    test('disable unregisters only its own panels, never the shared manager’s whole list', async () => {
+        sortCalls.cleared = 0;
+        sortCalls.unregistered = [];
+        await gatheringStats.initialize();
+        const ownPanel = document.createElement('div');
+        gatheringStats.actionElements.set(ownPanel, { displayElement: document.createElement('span') });
+
+        gatheringStats.disable();
+
+        expect(sortCalls.unregistered).toEqual([ownPanel]);
+        // clearAllPanels would also drop max-produceable's production tiles
+        expect(sortCalls.cleared).toBe(0);
     });
 });
