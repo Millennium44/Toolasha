@@ -2453,7 +2453,8 @@ class GuildCreditValue {
                 const note = document.createElement('div');
                 note.className = 'mwi-shrine-plan-needs-shrine';
                 note.style.cssText = 'font-size:10px; color:#fbbf24; white-space:normal; overflow-wrap:anywhere;';
-                note.textContent = `${plan.label} to ${plan.toLevel}: the guild's shrine is built to ${plan.builtLevel} and has to reach ${plan.toLevel} first.`;
+                const state = plan.builtLevel > 0 ? `is built to ${plan.builtLevel}` : 'is not built';
+                note.textContent = `${plan.label} to ${plan.toLevel}: the guild's shrine ${state} and has to reach ${plan.toLevel} first.`;
                 grossEl.appendChild(note);
             }
         }
@@ -2489,6 +2490,12 @@ class GuildCreditValue {
         // Single-level-ahead buys, filled by the per-shrine walk below
         const nextBuys = [];
 
+        // A level of 0 is "not built" only once some shrine's level has reached the client; with no
+        // building data at all it means "unknown", and nothing is claimed about the shrine
+        const shrineLevelsKnown = Object.keys(byShrine).some(
+            (shrineHrid) => dataManager.getGuildBuildingLevel(shrineHrid) > 0
+        );
+
         // Build rows per shrine
         for (const [shrineHrid, buffs] of Object.entries(byShrine).sort()) {
             const shrineLabel = SHRINE_LABELS[shrineHrid] || shrineHrid.split('/').pop();
@@ -2500,7 +2507,9 @@ class GuildCreditValue {
             const shrineTitleEl = document.createElement('div');
             shrineTitleEl.style.cssText =
                 'color:#c4b5fd; font-size:11px; font-weight:600; margin-bottom:3px; padding:2px 0;';
-            shrineTitleEl.textContent = `${shrineLabel} Shrine${shrineCapLevel > 0 ? ` (built to ${shrineCapLevel})` : ''}`;
+            const builtNote =
+                shrineCapLevel > 0 ? ` (built to ${shrineCapLevel})` : shrineLevelsKnown ? ' (not built)' : '';
+            shrineTitleEl.textContent = `${shrineLabel} Shrine${builtNote}`;
             shrineSection.appendChild(shrineTitleEl);
 
             for (const { buffHrid, buff } of buffs.sort((a, b) => a.buffHrid.localeCompare(b.buffHrid))) {
@@ -2515,7 +2524,9 @@ class GuildCreditValue {
                 const capLevel = Math.min(maxLevel, maxGuildShrineLevel());
                 // What the guild's shrine lets a member buy today. A target may go past it — the plan
                 // then says which shrine the guild has to build first — but a next buy may not.
-                const builtLevel = shrineCapLevel > 0 ? Math.min(shrineCapLevel, capLevel) : capLevel;
+                let builtLevel = capLevel;
+                if (shrineCapLevel > 0) builtLevel = Math.min(shrineCapLevel, capLevel);
+                else if (shrineLevelsKnown) builtLevel = 0;
 
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex; align-items:center; gap:6px; padding:2px 0; font-size:11px;';

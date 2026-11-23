@@ -1458,6 +1458,31 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         expect(nextBuyRows(modal).some((row) => row.textContent.includes('Rarity'))).toBe(false);
     });
 
+    test('a shrine at level 0 beside built ones is not built, and a target on it says so', () => {
+        game.buildingLevels = { '/guild_shrines/force': 10, '/guild_shrines/rarity': 5 };
+        const modal = openModal();
+        expect(modal.textContent).toContain('Tempo Shrine (not built)');
+        const input = inputFor(modal, TEMPO);
+        input.value = '2';
+        input.dispatchEvent(new Event('input'));
+
+        const notes = Array.from(modal.querySelectorAll('.mwi-shrine-plan-needs-shrine')).map((n) => n.textContent);
+        expect(notes).toEqual(["Tempo Skilling to 2: the guild's shrine is not built and has to reach 2 first."]);
+        expect(nextBuyRows(modal).some((row) => row.textContent.includes('Tempo'))).toBe(false);
+    });
+
+    test('with no shrine level known at all, nothing is claimed about any shrine', () => {
+        game.buildingLevels = {};
+        const modal = openModal();
+        expect(modal.textContent).not.toContain('not built');
+        const input = inputFor(modal, TEMPO);
+        input.value = '2';
+        input.dispatchEvent(new Event('input'));
+
+        expect(modal.querySelector('.mwi-shrine-plan-needs-shrine')).toBeNull();
+        expect(nextBuyRows(modal).some((row) => row.textContent.includes('Tempo'))).toBe(true);
+    });
+
     test('the total cost is the whole bill, with held credits not taken off', () => {
         game.inventory = [
             { itemHrid: '/items/guild_credit_1', count: 50, itemLocationHrid: '/item_locations/inventory' },
