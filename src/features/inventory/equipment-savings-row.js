@@ -141,6 +141,7 @@ import {
     migrateSavingsTargets,
 } from '../../utils/equipment-savings.js';
 import { ENHANCEMENT_SOLVER_MAX_LEVEL, maxEnhancementLevel, maxHouseRoomLevel } from '../../utils/game-maximums.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const MENU_BUTTON_CLASS = 'toolasha-savings-button';
 const MENU_BUTTON_SETTING = 'equipmentSavings_menuButton';
@@ -4982,6 +4983,11 @@ function applyMenuButtonSetting() {
 export default {
     name: 'Equipment Savings',
     initialize: () => {
+        registerCommand({
+            name: 'Equipment Watch',
+            hint: 'What each piece you are saving for costs, and how far along you are',
+            run: () => equipmentSavingsPanel.toggle(),
+        });
         applyMenuButtonSetting();
         // Registered fresh on every initialize() — and initialize() runs again
         // on every character switch, right after cleanup() — so this must be
@@ -4992,6 +4998,7 @@ export default {
         config.onSettingChange(MENU_BUTTON_SETTING, applyMenuButtonSetting);
     },
     cleanup: () => {
+        unregisterCommand('Equipment Watch');
         config.offSettingChange(MENU_BUTTON_SETTING, applyMenuButtonSetting);
         detachMenuObserver?.();
         detachMenuObserver = null;

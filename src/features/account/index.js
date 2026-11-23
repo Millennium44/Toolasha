@@ -60,11 +60,18 @@ export default {
             },
         });
 
+        registerCommand({
+            name: 'Account',
+            hint: 'Every character at once: networth, idle queues, goals',
+            run: () => accountPanel.toggle(),
+        });
+
         registerAccountRow();
     },
 
     cleanup: () => {
         unregisterCommand('Snapshot briefing now');
+        unregisterCommand('Account');
         accountPanel.hide({ remember: false });
         clearAccountCache();
     },

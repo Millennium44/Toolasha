@@ -229,6 +229,7 @@ import { scriptVersion } from '../../utils/script-version.js';
 import { stableStringify } from '../../utils/stable-stringify.js';
 import { isTestServer } from '../../utils/game-server.js';
 import { hashPlayerName } from './labyrinth-accuracy-export.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 /** Below this many fights the spread of the sample says nothing about the mean */
 export const MIN_SAMPLE_FIGHTS = 3;
@@ -4008,3 +4009,13 @@ export function dungeonWaveTiming({ recording, simResult } = {}) {
     }
     return { rows, summary };
 }
+
+// Module scope: the panel is opened from the row and has no initialize. Its own
+// draw says "switched off" when the setting is off, so the palette does not
+// offer it then.
+registerCommand({
+    name: 'Sim Accuracy',
+    hint: 'How closely the simulator reproduced a recorded fight',
+    run: () => replayCheckPanel.toggle(),
+    when: () => config.getSetting('replayCheck'),
+});

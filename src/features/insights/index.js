@@ -17,6 +17,7 @@ import { predictionCalibration } from './prediction-calibration.js';
 import { combatCalibration } from './combat-calibration.js';
 import { enhancementCalibration } from './enhancement-calibration.js';
 import { calibrationPanel, registerCalibrationRow, forgetAlchemySessions } from './calibration-panel.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 export { calibrationPanel, predictionCalibration, combatCalibration, enhancementCalibration };
 
@@ -34,9 +35,15 @@ export default {
             // feature off leaves no tile in the overlay and no entry in the
             // command palette
             registerCalibrationRow();
+            registerCommand({
+                name: 'Prediction Calibration',
+                hint: 'How far predicted rates were from what happened',
+                run: () => calibrationPanel.toggle(),
+            });
         }
     },
     cleanup: () => {
+        unregisterCommand('Prediction Calibration');
         combatCalibration.disable();
         predictionCalibration.disable();
         enhancementCalibration.disable();

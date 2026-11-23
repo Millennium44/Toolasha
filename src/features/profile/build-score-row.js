@@ -38,6 +38,7 @@ import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { calculateCombatScore } from './score-calculator.js';
 import { buildScorePanel, setScoreSource } from './build-score-panel.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 /** Equipment changes arrive in bursts — a loadout swap is one event per slot */
 const DEBOUNCE_MS = 3000;
@@ -393,6 +394,15 @@ registerRow({
             'Double-click for what the score is made of.';
     },
     onOpen: () => buildScorePanel.toggle(),
+});
+
+// Module scope, like the tile: there is no initialize. The score is not worked
+// out at all with the setting off, so the panel would have nothing to show.
+registerCommand({
+    name: 'Build Score',
+    hint: 'What your build score is made of',
+    run: () => buildScorePanel.toggle(),
+    when: () => config.getSetting('combatScore'),
 });
 
 export default buildScore;

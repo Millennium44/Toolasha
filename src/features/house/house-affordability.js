@@ -35,6 +35,7 @@ import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { roomSkill } from '../../utils/room-skills.js';
 import { GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 import { maxHouseRoomLevel } from '../../utils/game-maximums.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 const PANEL_ID = 'toolasha-houses-panel';
 /** Where this panel's size and position are remembered */
@@ -804,6 +805,13 @@ function housesVersion() {
     const levels = Object.entries(rooms).map(([hrid, room]) => `${hrid}:${room?.level || 0}`);
     return `${levels.join(',')}|${coinBalance()}|${[...untrackedRooms()].sort().join(',')}|${priceFeed}`;
 }
+
+// No lifecycle and no setting of its own, so on offer for the life of the tab
+registerCommand({
+    name: 'Houses',
+    hint: 'Every room, and what its next level costs',
+    run: () => housesPanel.toggle(),
+});
 
 registerRow({
     key: 'houses',

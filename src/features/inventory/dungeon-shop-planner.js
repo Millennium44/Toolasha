@@ -45,6 +45,7 @@ import {
     planTokenSpend,
     volumeCap,
 } from './dungeon-shop-plan.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /** The feature's switch; also gates the tooltip hint line */
 export const PLANNER_SETTING = 'dungeonShopPlanner';
@@ -111,6 +112,14 @@ class DungeonShopPlanner {
         this.generation = (this.generation || 0) + 1;
 
         this.autofill = createAutofillManager('DungeonShopPlanner');
+        // No token is asked for from the palette, so `open` falls back to the
+        // one the character holds most of — the same default the Shop button
+        // lands on when it has never been pressed
+        registerCommand({
+            name: 'Dungeon token spend plan',
+            hint: 'How to spend the dungeon tokens you hold, best first',
+            run: () => (this.panel?.isOpen?.() ? this.panel.hide() : this.open()),
+        });
         this.panel = createPanel({
             id: 'dungeon-shop-planner',
             title: 'Dungeon token spend plan',
@@ -129,6 +138,7 @@ class DungeonShopPlanner {
 
     /** Undo everything `initialize` did */
     cleanup() {
+        unregisterCommand('Dungeon token spend plan');
         for (const unregister of this.unregisters.splice(0)) {
             try {
                 unregister?.();

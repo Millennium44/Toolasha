@@ -35,6 +35,7 @@ import {
     arrangeRows,
     clearProductionArbitrageCache,
 } from './production-arbitrage.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /** The setting that turns the board on */
 export const ARBITRAGE_BOARD_SETTING = 'actions_arbitrageBoard';
@@ -144,6 +145,12 @@ class ProductionArbitrageBoard {
         if (!config.getSetting(ARBITRAGE_BOARD_SETTING)) return;
         this.initialized = true;
 
+        registerCommand({
+            name: 'Production Arbitrage',
+            hint: 'Production recipes ranked by what they earn over buying',
+            run: () => (this.panel?.isOpen?.() ? this.panel.hide() : this.open()),
+        });
+
         this.panel = createPanel({
             id: PANEL_ID,
             title: 'Production Arbitrage',
@@ -167,6 +174,7 @@ class ProductionArbitrageBoard {
     /** Feature-registry teardown */
     disable() {
         try {
+            unregisterCommand('Production Arbitrage');
             // Any ranking still in flight for the character this instance was
             // just serving is now stale — the panel it would render into is
             // about to be torn down, and a new one may be built for a

@@ -52,6 +52,7 @@ import {
     upgradeValue,
 } from '../../utils/charm-value.js';
 import { maxEnhancementLevel } from '../../utils/game-maximums.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 /**
  * Where the game keeps the equipped charm.
@@ -496,4 +497,11 @@ registerRow({
             '\nDouble-click for the whole family.';
     },
     onOpen: () => charmPanel.toggle(),
+});
+
+// Module scope: the panel has no lifecycle and its tile is ungated
+registerCommand({
+    name: 'Charms',
+    hint: 'Every tier of the charm you wear, and what each would cost',
+    run: () => charmPanel.toggle(),
 });

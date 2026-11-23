@@ -33,6 +33,7 @@ import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.j
 import { calculateTaskTokenValue, formatTokenFigure, valueTaskRewards } from './task-profit-calculator.js';
 import taskCompletionTracker from './task-completion-tracker.js';
 import taskStatistics from './task-statistics.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 /** The board's own token, for the icon */
 const TASK_TOKEN_HRID = '/items/task_token';
@@ -171,6 +172,13 @@ let priceFeed = 0;
 
 marketAPI.on(() => {
     priceFeed++;
+});
+
+// Module scope, like the tile it backs: no lifecycle and no setting of its own
+registerCommand({
+    name: 'Task Tokens statistics',
+    hint: 'Every task, what each pays, and the rate it is measured from',
+    run: () => toggleStatistics(),
 });
 
 registerRow({

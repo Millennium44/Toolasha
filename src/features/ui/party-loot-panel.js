@@ -36,6 +36,7 @@
  */
 
 import config from '../../core/config.js';
+import { registerCommand } from '../../utils/command-registry.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, shortDuration, ROW_COLORS, GLYPHS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
@@ -927,6 +928,15 @@ export const partyLootPanel = createPanel({
             )
         );
     },
+});
+
+// Module scope: the panel has no lifecycle. Gated on the Statistics setting its
+// overlay tile (the session timer) sits behind.
+registerCommand({
+    name: 'Party Loot',
+    hint: 'What everyone picked up, this run and earlier ones',
+    run: () => partyLootPanel.toggle(),
+    when: () => config.getSetting('combatStats', true),
 });
 
 export default partyLootPanel;

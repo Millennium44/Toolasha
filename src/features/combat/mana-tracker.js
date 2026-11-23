@@ -42,6 +42,7 @@ import {
 } from '../../utils/refused-casts.js';
 import { buildMpCandidates, findBestOptimAllocation, findMaxMpAllocation } from '../../utils/mp-optimizer.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 /** A rate over less wall-clock time than this is noise, not a measurement */
 const MIN_RATE_SPAN_MS = 60_000;
@@ -758,4 +759,12 @@ registerRow({
             '\nDouble-click for the breakdown by ability.';
     },
     onOpen: () => manaPanel.toggle(),
+});
+
+// Module scope, gated on the same setting `initialize` returns on
+registerCommand({
+    name: 'Mana',
+    hint: 'Mana spent this run and per ability',
+    run: () => manaPanel.toggle(),
+    when: () => config.getSetting('manaTracker'),
 });

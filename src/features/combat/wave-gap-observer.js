@@ -49,6 +49,7 @@ import { registerRow, TILE_CLASS } from '../../utils/overlay-rows.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { styleGameButton } from '../../utils/game-look.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 /** Where the tally lives */
 const STORAGE_KEY = 'waveGapTally';
@@ -520,3 +521,13 @@ registerRow({
 });
 
 export default waveGap;
+
+// Module scope, offered only while the watch itself is on: the panel is empty
+// and says so when it is not, and a diagnostic nobody switched on is not a
+// thing to list.
+registerCommand({
+    name: 'Wave Gap',
+    hint: 'What the wave-gap watch has recorded',
+    run: () => waveGapPanel.toggle(),
+    when: () => config.getSetting('waveGapWatch'),
+});

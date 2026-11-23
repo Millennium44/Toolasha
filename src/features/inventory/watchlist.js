@@ -70,6 +70,7 @@ import { combatZones, zoneDrops, openableItems, openableDrops } from '../../util
 import { registerRow } from '../../utils/overlay-rows.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const PANEL_ID = 'toolasha-watchlist-panel';
 const GEOMETRY_KEY = 'watchlistPanel';
@@ -1140,6 +1141,11 @@ export default {
         // checkbox did nothing
         if (!config.getSetting('watchlist')) return;
 
+        registerCommand({
+            name: 'Watchlist',
+            hint: 'Items you are tracking, with what each is worth now',
+            run: () => watchlistPanel.toggle(),
+        });
         inventoryBadgeManager.registerProvider('watchlist-dot', markTrackedItem, 150);
         applyMenuButtonSetting();
         unregisterSettingListeners = [
@@ -1159,6 +1165,7 @@ export default {
         ];
     },
     cleanup: () => {
+        unregisterCommand('Watchlist');
         unregisterSettingListeners.forEach((unregister) => unregister());
         unregisterSettingListeners = [];
         inventoryBadgeManager.unregisterProvider('watchlist-dot');

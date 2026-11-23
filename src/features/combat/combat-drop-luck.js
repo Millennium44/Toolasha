@@ -63,6 +63,7 @@ import { newKeyLedger, noteItems, sample, keyFlow, entryKeyFor } from '../../uti
 import { partyLevelGaps, isLevelGapped } from '../../utils/dungeon-level-gap.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { partyLuckPanel } from '../../utils/bundle-bridge.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
 import { ownPlayer } from '../../utils/combat-players.js';
 
@@ -174,6 +175,14 @@ class CombatDropLuck {
         if (!config.getSetting('combatDropLuck')) return;
         this.isInitialized = true;
 
+        // The panel lives in the same bundle but imports this module, so it is
+        // reached through the bridge, as the overlay row's onOpen does
+        registerCommand({
+            name: 'Party Luck',
+            hint: 'Every drop this run produced, against what it owed',
+            run: () => partyLuckPanel()?.toggle(),
+        });
+
         // The zone, the player's drop stats and the battle count are only on the
         // wire mid-combat. By the time the panel appears the action may be gone
         // from the character's list, so they are captured as they go past.
@@ -195,6 +204,7 @@ class CombatDropLuck {
 
     disable() {
         try {
+            unregisterCommand('Party Luck');
             if (this.newBattleHandler) {
                 webSocketHook.off('new_battle', this.newBattleHandler);
                 this.newBattleHandler = null;

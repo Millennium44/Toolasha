@@ -35,6 +35,7 @@ import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple
 import { registerRow } from '../../utils/overlay-rows.js';
 import { healthDeltas, createCombatLog } from '../../utils/combat-events.js';
 import { newAttributionState, noteActions, attributeTick } from '../../utils/damage-attribution.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 const FLOATING_SETTING = 'combatText_floating';
 const SCROLLING_SETTING = 'combatText_scrolling';
@@ -464,4 +465,13 @@ registerRow({
             '\nDouble-click for the whole log.';
     },
     onOpen: () => combatLogPanel.toggle(),
+});
+
+// Module scope: the panel has no lifecycle of its own. It draws from the
+// scrolling log, which only fills while that setting is on.
+registerCommand({
+    name: 'Combat Log',
+    hint: 'Every hit, heal and miss this fight, not just the last six',
+    run: () => combatLogPanel.toggle(),
+    when: () => config.getSetting(SCROLLING_SETTING),
 });

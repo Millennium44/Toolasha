@@ -31,6 +31,7 @@ import networthExclusionPopup from './networth-exclusion-popup.js';
 import { terminateItemValueWorkerPool } from '../../utils/networth-worker-manager.js';
 import { VALUATION_SETTINGS } from './networth-markers.js';
 import { GUILD_TOKEN_EXCHANGE_EVENT } from '../guild/guild-token-exchange-capture.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 /**
  * The settings that change what everything is worth, so a change re-prices the
@@ -406,6 +407,15 @@ async function openHistoryChart() {
         console.error('[Networth] Opening the history chart failed:', error);
     }
 }
+
+// Module scope like the row below, which is the chart's only other way in. The
+// history is recorded only while its setting is on.
+registerCommand({
+    name: 'Net worth history',
+    hint: 'Net worth over time, as a chart',
+    run: () => openHistoryChart(),
+    when: () => config.getSetting('networth_historyChart'),
+});
 
 // Registered at module scope so the overlay has the row regardless of start-up
 // order. Reads the value the feature last calculated rather than calculating:

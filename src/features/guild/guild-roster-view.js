@@ -44,6 +44,7 @@ import { describeLoadoutAge } from './guild-loadouts.js';
 import { aggregateGuildSkills, sortSkillRows } from './guild-skill-totals.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /** How many stat rows of a snapshot the roster panel shows before it stops */
 export const LOADOUT_PREVIEW_ROWS = 6;
@@ -908,6 +909,11 @@ export default {
     initialize: async () => {
         if (!config.getSetting('guildRoster', true)) return;
         registerGuildRosterRow();
+        registerCommand({
+            name: 'Guild Roster',
+            hint: "Every guildmate's output, and who has gone quiet",
+            run: () => guildRosterPanel.toggle(),
+        });
         // Idempotent, and the trials feature starts it too: either being on is
         // reason enough to be writing down what goes past
         //
@@ -927,6 +933,7 @@ export default {
         offCaptured = guildLoadoutCapture.onCaptured?.(() => guildRosterPanel.render()) ?? null;
     },
     cleanup: () => {
+        unregisterCommand('Guild Roster');
         offCaptured?.();
         offCaptured = null;
         // Give the owner back, once. `cleanup()` on the capture decrements and

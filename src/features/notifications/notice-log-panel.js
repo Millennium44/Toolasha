@@ -34,6 +34,7 @@ import {
     clearNotices,
     MAX_ENTRIES,
 } from './notice-log.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 /** Panel id, which is also its geometry key */
 export const PANEL_ID = 'noticeLog';
@@ -278,6 +279,13 @@ noticePanel.show = (options) => {
     markNoticesSeen();
     return shellShow(options);
 };
+
+// Module scope: the panel has no lifecycle, and its tile is ungated
+registerCommand({
+    name: 'Notices',
+    hint: 'Everything Toolasha has told you, and what is unread',
+    run: () => noticePanel.toggle(),
+});
 
 registerRow({
     key: 'noticeLog',

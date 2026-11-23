@@ -57,6 +57,7 @@ import { clampToBand } from '../../utils/market-values.js';
 import { itemLabel } from '../../utils/overlay-format.js';
 import { itemHridFromIcon } from '../../utils/item-icon.js';
 import { GAME } from '../../utils/selectors.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /** Master switch for the panel */
 export const SETTING = 'market_overbidPanel';
@@ -525,6 +526,14 @@ class OverbidPanel {
         if (!config.getSetting(SETTING)) return;
         this.isInitialized = true;
 
+        // The tab's own toggle: opens or expands the table whether or not
+        // anything is beaten, and closing is the same as pressing X
+        registerCommand({
+            name: 'Overbid table',
+            hint: 'Your listings that someone has since beaten',
+            run: () => this.toggleFromTab(),
+        });
+
         this.panel = createPanel({
             id: PANEL_ID,
             title: 'Overbid table',
@@ -905,6 +914,7 @@ class OverbidPanel {
      * Tear everything down.
      */
     disable() {
+        unregisterCommand('Overbid table');
         this.cleanup.cleanupAll();
         this.panel?.destroy();
         this.panel = null;

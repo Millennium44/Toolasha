@@ -38,6 +38,7 @@ import {
     onLoadoutCaptured,
     VIEW_LOADOUT_CONTEXT,
 } from '../../utils/view-loadout.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /**
  * Make an element open a player's profile on click.
@@ -2088,6 +2089,13 @@ export default {
      * @returns {Promise<void>}
      */
     initialize: async (guildName = null) => {
+        // Initialized by the trials feature, so a switched-off Guild Trials
+        // never offers it
+        registerCommand({
+            name: 'Trial Abilities',
+            hint: "The trial roster's abilities against the plan",
+            run: () => guildTrialAbilitiesPanel.toggle(),
+        });
         // Subscribed *before* the session is restored, not after. The restore
         // is an IndexedDB read and a Battle Info popup that landed while it was
         // in flight had nobody listening — the sheet reached the store and
@@ -2136,6 +2144,7 @@ export default {
         await guildTrialAbilities.initialize(guildName);
     },
     cleanup: () => {
+        unregisterCommand('Trial Abilities');
         offCaptured?.();
         offCaptured = null;
         offViewLoadoutCaptured?.();

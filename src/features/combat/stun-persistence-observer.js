@@ -37,6 +37,7 @@ import { registerRow, TILE_CLASS } from '../../utils/overlay-rows.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { styleGameButton } from '../../utils/game-look.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 /** Where the tally lives */
 const STORAGE_KEY = 'stunPersistenceTally';
@@ -387,3 +388,13 @@ registerRow({
 });
 
 export default stunPersistence;
+
+// Module scope, offered only while the watch itself is on: the panel is empty
+// and says so when it is not, and a diagnostic nobody switched on is not a
+// thing to list.
+registerCommand({
+    name: 'Stun Persistence',
+    hint: 'What the stun watch has recorded',
+    run: () => stunPersistencePanel.toggle(),
+    when: () => config.getSetting('stunPersistenceWatch'),
+});

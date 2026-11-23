@@ -56,6 +56,7 @@ import {
     traceGapAccuracyPairing,
 } from './guild-trial-accuracy.js';
 import { loadTrialRecord, loadTrialStats } from './guild-trials-store.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /** Ink per check status, so the checklist reads at a glance */
 const STATUS_COLOR = {
@@ -1090,12 +1091,18 @@ export default {
     initialize: async () => {
         if (!config.getSetting('guildTrialLedger', true)) return;
         registerTrialLedgerRow();
+        registerCommand({
+            name: 'Trial Ledger',
+            hint: 'Guild trial results, week by week',
+            run: () => guildTrialLedgerPanel.toggle(),
+        });
         // The panel can be restored open before the guild arrives; draw again once it is known or changes
         offOwnGuildChange?.();
         offOwnGuildChange = guildXPTracker.onOwnGuildChange?.(() => refreshLedgerView()) || null;
         await refreshLedgerView();
     },
     cleanup: () => {
+        unregisterCommand('Trial Ledger');
         offOwnGuildChange?.();
         offOwnGuildChange = null;
         guildTrialLedgerPanel.hide({ remember: false });

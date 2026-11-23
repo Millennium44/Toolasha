@@ -295,13 +295,13 @@ class MarketHistoryPanel {
         // Before the *first* side effect of the resumed tail, not merely before
         // the registrations below. `registerCommand` used to sit above this
         // check, so a teardown landing inside `loadPrefs()` left the palette
-        // offering "Market History Viewer" for a feature that was switched off
+        // offering "Price History" for a feature that was switched off
         // — and picking it ran `toggle()` against a removed panel, which
         // flipped `prefs.open` and wrote it back to storage anyway.
         if (!stillOurs(ticket)) return;
 
         registerCommand({
-            name: 'Market History Viewer',
+            name: 'Price History',
             hint: 'Pooled price history, per item',
             run: () => this.toggle(),
         });
@@ -412,7 +412,7 @@ class MarketHistoryPanel {
         clearTimeout(this.pinFlashTimer);
         this.pinFlashTimer = null;
         try {
-            unregisterCommand('Market History Viewer');
+            unregisterCommand('Price History');
             this.chart?.destroy();
             this.chart = null;
             this.shown = null;

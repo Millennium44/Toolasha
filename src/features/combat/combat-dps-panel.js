@@ -63,6 +63,7 @@
  */
 
 import config from '../../core/config.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import domObserver from '../../core/dom-observer.js';
 import { damageBreakdown, actionLabel } from './damage-tracker.js';
 import { takenBreakdown } from './damage-taken-tracker.js';
@@ -1408,6 +1409,11 @@ export default {
         // Building the shell here is also what lets it reopen where it was
         // left, since that is `createPanel`'s doing
         getPanel();
+        registerCommand({
+            name: 'Party damage',
+            hint: 'Damage, damage taken and healing per party member, ranked',
+            run: () => getPanel().toggle(),
+        });
         // The Rotation tab is the only reader of this, so it starts and stops
         // with the panel rather than carrying a setting of its own
         startRotationTracker();
@@ -1434,6 +1440,7 @@ export default {
     },
     cleanup: () => {
         try {
+            unregisterCommand('Party damage');
             unregister?.();
             unregister = null;
             unregisterReady?.();

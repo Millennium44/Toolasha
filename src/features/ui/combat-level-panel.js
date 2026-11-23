@@ -45,6 +45,7 @@
  */
 
 import config from '../../core/config.js';
+import { registerCommand } from '../../utils/command-registry.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
@@ -1848,6 +1849,14 @@ class CombatLevelPanel {
 }
 
 export const combatLevelPanel = new CombatLevelPanel();
+
+// No setting gates the panel itself (only whether sessions are tracked), and it
+// has no lifecycle, so it is on offer for the life of the tab
+registerCommand({
+    name: 'Combat Level',
+    hint: 'Progress to the next combat level, and how long it takes',
+    run: () => combatLevelPanel.toggle(),
+});
 
 // The panel reads one character's skills, so it cannot simply carry on into the
 // next one. Torn down and rebuilt rather than left to redraw, because the levels

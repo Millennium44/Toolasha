@@ -57,6 +57,7 @@ import { clearRecord, clearedAtOf, mergeClearable } from '../../utils/cleared-re
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /** The game's roll-up entry in the skill list; its experience already contains every other skill's */
 const TOTAL_LEVEL_SKILL_HRID = '/skills/total_level';
@@ -419,6 +420,11 @@ class LabyrinthRoomLogs {
         if (this.isInitialized) return;
         if (!config.getSetting('labyrinthRoomLogs')) return;
         this.isInitialized = true;
+        registerCommand({
+            name: 'Labyrinth Room Logs',
+            hint: 'What happened in each room, and whether the calculator was right',
+            run: () => this.togglePanel(),
+        });
 
         // Rooms finished before the read lands are folded in rather than lost;
         // an unreadable store keeps what memory has rather than blanking it
@@ -553,6 +559,7 @@ class LabyrinthRoomLogs {
     }
 
     async disable() {
+        unregisterCommand('Labyrinth Room Logs');
         // First of all, so an `initialize()` parked on the record read cannot
         // resume into the fields this teardown is about to null.
         noteTeardown(this);

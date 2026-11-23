@@ -62,6 +62,7 @@ import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { partyLintWarnings, battleLintInputs } from '../../utils/party-lint.js';
 import { abilityBreakdownRows, abilityDamageText, abilityRateText } from '../../utils/damage-board.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 const REFRESH_MS = 2000;
 
@@ -2118,3 +2119,25 @@ function taxCard(stats) {
 dpsPanel.restore();
 deathsPanel.restore();
 profitPanel.restore();
+
+// Palette entries, at module scope for the same reason: nothing else owns these
+// panels' lifetime, so `when` mirrors the setting each one's overlay tile sits
+// behind (the DPS tile behind `combatDps`, the rest behind the Statistics tab's).
+registerCommand({
+    name: dpsPanel.title,
+    hint: 'Damage dealt per second, by player and by monster',
+    run: () => dpsPanel.toggle(),
+    when: () => config.getSetting('combatDps', true),
+});
+registerCommand({
+    name: deathsPanel.title,
+    hint: 'Damage taken and healing received, by player',
+    run: () => deathsPanel.toggle(),
+    when: () => config.getSetting('combatStats', true),
+});
+registerCommand({
+    name: profitPanel.title,
+    hint: 'Combat income, costs and the MooPass tax',
+    run: () => profitPanel.toggle(),
+    when: () => config.getSetting('combatStats', true),
+});
