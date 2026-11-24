@@ -888,6 +888,9 @@ export { transmuteHistoryTracker };
 
 export default {
     name: 'Transmute History Tracker',
+    // The instance itself, for a bundle that loads after this one and imports it by name (rollup.config.js
+    // singletonOwnership): the published global is this record, so the name has to be a property of it
+    transmuteHistoryTracker,
     initialize: () => transmuteHistoryTracker.initialize(),
     // Awaited, so a rejection from the now-async disable is caught here rather
     // than escaping as an unhandled promise

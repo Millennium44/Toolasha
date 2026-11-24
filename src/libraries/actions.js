@@ -53,6 +53,16 @@ import alchemyItemSort from '../features/alchemy/alchemy-item-sort.js';
 import alchemyCatalystMark from '../features/alchemy/alchemy-catalyst-mark.js';
 import alchemyCatalystCheck from '../features/alchemy/alchemy-catalyst-check.js';
 import { describeAlchemyMenus } from '../features/alchemy/alchemy-item-selector.js';
+// Alchemy history. It lives here rather than in the ui bundle (which sits at the @require size
+// ceiling): everything it imports is core/utils/api or an alchemy helper this bundle already holds.
+// calibration-panel (ui) reads the three tracker instances through singletonOwnership.
+import transmuteHistoryTracker from '../features/alchemy/transmute-history-tracker.js';
+import transmuteHistoryViewer from '../features/alchemy/transmute-history-viewer.js';
+import coinifyHistoryTracker from '../features/alchemy/coinify-history-tracker.js';
+import coinifyHistoryViewer from '../features/alchemy/coinify-history-viewer.js';
+import decomposeHistoryTracker from '../features/alchemy/decompose-history-tracker.js';
+import decomposeHistoryViewer from '../features/alchemy/decompose-history-viewer.js';
+import alchemyActionProtection from '../features/alchemy/alchemy-action-protection.js';
 
 // Skilling optimizer
 import skillingOptimizer from '../features/skilling-optimizer/skilling-optimizer-ui.js';
@@ -116,6 +126,13 @@ toolashaRoot.Actions = {
     alchemyItemSort,
     alchemyCatalystMark,
     alchemyCatalystCheck,
+    transmuteHistoryTracker,
+    transmuteHistoryViewer,
+    coinifyHistoryTracker,
+    coinifyHistoryViewer,
+    decomposeHistoryTracker,
+    decomposeHistoryViewer,
+    alchemyActionProtection,
     teaRecommendation,
     skillingBuySupplies,
     inventoryCountDisplay,

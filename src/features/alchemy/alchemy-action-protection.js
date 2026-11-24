@@ -820,7 +820,7 @@ export default {
     initialize: async () => {
         await alchemyActionProtection.initialize();
     },
-    // On this record, not only the instance: this is what `Toolasha.UI.alchemyActionProtection` publishes, and so
+    // On this record, not only the instance: this is what `Toolasha.Actions.alchemyActionProtection` publishes, and so
     // what the catalyst check in the actions bundle reaches
     protectedCategoryFor: (btn) => alchemyActionProtection.protectedCategoryFor(btn),
     cleanup: () => {

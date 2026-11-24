@@ -906,11 +906,26 @@ export const singletonOwnership = new Map([
         { global: 'Toolasha.UI.taskCompletionTracker' },
     ],
     [normalize(join(__dirname, 'src/features/actions/loot-log-history.js')), { global: 'Toolasha.UI.lootLogHistory' }],
-    // Holds the player's protected-category list; the catalyst check (actions) asks it whether a press is its own.
+    // Holds the player's protected-category list; the catalyst check asks it whether a press is its own. Both live
+    // in the actions bundle now, so this routes nothing there; it stays so no later bundle compiles a second copy.
     // The global is the registration record, which carries `protectedCategoryFor` for this reason.
     [
         normalize(join(__dirname, 'src/features/alchemy/alchemy-action-protection.js')),
-        { global: 'Toolasha.UI.alchemyActionProtection' },
+        { global: 'Toolasha.Actions.alchemyActionProtection' },
+    ],
+    // The alchemy history trackers: the calibration panel (ui) imports each instance by name. The published global
+    // is the registration record, which carries the instance under its own name for this reason.
+    [
+        normalize(join(__dirname, 'src/features/alchemy/transmute-history-tracker.js')),
+        { global: 'Toolasha.Actions.transmuteHistoryTracker', named: ['transmuteHistoryTracker'] },
+    ],
+    [
+        normalize(join(__dirname, 'src/features/alchemy/coinify-history-tracker.js')),
+        { global: 'Toolasha.Actions.coinifyHistoryTracker', named: ['coinifyHistoryTracker'] },
+    ],
+    [
+        normalize(join(__dirname, 'src/features/alchemy/decompose-history-tracker.js')),
+        { global: 'Toolasha.Actions.decomposeHistoryTracker', named: ['decomposeHistoryTracker'] },
     ],
     [
         normalize(join(__dirname, 'src/features/notifications/market-undercut-alerts.js')),
