@@ -453,7 +453,7 @@ registerRow({
         container.title =
             'Everything you own, priced.\nDouble-click for the net worth history chart.' +
             (partial
-                ? '\n* Some items are valued on a crafting cost with an unpriced input, so the total is a floor.'
+                ? '\n* Some items are valued without a full price (an unpriced input, ability book or currency counts as nothing), so the total is a floor.'
                 : '');
     },
     onOpen: openHistoryChart,

@@ -312,6 +312,18 @@ describe('the store', () => {
         expect(disk.map.has('networthMovers_c1_3000')).toBe(false);
     });
 
+    test('a reading is stamped with the side it was valued under, not the setting at the time it is stored', async () => {
+        // The live setting says ask; this reading was valued under bid and stored before the recalculation caught up
+        const valued = { ...d(100), valuation: { networth_pricingMode: 'bid', networth_valueSource: 'officialValue' } };
+        movers.record({ characterId: 'c1', snapshot: snap(1000, 1e9), data: valued });
+        movers.record({ characterId: 'c1', snapshot: snap(2000, 1e9), data: d(100) });
+
+        expect(disk.map.get('networthMovers_c1_1000')).toMatchObject({ pm: 'bid', vs: 'officialValue' });
+        // A reading with no recorded valuation falls back to the live settings
+        expect(disk.map.get('networthMovers_c1_2000')).toMatchObject({ pm: 'ask', vs: 'orderBook' });
+        expect((await movers.detailFor(2000)).pricing.changed).toBe(true);
+    });
+
     test('a record for another character, or before load, is ignored', () => {
         movers.record({ characterId: 'c2', snapshot: snap(1000, 1), data: d(1) });
         expect(movers.index).toHaveLength(0);

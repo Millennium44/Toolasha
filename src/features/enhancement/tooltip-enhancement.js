@@ -1283,7 +1283,10 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
         const data = calculateEnhancementPath(itemHrid, level, enhancementConfig, { priceContext: 'ask' });
         if (!data) continue;
 
-        const cost = fmtCost(data.optimalStrategy.totalCost);
+        // An input nobody prices counts as 0 in the total: a floor, which the full tooltip says in words and
+        // this compact row says with a leading "≥"
+        const partial = data.pricesPartial === true || data.inputsPartial === true;
+        const cost = partial ? `≥${fmtCost(data.optimalStrategy.totalCost)}` : fmtCost(data.optimalStrategy.totalCost);
         const xp = data.totalExpectedXP !== null ? fmtXp(Math.round(data.totalExpectedXP)) : '—';
 
         let ask = '—';
@@ -1294,7 +1297,7 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
             bid = fmtCost(prices?.bid);
         }
 
-        rows.push({ level, cost, xp, ask, bid });
+        rows.push({ level, cost, xp, ask, bid, partial });
     }
 
     if (rows.length === 0) return '';
@@ -1322,7 +1325,8 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
     for (const row of rows) {
         html += '<tr>';
         html += `<td ${tdStyle('left', config.COLOR_TOOLTIP_INFO)}>+${row.level}</td>`;
-        html += `<td ${tdStyle('right', config.COLOR_TOOLTIP_INFO)}>${row.cost}</td>`;
+        const costTitle = row.partial ? ' title="Some inputs have no price; the cost is understated."' : '';
+        html += `<td ${tdStyle('right', config.COLOR_TOOLTIP_INFO)}${costTitle}>${row.cost}</td>`;
         if (showPrices) {
             html += `<td ${tdStyle('right', config.COLOR_TOOLTIP_INFO)}>${row.ask} / ${row.bid}</td>`;
         }
