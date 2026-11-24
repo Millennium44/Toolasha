@@ -414,6 +414,87 @@ describe('a lock landing mid-run is caught again, not just at the queue build', 
     });
 });
 
+describe('a hold landing mid-run is caught again, not just at the queue build', () => {
+    beforeEach(() => {
+        bulkSell._stop('');
+    });
+    afterEach(() => {
+        bulkSell._stop('');
+    });
+    const twoStacks = () => {
+        // Two stacks of one item at different levels: only the +0 is claimed below
+        bulkSell.queue = [
+            { itemHrid: '/items/milk', enhancementLevel: 3, count: 2, name: 'Milk' },
+            { itemHrid: '/items/milk', enhancementLevel: 0, count: 4, name: 'Milk' },
+        ];
+        bulkSell.index = 1;
+        bulkSell.heldCount = 0;
+    };
+
+    test('_prepareCurrent skips a stack a provider started holding after the queue was built', () => {
+        twoStacks();
+        bulkSell.holdProviders.set('reselling', () => ['/items/milk']);
+
+        bulkSell._prepareCurrent();
+
+        expect(bulkSell.heldCount).toBe(4);
+        expect(bulkSell.statusNote).toBe('held');
+        expect(bulkSell.bookTimeout).toBeNull();
+        expect(navigations).not.toContain('/items/milk');
+    });
+
+    test('a hold on the +0 stack does not stop the +3 stack of the same item', () => {
+        twoStacks();
+        bulkSell.index = 0;
+        bulkSell.holdProviders.set('reselling', () => ['/items/milk']);
+        game.items = [inventory('/items/milk', 2, 3), inventory('/items/milk', 4, 0)];
+
+        bulkSell._prepareCurrent();
+
+        expect(bulkSell.heldCount).toBe(0);
+        expect(bulkSell.bookTimeout).not.toBeNull();
+    });
+
+    test('a loadout saved after the queue was built holds its gear back too', () => {
+        twoStacks();
+        game.loadouts = [{ name: 'Mining', equipment: [{ itemHrid: '/items/milk', enhancementLevel: 0 }] }];
+
+        bulkSell._prepareCurrent();
+
+        expect(bulkSell.heldCount).toBe(4);
+        expect(bulkSell.bookTimeout).toBeNull();
+    });
+
+    test('_onConfirmClick skips without pressing when a hold lands in the gap before Confirm', () => {
+        twoStacks();
+        bulkSell.current = bulkSell.queue[1];
+        bulkSell.decision = { insta: true, price: 100, avgPrice: 100, reason: 'queue ok' };
+        bulkSell.state = 'awaiting_confirm';
+        bulkSell._confirmedStep = null;
+        bulkSell.holdProviders.set('reselling', () => ['/items/milk']);
+
+        bulkSell._onConfirmClick();
+
+        expect(bulkSell.heldCount).toBe(4);
+        expect(bulkSell._confirmSent()).toBe(false);
+        expect(bulkSell.statusNote).toBe('held');
+    });
+
+    test('a provider that throws does not stop the step, as at the queue build', () => {
+        twoStacks();
+        bulkSell.holdProviders.set('broken', () => {
+            throw new Error('boom');
+        });
+        const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        bulkSell._prepareCurrent();
+
+        expect(bulkSell.heldCount).toBe(0);
+        expect(bulkSell.bookTimeout).not.toBeNull();
+        log.mockRestore();
+    });
+});
+
 describe('the watchlist is only offered when it has something in it', () => {
     const optionValues = async () => {
         bulkSell._buildPanel();
@@ -1229,6 +1310,40 @@ describe('confirming from the strip', () => {
 
         closeModalAndSettle(modal);
         expect(bulkSell.state).toBe('awaiting_next');
+    });
+
+    test('a Sell Now form is not pressed for a step that decided to list', () => {
+        const modal = openModal({ header: 'Sell Now' });
+        runAtStep0();
+        bulkSell.decision = { insta: false, price: 900000, avgPrice: null, reason: 'queue ok' };
+
+        confirmBtn().click();
+
+        expect(gameClicks).toBe(0);
+        expect(bulkSell.confirmNote).toMatch(/sells instantly, but this step lists/);
+        modal.remove();
+    });
+
+    test('a listing form is not pressed for a step that decided to sell now', () => {
+        const modal = openModal({ header: 'Sell Listing' });
+        runAtStep0();
+
+        confirmBtn().click();
+
+        expect(gameClicks).toBe(0);
+        expect(bulkSell.confirmNote).toMatch(/listing form, but this step sells instantly/);
+        modal.remove();
+    });
+
+    test('a listing step is pressed on its own listing form', () => {
+        const modal = openModal({ header: 'Sell Listing' });
+        runAtStep0();
+        bulkSell.decision = { insta: false, price: 900000, avgPrice: null, reason: 'queue ok' };
+
+        confirmBtn().click();
+
+        expect(gameClicks).toBe(1);
+        modal.remove();
     });
 
     test('an above-band warning is marked on the headline and leads the detail, ahead of the reason', () => {
@@ -2261,6 +2376,27 @@ describe('confirming from the strip', () => {
 
             expect(gameClicks).toBe(1);
             expect(bulkSell._confirmSent()).toBe(false);
+            inventory.remove();
+        });
+
+        test('a step skipped while the run waits for the menu is not turned into a sale by the late menu', async () => {
+            runAtStep0();
+            bulkSell.state = 'preparing';
+            const inventory = document.createElement('div');
+            inventory.className = 'Inventory_items__x';
+            inventory.innerHTML =
+                '<div class="Item_itemContainer__x"><div class="Item_item__x"><svg><use href="#cheese"></use></svg></div></div>';
+            document.body.appendChild(inventory);
+            expect(bulkSell._openVendorSell(PRICE, 1)).toBe(true);
+            openMenu();
+
+            // Skip lands inside the menu wait: it ends the step and moves the run on to "preparing"
+            bulkSell._clearTransient();
+            bulkSell.state = 'preparing';
+            await vi.advanceTimersByTimeAsync(360);
+
+            expect(bulkSell.state).toBe('preparing');
+            expect(bulkSell.decision?.vendor).toBeUndefined();
             inventory.remove();
         });
 

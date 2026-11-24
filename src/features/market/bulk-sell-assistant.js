@@ -160,7 +160,7 @@ const TOUCH_MIN_SIZE = '32px';
  * Skip reasons where the step itself was refused on its merits: starting it over would only be
  * refused again, so Retry is not offered for them
  */
-const NOT_RETRYABLE_NOTES = ['locked', 'favorite', 'no longer in inventory'];
+const NOT_RETRYABLE_NOTES = ['locked', 'favorite', 'held', 'no longer in inventory'];
 /** The source that is not a tab: whatever the Watchlist is currently tracking */
 const WATCHLIST_SOURCE = 'watchlist';
 
@@ -1474,6 +1474,13 @@ class BulkSellAssistant {
         if (!header.includes('Sell Now') && !header.includes('Sell Listing')) {
             return 'the open modal is not a sell form';
         }
+        // The step decided between selling now and listing. A form of the other kind is not the sale the
+        // strip described: pressing it would fill at the bid where a listing at the ask was chosen
+        if (this.decision && !this.decision.vendor && header.includes('Sell Now') !== Boolean(this.decision.insta)) {
+            return this.decision.insta
+                ? 'the open modal is a listing form, but this step sells instantly'
+                : 'the open modal sells instantly, but this step lists';
+        }
         const hrid = this._modalItemHrid(modal);
         if (!hrid) return 'the modal does not say what it is selling';
         if (hrid !== this.current.itemHrid) {
@@ -1763,6 +1770,10 @@ class BulkSellAssistant {
             this._skipFavoriteCurrent();
             return;
         }
+        if (this._isCurrentHeld()) {
+            this._skipHeldCurrent();
+            return;
+        }
         if (!this._syncLiveCountForConfirm()) return;
         const target = this._confirmTarget();
         if (target.why) {
@@ -1820,6 +1831,10 @@ class BulkSellAssistant {
             // wait would otherwise still sell, so it is checked again right before the press
             if (this._isCurrentFavorite()) {
                 this._skipFavoriteCurrent();
+                return;
+            }
+            if (this._isCurrentHeld()) {
+                this._skipHeldCurrent();
                 return;
             }
             this._pressConfirm(settled.button);
@@ -2051,6 +2066,10 @@ class BulkSellAssistant {
             // wait would otherwise still sell, so it is checked again right before the press
             if (this._isCurrentFavorite()) {
                 this._skipFavoriteCurrent();
+                return;
+            }
+            if (this._isCurrentHeld()) {
+                this._skipHeldCurrent();
                 return;
             }
             this._pressConfirm(settled.button);
@@ -2367,6 +2386,32 @@ class BulkSellAssistant {
         return !!dataManager.isItemFavorite?.(this.current.itemHrid, this.current.enhancementLevel || 0);
     }
 
+    /**
+     * Whether the current queue entry has been claimed by a hold since the queue was built.
+     *
+     * The queue-build filter reads the hold providers and the loadout store once, but a provider
+     * can start claiming stock (stock promised to a guildmate, gear saved into a loadout) while the
+     * run is walking the queue, and the old read never sees it. Read again right before the step
+     * opens a sell form or presses Confirm, the way Lock and Favorite are.
+     *
+     * @returns {boolean} True when a provider or a loadout now holds this stack
+     */
+    _isCurrentHeld() {
+        if (!this.current) return false;
+        const providers = new Map(this.holdProviders);
+        providers.set('loadouts', () => loadoutHoldKeys());
+        const held = collectHeldKeys(providers, (name, error) =>
+            console.error(`[BulkSellAssistant] Hold provider "${name}" failed; its items are not held:`, error)
+        );
+        return held.has(holdKey(this.current.itemHrid, this.current.enhancementLevel));
+    }
+
+    /** Skip the current entry because a hold claimed it after the queue was built. */
+    _skipHeldCurrent() {
+        this.heldCount += this.current?.count || 0;
+        this._skip('held');
+    }
+
     /** Skip the current entry because it was found to be Favorite. */
     _skipFavoriteCurrent() {
         this.favoriteSkipped += this.current?.count || 0;
@@ -2425,6 +2470,10 @@ class BulkSellAssistant {
         }
         if (this._isCurrentFavorite()) {
             this._skipFavoriteCurrent();
+            return;
+        }
+        if (this._isCurrentHeld()) {
+            this._skipHeldCurrent();
             return;
         }
 
@@ -2735,8 +2784,10 @@ class BulkSellAssistant {
 
         // Wait for the menu, retrying once — clicking the tile again reopens
         // it if something dismissed the first attempt
+        // A Skip, Stop or Retry inside the wait ends this step: a late menu belongs to the step that ended
+        const opSeq = this._opSeq;
         const awaitMenu = (attempt) => {
-            if (this.state !== 'preparing') return;
+            if (opSeq !== this._opSeq || this.state !== 'preparing') return;
             const menu = document.querySelector('[class*="Item_actionMenu"]');
             if (!menu) {
                 if (attempt < 2) {
