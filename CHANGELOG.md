@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Every switch either turns off right away or says it needs a reload
+
+27 more features now stop the moment you switch them off, among them the combat battle counter, boss timer and unit badges, the alchemy history tabs, the Combat Sim and Lab Sim buttons, task icons and reroll protection. 24 others that cannot stop cleanly, such as net worth, the watchlist, inventory tabs and the DPS panel, now carry the "refresh to apply" tag instead of silently staying on screen.
+
 ### Combat Sim import reads talismans and handles bad pastes
 
 Importing a build in the other simulator's format now brings its slotted combat talismans, which were dropped before. A malformed paste shows "Invalid format" instead of doing nothing, and out-of-range levels are brought back inside the game's limits.
