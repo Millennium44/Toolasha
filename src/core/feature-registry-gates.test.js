@@ -134,6 +134,7 @@ describe('feature registry gates', () => {
         'queueLengthEstimator',
         'tradeHistoryDisplay',
         'gatheringStats',
+        'invCategoryTotals',
     ];
 
     test.each(LIVE_STOP)('%s stops live when its setting is switched off', (key) => {

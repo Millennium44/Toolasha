@@ -1254,6 +1254,8 @@ function registerFeatures() {
             category: 'Inventory',
             module: Market.inventoryCategoryTotals,
             async: false,
+            // disable() unregisters the badge provider, drops its listeners and removes every total it drew
+            liveStop: true,
         },
         {
             key: 'autoAllButton',

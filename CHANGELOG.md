@@ -22,6 +22,18 @@ The reroll walk no longer offers a paid reroll on a task it cannot read, and a d
 
 A pasted or imported build with two talismans in one belt slot now counts only the first in skilling figures, as the Combat Sim already did.
 
+### Inventory category totals switch off without a reload
+
+Turning off "Show category totals in inventory" now removes the totals right away. They used to stay until the next reload.
+
+### Alchemy profit taxes essence and crate drops, and follows the loadout's tea
+
+Alchemy profit now takes the market tax off Alchemy Essence and crate bonus drops, as it does for every other sold output, so profit per hour is slightly lower and closer to what you earn. The success bonus from tea now comes from the same drinks the calculator charges for (the action's loadout), not whatever is slotted right now.
+
+### A running action whose loadout was deleted uses your worn gear
+
+If you delete the loadout an action was started with, the action bar's time and the enhancing figures now use your worn gear, like the rest of Toolasha, instead of that skill's default loadout.
+
 ### Reroll advisor recognizes a met target that is too big to solve
 
 With a target too large for the advisor to plan (six wanted lines at the top grade), a talisman or pending roll that already meets it now reads "Target met" or "Use New Roll" instead of "Not reachable".
