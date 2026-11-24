@@ -10,7 +10,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ statsCalls: [] }));
+const game = vi.hoisted(() => ({ statsCalls: [], queue: [], contextOptions: [] }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -26,6 +26,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: () => null,
         getActionDrinkSlots: () => [],
         getInventory: () => [],
+        getCurrentActions: () => game.queue,
         on: () => () => {},
     },
 }));
@@ -40,7 +41,8 @@ vi.mock('../../utils/action-calculator.js', () => ({
 // The real resolver is covered in action-context.test.js; here only which one is asked matters.
 vi.mock('../../utils/action-context.js', () => ({
     resolveActionContext: () => ({ equipment: new Map([['d', { itemHrid: '/items/default' }]]), drinks: [] }),
-    resolveLoadoutContext: (type, id) => ({
+    resolveLoadoutContext: (type, id, options) => ({
+        options: game.contextOptions.push(options),
         equipment: new Map([['l', { itemHrid: `/items/loadout_${id}` }]]),
         drinks: id > 0 ? [{ itemHrid: '/items/artisan_tea' }] : [],
     }),
@@ -102,5 +104,20 @@ describe('the Artisan discount follows the loadout drinks of the row', () => {
 
         expect(saved).toBeCloseTo(0.1);
         expect(none).toBe(0);
+    });
+});
+
+describe('only the running action reads an unknown saved loadout as the gear worn', () => {
+    test('the running entry asks for running, a queued entry behind it does not', () => {
+        const running = row({ id: 1, ordinal: 0, isDone: false, characterLoadoutID: 99999 });
+        const queued = row({ id: 2, ordinal: 5, isDone: false, characterLoadoutID: 99999 });
+        // The repeating action was requeued to the front of the array with a higher ordinal
+        game.queue = [queued, running];
+        game.contextOptions.length = 0;
+
+        actionTimeDisplay.queuedActionContext(DETAILS, running);
+        actionTimeDisplay.queuedActionContext(DETAILS, queued);
+
+        expect(game.contextOptions.map((o) => o.running)).toEqual([true, false]);
     });
 });

@@ -3969,7 +3969,21 @@ class ActionTimeDisplay {
      */
     queuedActionContext(actionDetails, actionObj) {
         if (!actionDetails?.type || typeof actionObj?.characterLoadoutID !== 'number') return null;
-        return resolveLoadoutContext(actionDetails.type, actionObj.characterLoadoutID);
+        return resolveLoadoutContext(actionDetails.type, actionObj.characterLoadoutID, {
+            running: this.isRunningAction(actionObj),
+        });
+    }
+
+    /**
+     * Whether this queue entry is the action the game is running now (not one queued behind it).
+     * @param {Object|null} actionObj - A queue entry
+     * @returns {boolean}
+     */
+    isRunningAction(actionObj) {
+        if (!actionObj) return false;
+        const running = runningAction(dataManager.getCurrentActions?.() || []);
+        if (!running) return false;
+        return running === actionObj || (running.id !== undefined && running.id === actionObj.id);
     }
 
     /**
@@ -3984,9 +3998,12 @@ class ActionTimeDisplay {
     enhancementRowOptions(actionObj) {
         const id = actionObj?.characterLoadoutID;
         if (typeof id !== 'number' || !Number.isFinite(id)) return {};
+        const running = this.isRunningAction(actionObj);
+        // A running run whose saved loadout is gone is on the worn gear, so the live buff maps time it
+        const gone = running && id > 0 && !(loadoutSnapshot() || bundledLoadoutSnapshot).getSnapshotById?.(id);
         return {
-            actionContext: resolveLoadoutContext('/action_types/enhancing', id),
-            timeFromContext: id > 0,
+            actionContext: resolveLoadoutContext('/action_types/enhancing', id, { running }),
+            timeFromContext: id > 0 && !gone,
         };
     }
 

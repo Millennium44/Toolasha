@@ -195,9 +195,11 @@ esolveActionContext. A saved loadout with no equipment (or no drinks) inherits t
  *
  * @param {string} actionTypeHrid - e.g. "/action_types/cooking"
  * @param {number|null|undefined} characterLoadoutID - The queued action's loadout id
+ * @param {{running?: boolean}} [options] - `running`: the action is the one running now, so an unknown saved id reads
+ *   the worn gear, as {@link resolveRunningContext} does
  * @returns {{equipment: Map, drinks: Array}}
  */
-export function resolveLoadoutContext(actionTypeHrid, characterLoadoutID) {
+export function resolveLoadoutContext(actionTypeHrid, characterLoadoutID, { running = false } = {}) {
     if (typeof characterLoadoutID !== 'number' || !Number.isFinite(characterLoadoutID)) {
         return skillDefaultContext(actionTypeHrid);
     }
@@ -209,7 +211,9 @@ export function resolveLoadoutContext(actionTypeHrid, characterLoadoutID) {
     }
     const store = loadouts();
     const snapshot = store.getSnapshotById?.(characterLoadoutID) ?? null;
-    if (!snapshot) return skillDefaultContext(actionTypeHrid);
+    // A RUNNING action's saved id with no loadout behind it (deleted since, loadouts off, not loaded) is gear the
+    // game already put on: what is worn. The per-skill pick would be a different loadout's gear
+    if (!snapshot) return running ? resolveLoadoutContext(actionTypeHrid, 0) : skillDefaultContext(actionTypeHrid);
 
     const worn = snapshot.equipment?.length
         ? (store.equipmentMapOf?.(snapshot) ??
@@ -237,10 +241,7 @@ export function resolveLoadoutContext(actionTypeHrid, characterLoadoutID) {
  */
 export function resolveRunningContext(actionTypeHrid, characterLoadoutID) {
     if (typeof characterLoadoutID !== 'number' || !Number.isFinite(characterLoadoutID)) return null;
-    if (characterLoadoutID > 0 && !loadouts().getSnapshotById?.(characterLoadoutID)) {
-        return resolveLoadoutContext(actionTypeHrid, 0);
-    }
-    return resolveLoadoutContext(actionTypeHrid, characterLoadoutID);
+    return resolveLoadoutContext(actionTypeHrid, characterLoadoutID, { running: true });
 }
 
 export default {

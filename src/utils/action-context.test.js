@@ -223,6 +223,14 @@ describe('resolveRunningContext (the running action never takes the skill defaul
         expect(result.drinks).toEqual(SAVED.drinks);
     });
 
+    test('resolveLoadoutContext with running: an unknown id is the worn gear; a queued one keeps the skill pick', () => {
+        loadoutSnapshot.getSnapshotForSkill.mockReturnValue(SNAPSHOT_EQ);
+        loadoutSnapshot.getSnapshotDrinksForSkill.mockReturnValue(SNAPSHOT_DRINKS);
+
+        expect(resolveLoadoutContext(TYPE, 99999, { running: true }).equipment).toBe(CURRENT_EQ);
+        expect(resolveLoadoutContext(TYPE, 99999).equipment).toBe(SNAPSHOT_EQ);
+    });
+
     test('a deleted id reads the live gear and slots, not another loadout via the skill default', () => {
         const result = resolveRunningContext(TYPE, 99999);
         expect(result.equipment).toBe(CURRENT_EQ);
