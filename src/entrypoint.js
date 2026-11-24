@@ -838,7 +838,6 @@ function registerFeatures() {
             category: 'Market',
             module: Market.tooltipConsumables,
             async: true,
-            liveStop: true,
         },
         {
             key: 'dungeonTokenTooltips',
@@ -1502,7 +1501,6 @@ function registerFeatures() {
             category: 'Alchemy',
             module: Actions.alchemyItemPins,
             async: true,
-            liveStop: true,
             // Waits only on its own pin record. The menu observer it registers
             // afterwards shares a class with alchemy item dimming, which styles
             // individual items rather than reordering them, so which of the two
@@ -1515,7 +1513,6 @@ function registerFeatures() {
             category: 'Alchemy',
             module: Actions.alchemyItemSort,
             async: true,
-            liveStop: true,
             // Waits only on its own order-choice record, same shape as
             // Alchemy Item Pins above; the two share the picker but each owns
             // its own reorder pass, so registration order between them does
@@ -1822,7 +1819,6 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatSummary,
             async: false,
-            liveStop: true,
         },
         {
             key: 'combatDropLuck',
@@ -1955,7 +1951,6 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.labyrinthShopPrices,
             async: false,
-            liveStop: true,
         },
         {
             key: 'labyrinthClearRate',
@@ -2065,7 +2060,6 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatSim,
             async: false,
-            liveStop: true,
         },
         {
             key: 'labSim',
@@ -2073,7 +2067,6 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.labSim,
             async: false,
-            liveStop: true,
         },
     ];
 
@@ -2097,7 +2090,6 @@ function registerFeatures() {
             category: 'UI',
             module: UI.alchemyItemDimming,
             async: false,
-            liveStop: true,
         },
         {
             key: 'skillExperiencePercentage',
@@ -2521,7 +2513,6 @@ function registerFeatures() {
             category: 'Tasks',
             module: UI.taskIcons,
             async: false,
-            liveStop: true,
             // The attribute rather than `.mwi-task-icon`: it is stamped on every
             // card the feature has looked at, whereas an icon depends on a sprite
             // resolving, and a missing sprite is a different complaint
@@ -2579,7 +2570,6 @@ function registerFeatures() {
             category: 'Tasks',
             module: UI.taskRerollProtection,
             async: true,
-            liveStop: true,
         },
         {
             key: 'taskAutoReroll',
@@ -2888,7 +2878,6 @@ function registerFeatures() {
             category: 'Leaderboard',
             module: UI.leaderboardXPDisplay,
             async: false,
-            liveStop: true,
         },
         {
             key: 'leaderboardRankBadges',

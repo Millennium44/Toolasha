@@ -660,6 +660,7 @@ export const settingsGroups = {
             },
             alchemyItemPins: {
                 id: 'alchemyItemPins',
+                requiresRefresh: true,
                 label: 'Alchemy panel: Pin items in the item picker',
                 type: 'checkbox',
                 default: true,
@@ -692,6 +693,7 @@ export const settingsGroups = {
             },
             alchemyItemSort: {
                 id: 'alchemyItemSort',
+                requiresRefresh: true,
                 label: 'Alchemy panel: Sort item picker by profit or XP',
                 type: 'checkbox',
                 default: true,
@@ -732,6 +734,7 @@ export const settingsGroups = {
             },
             alchemyItemDimming: {
                 id: 'alchemyItemDimming',
+                requiresRefresh: true,
                 label: 'Alchemy panel: Dim items requiring higher level',
                 type: 'checkbox',
                 default: true,
@@ -1267,6 +1270,7 @@ export const settingsGroups = {
             },
             showConsumTips: {
                 id: 'showConsumTips',
+                requiresRefresh: true,
                 label: 'HP/MP consumables: Restore speed, cost performance',
                 type: 'checkbox',
                 default: true,
@@ -3263,6 +3267,7 @@ export const settingsGroups = {
             },
             labyrinthShopPrices: {
                 id: 'labyrinthShopPrices',
+                requiresRefresh: true,
                 needsPrices: true,
                 label: 'Labyrinth Shop: Show market prices',
                 type: 'checkbox',
@@ -3587,6 +3592,7 @@ export const settingsGroups = {
             },
             combatSummary: {
                 id: 'combatSummary',
+                requiresRefresh: true,
                 label: 'Combat Summary: Add rate stats to Battle Info panel',
                 type: 'checkbox',
                 default: true,
@@ -3786,6 +3792,7 @@ export const settingsGroups = {
             },
             combatSim: {
                 id: 'combatSim',
+                requiresRefresh: true,
                 label: 'Combat Simulator',
                 type: 'checkbox',
                 default: true,
@@ -3793,6 +3800,7 @@ export const settingsGroups = {
             },
             labSim: {
                 id: 'labSim',
+                requiresRefresh: true,
                 label: 'Lab Simulator',
                 type: 'checkbox',
                 default: true,
@@ -4188,6 +4196,7 @@ export const settingsGroups = {
             },
             taskIcons: {
                 id: 'taskIcons',
+                requiresRefresh: true,
                 label: 'Show visual icons on task cards',
                 type: 'checkbox',
                 default: true,
@@ -4330,6 +4339,7 @@ export const settingsGroups = {
             },
             taskRerollProtection: {
                 id: 'taskRerollProtection',
+                requiresRefresh: true,
                 label: 'Task reroll protection',
                 type: 'checkbox',
                 default: true,
@@ -5140,6 +5150,7 @@ export const settingsGroups = {
             },
             leaderboardXPDisplay: {
                 id: 'leaderboardXPDisplay',
+                requiresRefresh: true,
                 label: 'Show XP/hr columns on Leaderboard',
                 type: 'checkbox',
                 default: true,

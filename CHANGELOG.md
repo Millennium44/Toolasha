@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Every switch either turns off right away or says it needs a reload
 
-27 more features now stop the moment you switch them off, among them the combat battle counter, boss timer and unit badges, the alchemy history tabs, the Combat Sim and Lab Sim buttons, task icons and reroll protection. 24 others that cannot stop cleanly, such as net worth, the watchlist, inventory tabs and the DPS panel, now carry the "refresh to apply" tag instead of silently staying on screen.
+16 more features now stop the moment you switch them off, among them the combat battle counter, boss timer, unit badges and buff bars, the alchemy history tabs, the catalyst mark and the talisman reroll advisor. 35 others that cannot stop cleanly, such as net worth, the watchlist, inventory tabs, the DPS panel, Combat Summary and the Combat Sim, now carry the "refresh to apply" tag instead of silently staying on screen.
 
 ### Combat Sim import reads talismans and handles bad pastes
 
