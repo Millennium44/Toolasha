@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy figures follow price changes
+
+The alchemy Profitability section now redraws when market prices arrive or change, so a panel opened before prices loaded fills in and a "no market price" notice clears once the price exists. The goal planner's alchemy gold per hour also follows an opened order book or a custom price right away.
+
+### Alchemy tools work for items without an icon
+
+The catalyst check, catalyst mark and missing-materials button now read an alchemy input the game draws without an icon, such as Focus Orb.
+
+### Task reroll walk and cap protection refuse what they cannot check
+
+The reroll walk no longer offers a paid reroll on a task it cannot read, and a discard step re-checks its setting before pressing. Reroll cap protection no longer treats a reroll whose price it cannot read as under the cap.
+
+### Imported builds no longer double-count a belt slot
+
+A pasted or imported build with two talismans in one belt slot now counts only the first in skilling figures, as the Combat Sim already did.
+
 <!-- shipped in 3.92.0 -->
 
 ### "Instead of selling" shows the gain per hour
