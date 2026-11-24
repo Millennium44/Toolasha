@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth toolbar buttons stay put between presses
+
+The Shroud and Beacon step buttons now keep one width whatever their label says, and the summary text has its own line under the controls instead of sitting beside the gear. A changing label or a long summary no longer moves the buttons, wraps the toolbar or pushes the map down between two presses. A long summary is cut with "…" on a desktop and shown whole on hover.
+
 ### Labyrinth step buttons light up their room and start at the nearest shroud
 
 Pointing at the Shroud or Beacon step button now lights the room its next press acts on, and the room stays lit once the supply is armed, which is how a phone sees it. The Shroud step also starts with the planned shroud nearest to where you stand and works toward the exit, instead of starting beside the exit. Canceling an armed supply with the game's X now puts the step button back to "Use".

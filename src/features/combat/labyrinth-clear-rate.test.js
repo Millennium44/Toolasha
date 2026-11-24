@@ -7991,7 +7991,7 @@ describe('labyrinth toolbar layout', () => {
     const panel = () => q('settings-panel');
     const open = () => panel().style.display !== 'none';
 
-    test('main row: Labyrinth, then Path, Beacons, Clear and the gear in clusters; the summary beside the gear, the bar below', () => {
+    test('main row: Labyrinth, then Path, Beacons, Clear and the gear in clusters; the summary on its own line, the bar below', () => {
         labyrinthClearRate.injectTileControls();
 
         const clusters = [...document.querySelectorAll('.mwi-labyrinth-tile-controls-cluster')];
@@ -8010,12 +8010,26 @@ describe('labyrinth toolbar layout', () => {
         expect(before(clusters[3], q('status'))).toBe(true);
         expect(before(q('status'), q('bar'))).toBe(true);
         expect(q('status').parentElement).toBe(clusters[3].parentElement);
-        // Empty, it takes no room; with text it shows
+        // Its own line, never part of the bar's width: a summary of any length leaves every control where it was
+        expect(q('status').style.flex).toBe('1 1 100%');
+        expect(q('status').style.width).toBe('0px');
+        expect(q('status').style.whiteSpace).toBe('nowrap');
+        // The line is kept while empty (open, desktop), so the first summary does not push the map down
+        expect(q('status').style.display).toBe('');
+        labyrinthClearRate.setTileStatus('Path: 12 rooms');
+        expect(q('status').style.display).toBe('');
+        expect(q('status').title).toBe('Path: 12 rooms');
+        labyrinthClearRate.setTileStatus('');
+        expect(q('status').style.display).toBe('');
+        expect(q('status').title).toBe('');
+        // Collapsed, an empty line takes no room; a summary still shows
+        q('toggle').click();
         expect(q('status').style.display).toBe('none');
         labyrinthClearRate.setTileStatus('Path: 12 rooms');
         expect(q('status').style.display).toBe('');
         labyrinthClearRate.setTileStatus('');
-        expect(q('status').style.display).toBe('none');
+        q('toggle').click();
+        expect(q('status').style.display).toBe('');
         expect(clusters[3].parentElement.contains(q('auto-toggle'))).toBe(true);
         expect(panel().contains(q('auto-toggle'))).toBe(true);
     });
@@ -8108,6 +8122,10 @@ describe('labyrinth toolbar layout', () => {
             const beacon = document.querySelectorAll('.mwi-labyrinth-step-beacon');
             expect(shroud).toHaveLength(1);
             expect(beacon).toHaveLength(1);
+            // One fixed width for both, whatever the label says, so nothing beside them moves between presses
+            expect(shroud[0].style.width).toBe('126px');
+            expect(beacon[0].style.width).toBe(shroud[0].style.width);
+            expect(shroud[0].style.boxSizing).toBe('border-box');
             expect(shroud[0].previousElementSibling).toBe(q('path-button'));
             expect(shroud[0].title).toContain('Press Path first');
             expect(beacon[0].previousElementSibling).toBe(q('beacon-button'));
@@ -8259,6 +8277,7 @@ describe('labyrinth toolbar layout', () => {
                     cellAt(7, 6);
                     steps.shroud = { action: 'room', code: 'ready', idx: 55, x: 7, y: 6, label: 'room', reason: 'r' };
                     labyrinthClearRate.refreshStepButtons();
+                    labyrinthClearRate.setTileStatus('Shroud ready: press again for room 8,7');
                     expect(lights()).toHaveLength(1);
                     expect(labyrinthClearRate._stepArmedTimer).toBeTruthy();
                     // The game's own X: client state only, no message. No panel in the page reads as disarmed
@@ -8266,6 +8285,8 @@ describe('labyrinth toolbar layout', () => {
                     vi.advanceTimersByTime(350);
                     expect(lights()).toHaveLength(0);
                     expect(btn('shroud').textContent).toBe('use');
+                    // The "ready" line went with it
+                    expect(q('status').textContent).toBe('');
                     // And the watch stops with nothing armed
                     expect(labyrinthClearRate._stepArmedTimer).toBeNull();
                 } finally {

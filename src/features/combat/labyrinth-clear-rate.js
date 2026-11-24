@@ -197,6 +197,8 @@ const CLEAR_CHANCE_LABEL = 'Clear Chance';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
 /** The light on the room the Shroud or Beacon step button acts on next */
 const STEP_TARGET_CLASS = 'mwi-labyrinth-step-target';
+/** Width of both step buttons, so a changing label never moves the controls beside them */
+const STEP_BUTTON_WIDTH_PX = 126;
 /** How often an armed step button re-reads whether the game still has the supply armed */
 const STEP_ARMED_POLL_MS = 300;
 /** The corner dot a covered room carries so a beacon's reach reads through a path tile's own border */
@@ -3613,13 +3615,21 @@ class LabyrinthClearRate {
         const gear = cluster();
         gear.append(settingsButton, settingsPanel);
 
-        // The latest summary (the path's rooms and shrouds, a beacon plan) sits
-        // beside the gear when it fits and wraps, whole, onto its own line when
-        // it does not. Hidden while empty so it takes no room.
+        // The latest summary (the path's rooms and shrouds, a beacon plan) has its own line under the
+        // controls, as wide as they are (width:0 keeps its text out of the bar's own width). Beside the gear
+        // it made the bar as wide as its text: a long summary pushed the whole row onto the next line and a
+        // short one pulled it back, so every button moved between two presses. On a desktop the line is
+        // always there, one line high, cut with an ellipsis and whole in its hover; on a phone, which cannot
+        // hover, it wraps and takes no room while empty.
         const status = document.createElement('span');
         status.className = `${TILE_CONTROLS_CLASS}-status`;
         status.style.cssText =
-            'display:none; flex:1 1 160px; min-width:160px; font-size:10px; color:#9ab0d8; overflow-wrap:anywhere;';
+            'display:none; flex:1 1 100%; width:0; min-width:100%; min-height:13px; line-height:13px; ' +
+            'font-size:10px; color:#9ab0d8; ' +
+            (isMobileMode()
+                ? 'overflow-wrap:anywhere;'
+                : 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;');
+        status.dataset.reserve = isMobileMode() ? '' : '1';
         container.appendChild(status);
 
         const track = document.createElement('div');
@@ -3675,6 +3685,7 @@ class LabyrinthClearRate {
             body.style.display = collapsed ? 'none' : 'contents';
             toggle.textContent = collapsed ? '▸ Labyrinth' : '▾ Labyrinth';
             toggle.title = collapsed ? 'Show labyrinth controls' : 'Hide labyrinth controls';
+            this.syncTileStatusRoom();
             this.syncTileCalcButton();
         };
         toggle.addEventListener('click', () => {
@@ -3909,6 +3920,7 @@ class LabyrinthClearRate {
         // document, and a bar rebuilt mid-calculation must show a queued or
         // running path rather than an idle button whose press cancels the wait
         this.syncTileCalcButton();
+        this.syncTileStatusRoom();
         this.setPathButtonRunning(!!this.pathCalcRunning);
         this.syncStepButtons();
     }
@@ -3990,6 +4002,9 @@ class LabyrinthClearRate {
         if (this._stepArmedTimer) return;
         this._stepArmedTimer = setInterval(() => {
             if ((findLabyrinthPanel()?.state?.supplyMode ?? null) === this._stepArmedMode) return;
+            // "ready: press again" is no longer true; a finished press writes its own result over this
+            const status = document.querySelector(`.${TILE_CONTROLS_CLASS}-status`);
+            if (/ ready: press again /.test(status?.textContent || '')) this.setTileStatus('');
             this.refreshStepButtons();
         }, STEP_ARMED_POLL_MS);
     }
@@ -4090,8 +4105,12 @@ class LabyrinthClearRate {
             const btn = document.createElement('button');
             btn.className = cls;
             btn.style.cssText =
-                `min-width:44px; min-height:20px; padding:0 8px; border:0; border-radius:5px; background:${color}; ` +
-                'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+                // One fixed width, sized to the longest label ("No beacons planned", 108 px of bold 11 px text):
+                // a width that followed the label moved every control to its right between the two presses
+                `width:${STEP_BUTTON_WIDTH_PX}px; flex:0 0 auto; box-sizing:border-box; min-height:20px; padding:0 8px; ` +
+                `border:0; border-radius:5px; background:${color}; color:#fff; font-size:11px; font-weight:700; ` +
+                'line-height:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:center; ' +
+                'cursor:pointer;';
             // The stepper presses the game on its own next task, after this handler has returned
             btn.addEventListener('click', () => {
                 void this.getStepper().press(kind);
@@ -4282,8 +4301,21 @@ class LabyrinthClearRate {
         const status = document.querySelector(`.${TILE_CONTROLS_CLASS}-status`);
         if (!status) return;
         status.textContent = message || '';
-        status.style.display = message ? '' : 'none';
+        status.title = message || '';
         status.style.color = warn ? '#ff8a80' : '';
+        this.syncTileStatusRoom();
+    }
+
+    /**
+     * Show or hide the summary line. With text it always shows. Empty, it keeps its line on a desktop while
+     * the controls are open, so the first summary does not push the map down; collapsed or on a phone it
+     * takes no room.
+     */
+    syncTileStatusRoom() {
+        const status = document.querySelector(`.${TILE_CONTROLS_CLASS}-status`);
+        if (!status) return;
+        const reserve = status.dataset.reserve === '1' && !this._tileControlsCollapsed;
+        status.style.display = status.textContent || reserve ? '' : 'none';
     }
 
     setTileProgress(ratio) {
