@@ -18376,6 +18376,52 @@ describe("a row's profit error is given on the gold scale it is judged on (#541)
         expect(profitCell).toContain('within noise');
     });
 
+    describe('delta colors against the error bar', () => {
+        const colorOf = (html, key) => html.match(new RegExp(`data-delta="${key}" style="color:([^;]+);`))[1];
+        // Worse on every figure, as a +0.3% damage level came out in one run
+        const worse = {
+            ...noisy,
+            metrics: {
+                ...base,
+                dps: 99,
+                xpPerHour: 990,
+                profitPerHour: -500,
+                encountersPerHour: 990,
+                deathsPerHour: 1,
+            },
+            deltas: { dps: -1, xp: -1, profit: -5100, deaths: 100, encounters: -1 },
+        };
+        const KEYS = ['dps', 'xp', 'profit', 'encounters', 'deaths'];
+
+        test('a drop inside the error bar is gray, not red, on all five figures', () => {
+            const html = ui._renderUpgradeDetailCells(worse, base);
+            for (const key of KEYS) expect([key, colorOf(html, key)]).toEqual([key, '#888']);
+        });
+
+        test('a gain inside the error bar is gray, not green', () => {
+            expect(colorOf(ui._renderUpgradeDetailCells(noisy, base), 'profit')).toBe('#888');
+        });
+
+        test('the same drop is red once it clears the error bar, per figure', () => {
+            const mixed = { ...worse, significantBy: { ...worse.significantBy, dps: true, deaths: true } };
+            const html = ui._renderUpgradeDetailCells(mixed, base);
+            expect(colorOf(html, 'dps')).toBe('#f44336');
+            expect(colorOf(html, 'deaths')).toBe('#f44336');
+            expect(colorOf(html, 'xp')).toBe('#888');
+        });
+
+        test('a row with no noise measured keeps its colors', () => {
+            const html = ui._renderUpgradeDetailCells({ ...worse, noise: undefined, significantBy: undefined }, base);
+            expect(colorOf(html, 'dps')).toBe('#f44336');
+        });
+
+        test('a profit ceiling (unpriced running cost) keeps its color: it is a bound, not a noisy reading', () => {
+            const html = ui._renderUpgradeDetailCells({ ...noisy, costUnpriced: ['Mystery Tea'] }, base);
+            expect(colorOf(html, 'profit')).toBe('#4caf50');
+            expect(colorOf(html, 'dps')).toBe('#888');
+        });
+    });
+
     test('and the budget planner marks such a pick as an estimate', () => {
         const plan = planUpgradeBudget([noisy], 1000, { baseline: base, metricKey: 'profit' });
 

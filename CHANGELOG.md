@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 13 more features now stop the moment you switch them off, among them the combat battle counter, boss timer, unit badges and buff bars, the catalyst mark and the talisman reroll advisor. 35 others that cannot stop cleanly, such as net worth, the watchlist, inventory tabs, the DPS panel, Combat Summary and the Combat Sim, now carry the "refresh to apply" tag instead of silently staying on screen.
 
+### Combat Sim upgrade rows gray out changes inside the error bar
+
+In an expanded upgrade row, a DPS, EXP, profit, encounters or deaths change that is within noise is now gray instead of red or green. A small upgrade such as one Force Shrine level no longer reads as making you worse when the run simply could not measure it.
+
 ### Bulk Sell re-checks holds and the kind of sale before selling
 
 The Bulk Sell Assistant now re-checks held items at every step and at Confirm, so an item that becomes held mid-run (a new loadout that wears it, say) is skipped instead of sold. Confirm also refuses when the game's open form is Sell Now but the step decided to list, or the reverse.

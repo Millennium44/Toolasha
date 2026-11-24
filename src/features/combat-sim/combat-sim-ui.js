@@ -15130,6 +15130,12 @@ class CombatSimUI {
         const deltaColor = (val) => (val > 0.5 ? '#4caf50' : val < -0.5 ? '#f44336' : '#888');
         // For deaths, lower is better (inverted color)
         const deathDeltaColor = (val) => (val < -0.01 ? '#4caf50' : val > 0.01 ? '#f44336' : '#888');
+        // A delta that has not cleared its own error bar is gray, whichever way it points: a red or green
+        // figure reads as a finding, and a +0.3% damage level inside a ±0.7% run came out red as often as green
+        const tone = (key, color) => {
+            const { noisePct, significant } = upgradeNoiseFor(r, key);
+            return noisePct != null && !significant ? '#888' : color;
+        };
 
         // The error bar on each percentage, and a note when the delta has not
         // cleared it. Without this a 0.2% "gain" off ninety encounters reads
@@ -15167,27 +15173,27 @@ class CombatSimUI {
                 <div>
                     <div style="color:#888;">DPS</div>
                     <div style="color:#e0e0e0;">${formatKMB(r.metrics.dps)}</div>
-                    <div style="color:${deltaColor(dpsValueDelta)};">${fmtDelta(dpsValueDelta)} (${r.deltas.dps >= 0 ? '+' : ''}${r.deltas.dps.toFixed(2)}%)${errorBar('dps')}</div>
+                    <div data-delta="dps" style="color:${tone('dps', deltaColor(dpsValueDelta))};">${fmtDelta(dpsValueDelta)} (${r.deltas.dps >= 0 ? '+' : ''}${r.deltas.dps.toFixed(2)}%)${errorBar('dps')}</div>
                 </div>
                 <div>
                     <div style="color:#888;">EXP/hr</div>
                     <div style="color:#e0e0e0;">${formatKMB(r.metrics.xpPerHour)}</div>
-                    <div style="color:${deltaColor(xpValueDelta)};">${fmtDelta(xpValueDelta)} (${r.deltas.xp >= 0 ? '+' : ''}${r.deltas.xp.toFixed(2)}%)${errorBar('xp')}</div>
+                    <div data-delta="xp" style="color:${tone('xp', deltaColor(xpValueDelta))};">${fmtDelta(xpValueDelta)} (${r.deltas.xp >= 0 ? '+' : ''}${r.deltas.xp.toFixed(2)}%)${errorBar('xp')}</div>
                 </div>
                 <div>
                     <div style="color:#888;">Profit/day</div>
                     <div style="color:#e0e0e0;">${formatKMB(r.metrics.profitPerHour * 24)}</div>
-                    <div style="color:${r.costUnpricedBaseline?.length ? '#ff9800' : deltaColor(profitValueDelta)};">${r.costUnpricedBaseline?.length ? 'Unknown' : `${fmtDelta(profitValueDelta)} (${r.deltas.profit >= 0 ? '+' : ''}${r.deltas.profit.toFixed(2)}%)`}${errorBar('profit')}</div>
+                    <div data-delta="profit" style="color:${r.costUnpricedBaseline?.length ? '#ff9800' : r.costUnpriced?.length ? deltaColor(profitValueDelta) : tone('profit', deltaColor(profitValueDelta))};">${r.costUnpricedBaseline?.length ? 'Unknown' : `${fmtDelta(profitValueDelta)} (${r.deltas.profit >= 0 ? '+' : ''}${r.deltas.profit.toFixed(2)}%)`}${errorBar('profit')}</div>
                 </div>
                 <div>
                     <div style="color:#888;">EPH</div>
                     <div style="color:#e0e0e0;">${r.metrics.encountersPerHour.toFixed(1)}</div>
-                    <div style="color:${deltaColor(ephDelta)};">${fmtDeltaSmall(ephDelta)} (${r.deltas.encounters >= 0 ? '+' : ''}${r.deltas.encounters.toFixed(2)}%)${errorBar('encounters')}</div>
+                    <div data-delta="encounters" style="color:${tone('encounters', deltaColor(ephDelta))};">${fmtDeltaSmall(ephDelta)} (${r.deltas.encounters >= 0 ? '+' : ''}${r.deltas.encounters.toFixed(2)}%)${errorBar('encounters')}</div>
                 </div>
                 <div>
                     <div style="color:#888;">DPH</div>
                     <div style="color:#e0e0e0;">${r.metrics.deathsPerHour.toFixed(1)}</div>
-                    <div style="color:${deathDeltaColor(dphDelta)};">${fmtDeltaSmall(dphDelta)} (${r.deltas.deaths >= 0 ? '+' : ''}${r.deltas.deaths.toFixed(2)}%)${errorBar('deaths')}</div>
+                    <div data-delta="deaths" style="color:${tone('deaths', deathDeltaColor(dphDelta))};">${fmtDeltaSmall(dphDelta)} (${r.deltas.deaths >= 0 ? '+' : ''}${r.deltas.deaths.toFixed(2)}%)${errorBar('deaths')}</div>
                 </div>
             </div>
             <div style="margin-top:6px; color:${GAME_COLORS.textDim}; font-size:10px;">
