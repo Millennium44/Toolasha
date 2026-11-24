@@ -21,6 +21,7 @@ import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 import { describeShopValue } from '../../utils/alchemy-shop-value.js';
 import { CAPE_BASE_VALUE_SETTING, describeAssumedCape } from '../../utils/untradable-cape.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import { pricesMoved } from '../../utils/price-change.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { maxLevel } from '../../utils/game-maximums.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
@@ -83,6 +84,7 @@ class AlchemyProfitDisplay {
         this.catalystWhatIfUnsubscribe = null;
         this.expectedValueHandler = null; // dataManager 'expected_value_initialized' listener
         this.expectedValueStart = null; // In-flight request to start the expected-value calculator
+        this.marketUpdateHandler = null; // marketAPI price-update listener
     }
 
     /**
@@ -159,6 +161,16 @@ class AlchemyProfitDisplay {
             if (this.isActive) this.checkAndUpdateDisplay();
         };
         dataManager.on('expected_value_initialized', this.expectedValueHandler);
+
+        // Every figure here is priced from the market, and the panel's own fingerprint is DOM-only: a panel
+        // opened before the market data arrived (no figure, or "no market price" for an item that has one
+        // now) would otherwise stay as drawn until the player touched it
+        this.marketUpdateHandler = (change) => {
+            if (!pricesMoved(change)) return;
+            this.lastFingerprint = null;
+            if (this.isActive) this.checkAndUpdateDisplay();
+        };
+        marketAPI.on(this.marketUpdateHandler);
 
         // Pricing settings: the figures and the "Pricing Mode:" line both follow
         // them, and the state fingerprint does not include them
@@ -2074,6 +2086,11 @@ class AlchemyProfitDisplay {
             if (this.expectedValueHandler) {
                 dataManager.off('expected_value_initialized', this.expectedValueHandler);
                 this.expectedValueHandler = null;
+            }
+
+            if (this.marketUpdateHandler) {
+                marketAPI.off(this.marketUpdateHandler);
+                this.marketUpdateHandler = null;
             }
 
             if (this.contentObserver) {

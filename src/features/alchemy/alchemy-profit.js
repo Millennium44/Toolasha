@@ -95,12 +95,14 @@ export function readAlchemyPanelSelection(root = document) {
     const use = container?.querySelector('svg use');
     const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
     const itemId = href.split('#')[1];
-    if (!itemId) return null;
+    // An icon-less input (Focus Orb) draws its name alone, as extractItemData already reads it
+    const itemHrid = itemId ? `/items/${itemId}` : container ? getItemHridFromName(itemNameOf(container)) : null;
+    if (!itemHrid) return null;
 
     const enhancementText = container.querySelector('[class*="Item_enhancementLevel"]')?.textContent || '';
     const match = enhancementText.match(/\+(\d+)/);
     return {
-        itemHrid: `/items/${itemId}`,
+        itemHrid,
         enhancementLevel: match ? parseInt(match[1], 10) : 0,
         actionType: readAlchemyTabType(root),
     };

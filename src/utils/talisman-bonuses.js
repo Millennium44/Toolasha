@@ -351,10 +351,14 @@ export function computeTalismanBonuses({ talismans, belt, itemDetailMap, modifie
     if (slots === 0) return result;
     const power = getTalismanPower(belt, itemDetailMap, enhancementTable);
     const accumulator = createLineAccumulator();
+    // A second record in one slot counts for nothing, as in the combat engine and {@link deadSpecialLines} (a pasted or
+    // imported build can hold two); the live list never does
+    const seenSlots = new Set();
 
     for (const talisman of talismans) {
         const slot = talisman?.slotIndex;
-        if (!Number.isInteger(slot) || slot < 1 || slot > slots) continue;
+        if (!Number.isInteger(slot) || slot < 1 || slot > slots || seenSlots.has(slot)) continue;
+        seenSlots.add(slot);
         for (const modifier of talisman.modifiers || []) {
             const scaled = scaleTalismanModifier(modifier, modifierDetailMap, power);
             if (!scaled) continue;
@@ -453,9 +457,11 @@ export function describeSimTalismans(talismans, belt, itemDetailMap, modifierDet
     const slots = getBeltSlotCount(belt, itemDetailMap);
     const power = getTalismanPower(belt, itemDetailMap, enhancementTable);
     const out = [];
+    const seenSlots = new Set();
     for (const talisman of [...talismans].sort((x, y) => (x?.slotIndex || 0) - (y?.slotIndex || 0))) {
         const slot = talisman?.slotIndex;
-        if (!Number.isInteger(slot) || slot < 1 || slot > slots) continue;
+        if (!Number.isInteger(slot) || slot < 1 || slot > slots || seenSlots.has(slot)) continue;
+        seenSlots.add(slot);
         const lines = [];
         for (const modifier of talisman.modifiers || []) {
             const scaled = scaleTalismanModifier(modifier, modifierDetailMap, power);

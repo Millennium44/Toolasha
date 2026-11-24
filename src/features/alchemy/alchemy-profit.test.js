@@ -179,6 +179,19 @@ describe('an input the sprite sheet has no icon for', () => {
         ]);
     });
 
+    test('readAlchemyPanelSelection reads the same input from the name, with its enhancement level', () => {
+        mountRequirement('Focus Orb', 2);
+        expect(alchemyProfitModule.readAlchemyPanelSelection()).toEqual({
+            itemHrid: '/items/focus_orb',
+            enhancementLevel: 2,
+            actionType: null,
+        });
+        mountRequirement('Not An Item');
+        expect(alchemyProfitModule.readAlchemyPanelSelection()).toBeNull();
+        mountRequirement('');
+        expect(alchemyProfitModule.readAlchemyPanelSelection()).toBeNull();
+    });
+
     test('an unknown name or an empty slot yields no requirement', async () => {
         mountRequirement('Not An Item');
         expect(await alchemyProfit.extractRequirements()).toEqual([]);
