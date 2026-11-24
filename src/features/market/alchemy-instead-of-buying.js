@@ -967,7 +967,8 @@ export function makeRateChoices() {
                 getItemPrice: (hrid) => realPrice(hrid, 'buy'),
             }).totalCostPerHour;
             teaSetups.push({
-                tea: calc.calculateSuccessRateBreakdown(1, 0).tea,
+                // The Alchemy Success of the drinks being priced, as the costing reads it
+                tea: calc.successBonusFromContext?.(context) ?? calc.calculateSuccessRateBreakdown(1, 0).tea,
                 drinkSlots: drinks,
                 teaCostPerHour,
                 context,

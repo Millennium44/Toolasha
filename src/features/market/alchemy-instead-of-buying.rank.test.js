@@ -103,6 +103,9 @@ vi.mock('./alchemy-profit-calculator.js', () => ({
             total: Math.max(0, Math.min(1, base * (1 + catalyst + penalty + (tea ?? world.liveTea ?? 0)))),
             tea: tea ?? world.liveTea ?? 0,
         }),
+        // Alchemy Success of the drinks of a context; null leaves the calculator's own answer
+        successBonusFromContext: (context) =>
+            world.contextTea === null || world.contextTea === undefined || !context ? null : world.contextTea,
         catalystSuccessBonus: (hrid) => (hrid === '/items/prime_catalyst' ? 0.25 : 0.15),
         // The calculator folds a speed tea into the action time after calculateActionStats
         actionSpeedStats: (details, { drinkSlots, actionTime }) => ({
@@ -139,6 +142,7 @@ beforeEach(() => {
     world.loadoutDrinks = [];
     world.equipment = null;
     world.liveTea = 0;
+    world.contextTea = null;
     world.teaSpeed = 0;
     world.listeners = [];
     world.prices = { [ESSENCE]: { ask: 5000, bid: 4000 }, [SHARD]: { ask: 1100, bid: 1000 } };
@@ -228,6 +232,20 @@ describe('bonus-source ranking with the real success rate', () => {
         // 12 drinks an hour at 600 over 720 actions an hour
         for (const choice of teaChoices) expect(choice.teaPerAction).toBeCloseTo((12 * 600) / 720);
         expect(choices.some((choice) => choice.teaPerAction === 0)).toBe(true);
+    });
+
+    test('the tea setup is ranked at the Alchemy Success of the drinks it prices, not of the live buff map', () => {
+        world.loadoutDrinks = [TEA];
+        world.prices[TEA] = { ask: 600, bid: 500 };
+        world.liveTea = 0;
+        world.contextTea = 0.06;
+        const choices = makeRateChoices()('decompose', { itemLevel: 10 }, 0.6);
+        const teaChoices = choices.filter((choice) => choice.teaPerAction > 0);
+        expect(teaChoices.length).toBeGreaterThan(0);
+        expect(Math.max(...teaChoices.map((choice) => choice.rate))).toBeCloseTo(0.6 * 1.06, 10);
+        // The no-drink setup takes none of it
+        const bare = choices.filter((choice) => choice.teaPerAction === 0).map((choice) => choice.rate);
+        expect(Math.min(...bare)).toBeCloseTo(0.6, 10);
     });
 
     test('Conservation lowers what each catalyst costs per success, and only a catalyst', async () => {

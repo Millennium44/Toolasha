@@ -723,6 +723,58 @@ describe('with no actionContext, drinks resolve through one path for every term'
         expect(result.successRateBreakdown.levelPenalty).toBe(0);
     });
 
+    describe('Alchemy Success follows the same drinks as their cost', () => {
+        const CATALYTIC = '/items/catalytic_tea';
+        beforeEach(() => {
+            mocks.initClientData = {
+                ...mocks.initClientData,
+                itemDetailMap: {
+                    ...ITEM_DETAIL_MAP,
+                    [CATALYTIC]: {
+                        name: 'Catalytic Tea',
+                        consumableDetail: {
+                            buffs: [{ typeHrid: '/buff_types/alchemy_success', ratioBoost: 0.05, flatBoost: 0 }],
+                        },
+                    },
+                },
+            };
+            mocks.drinkConcentration = 0.2;
+            mocks.itemPrices = { '/items/relic': 0, [CATALYTIC]: 1 };
+        });
+
+        test('a loadout tea the live buff map lacks still lifts the success rate', () => {
+            mocks.drinkSlots = [];
+            mocks.resolvedDrinks = [{ itemHrid: CATALYTIC }];
+            mocks.alchemyTeaBonus = 0;
+
+            const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/relic');
+
+            expect(result.winningTeaUsed).toBe(true);
+            expect(result.consumableCosts.map((c) => c.itemHrid)).toEqual([CATALYTIC]);
+            // 5% × (1 + 20% Drink Concentration)
+            expect(result.successRateBreakdown.tea).toBeCloseTo(0.06, 10);
+        });
+
+        test('a live tea buff the priced drinks do not include is not a free success bonus', () => {
+            mocks.drinkSlots = [{ itemHrid: CATALYTIC }];
+            mocks.resolvedDrinks = [];
+            mocks.alchemyTeaBonus = 0.06;
+
+            const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/relic');
+
+            expect(result.totalTeaCostPerHour).toBe(0);
+            expect(result.successRateBreakdown.tea).toBe(0);
+        });
+
+        test('an explicit teaBonusOverride still wins over the drinks', () => {
+            mocks.resolvedDrinks = [{ itemHrid: CATALYTIC }];
+
+            const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/relic', 0, false, 0.5);
+
+            expect(result.successRateBreakdown.tea).toBe(0.5);
+        });
+    });
+
     test('an explicit actionContext is used as-is, ignoring both the raw slots and the resolved snapshot', () => {
         mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
         mocks.resolvedDrinks = [{ itemHrid: '/items/loadout_tea' }];

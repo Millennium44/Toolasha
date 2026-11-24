@@ -890,9 +890,10 @@ class AlchemyProfitCalculator {
         computeNetProfit,
         computeTeaCost,
         levelPenalty = 0,
+        teaBonusOverride = null,
         conservation = 0,
     }) {
-        const liveTeaBonus = getAlchemySuccessBonus();
+        const liveTeaBonus = teaBonusOverride !== null ? teaBonusOverride : getAlchemySuccessBonus();
 
         // Read the live catalyst from the DOM slot
         const catalystUse = document.querySelector(
@@ -1091,6 +1092,12 @@ class AlchemyProfitCalculator {
 
             // Get drink concentration separately (not in breakdown from calculateActionStats)
             const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
+            // Alchemy Success comes from the drinks this calculation prices (a saved loadout's, a queued row's),
+            // like their cost, speed and level lift; the live buff map can describe other drinks
+            const contextTeaBonus =
+                teaBonusOverride !== null
+                    ? teaBonusOverride
+                    : getAlchemySuccessBonusFromDrinks(drinkSlots, gameData.itemDetailMap, drinkConcentration);
 
             // Action speed breakdown, and the action time with tea speed folded in
             let { actionTime, actionSpeedBreakdown } = buildActionSpeedStats(actionDetails, {
@@ -1177,7 +1184,7 @@ class AlchemyProfitCalculator {
                 alchemyBonusRevenue: alchemyBonus.totalBonusRevenue,
                 computeNetProfit: (successRate) => coinsProduced * successRate - (materialCost + coinCost),
                 computeTeaCost: () => teaCostData.totalCostPerHour,
-                teaBonusOverride,
+                teaBonusOverride: contextTeaBonus,
                 catalystChoice,
                 fixedTeaSelection: actionContext?.fixedTeaSelection === true,
                 hasMissingTeaPrices: teaCostData.hasMissingPrices,
@@ -1415,6 +1422,12 @@ class AlchemyProfitCalculator {
             let { efficiencyBreakdown } = actionStats;
 
             const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
+            // Alchemy Success comes from the drinks this calculation prices (a saved loadout's, a queued row's),
+            // like their cost, speed and level lift; the live buff map can describe other drinks
+            const contextTeaBonus =
+                teaBonusOverride !== null
+                    ? teaBonusOverride
+                    : getAlchemySuccessBonusFromDrinks(drinkSlots, gameData.itemDetailMap, drinkConcentration);
 
             // Action speed breakdown, and the action time with tea speed folded in
             let { actionTime, actionSpeedBreakdown } = buildActionSpeedStats(actionDetails, {
@@ -1596,7 +1609,7 @@ class AlchemyProfitCalculator {
                 alchemyBonusRevenue: alchemyBonus.totalBonusRevenue,
                 computeNetProfit: (successRate) => outputValue * successRate - (inputPrice + coinCost),
                 computeTeaCost: () => teaCostData.totalCostPerHour,
-                teaBonusOverride,
+                teaBonusOverride: contextTeaBonus,
                 catalystChoice,
                 fixedTeaSelection: actionContext?.fixedTeaSelection === true,
                 hasMissingTeaPrices: teaCostData.hasMissingPrices,
@@ -1859,6 +1872,12 @@ class AlchemyProfitCalculator {
             let { efficiencyBreakdown } = actionStats;
 
             const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
+            // Alchemy Success comes from the drinks this calculation prices (a saved loadout's, a queued row's),
+            // like their cost, speed and level lift; the live buff map can describe other drinks
+            const contextTeaBonus =
+                teaBonusOverride !== null
+                    ? teaBonusOverride
+                    : getAlchemySuccessBonusFromDrinks(drinkSlots, gameData.itemDetailMap, drinkConcentration);
 
             // Action speed breakdown, and the action time with tea speed folded in
             let { actionTime, actionSpeedBreakdown } = buildActionSpeedStats(actionDetails, {
@@ -2029,7 +2048,7 @@ class AlchemyProfitCalculator {
                     itemDetailMap: gameData.itemDetailMap,
                     equipment,
                 }),
-                teaBonusOverride,
+                teaBonusOverride: contextTeaBonus,
                 catalystChoice,
                 fixedTeaSelection: actionContext?.fixedTeaSelection === true,
                 hasMissingTeaPrices: teaCostData.hasMissingPrices,
