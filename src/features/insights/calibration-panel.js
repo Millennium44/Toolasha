@@ -24,9 +24,9 @@ import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple
 import { registerRow } from '../../utils/overlay-rows.js';
 import { predictionCalibration } from './prediction-calibration.js';
 import { enhancementCalibration } from './enhancement-calibration.js';
-import { transmuteHistoryTracker } from '../alchemy/transmute-history-tracker.js';
-import { decomposeHistoryTracker } from '../alchemy/decompose-history-tracker.js';
-import { coinifyHistoryTracker } from '../alchemy/coinify-history-tracker.js';
+import transmuteHistoryTracker from '../alchemy/transmute-history-tracker.js';
+import decomposeHistoryTracker from '../alchemy/decompose-history-tracker.js';
+import coinifyHistoryTracker from '../alchemy/coinify-history-tracker.js';
 import { summarizeAlchemyCalibration, verdictText } from './alchemy-calibration.js';
 import {
     withoutBadEnhancementScaleRecords,
@@ -107,7 +107,10 @@ function enhancementRecords() {
     return cached;
 }
 
-/** The three alchemy trackers, by the kind of session they keep */
+/**
+ * The three alchemy trackers' registration records, by the kind of session they keep. The records, not the
+ * instances: in the release the trackers live in the actions bundle, which publishes the record.
+ */
 const ALCHEMY_TRACKERS = {
     transmute: transmuteHistoryTracker,
     decompose: decomposeHistoryTracker,

@@ -913,19 +913,19 @@ export const singletonOwnership = new Map([
         normalize(join(__dirname, 'src/features/alchemy/alchemy-action-protection.js')),
         { global: 'Toolasha.Actions.alchemyActionProtection' },
     ],
-    // The alchemy history trackers: the calibration panel (ui) imports each instance by name. The published global
-    // is the registration record, which carries the instance under its own name for this reason.
+    // The alchemy history trackers: the calibration panel (ui) imports each registration record, which carries
+    // `loadSessions` for this reason.
     [
         normalize(join(__dirname, 'src/features/alchemy/transmute-history-tracker.js')),
-        { global: 'Toolasha.Actions.transmuteHistoryTracker', named: ['transmuteHistoryTracker'] },
+        { global: 'Toolasha.Actions.transmuteHistoryTracker' },
     ],
     [
         normalize(join(__dirname, 'src/features/alchemy/coinify-history-tracker.js')),
-        { global: 'Toolasha.Actions.coinifyHistoryTracker', named: ['coinifyHistoryTracker'] },
+        { global: 'Toolasha.Actions.coinifyHistoryTracker' },
     ],
     [
         normalize(join(__dirname, 'src/features/alchemy/decompose-history-tracker.js')),
-        { global: 'Toolasha.Actions.decomposeHistoryTracker', named: ['decomposeHistoryTracker'] },
+        { global: 'Toolasha.Actions.decomposeHistoryTracker' },
     ],
     [
         normalize(join(__dirname, 'src/features/notifications/market-undercut-alerts.js')),

@@ -44,13 +44,13 @@ vi.mock('./enhancement-calibration.js', () => ({
 // The alchemy sessions come from the trackers themselves; mocked at the tracker
 // rather than at the store so the panel's own async read is what is exercised
 vi.mock('../alchemy/transmute-history-tracker.js', () => ({
-    transmuteHistoryTracker: { loadSessions: async () => store.alchemy.transmute },
+    default: { loadSessions: async () => store.alchemy.transmute },
 }));
 vi.mock('../alchemy/decompose-history-tracker.js', () => ({
-    decomposeHistoryTracker: { loadSessions: async () => store.alchemy.decompose },
+    default: { loadSessions: async () => store.alchemy.decompose },
 }));
 vi.mock('../alchemy/coinify-history-tracker.js', () => ({
-    coinifyHistoryTracker: { loadSessions: async () => store.alchemy.coinify },
+    default: { loadSessions: async () => store.alchemy.coinify },
 }));
 
 store.rows = [];

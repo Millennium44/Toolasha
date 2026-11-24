@@ -838,9 +838,9 @@ export { decomposeHistoryTracker };
 
 export default {
     name: 'Decompose History Tracker',
-    // The instance itself, for a bundle that loads after this one and imports it by name (rollup.config.js
-    // singletonOwnership): the published global is this record, so the name has to be a property of it
-    decomposeHistoryTracker,
+    // The calibration panel (ui bundle) imports this record and reads sessions through it: the published global
+    // is this record, not the instance (rollup.config.js singletonOwnership)
+    loadSessions: () => decomposeHistoryTracker.loadSessions(),
     initialize: () => decomposeHistoryTracker.initialize(),
     // Awaited, so a rejection from the now-async disable is caught here rather
     // than escaping as an unhandled promise
