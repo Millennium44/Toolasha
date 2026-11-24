@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bulk Sell re-checks holds and the kind of sale before selling
+
+The Bulk Sell Assistant now re-checks held items at every step and at Confirm, so an item that becomes held mid-run (a new loadout that wears it, say) is skipped instead of sold. Confirm also refuses when the game's open form is Sell Now but the step decided to list, or the reverse.
+
+### Skilling optimizer gold per hour matches the action tile
+
+The tea and gear optimizer's gold per hour now counts a Gourmet or Processing scroll and the Prosperity talisman line, as the action tile already did, so its figures and its pick of the best tea agree with what you see on the action.
+
+### Crafting plan shopping list matches Buy Missing Materials
+
+With worst-case Artisan rounding, the crafting plan's shopping list and guided walk now size a crafted intermediate's inputs the same cautious way the Buy Missing Materials button does, instead of listing fewer. On the test server, the tester shop's Buy next re-checks the line before buying.
+
 ### Net worth marks its total when something could not be priced
 
 The net worth total now carries its "not fully priced" mark when an enhanced item is counted at its +0 price, or an ability or currency has no price, instead of showing a clean figure that was really a floor. Values themselves are unchanged. The "pricing changed" note in Movers now follows the mode each reading was valued under.
