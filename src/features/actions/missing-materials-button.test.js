@@ -97,7 +97,7 @@ vi.mock('../../utils/material-calculator.js', () => ({
 }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
     createAutofillManager: () => state.autofill,
-    findQuantityInput: () => null,
+    findQuantityInput: (modal) => modal?.querySelector?.('input') ?? null,
 }));
 // marketplace-tabs.js itself is NOT mocked — its tab creation, dismiss button,
 // and clear-all control are exercised for real, the same way lab-sim-ui.test.js
@@ -1273,6 +1273,99 @@ describe('the Tester shop strip', () => {
         expect(state.autofill.setPendingCalculation).toHaveBeenCalledWith(expect.any(Function), {
             itemHrid: '/items/plank',
         });
+    });
+});
+
+describe('Buy next in the Tester shop', () => {
+    function buildShopWithCard() {
+        document.body.innerHTML = '';
+        const nav = document.createElement('div');
+        nav.className = 'NavigationBar_nav__3uuUl';
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('aria-label', 'navigationBar.shop');
+        nav.appendChild(svg);
+        document.body.appendChild(nav);
+        const container = document.createElement('div');
+        container.className = 'MuiTabs-flexContainer';
+        container.setAttribute('role', 'tablist');
+        const tester = document.createElement('button');
+        tester.setAttribute('role', 'tab');
+        tester.textContent = 'Tester';
+        container.appendChild(tester);
+        const shopPanel = document.createElement('div');
+        shopPanel.className = 'ShopPanel_shopPanel__1Wl3r';
+        shopPanel.appendChild(container);
+        const card = document.createElement('div');
+        card.className = 'ShopPanel_shopItem__abc';
+        card.textContent = 'Plank 100 Coins';
+        Object.defineProperty(card, 'offsetParent', { get: () => document.body, configurable: true });
+        shopPanel.appendChild(card);
+        document.body.appendChild(shopPanel);
+        Object.defineProperty(container, 'offsetParent', { get: () => document.body, configurable: true });
+        return { container, card };
+    }
+
+    /** Clicking the card opens a Quantity dialog; `onOpen` runs as it appears */
+    function openDialogOnClick(card, onOpen) {
+        const buy = vi.fn();
+        card.addEventListener('click', () => {
+            const modal = document.createElement('div');
+            modal.className = 'Modal_modalContainer__x';
+            modal.textContent = 'Quantity';
+            modal.getClientRects = () => [{}];
+            const input = document.createElement('input');
+            modal.appendChild(input);
+            const button = document.createElement('button');
+            button.textContent = 'Buy';
+            button.addEventListener('click', buy);
+            modal.appendChild(button);
+            document.body.appendChild(modal);
+            onOpen?.();
+        });
+        return buy;
+    }
+
+    beforeEach(() => {
+        state.testerShop = true;
+        state.items = { '/items/plank': { name: 'Plank', isTradable: true } };
+        state.actionMaterials = [
+            { itemHrid: '/items/plank', itemName: 'Plank', missing: 40, required: 40, isTradeable: true },
+        ];
+    });
+
+    test('presses Buy for the line the press started with', async () => {
+        const { container, card } = buildShopWithCard();
+        const buy = openDialogOnClick(card);
+        await openMissingMaterials('/actions/crafting/plank', 5);
+        container.querySelector('[data-mwi-buy-next]').click();
+        await vi.waitFor(() => expect(buy).toHaveBeenCalledTimes(1), { timeout: 4000 });
+        missingMaterials.cleanup();
+    });
+
+    test('does not press Buy once a purchase has already covered the line', async () => {
+        const { container, card } = buildShopWithCard();
+        const buy = openDialogOnClick(card, () => {
+            container.querySelector('[data-item-hrid="/items/plank"]').setAttribute('data-missing-quantity', '0');
+        });
+        await openMissingMaterials('/actions/crafting/plank', 5);
+        const control = container.querySelector('[data-mwi-buy-next]');
+        control.click();
+        await vi.waitFor(() => expect(control.textContent).toContain('nothing bought'), { timeout: 4000 });
+        expect(buy).not.toHaveBeenCalled();
+        missingMaterials.cleanup();
+    });
+
+    test('does not press Buy after the bill is closed under it', async () => {
+        const { container, card } = buildShopWithCard();
+        const buy = openDialogOnClick(card, () => {
+            container.querySelector('[data-item-hrid="/items/plank"]').remove();
+        });
+        await openMissingMaterials('/actions/crafting/plank', 5);
+        const control = container.querySelector('[data-mwi-buy-next]');
+        control.click();
+        await vi.waitFor(() => expect(control.textContent).toContain('nothing bought'), { timeout: 4000 });
+        expect(buy).not.toHaveBeenCalled();
+        missingMaterials.cleanup();
     });
 });
 
