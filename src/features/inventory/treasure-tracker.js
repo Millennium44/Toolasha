@@ -1360,6 +1360,16 @@ class TreasureTracker {
     }
 
     /**
+     * A cowbell's worth for other features that follow this tracker's choice (the alchemy "Instead of" lines'
+     * crate values): 0 when cowbells are set to zero here, null when they count but no bag is priced.
+     * @returns {number|null}
+     */
+    cowbellWorth() {
+        if (!this.settings.valueCowbells) return 0;
+        return this._cowbellValue();
+    }
+
+    /**
      * What an untradable reward is worth, under the current setting.
      *
      * Read from the game's own shop data rather than a hardcoded price list, so

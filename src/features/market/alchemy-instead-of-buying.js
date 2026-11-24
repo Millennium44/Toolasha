@@ -35,6 +35,7 @@ import marketAPI from '../../api/marketplace.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { isKeptForSelfUse, keptSignature } from './self-use-wanted.js';
 import { getItemPriceInfo } from '../../utils/market-data.js';
+import { treasureTracker } from '../../utils/bundle-bridge.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { getDrinkConcentration } from '../../utils/tea-parser.js';
@@ -351,6 +352,7 @@ export function findAlchemyAlternatives(targetHrid, deps) {
             sellingPerUnit: targetSell === null || targetSell === undefined ? null : targetSell - effectiveCost,
             secondsPerUnit: evaluation.secondsPerUnit,
             partlyUnpriced: evaluation.partlyUnpriced,
+            unpriced: evaluation.unpriced ?? [],
             kept: evaluation.kept,
             result: pick.result,
         });
@@ -369,6 +371,17 @@ export function findAlchemyAlternatives(targetHrid, deps) {
 
 /** The coin item, a coinify's whole base output */
 const COIN_HRID = '/items/coin';
+const COWBELL_HRID = '/items/cowbell';
+
+/**
+ * A cowbell's worth as the treasure tracker counts it: a bag of ten's sell price less the bag tax, split ten ways,
+ * or 0 when the tracker is set to "Cowbells at zero". Null when that cannot be read (no bag price, no tracker).
+ * @returns {number|null}
+ */
+function cowbellWorth() {
+    const worth = treasureTracker()?.cowbellWorth?.();
+    return Number.isFinite(worth) ? worth : null;
+}
 
 /**
  * The alchemy actions one item can be put through, from its details.
@@ -436,15 +449,16 @@ export function findAlchemySellRoutes(itemHrid, deps) {
                 if (!basis) return null;
                 let netPerAction;
                 let partlyUnpriced;
+                let unpriced;
                 let kept;
                 if (actionType === 'decompose') {
                     const step = selfUseDecompose(result, details, { ...pricing, ownUseCost: sellValue });
                     if (!step) return null;
-                    ({ netPerAction, partlyUnpriced, kept } = step);
+                    ({ netPerAction, partlyUnpriced, unpriced, kept } = step);
                 } else if (actionType === 'transmute') {
                     const held = selfUseTransmuteHeld(result, details, { ...pricing, sellPrice: bid });
                     if (!held) return null;
-                    ({ netPerAction, partlyUnpriced, kept } = held);
+                    ({ netPerAction, partlyUnpriced, unpriced, kept } = held);
                 } else {
                     // A coinify's output is its coins at face value, the rest its bonus drops
                     const made = alchemySourceUnitCost(result, details, {
@@ -455,13 +469,13 @@ export function findAlchemySellRoutes(itemHrid, deps) {
                     });
                     if (!made) return null;
                     netPerAction = made.targetPerAction + made.creditPerAction - made.spendPerAction;
-                    ({ partlyUnpriced, kept } = made);
+                    ({ partlyUnpriced, unpriced, kept } = made);
                 }
                 if (!Number.isFinite(netPerAction)) return null;
                 const secondsPerUnit = 3600 / (basis.actionsPerHour * basis.bulk);
                 const timeCostPerUnit = (secondsPerUnit / 3600) * goldPerHour;
                 const margin = netPerAction / basis.bulk - timeCostPerUnit;
-                return { margin, secondsPerUnit, timeCostPerUnit, partlyUnpriced, kept };
+                return { margin, secondsPerUnit, timeCostPerUnit, partlyUnpriced, unpriced: unpriced ?? [], kept };
             },
             'margin',
             // A missing output price only lowers the margin, so the best partial figure is a lower bound
@@ -479,6 +493,7 @@ export function findAlchemySellRoutes(itemHrid, deps) {
                     sellValue,
                     margin: evaluation.margin,
                     partlyUnpriced: evaluation.partlyUnpriced,
+                    unpriced: evaluation.unpriced,
                 };
             }
             continue;
@@ -491,6 +506,7 @@ export function findAlchemySellRoutes(itemHrid, deps) {
             secondsPerUnit: evaluation.secondsPerUnit,
             timeCostPerUnit: evaluation.timeCostPerUnit,
             partlyUnpriced: evaluation.partlyUnpriced,
+            unpriced: evaluation.unpriced,
             kept: evaluation.kept,
         });
     }
@@ -1150,7 +1166,9 @@ function resultKey(targetHrid, wanted) {
     const goldPerHour = Math.max(0, Number(config.getSetting(GOLD_RATE_SETTING)) || 0);
     // The mark meaning is part of the key: the same marks keep and sell opposite outputs
     const keepKey = keptSignature(wanted);
-    return { key: `${targetHrid}|${goldPerHour}|${keepKey}|${pricingSignature()}`, goldPerHour };
+    // The cowbell worth too: the treasure tracker's toggle changes every crate's value
+    const cowbellKey = cowbellWorth() ?? '';
+    return { key: `${targetHrid}|${goldPerHour}|${keepKey}|${pricingSignature()}|${cowbellKey}`, goldPerHour };
 }
 
 /**
@@ -1166,6 +1184,10 @@ function makeMarketPricing() {
         return bid === null ? null : calculatePriceAfterTax(bid);
     };
     const containerDrops = (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null;
+    // Inside a crate, coins are worth their face and cowbells what the treasure tracker counts them at: neither has
+    // a book of its own, and leaving them out undervalued a Medium Artisan's Crate by about a third
+    const crateItem = (priceOf) => (hrid) =>
+        hrid === COIN_HRID ? 1 : hrid === COWBELL_HRID ? cowbellWorth() : priceOf(hrid);
     const crates = new Map();
     const containerValue = (hrid) => {
         if (!crates.has(`k|${hrid}`)) {
@@ -1174,7 +1196,7 @@ function makeMarketPricing() {
                 untaxedContainerValue(hrid, {
                     containerDrops,
                     // Real book asks only, like every kept output: no custom or value-map price
-                    priceOf: askOf,
+                    priceOf: crateItem(askOf),
                 })
             );
         }
@@ -1188,7 +1210,7 @@ function makeMarketPricing() {
                     containerDrops,
                     // The player's sell side after tax, like every other unwanted output; custom
                     // prices and value-map estimates are no listing
-                    priceOf: sellOf,
+                    priceOf: crateItem(sellOf),
                 })
             );
         }

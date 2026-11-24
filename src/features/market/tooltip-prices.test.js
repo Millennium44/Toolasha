@@ -2994,3 +2994,62 @@ describe('the craft PROFIT block with simulated tile scrolls', () => {
         expect(block.innerHTML).not.toContain('title=');
     });
 });
+
+describe('the gold rate named in the "Instead of" hovers', () => {
+    test('the hover names the setting by the section and label the settings panel shows', async () => {
+        const { settingsGroups } = await vi.importActual('../../core/settings-schema.js');
+        const { GOLD_RATE_WHERE } = await import('./tooltip-prices.js');
+        const { GOLD_RATE_SETTING } = await import('./alchemy-instead-of-buying.js');
+        const group = Object.values(settingsGroups).find((g) => g.settings?.[GOLD_RATE_SETTING]);
+        expect(group).toBeTruthy();
+        expect(GOLD_RATE_WHERE).toBe(`Settings → ${group.title} → "${group.settings[GOLD_RATE_SETTING].label}"`);
+    });
+
+    test('settings search for "gold rate" finds the setting by its label', async () => {
+        const { settingsGroups } = await vi.importActual('../../core/settings-schema.js');
+        const { GOLD_RATE_SETTING } = await import('./alchemy-instead-of-buying.js');
+        const def = Object.values(settingsGroups).find((g) => g.settings?.[GOLD_RATE_SETTING]).settings[
+            GOLD_RATE_SETTING
+        ];
+        expect(def.label.toLowerCase()).toContain('gold rate');
+        expect(def.help.toLowerCase()).toContain('time value');
+    });
+
+    test.each([
+        [
+            'insteadTitle',
+            0,
+            /is left free; set a gold rate to charge it \(Settings → .*"Your gold rate \(gold\/hr\)"\)/,
+        ],
+        ['sellingTitle', 0, /is left free; set a gold rate/],
+        ['insteadTitle', 3_000_000, /charged at your gold rate, 3\.0?0?M\/hr \(Settings → /],
+        ['sellingTitle', 3_000_000, /charged at your gold rate, 3\.0?0?M\/hr \(Settings → /],
+    ])('%s with a rate of %d says where the rate is set', async (fn, rate, pattern) => {
+        settings.goldRate = rate;
+        try {
+            const mod = await import('./tooltip-prices.js');
+            expect(mod[fn]()).toMatch(pattern);
+        } finally {
+            settings.goldRate = 0;
+        }
+    });
+});
+
+describe('the unpriced outputs named in the "Instead of" hovers', () => {
+    test('names each unpriced output once, a crate marked as some contents', async () => {
+        const { unpricedNote } = await import('./tooltip-prices.js');
+        const names = { '/items/medium_artisans_crate': "Medium Artisan's Crate", '/items/x': 'X' };
+        const note = unpricedNote(
+            ['/items/medium_artisans_crate', '/items/x', '/items/x'],
+            (h) => names[h],
+            (h) => h.includes('crate')
+        );
+        expect(note).toBe("no price for: Medium Artisan's Crate (some contents), X");
+    });
+
+    test('says nothing when every output is priced', async () => {
+        const { unpricedNote } = await import('./tooltip-prices.js');
+        expect(unpricedNote([], (h) => h)).toBe('');
+        expect(unpricedNote(undefined, (h) => h)).toBe('');
+    });
+});

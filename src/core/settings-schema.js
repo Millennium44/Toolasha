@@ -877,15 +877,15 @@ export const settingsGroups = {
             },
             actionPanel_craftingPlanGoldPerHour: {
                 id: 'actionPanel_craftingPlanGoldPerHour',
-                label: 'Your time value (gold/hr)',
+                label: 'Your gold rate (gold/hr)',
                 type: 'number',
                 shorthand: true,
                 default: 0,
                 min: 0,
                 help:
-                    'What an hour of your time earns elsewhere, in gold. The crafting plan uses it to decide whether ' +
+                    'Your time value: what an hour of your time earns elsewhere, in gold. The crafting plan uses it to decide whether ' +
                     'crafting an intermediate is worth the time, and "Instead of buying" alchemy routes charge their time ' +
-                    'at it. Set it to your typical hourly profit; 3m, 500k or 1.5b all work. 0 leaves time free.',
+                    'at it. Use your typical hourly profit (3m, 500k, 1.5b). 0 leaves time free.',
             },
             actionPanel_craftingPlanThinMarket: {
                 id: 'actionPanel_craftingPlanThinMarket',
@@ -1209,7 +1209,7 @@ export const settingsGroups = {
                 label: 'Show cheaper alchemy routes instead of buying',
                 type: 'checkbox',
                 default: false,
-                help: 'On an item you might buy (an essence before enhancing, say), names the best one or two items you could buy and decompose or transmute to get it for less, and the saving per unit. Prices follow your pricing mode; other outputs are sold after tax or valued at your buy price when kept (see "What a K mark means"). Estimated prices are left out; alchemy time is charged at "Your time value (gold/hr)". Nothing shows when buying is cheapest.',
+                help: 'On an item you might buy (an essence before enhancing, say), names the best one or two items you could buy and decompose or transmute to get it for less, and the saving per unit. Prices follow your pricing mode; other outputs are sold after tax or valued at your buy price when kept (see "What a K mark means"). Estimated prices are left out; alchemy time is charged at "Your gold rate (gold/hr)". Nothing shows when buying is cheapest.',
             },
             itemTooltip_alchemyInsteadHeadline: {
                 id: 'itemTooltip_alchemyInsteadHeadline',
@@ -1230,7 +1230,7 @@ export const settingsGroups = {
                 label: 'Show alchemy routes that beat selling an item you hold',
                 type: 'checkbox',
                 default: true,
-                help: 'On an item you might sell, names the alchemy action (decompose, transmute or coinify) that pays more for one unit you hold than selling it at your sell price after tax. For items you farmed or made yourself. Outputs are sold after tax whatever your K marks say; estimated prices are left out; alchemy time is charged at "Your time value (gold/hr)". Nothing shows when selling pays more.',
+                help: 'On an item you might sell, names the alchemy action (decompose, transmute or coinify) that pays more for one unit you hold than selling it at your sell price after tax. For items you farmed or made yourself. Outputs are sold after tax whatever your K marks say; estimated prices are left out; alchemy time is charged at "Your gold rate (gold/hr)". Nothing shows when selling pays more.',
             },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',

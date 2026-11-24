@@ -87,6 +87,7 @@ import {
     stopInsteadListeners,
     INSTEAD_SETTING,
     SELLING_SETTING,
+    GOLD_RATE_SETTING,
 } from './alchemy-instead-of-buying.js';
 
 // Compiled regex patterns (created once, reused for performance)
@@ -152,10 +153,46 @@ const INSTEAD_SECTION_CLASS = 'mwi-alchemy-instead';
 const SELLING_SECTION_CLASS = 'mwi-alchemy-instead-selling';
 
 /**
+ * The outputs a route could not price, named for its hover. A crate on the list (it opens into a loot table) is one
+ * whose contents are only partly priced, so it says so.
+ * @param {Array<string>|undefined} hrids
+ * @param {(hrid: string) => string} nameOf
+ * @param {(hrid: string) => boolean} [isCrate]
+ * @returns {string} e.g. "no price for: Medium Artisan's Crate (some contents)", or '' when none
+ */
+export function unpricedNote(hrids, nameOf, isCrate = () => false) {
+    const names = [...new Set(hrids || [])].map((hrid) => `${nameOf(hrid)}${isCrate(hrid) ? ' (some contents)' : ''}`);
+    return names.length ? `no price for: ${names.join(', ')}` : '';
+}
+
+/**
+ * Whether an item opens into a loot table (a crate, chest or box).
+ * @param {string} hrid
+ * @returns {boolean}
+ */
+function isCrate(hrid) {
+    return Array.isArray(dataManager.getInitClientData?.()?.openableLootDropMap?.[hrid]);
+}
+
+/** Where the gold rate is set, named in the hover so a player can find it (settings-schema.js holds both names) */
+export const GOLD_RATE_WHERE = 'Settings → Missing Materials & Crafting Plan → "Your gold rate (gold/hr)"';
+
+/**
+ * The hover's last sentence: what the alchemy time is charged at, and where that is set.
+ * @returns {string}
+ */
+function goldRateSentence() {
+    const rate = Math.max(0, Number(config.getSetting(GOLD_RATE_SETTING)) || 0);
+    return rate > 0
+        ? `The alchemy time is charged at your gold rate, ${formatKMB(rate)}/hr (${GOLD_RATE_WHERE}).`
+        : `The alchemy time is left free; set a gold rate to charge it (${GOLD_RATE_WHERE}).`;
+}
+
+/**
  * Hover text on every "Instead of buying" line, following what a K mark means.
  * @returns {string}
  */
-function insteadTitle() {
+export function insteadTitle() {
     const outputs =
         getMarkMeaning() === 'sell'
             ? 'every other output kept and valued at your buy price (or sold at your sell price after tax when marked with K)'
@@ -163,7 +200,7 @@ function insteadTitle() {
     return (
         'Instead of buying: the source bought at your buy price and decomposed or transmuted, the catalyst and tea at ' +
         `your buy price, ${outputs}, divided by the expected units of this item per action. Estimated prices are ` +
-        'left out. With a gold rate set, the alchemy time is charged at that rate.'
+        `left out. ${goldRateSentence()}`
     );
 }
 
@@ -180,12 +217,11 @@ function escapeAttribute(text) {
  * Hover text on every "Instead of selling" line. K marks do not apply: every output is sold.
  * @returns {string}
  */
-function sellingTitle() {
+export function sellingTitle() {
     return (
         'Instead of selling: one unit you hold, decomposed, transmuted or coinified, against selling it at your sell ' +
         'price after tax. The catalyst and tea are bought at your buy price and every output is sold at your sell ' +
-        'price after tax (K marks do not apply). Estimated prices are left out. With a gold rate set, the alchemy ' +
-        'time is charged at that rate.'
+        `price after tax (K marks do not apply). Estimated prices are left out. ${goldRateSentence()}`
     );
 }
 
@@ -1314,6 +1350,8 @@ class TooltipPrices {
             }
             // The working lives in the hover text, not on a second line; the one caveat that changes whether
             // the figure can be trusted stays visible, short, next to the headline
+            const missing = unpricedNote(alt.unpriced, nameOf, isCrate);
+            if (missing) parts.push(missing);
             const hover = escapeAttribute(`${insteadTitle()}\n${parts.join(' · ')}`);
             const caveat = alt.partlyUnpriced
                 ? '<span style="opacity: 0.7; font-size: 0.9em;"> (an output unpriced)</span>'
@@ -1363,6 +1401,7 @@ class TooltipPrices {
      * @returns {string}
      */
     buildInsteadOfSellingHTML(sellValue, routes, divided = true, bestLoser = null) {
+        const nameOf = (hrid) => dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop();
         let html = divided ? '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">' : '<div>';
         for (const route of routes) {
             const atLeast = route.partlyUnpriced ? '≥' : '';
@@ -1382,6 +1421,8 @@ class TooltipPrices {
             const caveat = route.partlyUnpriced
                 ? '<span style="opacity: 0.7; font-size: 0.9em;"> (an output unpriced)</span>'
                 : '';
+            const missing = unpricedNote(route.unpriced, nameOf, isCrate);
+            if (missing) parts.push(missing);
             const hover = escapeAttribute(`${sellingTitle()}\n${parts.join(' · ')}`);
             html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${hover}">`;
             html += `Instead of selling: ${route.actionType} — `;
@@ -1391,7 +1432,8 @@ class TooltipPrices {
         if (!routes.length && bestLoser) {
             const atLeast = bestLoser.partlyUnpriced ? '≥' : '';
             const caveat = bestLoser.partlyUnpriced ? ' (an output unpriced)' : '';
-            const hover = escapeAttribute(sellingTitle());
+            const missing = unpricedNote(bestLoser.unpriced, nameOf, isCrate);
+            const hover = escapeAttribute(missing ? `${sellingTitle()}\n${missing}` : sellingTitle());
             html += `<div style="opacity: 0.7;" title="${hover}">`;
             html += `Instead of selling: selling wins — ${formatKMB(sellValue)} after tax vs best alchemy `;
             html += `${atLeast}${formatKMB(bestLoser.valuePerUnit)}/unit (${bestLoser.actionType})${caveat}</div>`;

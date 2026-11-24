@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy "Instead of" lines value a crate's coins and cowbells
+
+The "Instead of buying" and "Instead of selling" lines now count a crate's coins at face value and its Cowbells the way the treasure tracker does, so an Artisan's Crate is no longer undervalued by about a third or tagged "(an output unpriced)". When an output is still unpriced, the line's hover now names it.
+
+### "Your time value" is now "Your gold rate"
+
+The setting the alchemy "Instead of" lines charge their time at is renamed "Your gold rate (gold/hr)", the name those lines use, so searching settings or Ctrl+K for "gold rate" finds it. The lines' hover text now says where to set it and what it is set to.
+
 ### Every switch either turns off right away or says it needs a reload
 
 13 more features now stop the moment you switch them off, among them the combat battle counter, boss timer, unit badges and buff bars, the catalyst mark and the talisman reroll advisor. 35 others that cannot stop cleanly, such as net worth, the watchlist, inventory tabs, the DPS panel, Combat Summary and the Combat Sim, now carry the "refresh to apply" tag instead of silently staying on screen.
