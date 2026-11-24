@@ -9,6 +9,7 @@
  * - Market (market, inventory, economy)
  * - Actions (production, gathering, alchemy)
  * - Combat (combat, stats, abilities)
+ * - Guild (guild XP, credits, roster, trials, the Trial Sim)
  * - UI (tasks, skills, settings, misc)
  */
 
@@ -26,7 +27,7 @@
 // broke the @require loads for everyone, presenting only as this cryptic throw.)
 // ---------------------------------------------------------------------------
 
-const REQUIRED_LIBRARIES = ['Core', 'Utils', 'Sim', 'Market', 'Actions', 'Combat', 'UI'];
+const REQUIRED_LIBRARIES = ['Core', 'Utils', 'Sim', 'Market', 'Actions', 'Combat', 'Guild', 'UI'];
 
 /** Which required Toolasha bundle globals did not load. */
 function missingLibraries(ns) {
@@ -155,7 +156,7 @@ const Utils = toolashaNamespace.Utils;
 const Market = toolashaNamespace.Market;
 const Actions = toolashaNamespace.Actions;
 const Combat = toolashaNamespace.Combat;
-const Sim = toolashaNamespace.Sim;
+const Guild = toolashaNamespace.Guild;
 const UI = toolashaNamespace.UI;
 
 // Destructure core modules
@@ -779,7 +780,7 @@ function registerFeatures() {
             key: 'guildXPTracker',
             name: 'Guild XP Tracker',
             category: 'Guild',
-            module: Combat.guildXPTracker,
+            module: Guild.guildXPTracker,
             async: false,
             // The key switches only the XP history (its reads, samples and writes), which
             // the tracker checks itself. The member metadata the trials features read —
@@ -791,7 +792,7 @@ function registerFeatures() {
             key: 'guildTrialsInfo',
             name: 'Guild Trials',
             category: 'Guild',
-            module: Combat.guildTrials,
+            module: Guild.guildTrials,
             async: true,
             // Registers every observer and handler before its first await by
             // design; what it then waits on is its own trial record.
@@ -2809,7 +2810,7 @@ function registerFeatures() {
             key: 'guildXPDisplay',
             name: 'Guild XP Display',
             category: 'Guild',
-            module: Combat.guildXPDisplay,
+            module: Guild.guildXPDisplay,
             async: false,
             // The key switches only the XP/hr rates, rankings and weekly chart, which the
             // render paths check themselves. The Overview idle-members list, the Trials-tab
@@ -2822,7 +2823,7 @@ function registerFeatures() {
             key: 'guildCreditValue',
             name: 'Guild Credit Value',
             category: 'Guild',
-            module: Combat.guildCreditValue,
+            module: Guild.guildCreditValue,
             async: false,
             // The key switches only the credit table and the shrine block, which
             // check it themselves. The trial tier badges, the signup Copy List
@@ -2834,21 +2835,21 @@ function registerFeatures() {
             key: 'guildRoster',
             name: 'Guild Roster',
             category: 'Guild',
-            module: Combat.guildRosterView,
+            module: Guild.guildRosterView,
             async: false,
         },
         {
             key: 'guildTrialLedger',
             name: 'Guild Trial Ledger',
             category: 'Guild',
-            module: Combat.guildTrialLedgerView,
+            module: Guild.guildTrialLedgerView,
             async: true,
         },
         {
             key: 'guildTrialSim',
             name: 'Guild Trial Simulator',
             category: 'Guild',
-            module: Sim.guildTrialSim,
+            module: Guild.guildTrialSim,
             async: false,
             // Its disable() removes the Trial Sim tab button, the panel and its
             // command, and aborts a run, so turning it off takes effect live.
@@ -3668,13 +3669,13 @@ if (combatSimulatorSite === 'metz') {
 
     // Guild XP data management
     targetWindow.Toolasha.guild = {
-        resetMemberXP: () => Combat.guildXPTracker.resetMemberData(),
-        memberSample: (name) => Combat.guildXPTracker.getRawMemberSample(name),
+        resetMemberXP: () => Guild.guildXPTracker.resetMemberData(),
+        memberSample: (name) => Guild.guildXPTracker.getRawMemberSample(name),
     };
 
     // The per-player trial panel, so the command palette can reach it the way it
     // reaches every other panel — through the page rather than through an import
-    targetWindow.Toolasha.guildTrialScoreboard = Combat.guildTrialScoreboard;
+    targetWindow.Toolasha.guildTrialScoreboard = Guild.guildTrialScoreboard;
 
     // Another userscript sharing this database can opt some of its own keys in
     // the settings store into the cross-device sync — small settings and live

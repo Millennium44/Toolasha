@@ -149,18 +149,19 @@ vi.mock('../api/marketplace.js', async (importOriginal) => {
     };
 });
 
-// The four @require bundles the entrypoint reads its feature list out of. They
+// The five @require bundles the entrypoint reads its feature list out of. They
 // publish themselves onto window.Toolasha exactly as they do in the browser, so
 // importing them gives the same population the entrypoint registers, without
 // having to run the bootstrap.
 await import('../libraries/market.js');
 await import('../libraries/actions.js');
 await import('../libraries/combat.js');
+await import('../libraries/guild.js');
 await import('../libraries/ui.js');
 
 /** Every module in the bundles that offers both halves of the lifecycle. */
 const lifecycleModules = [];
-for (const bundleName of ['Market', 'Actions', 'Combat', 'UI']) {
+for (const bundleName of ['Market', 'Actions', 'Combat', 'Guild', 'UI']) {
     const surface = window.Toolasha?.[bundleName] ?? {};
     for (const [exportName, module] of Object.entries(surface)) {
         if (!module || typeof module !== 'object') continue;

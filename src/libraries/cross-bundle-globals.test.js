@@ -36,7 +36,7 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
 /** Repo-relative, always with forward slashes — the paths below are split on '/' */
 const rel = (path) => relative(ROOT, path).split(sep).join('/');
-const LIBRARIES = ['core', 'utils', 'sim', 'market', 'actions', 'combat', 'ui'];
+const LIBRARIES = ['core', 'utils', 'sim', 'market', 'actions', 'combat', 'guild', 'ui'];
 
 /**
  * The modules rollup replaces with a global, and the global each becomes.

@@ -192,6 +192,11 @@ import * as partyLint from '../utils/party-lint.js';
 import * as profileCommand from '../utils/profile-command.js';
 import * as viewLoadout from '../utils/view-loadout.js';
 import * as guildTrialSimulationInputs from '../features/guild/guild-trial-simulation-inputs.js';
+// Shared by the combat and guild bundles; each keeps module state (see rollup.config.js)
+import * as classOverride from '../utils/class-override.js';
+import * as playerColors from '../utils/player-colors.js';
+import * as playerMenu from '../utils/player-menu.js';
+import * as abilityEffects from '../utils/ability-effects.js';
 import * as chatFill from '../utils/chat-fill.js';
 import * as progressEta from '../utils/progress-eta.js';
 // Risk of Ruin: the panel is in the ui bundle and market-depth-cap.js (market) reads its last
@@ -376,6 +381,10 @@ toolashaRoot.Utils = {
     profileCommand,
     viewLoadout,
     guildTrialSimulationInputs,
+    classOverride,
+    playerColors,
+    playerMenu,
+    abilityEffects,
     chatFill,
     progressEta,
     optimalBankrollShare,

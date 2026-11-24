@@ -28,7 +28,10 @@ import { partyLuckPanel } from '../features/combat/party-luck-panel.js';
 import combatDPS from '../features/combat/combat-dps.js';
 import portraitDps from '../features/combat/portrait-dps.js';
 import combatUnitBadges from '../features/combat/combat-unit-badges.js';
-import combatUnitBuffBars from '../features/combat/combat-unit-buff-bars.js';
+// Its namespace is published too: the guild bundle's boss-debuff strip imports its helpers (rollup.config.js)
+import * as combatUnitBuffBarsModule from '../features/combat/combat-unit-buff-bars.js';
+// The saved meter history, a namespace for the guild bundle's trial scoreboard and trial history
+import * as meterHistory from '../features/combat/meter-history.js';
 import combatConsumableRunway from '../features/combat/combat-consumable-runway.js';
 import combatDpsPanel from '../features/combat/combat-dps-panel.js';
 import partyProfileButton from '../features/combat/party-profile-button.js';
@@ -111,26 +114,6 @@ import combatScore from '../features/profile/combat-score.js';
 import characterCardButton from '../features/profile/character-card-button.js';
 import eliteAchievementReminder from '../features/profile/elite-achievement-reminder.js';
 
-// Guild
-import guildXPTracker, { guildXPTracker as guildXPTrackerInstance } from '../features/guild/guild-xp-tracker.js';
-// Namespace-imported for the ui bundle's chat commands, which used to inline a
-// private copy of the whole guild graph through these five roots — the
-// externals map (rollup.config.js) now points its imports here instead
-import * as guildTokenValue from '../features/guild/guild-token-value.js';
-import * as guildTrialStore from '../features/guild/guild-trials-store.js';
-import * as guildTrialsModule from '../features/guild/guild-trials.js';
-import guildXPDisplay from '../features/guild/guild-xp-display.js';
-import guildCreditValue from '../features/guild/guild-credit-value.js';
-import * as guildTokenExchangeCapture from '../features/guild/guild-token-exchange-capture.js';
-import guildRosterView from '../features/guild/guild-roster-view.js';
-import guildTrials, { guildTrials as guildTrialsStore } from '../features/guild/guild-trials.js';
-import * as guildTrialExport from '../features/guild/guild-trial-recorder.js';
-import guildTrialScoreboard from '../features/guild/guild-trial-scoreboard.js';
-import guildTrialLedgerView from '../features/guild/guild-trial-ledger-view.js';
-import guildMemberSkills from '../features/guild/guild-member-skills.js';
-// Side-effect import: registers the Guild Trials overlay row
-import '../features/guild/guild-trials-row.js';
-
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
 window.Toolasha = toolashaRoot;
@@ -160,7 +143,9 @@ toolashaRoot.Combat = {
     combatDPS,
     portraitDps,
     combatUnitBadges,
-    combatUnitBuffBars,
+    combatUnitBuffBars: combatUnitBuffBarsModule.default,
+    combatUnitBuffBarsModule,
+    meterHistory,
     combatConsumableRunway,
     combatDpsPanel,
     partyProfileButton,
@@ -207,28 +192,6 @@ toolashaRoot.Combat = {
     eliteAchievementReminder,
     combatSim,
     labSim,
-    guildXPTracker,
-    // The live tracker (roster, sign-ups, week): guildXPTracker above is only its registration record
-    guildXPTrackerInstance,
-    guildXPDisplay,
-    guildCreditValue,
-    // Shared so guild-token-value (runs live in the sim and ui bundles) reads
-    // the Guild Shop exchange rate captured/hydrated here in the combat bundle
-    guildTokenExchangeCapture,
-    guildRosterView,
-    guildTrials,
-    // The trials singleton (guildName + record) and the recorder's export
-    // builder, shared so the exportTrialData console helper in the ui bundle
-    // gathers from the live combat copies instead of empty duplicates
-    guildTrialsStore,
-    guildTrialExport,
-    guildTokenValue,
-    guildTrialStore,
-    guildTrialsModule,
-    guildTrialScoreboard,
-    guildTrialLedgerView,
-    // Read by the Trial Sim's skilling assignment (sim bundle) for members' captured skill levels
-    guildMemberSkills,
 };
 
 // Console-driven debug tools, kept out of the feature namespaces because
@@ -498,7 +461,6 @@ toolashaRoot.Debug = {
         console.table(rows);
         return rows;
     },
-    guildXp: () => guildXPTracker.debugState(),
 };
 
 console.log('[Toolasha] Combat library loaded');

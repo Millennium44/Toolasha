@@ -80,9 +80,13 @@ const SINGLE_COPY_FEATURES = new Set([
     'src/features/combat/combat-record-control.js',
     'src/features/combat/scroll-simulator-ui.js',
     'src/features/market/network-alert.js',
-    // Combat collects the session profiles, while the trial simulator reads them.
+    // The guild bundle collects the session profiles, while the trial simulator reads them.
     // A private store in each bundle would discard the collected guild roster.
     'src/features/guild/guild-trial-simulation-inputs.js',
+    // The saved meter history keeps its index and body caches, load queues and list ui state at module
+    // scope, with no class for the singleton sweep to see. The combat bundle owns it; the guild bundle's
+    // trial scoreboard and trial history read it through Toolasha.Combat.meterHistory.
+    'src/features/combat/meter-history.js',
     // The inventory badge pipeline: registered providers, the processed-item set
     // and the price caches the dots, category totals and custom tabs all read.
     // The sim bundle used to reach it through combat-sim-ui's bundled watchlist
@@ -486,6 +490,20 @@ const ALLOWLIST = new Map([
         // importing that module's stateful snapshot store and WebSocket
         // subscription).
         'stateless loadout-equipment resolvers; no module state to share',
+    ],
+    [
+        'src/utils/dps-graph-svg.js',
+        // Two constants and three functions that turn the series they are handed into SVG/HTML text; no
+        // module state, no import-time side effects. The combat bundle's DPS graphs and the guild bundle's
+        // trial DPS graph each draw with it.
+        'pure SVG builders over their arguments; no module state',
+    ],
+    [
+        'src/utils/live-session-persist.js',
+        // Constants, pure helpers and a factory (createLiveSessionPersister) whose timers and pending
+        // snapshot live in the closure it returns to each caller; the saved sessions live in storage. The
+        // combat bundle's meters and the guild bundle's trial damage stream each build their own persister.
+        'constants, pure helpers and a per-caller factory; state is per persister and in storage',
     ],
 ]);
 

@@ -397,48 +397,48 @@ export function labyrinthClearRate() {
 
 /**
  * The guild-token-exchange capture module (Guild Shop rate), whose `captured`
- * map is filled and hydrated only in the combat bundle.
- * @returns {Object|null} The module namespace, or null when combat is absent
+ * map is filled and hydrated only in the guild bundle.
+ * @returns {Object|null} The module namespace, or null when guild is absent
  */
 export function guildTokenExchangeCapture() {
-    return toolashaRoot()?.Combat?.guildTokenExchangeCapture || null;
+    return toolashaRoot()?.Guild?.guildTokenExchangeCapture || null;
 }
 
 /**
  * The guild-trials singleton (guildName + record), fed by the websocket only in
- * the combat bundle.
- * @returns {Object|null} The store, or null when the combat bundle is absent
+ * the guild bundle.
+ * @returns {Object|null} The store, or null when the guild bundle is absent
  */
 export function guildTrialsStore() {
-    return toolashaRoot()?.Combat?.guildTrialsStore || null;
+    return toolashaRoot()?.Guild?.guildTrialsStore || null;
 }
 
 /**
- * The guild XP tracker (own guild name + member history), combat-owned.
- * @returns {Object|null} The tracker, or null when the combat bundle is absent
+ * The guild XP tracker (own guild name + member history), guild-owned.
+ * @returns {Object|null} The tracker, or null when the guild bundle is absent
  */
 export function guildXpTracker() {
-    // The live singleton; Combat.guildXPTracker is the feature registration record, which has none of
+    // The live singleton; Guild.guildXPTracker is the feature registration record, which has none of
     // the tracker's readers (getMemberMeta, getMemberList, getCurrentWeekStartAt, onMetaChanged)
-    return toolashaRoot()?.Combat?.guildXPTrackerInstance || null;
+    return toolashaRoot()?.Guild?.guildXPTrackerInstance || null;
 }
 
 /**
- * Guild members' captured skill levels (`guild-member-skills.js`), combat-owned. Initialized only
+ * Guild members' captured skill levels (`guild-member-skills.js`), guild-owned. Initialized only
  * while Guild Trials is on; check `initialized` before reading an empty store as "no levels".
- * @returns {Object|null} The store, or null when the combat bundle is absent
+ * @returns {Object|null} The store, or null when the guild bundle is absent
  */
 export function guildMemberSkills() {
-    return toolashaRoot()?.Combat?.guildMemberSkills || null;
+    return toolashaRoot()?.Guild?.guildMemberSkills || null;
 }
 
 /**
  * The guild-trial export builder module (buildTrialExport/downloadTrialExport);
- * its data-gathering reads the trial singletons live only in the combat bundle.
- * @returns {Object|null} The module namespace, or null when combat is absent
+ * its data-gathering reads the trial singletons live only in the guild bundle.
+ * @returns {Object|null} The module namespace, or null when guild is absent
  */
 export function guildTrialExport() {
-    return toolashaRoot()?.Combat?.guildTrialExport || null;
+    return toolashaRoot()?.Guild?.guildTrialExport || null;
 }
 
 /**

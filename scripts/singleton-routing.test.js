@@ -26,6 +26,33 @@ describe('singletonRouting', () => {
         expect(routing.standIns.has(loadout)).toBe(false);
     });
 
+    test('the combat bundle, which loads before guild, reads the trial stream through a stand-in', () => {
+        const trial = abs('src/features/guild/guild-trial-damage.js');
+        expect(singletonRouting('combat').standIns.get(trial)).toMatchObject({
+            global: 'Toolasha.Guild.guildTrialDamage',
+            named: ['liveTrialSplit'],
+        });
+        expect(singletonRouting('ui').externals.get(trial)).toBe('Toolasha.Guild.guildTrialDamage');
+        expect(singletonRouting('guild').standIns.has(trial)).toBe(false);
+        expect(singletonRouting('guild').externals.has(trial)).toBe(false);
+    });
+
+    test('the instance answers liveTrialSplit the way the module function does', async () => {
+        // The combat bundle's stand-in calls `liveTrialSplit` as a method of the published instance
+        const module = await import('../src/features/guild/guild-trial-damage.js');
+        const instance = module.default;
+        expect(typeof instance.liveTrialSplit).toBe('function');
+        const lastAt = Date.now();
+        const fake = {
+            spectator: { lastAt },
+            breakdown: () => ({ measured: true, players: [1], partyDps: 2, seconds: 3 }),
+        };
+        const viaMethod = instance.liveTrialSplit.call(fake, lastAt + 1000);
+        expect(viaMethod).toEqual(module.liveTrialSplit(lastAt + 1000, fake));
+        expect(viaMethod).toEqual({ players: [1], partyDps: 2, seconds: 3 });
+        expect(instance.liveTrialSplit.call(fake, lastAt + module.TRIAL_BADGE_WINDOW_MS + 1)).toBeNull();
+    });
+
     test('the utils bundle, which loads before market, gets stand-ins for the market calculators', () => {
         const evc = abs('src/features/market/expected-value-calculator.js');
         expect(singletonRouting('utils').standIns.has(evc)).toBe(true);
@@ -35,7 +62,7 @@ describe('singletonRouting', () => {
 
     test('every owned singleton names a real library and a module that exists', () => {
         for (const [modulePath, { global }] of singletonOwnership) {
-            expect(global).toMatch(/^Toolasha\.(Core|Utils|Sim|Market|Actions|Combat|UI)\.[A-Za-z]+$/);
+            expect(global).toMatch(/^Toolasha\.(Core|Utils|Sim|Market|Actions|Combat|Guild|UI)\.[A-Za-z]+$/);
             expect(modulePath.endsWith('.js')).toBe(true);
         }
     });

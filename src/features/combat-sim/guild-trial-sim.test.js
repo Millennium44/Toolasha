@@ -958,7 +958,7 @@ describe('roster changes come from the guild XP tracker', () => {
         let listener = null;
         const off = vi.fn();
         window.Toolasha = {
-            Combat: {
+            Guild: {
                 guildXPTrackerInstance: {
                     onMetaChanged: (callback) => {
                         listener = callback;
@@ -997,7 +997,7 @@ describe('captured skill levels come from the member skill store', () => {
         let listener = null;
         const off = vi.fn();
         window.Toolasha = {
-            Combat: {
+            Guild: {
                 guildMemberSkills: {
                     onChanged: (callback) => {
                         listener = callback;
@@ -1068,7 +1068,7 @@ describe('a roster build made from a loadout view against the signed-up loadout'
     });
 
     const trackerWith = (seen, changedAt) => ({
-        Combat: {
+        Guild: {
             guildXPTrackerInstance: {
                 getMemberMeta: (id) => (seen.includes(String(id)) ? { name: 'x' } : null),
                 getLoadoutChangedAt: (id) => changedAt[String(id)] ?? null,

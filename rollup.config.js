@@ -18,6 +18,7 @@ const libraryHeaderMarket = readFileSync(join(__dirname, 'library-headers/market
 const libraryHeaderActions = readFileSync(join(__dirname, 'library-headers/actions.txt'), 'utf-8');
 const libraryHeaderSim = readFileSync(join(__dirname, 'library-headers/sim.txt'), 'utf-8');
 const libraryHeaderCombat = readFileSync(join(__dirname, 'library-headers/combat.txt'), 'utf-8');
+const libraryHeaderGuild = readFileSync(join(__dirname, 'library-headers/guild.txt'), 'utf-8');
 const libraryHeaderUI = readFileSync(join(__dirname, 'library-headers/ui.txt'), 'utf-8');
 const entrypointHeader = readFileSync(join(__dirname, 'library-headers/entrypoint.txt'), 'utf-8');
 
@@ -322,13 +323,20 @@ const utilsExternalGlobals = new Map([
     // One store of captured loadouts: the entrypoint starts the capture and the sim (and the
     // trial checker) read it, so a copy per bundle would read an empty store
     [normalize(join(__dirname, 'src/utils/view-loadout.js')), 'Toolasha.Utils.viewLoadout'],
-    // Combat records opened trial profiles and Sim consumes the same session store.
-    // Utils loads before both, so the captures stay shared in production too.
+    // The guild bundle records opened trial profiles and its Trial Sim consumes the same session store.
+    // Utils loads before it, so the captures stay shared in production too.
     [
         normalize(join(__dirname, 'src/features/guild/guild-trial-simulation-inputs.js')),
         'Toolasha.Utils.guildTrialSimulationInputs',
     ],
     // Filled from the combat bundle (Statistics popup) and the ui bundle (loot log)
+    // Reached from the combat bundle and, since the guild library split off it, the guild bundle. Each keeps
+    // module state, so one copy here: the per-name class overrides and player colors (each a name-keyed store
+    // loaded once), the open player menu, and the ability-effect index built from game data.
+    [normalize(join(__dirname, 'src/utils/class-override.js')), 'Toolasha.Utils.classOverride'],
+    [normalize(join(__dirname, 'src/utils/player-colors.js')), 'Toolasha.Utils.playerColors'],
+    [normalize(join(__dirname, 'src/utils/player-menu.js')), 'Toolasha.Utils.playerMenu'],
+    [normalize(join(__dirname, 'src/utils/ability-effects.js')), 'Toolasha.Utils.abilityEffects'],
     [normalize(join(__dirname, 'src/utils/chat-fill.js')), 'Toolasha.Utils.chatFill'],
     [normalize(join(__dirname, 'src/utils/progress-eta.js')), 'Toolasha.Utils.progressEta'],
     [normalize(join(__dirname, 'src/utils/room-skills.js')), 'Toolasha.Utils.roomSkills'],
@@ -413,15 +421,35 @@ const combatFeatureExternals = new Map([
     // selections; the ui bundle's uninitialized copy showed everything blank
     // and saved that blankness over the real record.
     [normalize(join(__dirname, 'src/features/combat/scroll-simulator-ui.js')), 'Toolasha.Combat.scrollSimulatorUI'],
-    // The chat commands (ui bundle) import these five guild roots, which used
-    // to drag the ENTIRE guild feature graph into the ui bundle as dead inline
-    // copies (~30 modules; the live ones all run in combat, reached via the
-    // bridge). Externalizing the roots prunes the whole subtree.
-    [normalize(join(__dirname, 'src/features/guild/guild-token-value.js')), 'Toolasha.Combat.guildTokenValue'],
-    [normalize(join(__dirname, 'src/features/guild/guild-trial-recorder.js')), 'Toolasha.Combat.guildTrialExport'],
-    [normalize(join(__dirname, 'src/features/guild/guild-trials-store.js')), 'Toolasha.Combat.guildTrialStore'],
-    [normalize(join(__dirname, 'src/features/guild/guild-xp-tracker.js')), 'Toolasha.Combat.guildXPTracker'],
-    [normalize(join(__dirname, 'src/features/guild/guild-trials.js')), 'Toolasha.Combat.guildTrialsModule'],
+]);
+
+// Combat modules the guild bundle reads, published as module namespaces because the guild modules
+// import named helpers from them. Only the guild bundle loads them this way: it loads after combat,
+// so the global already holds the live module when its iife runs.
+const combatExternalsForGuild = new Map([
+    // The saved meter history: index and body caches, load queues and list ui state at module scope.
+    // The trial scoreboard and trial history write and draw the same history the DPS panel does, so a
+    // second copy would be a second, stale cache of one store.
+    [normalize(join(__dirname, 'src/features/combat/meter-history.js')), 'Toolasha.Combat.meterHistory'],
+    // The boss-debuff strip borrows three helpers from the buff bars; compiled inline, the guild bundle
+    // would also construct a second, never-initialized CombatUnitBuffBars.
+    [
+        normalize(join(__dirname, 'src/features/combat/combat-unit-buff-bars.js')),
+        'Toolasha.Combat.combatUnitBuffBarsModule',
+    ],
+]);
+
+// Guild feature modules imported cross-library (by ui)
+// The chat commands (ui bundle) import these five guild roots, which used to
+// drag the ENTIRE guild feature graph into the ui bundle as dead inline copies
+// (~30 modules; the live ones all run in the guild bundle, reached via the
+// bridge). Externalizing the roots prunes the whole subtree.
+const guildFeatureExternals = new Map([
+    [normalize(join(__dirname, 'src/features/guild/guild-token-value.js')), 'Toolasha.Guild.guildTokenValue'],
+    [normalize(join(__dirname, 'src/features/guild/guild-trial-recorder.js')), 'Toolasha.Guild.guildTrialExport'],
+    [normalize(join(__dirname, 'src/features/guild/guild-trials-store.js')), 'Toolasha.Guild.guildTrialStore'],
+    [normalize(join(__dirname, 'src/features/guild/guild-xp-tracker.js')), 'Toolasha.Guild.guildXPTracker'],
+    [normalize(join(__dirname, 'src/features/guild/guild-trials.js')), 'Toolasha.Guild.guildTrialsModule'],
 ]);
 
 // Market modules imported cross-library (by combat, actions, ui)
@@ -793,6 +821,16 @@ const prodLibraries = [
         },
     },
     {
+        key: 'guild',
+        input: 'src/libraries/guild.js',
+        output: {
+            file: 'dist/libraries/toolasha-guild.js',
+            format: 'iife',
+            name: 'ToolashaGuild',
+            banner: libraryHeaderGuild,
+        },
+    },
+    {
         key: 'ui',
         input: 'src/libraries/ui.js',
         output: {
@@ -823,7 +861,7 @@ const prodEntrypoint = {
  * reference another library's global only when that library loads BEFORE it: the reference is an
  * iife argument, read the moment the bundle loads.
  */
-const LIBRARY_LOAD_ORDER = ['core', 'utils', 'sim', 'market', 'actions', 'combat', 'ui'];
+const LIBRARY_LOAD_ORDER = ['core', 'utils', 'sim', 'market', 'actions', 'combat', 'guild', 'ui'];
 
 /**
  * Stateful singletons that exactly one library owns, whichever bundle imports them.
@@ -930,6 +968,13 @@ export const singletonOwnership = new Map([
     [
         normalize(join(__dirname, 'src/features/notifications/market-undercut-alerts.js')),
         { global: 'Toolasha.UI.marketUndercutAlerts' },
+    ],
+    // The live guild trial stream. The combat bundle's unit badges and monster stat check read it, and the
+    // guild bundle loads after combat, so combat gets the stand-in: `.active`/`.tier`/`.participants` read the
+    // instance live, and `liveTrialSplit` is a method on the instance for this reason.
+    [
+        normalize(join(__dirname, 'src/features/guild/guild-trial-damage.js')),
+        { global: 'Toolasha.Guild.guildTrialDamage', named: ['liveTrialSplit'] },
     ],
 ]);
 
@@ -1044,7 +1089,7 @@ const prodConfig = [
             external = buildExternal(marketExternals);
             globals = buildGlobals(marketExternals);
         } else if (key !== 'core') {
-            // actions, combat, ui — need core + utils + sim + market externals
+            // actions, combat, guild, ui — need core + utils + sim + market externals
             const allExternals = new Map([
                 ...coreExternalGlobals,
                 ...utilsExternalGlobals,
@@ -1052,9 +1097,17 @@ const prodConfig = [
                 ...marketExternalGlobals,
                 ...ownedExternals,
             ]);
-            // ui and actions also treat combat feature singletons as externals to avoid duplicate instances
-            if (key === 'ui' || key === 'actions') {
+            // ui and actions also treat combat feature singletons as externals to avoid duplicate instances,
+            // and so does guild, which loads after combat
+            if (key === 'ui' || key === 'actions' || key === 'guild') {
                 for (const [k, v] of combatFeatureExternals) allExternals.set(k, v);
+            }
+            if (key === 'guild') {
+                for (const [k, v] of combatExternalsForGuild) allExternals.set(k, v);
+            }
+            // ui loads after guild, so the guild roots its chat commands import are globals there
+            if (key === 'ui') {
+                for (const [k, v] of guildFeatureExternals) allExternals.set(k, v);
             }
             external = buildExternal(allExternals);
             globals = buildGlobals(allExternals);

@@ -11,7 +11,7 @@
  * the production libraries and the dev bundle, and comparing the answers, sees that.
  *
  * What it does, with no game, no registry start-up and no network:
- * 1. loads the seven production libraries (the smoke test's loader) into one fresh happy-dom window
+ * 1. loads the eight production libraries (the smoke test's loader) into one fresh happy-dom window
  *    and the single dev bundle into another;
  * 2. feeds each the same small game-shaped world through the PUBLISHED singletons (init client data on
  *    `Toolasha.Core.dataManager`, a price snapshot on `Toolasha.Core.marketAPI`) and initializes the

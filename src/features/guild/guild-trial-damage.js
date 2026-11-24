@@ -4080,6 +4080,17 @@ class GuildTrialDamage {
     }
 
     /**
+     * {@link liveTrialSplit} over this tracker. The combat bundle's unit badges import the module's
+     * `liveTrialSplit`, and in the release that import is a stand-in that calls this method on the guild
+     * bundle's published instance (see singletonOwnership in rollup.config.js).
+     * @param {number} [now=Date.now()] - Clock
+     * @returns {{players: Array<Object>, partyDps: number|null, seconds: number}|null} The live split
+     */
+    liveTrialSplit(now = Date.now()) {
+        return liveTrialSplit(now, this);
+    }
+
+    /**
      * What the trial has looked like so far.
      *
      * `support` fills from the spectator stream even when the damage split does

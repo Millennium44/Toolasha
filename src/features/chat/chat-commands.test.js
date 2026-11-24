@@ -439,7 +439,7 @@ describe('Toolasha.debug.exportTrialData', () => {
         const downloadTrialExport = vi.fn();
         const error = vi.spyOn(console, 'error').mockImplementation(() => {});
         window.Toolasha = {
-            Combat: {
+            Guild: {
                 guildTrialsStore: { guildName: 'Milky Way' },
                 guildXPTracker: {},
                 guildTrialExport: {

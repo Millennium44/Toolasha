@@ -9,5 +9,6 @@ import './libraries/sim.js';
 import './libraries/market.js';
 import './libraries/actions.js';
 import './libraries/combat.js';
+import './libraries/guild.js';
 import './libraries/ui.js';
 import './entrypoint.js';

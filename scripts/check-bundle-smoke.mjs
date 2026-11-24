@@ -2,7 +2,7 @@
 /**
  * Split-bundle smoke test.
  *
- * The production script is seven library bundles (dist/libraries/toolasha-*.js) loaded in a fixed
+ * The production script is eight library bundles (dist/libraries/toolasha-*.js) loaded in a fixed
  * order, wired together only through `window.Toolasha.*`. The dev build is ONE bundle, so tests and
  * the dev loader never exercise that wiring — and a wiring bug ships silently: PR #671 moved code
  * into the utils bundle that imported the market bundle's expected-value calculator, the utils
@@ -186,7 +186,7 @@ export function wiringFailures({ order, root, reads }) {
 
     for (const { accessor, library, key, used = true, publishedLater = false } of reads) {
         const namespace = root[library];
-        if (!namespace) continue; // reported above when the library is one of the seven; otherwise not ours to check
+        if (!namespace) continue; // reported above when the library is one of the eight; otherwise not ours to check
         const value = namespace[key];
         // An accessor nobody calls cannot break anything, and a key the owner assigns after initialize()
         // is legitimately absent at load time; both are reported by the run's notes, not failed.

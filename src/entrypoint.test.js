@@ -301,6 +301,7 @@ beforeAll(async () => {
         Market: makeStub(),
         Actions: makeStub(),
         Combat: makeStub(),
+        Guild: makeStub(),
         // Two of the UI library's members are real modules that suspend, so the
         // registry entries the entrypoint builds for them can be run for real
         // below; everything else is the usual stub.
@@ -334,10 +335,11 @@ describe('startup dependency diagnostics', () => {
             'Market',
             'Actions',
             'Combat',
+            'Guild',
             'UI',
         ]);
 
-        const namespace = { Core: {}, Utils: {}, Market: {}, Actions: {}, Combat: {}, UI: {} };
+        const namespace = { Core: {}, Utils: {}, Market: {}, Actions: {}, Combat: {}, Guild: {}, UI: {} };
         expect(entrypointModule._missingLibraries(namespace)).toEqual(['Sim']);
     });
 
