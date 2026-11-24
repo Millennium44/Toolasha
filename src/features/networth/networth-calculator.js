@@ -1486,8 +1486,10 @@ export async function calculateNetworth() {
     listingsBreakdown.sort((a, b) => b.value - a.value);
 
     // Apply listings exclusion
-    if (isExcluded('assetType', 'listings') && listingsValue > 0) {
-        trackExcluded('assetType', 'listings', 'All Market Listings', listingsValue);
+    // The exclusion holds whatever the section is worth: listings that value to 0 are still excluded, and
+    // must not mark the total as a floor
+    if (isExcluded('assetType', 'listings')) {
+        if (listingsValue > 0) trackExcluded('assetType', 'listings', 'All Market Listings', listingsValue);
         listingsValue = 0;
     } else {
         for (const listing of listingsBreakdown) {
@@ -1520,8 +1522,11 @@ export async function calculateNetworth() {
 
     // Calculate abilities value — apply per-ability and whole-section exclusions
     let abilitiesData = calculateAllAbilitiesCost(characterAbilities, abilityCombatTriggersMap);
-    if (isExcluded('assetType', 'abilities') && abilitiesData.totalCost > 0) {
-        trackExcluded('assetType', 'abilities', 'All Abilities', abilitiesData.totalCost);
+    // As for listings: an excluded section of abilities nothing prices is still excluded
+    if (isExcluded('assetType', 'abilities')) {
+        if (abilitiesData.totalCost > 0) {
+            trackExcluded('assetType', 'abilities', 'All Abilities', abilitiesData.totalCost);
+        }
         abilitiesData = {
             totalCost: 0,
             equippedCost: 0,

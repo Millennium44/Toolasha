@@ -2368,6 +2368,47 @@ describe('a total never reads as whole when it rests on a missing price', () => 
         expect(result.fixedAssets.abilities.breakdown).toEqual([]);
     });
 
+    test('excluding all abilities keeps unpriced ones from marking the total, even when the section is worth 0', async () => {
+        mocks.unpricedAbilities.add('/abilities/heal');
+        mocks.excluded.add('assetType:abilities');
+        mocks.combinedData = {
+            ...base(),
+            characterItems: [],
+            characterAbilities: [{ abilityHrid: '/abilities/heal', level: 2 }],
+        };
+
+        const result = await calculateNetworth();
+
+        expect(result.partial.count).toBe(0);
+        expect(result.fixedAssets.abilities.breakdown).toEqual([]);
+    });
+
+    test('excluding all listings keeps a floored listing worth 0 from marking the total', async () => {
+        mocks.partialPaths.add(`${SWORD_HRID}:3`);
+        mocks.excluded.add('assetType:listings');
+        mocks.initData = { houseRoomDetailMap: {}, itemDetailMap: { [SWORD_HRID]: { name: 'Sword' } } };
+        mocks.combinedData = {
+            ...base(),
+            characterItems: [],
+            myMarketListings: [
+                {
+                    itemHrid: SWORD_HRID,
+                    enhancementLevel: 3,
+                    isSell: true,
+                    status: '/market_listing_status/active',
+                    orderQuantity: 4,
+                    filledQuantity: 1,
+                    unclaimedCoinCount: 0,
+                    unclaimedItemCount: 0,
+                },
+            ],
+        };
+
+        const result = await calculateNetworth();
+
+        expect(result.partial.count).toBe(0);
+    });
+
     test('held task tokens the shop cannot price yet make the total a floor, and priced ones do not', async () => {
         mocks.settings.networth_includeTaskTokens = true;
         mocks.combinedData = {
