@@ -66,7 +66,8 @@ vi.mock('../../utils/profit-helpers.js', () => ({
     calculateActionsPerHour: () => 0,
     calculateTeaCostsPerHour: () => ({ totalCostPerHour: 0 }),
 }));
-vi.mock('../../utils/bundle-bridge.js', () => ({
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
+    ...(await importOriginal()),
     treasureTracker: () => (tracker.present ? { cowbellWorth: () => tracker.worth } : null),
 }));
 
