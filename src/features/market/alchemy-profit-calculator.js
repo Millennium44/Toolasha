@@ -182,9 +182,13 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
     const essenceDropsPerHour = actionsPerHour * finalEssenceRate;
 
     let essencePrice = 0;
+    // What one drop realizes: a container's expected value has already paid its contents' market tax,
+    // a market sale pays it here, like every other sold output
+    let essenceNetPrice = 0;
     const essenceItemDetails = itemDetailMap['/items/alchemy_essence'];
     if (essenceItemDetails?.isOpenable) {
         essencePrice = expectedValueCalculator.getCachedValue('/items/alchemy_essence') || 0;
+        essenceNetPrice = essencePrice;
         if (!(essencePrice > 0) || containerPartlyUnpriced('/items/alchemy_essence')) {
             unpricedDrops.push('/items/alchemy_essence');
         }
@@ -192,9 +196,10 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
         const marketPrice = getItemPrice('/items/alchemy_essence', { context: 'profit', side: 'sell' });
         if (marketPrice === null || marketPrice === undefined) unpricedDrops.push('/items/alchemy_essence');
         essencePrice = marketPrice || 0;
+        essenceNetPrice = calculatePriceAfterTax(essencePrice);
     }
 
-    const essenceRevenuePerHour = essenceDropsPerHour * essencePrice;
+    const essenceRevenuePerHour = essenceDropsPerHour * essenceNetPrice;
     bonusDrops.push({
         itemHrid: '/items/alchemy_essence',
         count: 1,
@@ -203,7 +208,7 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
         price: essencePrice,
         isEssence: true,
         isRare: false,
-        revenuePerAttempt: finalEssenceRate * essencePrice,
+        revenuePerAttempt: finalEssenceRate * essenceNetPrice,
         revenuePerHour: essenceRevenuePerHour,
         dropsPerHour: essenceDropsPerHour,
     });
@@ -227,6 +232,7 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
     const rareDropsPerHour = actionsPerHour * finalRareRate;
 
     let cratePrice = 0;
+    let crateNetPrice = 0;
     const crateItemDetails = itemDetailMap[crateHrid];
     if (crateItemDetails?.isOpenable) {
         // Try cached EV first, then compute on-demand if cache is empty
@@ -234,15 +240,17 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
             expectedValueCalculator.getCachedValue(crateHrid) ||
             expectedValueCalculator.calculateSingleContainer(crateHrid) ||
             0;
+        crateNetPrice = cratePrice;
         // A positive but partial value is a floor, not an estimate: some contained drop had no price
         if (!(cratePrice > 0) || containerPartlyUnpriced(crateHrid)) unpricedDrops.push(crateHrid);
     } else {
         const marketPrice = getItemPrice(crateHrid, { context: 'profit', side: 'sell' });
         if (marketPrice === null || marketPrice === undefined) unpricedDrops.push(crateHrid);
         cratePrice = marketPrice || 0;
+        crateNetPrice = calculatePriceAfterTax(cratePrice);
     }
 
-    const rareRevenuePerHour = rareDropsPerHour * cratePrice;
+    const rareRevenuePerHour = rareDropsPerHour * crateNetPrice;
     bonusDrops.push({
         itemHrid: crateHrid,
         count: 1,
@@ -251,7 +259,7 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
         price: cratePrice,
         isEssence: false,
         isRare: true,
-        revenuePerAttempt: finalRareRate * cratePrice,
+        revenuePerAttempt: finalRareRate * crateNetPrice,
         revenuePerHour: rareRevenuePerHour,
         dropsPerHour: rareDropsPerHour,
     });

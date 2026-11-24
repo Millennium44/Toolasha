@@ -1547,6 +1547,40 @@ describe('essence and crate bonus drops follow the pricing mode', () => {
         expect(crateDrop.price).toBe(4321);
     });
 
+    test.each(['essence', 'crate'])(
+        'a market-sold %s bonus drop pays the sale tax, its listed price stays raw',
+        async (kind) => {
+            const { calculatePriceAfterTax } = await import('../../utils/profit-helpers.js');
+            const hrid = kind === 'essence' ? '/items/alchemy_essence' : '/items/small_artisans_crate';
+            mocks.itemPrices[hrid] = 1000;
+
+            const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
+
+            const drop = result.dropRevenues.find((d) => d.itemHrid === hrid);
+            expect(drop.price).toBe(1000);
+            expect(drop.revenuePerAttempt).toBeCloseTo(drop.dropRate * calculatePriceAfterTax(1000), 10);
+            expect(drop.revenuePerHour).toBeCloseTo(drop.dropsPerHour * calculatePriceAfterTax(1000), 10);
+            expect(drop.revenuePerHour).toBeLessThan(drop.dropsPerHour * 1000);
+        }
+    );
+
+    test('an openable bonus crate keeps its expected value, which has already paid the tax', () => {
+        mocks.initClientData = {
+            ...mocks.initClientData,
+            itemDetailMap: {
+                ...ITEM_DETAIL_MAP,
+                '/items/small_artisans_crate': { name: "Small Artisan's Crate", isOpenable: true },
+            },
+        };
+        mocks.evCache = { '/items/small_artisans_crate': 5000 };
+        mocks.evMissing = {};
+
+        const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
+
+        const crate = result.dropRevenues.find((d) => d.itemHrid === '/items/small_artisans_crate');
+        expect(crate.revenuePerAttempt).toBeCloseTo(crate.dropRate * 5000, 10);
+    });
+
     test('hybrid vs conservative: essence/crate prices move with whatever getItemPrice returns', () => {
         // getItemPrice already encodes the pricing-mode choice; this file only has to
         // hand the hrid through, so a mode-dependent mock price should show up unmodified.
