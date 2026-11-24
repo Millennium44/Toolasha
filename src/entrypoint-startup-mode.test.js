@@ -103,6 +103,7 @@ function installLibraries() {
         Market: makeStub(),
         Actions: makeStub(),
         Combat: makeStub(),
+        Guild: makeStub(),
         UI: makeStub(),
     };
 }
