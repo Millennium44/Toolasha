@@ -126,15 +126,41 @@ describe('the settings that honestly need a reload', () => {
     // tag any more — see settings-schema.test.js for the roster. The schema
     // was down to zero until three settings read once at startup were tagged again (the update check, its interval, and the live-price switch); the mechanism itself is still worth testing
     // against a synthetic map so a future genuinely-refresh-only setting has
-    // somewhere to prove itself.
-    test('only the settings that are read once at startup are tagged', () => {
+    // somewhere to prove itself. The feature-registry-gates test also tags the settings of modules whose disable()
+    // does not remove everything they drew (listed there by key), so those say "refresh to apply" rather than
+    // silently staying on.
+    test('only the settings that are read once at startup, or whose module cannot stop live, are tagged', () => {
         expect(refreshRequiredIds().sort()).toEqual([
             'actionPanel_showLevelProgress',
             'actionPanel_showSpeedTime',
             'actionPanel_totalTime_quickInputs',
+            'alchemy_actionProtection',
+            'chatCommands',
+            'chatHistoryExtender',
+            'combatDpsPanel',
+            'combatDropLuck',
+            'combatStats',
+            'dungeonTracker',
+            'dungeonTrackerChatAnnotations',
+            'guildRoster',
+            'guildTrialLedger',
+            'insights_calibration',
+            'inventoryTabs',
+            'labyrinthRoomLogs',
+            'labyrinthRunLedger',
+            'loadoutSnapshot',
+            'lootLogPivot',
+            'manaTracker',
+            'marketSort',
+            'networth',
             'pricing_useLivePrices',
+            'taskAutoReroll',
+            'tasks_mergedCraftingWalk',
+            'tasks_rerollWalk',
+            'treasureTracker',
             'updateCheck',
             'updateCheckHours',
+            'watchlist',
             'xpTracker',
             'xpTracker_timeTillLevel',
         ]);

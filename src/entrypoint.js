@@ -838,6 +838,7 @@ function registerFeatures() {
             category: 'Market',
             module: Market.tooltipConsumables,
             async: true,
+            liveStop: true,
         },
         {
             key: 'dungeonTokenTooltips',
@@ -1322,6 +1323,7 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.actionPanelLayout,
             async: false,
+            liveStop: true,
         },
         {
             key: 'quickInputButtons',
@@ -1500,6 +1502,7 @@ function registerFeatures() {
             category: 'Alchemy',
             module: Actions.alchemyItemPins,
             async: true,
+            liveStop: true,
             // Waits only on its own pin record. The menu observer it registers
             // afterwards shares a class with alchemy item dimming, which styles
             // individual items rather than reordering them, so which of the two
@@ -1512,6 +1515,7 @@ function registerFeatures() {
             category: 'Alchemy',
             module: Actions.alchemyItemSort,
             async: true,
+            liveStop: true,
             // Waits only on its own order-choice record, same shape as
             // Alchemy Item Pins above; the two share the picker but each owns
             // its own reorder pass, so registration order between them does
@@ -1524,6 +1528,7 @@ function registerFeatures() {
             category: 'Alchemy',
             module: Actions.alchemyCatalystMark,
             async: false,
+            liveStop: true,
         },
         {
             key: 'alchemyCatalystCheck',
@@ -1693,6 +1698,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.chestKeyMarketButton,
             async: false,
+            liveStop: true,
         },
         {
             key: 'zoneIndices',
@@ -1800,6 +1806,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatBattleCounter,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatBossEta',
@@ -1807,6 +1814,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatBossEta,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatSummary',
@@ -1814,6 +1822,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatSummary,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatDropLuck',
@@ -1838,6 +1847,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.portraitDps,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatUnitBadges',
@@ -1845,6 +1855,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatUnitBadges,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatUnitBuffBars',
@@ -1852,6 +1863,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatUnitBuffBars,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatConsumableRunway',
@@ -1859,6 +1871,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatConsumableRunway,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatDpsPanel',
@@ -1917,6 +1930,7 @@ function registerFeatures() {
             // does - and re-reads the bests on a 500 ms catch-up timer, four
             // times the load it would be racing.
             concurrent: true,
+            liveStop: true,
         },
         {
             key: 'labyrinthRunLedger',
@@ -1941,6 +1955,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.labyrinthShopPrices,
             async: false,
+            liveStop: true,
         },
         {
             key: 'labyrinthClearRate',
@@ -2050,6 +2065,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatSim,
             async: false,
+            liveStop: true,
         },
         {
             key: 'labSim',
@@ -2057,6 +2073,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.labSim,
             async: false,
+            liveStop: true,
         },
     ];
 
@@ -2080,6 +2097,7 @@ function registerFeatures() {
             category: 'UI',
             module: UI.alchemyItemDimming,
             async: false,
+            liveStop: true,
         },
         {
             key: 'skillExperiencePercentage',
@@ -2129,6 +2147,7 @@ function registerFeatures() {
             category: 'UI',
             module: UI.talismanWindowValues,
             async: false,
+            liveStop: true,
         },
         {
             // Test server only: the module returns at once anywhere else
@@ -2137,6 +2156,7 @@ function registerFeatures() {
             category: 'UI',
             module: UI.talismanRerollAdvisor,
             async: false,
+            liveStop: true,
         },
         {
             key: 'hideLabyrinthBadge',
@@ -2501,6 +2521,7 @@ function registerFeatures() {
             category: 'Tasks',
             module: UI.taskIcons,
             async: false,
+            liveStop: true,
             // The attribute rather than `.mwi-task-icon`: it is stamped on every
             // card the feature has looked at, whereas an icon depends on a sprite
             // resolving, and a missing sprite is a different complaint
@@ -2558,6 +2579,7 @@ function registerFeatures() {
             category: 'Tasks',
             module: UI.taskRerollProtection,
             async: true,
+            liveStop: true,
         },
         {
             key: 'taskAutoReroll',
@@ -2671,6 +2693,7 @@ function registerFeatures() {
             category: 'Alchemy',
             module: UI.transmuteHistoryTracker,
             async: false,
+            liveStop: true,
         },
         {
             key: 'alchemy_transmuteHistoryViewer',
@@ -2688,6 +2711,7 @@ function registerFeatures() {
             category: 'Alchemy',
             module: UI.coinifyHistoryTracker,
             async: false,
+            liveStop: true,
         },
         {
             key: 'alchemy_coinifyHistoryViewer',
@@ -2705,6 +2729,7 @@ function registerFeatures() {
             category: 'Alchemy',
             module: UI.decomposeHistoryTracker,
             async: false,
+            liveStop: true,
         },
         {
             key: 'alchemy_decomposeHistoryViewer',
@@ -2855,6 +2880,7 @@ function registerFeatures() {
             category: 'Leaderboard',
             module: UI.leaderboardXPTracker,
             async: false,
+            liveStop: true,
         },
         {
             key: 'leaderboardXPDisplay',
@@ -2862,6 +2888,7 @@ function registerFeatures() {
             category: 'Leaderboard',
             module: UI.leaderboardXPDisplay,
             async: false,
+            liveStop: true,
         },
         {
             key: 'leaderboardRankBadges',
