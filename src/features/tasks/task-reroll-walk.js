@@ -1100,13 +1100,13 @@ class TaskRerollWalk {
             const choice =
                 costs && hrid
                     ? chooseReroll({
-                      ...costs,
-                      coinThreshold,
-                      cowbellThreshold,
-                      cowbellValue,
-                      preference,
-                  })
-                : null;
+                          ...costs,
+                          coinThreshold,
+                          cowbellThreshold,
+                          cowbellValue,
+                          preference,
+                      })
+                    : null;
 
             const verdict = verdictForCard({
                 completed: this._isCompleted(card),
