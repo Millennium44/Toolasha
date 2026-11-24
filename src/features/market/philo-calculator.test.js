@@ -284,10 +284,10 @@ describe('revenue', () => {
         ];
         calc._bonusRevenueCache.clear();
 
-        // Bonus drops are taxed like the rest; the ordinary drop rows the
-        // alchemy calculator also reports are already counted here and must
-        // not be added twice.
-        expect(calc.calculateRow(WIDGET_HRID, widget()).ev).toBeCloseTo(without + 150 * (1 - MARKET_TAX), 6);
+        // With no book to re-quote from, the calculator's figure stands: it is already after tax, so taxing
+        // it here again would take the tax twice. The ordinary drop rows the alchemy calculator also reports
+        // are already counted here and must not be added twice.
+        expect(calc.calculateRow(WIDGET_HRID, widget()).ev).toBeCloseTo(without + 150, 6);
     });
 });
 

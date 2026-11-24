@@ -932,18 +932,19 @@ class PhiloCalculator {
                 // tick); this table has its own mode, so a listed, non-openable drop is
                 // re-quoted on that side. Openable crates stay at their expected value, and
                 // a drop with no book keeps the calculator's value-map figure.
+                // The calculator's own figure is already after tax (a sold drop) or an expected value
                 let revenue = drop.revenuePerAttempt || 0;
                 const book = itemDetailMap[drop.itemHrid]?.isOpenable
                     ? null
                     : (ironCowBook(drop.itemHrid) ?? marketAPI.getPrice(drop.itemHrid, 0));
                 const quote = book?.[sellType];
                 if (quote > 0 && drop.dropRate > 0) {
-                    revenue = drop.dropRate * this.patientQuote(quote, 'sell', sellType, book, drop.itemHrid);
+                    // Re-quoted raw off the book, so the tax comes off here, once
+                    revenue = calculatePriceAfterTax(
+                        drop.dropRate * this.patientQuote(quote, 'sell', sellType, book, drop.itemHrid)
+                    );
                 }
-                // Taxed, unlike the canonical calculator: essences and crates
-                // are sold like any other drop, and this table taxes every
-                // sold drop uniformly.
-                total += calculatePriceAfterTax(revenue);
+                total += revenue;
             }
         } catch (error) {
             console.error('[PhiloCalculator] Failed to resolve bonus drop revenue:', error);
