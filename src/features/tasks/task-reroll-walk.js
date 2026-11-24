@@ -1093,8 +1093,13 @@ class TaskRerollWalk {
             } else if (questKey && !chooser.length && this.chooserQuotes.has(questKey)) {
                 costs = { ...this.chooserQuotes.get(questKey), coinOffered: true, cowbellOffered: true };
             }
-            const choice = costs
-                ? chooseReroll({
+            // A card whose task cannot be named cannot be checked against the
+            // protected list either, and an open chooser carries prices of its
+            // own — so without this an unreadable quest paid for the reroll
+            // with protection never consulted
+            const choice =
+                costs && hrid
+                    ? chooseReroll({
                       ...costs,
                       coinThreshold,
                       cowbellThreshold,
@@ -1672,10 +1677,22 @@ class TaskRerollWalk {
         if (planned.kind !== 'back' && planned.kind !== 'claim') {
             const quest = questForTaskCard(planned.card);
             const hrid = quest?.actionHrid || quest?.monsterHrid || '';
-            if (hrid && this._liveProtectedHrids().has(hrid)) {
+            // No readable task means protection cannot be consulted: refuse
+            if (!hrid || this._liveProtectedHrids().has(hrid)) {
                 this._replan();
                 return false;
             }
+        }
+
+        // Discarding a task is only on offer while the setting says so; it is
+        // read again here because it can be switched off anywhere in the
+        // settings after the step was planned
+        if (
+            (planned.kind === 'trash' || planned.kind === 'confirmDiscard') &&
+            !config.getSetting('tasks_rerollWalkTrashAtLimit')
+        ) {
+            this._replan();
+            return false;
         }
 
         // A manual step is the player's press, not the walk's: the game refuses

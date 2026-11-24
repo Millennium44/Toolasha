@@ -2751,3 +2751,57 @@ describe('the info panel is sized from the viewport', () => {
         expect(panel().style.maxHeight).toBe('370px');
     });
 });
+
+describe('a spend the walk cannot vouch for is never pressed', () => {
+    test('an open chooser on a card whose quest cannot be read is closed, not paid', async () => {
+        // The quest names the task, and the task is what the protected list is
+        // keyed on. With no quest the open chooser still quotes its own prices,
+        // and the plan paid them with protection never consulted.
+        walk.protectedHrids = new Set([MILKING]);
+        board([{ name: 'Milking - Cow', buttons: ['Back', '10,000'], quest: null }]);
+
+        await walk.start();
+
+        expect(chipText()).toContain('Close the menu on #1 (unreadable)');
+        walk.advance();
+        expect(clicks).toEqual(['Milking - Cow:Back']);
+    });
+
+    test('a quest that stops being readable between the plan and the press is not paid', async () => {
+        board([{ name: 'Milking - Cow', buttons: ['Back', '10,000'], quest: quest(MILKING) }]);
+        await walk.start();
+        expect(chipText()).toContain('Reroll #1 — 10.0K🪙');
+
+        document.getElementById('root')._reactRootContainer.current.child.memoizedProps.characterQuest = null;
+
+        expect(walk.advance()).toBe(false);
+        expect(clicks).toEqual([]);
+    });
+
+    test('a discard is not confirmed once the setting that offered it is switched off', async () => {
+        stored.values.taskCapCoinThreshold_7 = 10000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        board([{ name: 'Milking - Cow', buttons: ['Confirm Discard'], quest: quest(MILKING) }]);
+        await walk.start();
+        expect(chipText()).toContain('Confirm discard #1');
+
+        // Switched off in the main settings: nothing wakes a re-plan
+        settings.values.tasks_rerollWalkTrashAtLimit = false;
+
+        expect(walk.advance()).toBe(false);
+        expect(clicks).toEqual([]);
+    });
+
+    test('the trash can is not pressed once the setting that offered it is switched off', async () => {
+        stored.values.taskCapCoinThreshold_7 = 10000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+        expect(chipText()).toContain('Trash #1');
+
+        settings.values.tasks_rerollWalkTrashAtLimit = false;
+
+        expect(walk.advance()).toBe(false);
+        expect(clicks).toEqual([]);
+    });
+});

@@ -368,7 +368,7 @@ class TaskRerollProtection {
         // sight to explain why. Per-task protection still covers it: that is a
         // choice about the task, and a free reroll destroys the task just the
         // same.
-        const isCapProtected = this.capProtectionEnabled && !isFreeReroll && this._isRerollAtCap(option);
+        const isCapProtected = this.capProtectionEnabled && !isFreeReroll && this._isRerollAtCap(option, quest);
 
         if (!isPerTaskProtected && !isCapProtected) return;
 
@@ -552,14 +552,28 @@ class TaskRerollProtection {
      * and guessing from magnitude alone is how the free reroll's "(2)" once got
      * measured against the cowbell cap.
      *
+     * A price the button does not state is read off the quest's own reroll
+     * ladder instead, and with neither on hand the option counts as at cap: an
+     * unreadable price is not a free one, and the lockdown it earns costs the
+     * player one extra click.
+     *
      * @param {{kind: string, cost: number|null}} option - A reroll option
+     * @param {Object|null} [quest] - The card's quest, for the ladder fallback
      * @returns {boolean}
      * @private
      */
-    _isRerollAtCap(option) {
-        if (!option || option.cost === null || option.cost === undefined) return false;
-        if (option.kind === 'cowbell') return option.cost >= this.cowbellThreshold;
-        return option.cost >= this.coinThreshold;
+    _isRerollAtCap(option, quest = null) {
+        if (!option) return false;
+        let cost = option.cost;
+        if (cost === null || cost === undefined) {
+            if (!quest) return true;
+            cost =
+                option.kind === 'cowbell'
+                    ? Math.min(Math.pow(2, Number(quest.cowbellRerollCount) || 0), 32)
+                    : Math.min(10000 * Math.pow(2, Number(quest.coinRerollCount) || 0), 320000);
+        }
+        if (option.kind === 'cowbell') return cost >= this.cowbellThreshold;
+        return cost >= this.coinThreshold;
     }
 
     /**
