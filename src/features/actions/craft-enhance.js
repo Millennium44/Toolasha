@@ -42,6 +42,7 @@ import {
 import { findRefinementAction } from '../../utils/refined-item-cost.js';
 import { findProducingAction } from '../../utils/production-index.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
+import { isPatientTickOn } from '../../utils/patient-tick.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
 import { productionRecipes, stateFingerprint } from './production-arbitrage.js';
 import {
@@ -330,6 +331,9 @@ export function craftEnhanceFingerprint({ targetLevel, ownedMode, params, priceS
         benchDigest(params),
         config.getSettingValue('expectedValue_respectPricingMode', true),
         config.getSettingValue('profitCalc_pricingMode', 'hybrid'),
+        // The patient tick moves every profit-context price the ranking reads (sale, inputs, drinks, protection)
+        isPatientTickOn('buy') ? 'tick-buy' : '',
+        isPatientTickOn('sell') ? 'tick-sell' : '',
     ].join('|');
 }
 

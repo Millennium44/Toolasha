@@ -622,6 +622,21 @@ describe('the state key the window compares on every draw', () => {
         game.detected = bench;
     });
 
+    test('the patient-tick settings move every price the ranking reads, so they move the key', async () => {
+        const key = craftEnhanceStateKey();
+        game.settings.profitCalc_patientTickSell = true;
+        const sellKey = craftEnhanceStateKey();
+        expect(sellKey).not.toBe(key);
+        game.settings.profitCalc_patientTickBuy = true;
+        expect(craftEnhanceStateKey()).not.toBe(sellKey);
+        // The cached ranking of the old setting is not served for the new one
+        game.settings.profitCalc_patientTickSell = false;
+        game.settings.profitCalc_patientTickBuy = false;
+        const rows = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
+        game.settings.profitCalc_patientTickSell = true;
+        expect(await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' })).not.toBe(rows);
+    });
+
     test('a held ranking is current exactly when its key matches the one a run would cache under', async () => {
         const rows = await rankCraftEnhance({ targetLevel: 5, ownedMode: 'market' });
         expect(await rankCraftEnhance()).toBe(rows);
