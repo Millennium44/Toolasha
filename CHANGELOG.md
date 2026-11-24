@@ -22,6 +22,18 @@ The reroll walk no longer offers a paid reroll on a task it cannot read, and a d
 
 A pasted or imported build with two talismans in one belt slot now counts only the first in skilling figures, as the Combat Sim already did.
 
+### Reroll advisor recognizes a met target that is too big to solve
+
+With a target too large for the advisor to plan (six wanted lines at the top grade), a talisman or pending roll that already meets it now reads "Target met" or "Use New Roll" instead of "Not reachable".
+
+### Craft & Enhance and Production Arbitrage follow the patient-tick settings
+
+Turning "patient tick" buy or sell pricing on or off now re-ranks the Craft & Enhance window and the Production Arbitrage board the next time they redraw (a sort or filter click, or reopening them), instead of keeping figures from the old setting until the next market refresh.
+
+### Shrine planner keeps up with shrine levels
+
+The Shrine Upgrade Planner now redraws when your guild's shrine levels or your buff levels arrive after it is open, so its caps, "(not built)" labels and prerequisite notes no longer stay on the first reading. Targets you typed are kept.
+
 <!-- shipped in 3.92.0 -->
 
 ### "Instead of selling" shows the gain per hour

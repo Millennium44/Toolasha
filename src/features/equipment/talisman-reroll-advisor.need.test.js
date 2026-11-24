@@ -307,3 +307,40 @@ describe('describeAdvice for a K that cannot be met', () => {
         );
     });
 });
+
+describe('a target too big to solve that the lines already meet', () => {
+    // Six lines wanted at G6 on a four-line talisman is 289,290 states, over the ceiling
+    const SIX = ['armor', 'melee_evasion', 'melee_accuracy', 'ability_damage', 'ability_haste', 'critical_rate'].map(
+        (name) => ({ hrid: M(name), minGrade: 6 })
+    );
+    const held = [line('armor', 6), line('melee_evasion', 6), line('smite', 1), line('ability_haste', 2)];
+
+    test('K met by the current lines says so, not "too many lines"', () => {
+        openWindow(talismanRow(7, held));
+        setRerollTarget(7, SIX, 2);
+        vi.runAllTimers();
+        expect(moveText()).toBe('Target met. Nothing to do.');
+    });
+
+    test('a pending roll that meets K is to be used', () => {
+        openWindow(
+            talismanRow(7, [line('armor', 6), line('smite', 1), line('ability_haste', 2), line('cast_speed', 1)])
+        );
+        game.shown = {
+            ...game.shown,
+            pendingModifiers: [line('armor', 6), line('critical_rate', 6), line('smite', 1)],
+        };
+        setRerollTarget(7, SIX, 2);
+        vi.runAllTimers();
+        expect(moveText()).toBe('Use New Roll: it meets the target.');
+    });
+
+    test('K not met still says the target is too big', () => {
+        openWindow(
+            talismanRow(7, [line('armor', 6), line('smite', 1), line('ability_haste', 2), line('cast_speed', 1)])
+        );
+        setRerollTarget(7, SIX, 2);
+        vi.runAllTimers();
+        expect(moveText()).toMatch(/^Not reachable\. Too many lines at this grade/);
+    });
+});

@@ -1829,9 +1829,11 @@ class GuildCreditValue {
      *
      * @param {Element} wrapper - The planner's root element
      * @param {Function} refresh - Redraws the totals and the suggestions
+     * @param {Function} [rebuild] - Rebuilds the whole planner; shrine and buff levels arriving after the
+     *   planner opened change its rows, caps and "not built" notes, which `refresh` does not redraw
      * @private
      */
-    _armPlannerObservers(wrapper, refresh) {
+    _armPlannerObservers(wrapper, refresh, rebuild) {
         this._disconnectPlannerObservers();
         this._plannerItemsHandler = () => {
             if (this._plannerTimer) clearTimeout(this._plannerTimer);
@@ -1845,6 +1847,16 @@ class GuildCreditValue {
             }, SHRINE_RERENDER_DEBOUNCE_MS);
         };
         dataManager.on('items_updated', this._plannerItemsHandler);
+        if (rebuild) {
+            this._plannerLevelsHandler = () => {
+                if (!wrapper.isConnected) {
+                    this._disconnectPlannerObservers();
+                    return;
+                }
+                rebuild();
+            };
+            dataManager.on('guild_shrine_levels_updated', this._plannerLevelsHandler);
+        }
     }
 
     /** Release the planner's inventory hook and any pending refresh */
@@ -1856,6 +1868,10 @@ class GuildCreditValue {
         if (this._plannerItemsHandler) {
             dataManager.off('items_updated', this._plannerItemsHandler);
             this._plannerItemsHandler = null;
+        }
+        if (this._plannerLevelsHandler) {
+            dataManager.off('guild_shrine_levels_updated', this._plannerLevelsHandler);
+            this._plannerLevelsHandler = null;
         }
     }
 
@@ -3074,10 +3090,14 @@ class GuildCreditValue {
         // Both halves are redrawn together, because both are drawn from the
         // inventory: the still-needed box (owed rows, shopping list, conversion
         // steps) and the suggestions (token balance, ✓ walk, its own flow)
-        this._armPlannerObservers(wrapper, () => {
-            recalculate();
-            renderSuggestions();
-        });
+        this._armPlannerObservers(
+            wrapper,
+            () => {
+                recalculate();
+                renderSuggestions();
+            },
+            () => this._renderShrinePlanner(modalEl)
+        );
     }
 
     /**
