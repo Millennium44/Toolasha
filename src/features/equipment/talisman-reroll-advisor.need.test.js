@@ -323,15 +323,22 @@ describe('a target too big to solve that the lines already meet', () => {
     });
 
     test('a pending roll that meets K is to be used', () => {
-        openWindow(talismanRow(7, [line('armor', 6), line('smite', 1), line('ability_haste', 2), line('cast_speed', 1)]));
-        game.shown = { ...game.shown, pendingModifiers: [line('armor', 6), line('critical_rate', 6), line('smite', 1)] };
+        openWindow(
+            talismanRow(7, [line('armor', 6), line('smite', 1), line('ability_haste', 2), line('cast_speed', 1)])
+        );
+        game.shown = {
+            ...game.shown,
+            pendingModifiers: [line('armor', 6), line('critical_rate', 6), line('smite', 1)],
+        };
         setRerollTarget(7, SIX, 2);
         vi.runAllTimers();
         expect(moveText()).toBe('Use New Roll: it meets the target.');
     });
 
     test('K not met still says the target is too big', () => {
-        openWindow(talismanRow(7, [line('armor', 6), line('smite', 1), line('ability_haste', 2), line('cast_speed', 1)]));
+        openWindow(
+            talismanRow(7, [line('armor', 6), line('smite', 1), line('ability_haste', 2), line('cast_speed', 1)])
+        );
         setRerollTarget(7, SIX, 2);
         vi.runAllTimers();
         expect(moveText()).toMatch(/^Not reachable\. Too many lines at this grade/);
