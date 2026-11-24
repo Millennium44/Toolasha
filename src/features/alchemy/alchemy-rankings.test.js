@@ -41,6 +41,8 @@ const mocks = vi.hoisted(() => ({
     communityBuffs: [],
     /** How many times anything asked for the alchemy action context */
     contextCalls: 0,
+    /** marketAPI.priceVersion: moves on an order-book patch or a custom price edit, with no new fetch */
+    priceVersion: 0,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -98,7 +100,15 @@ vi.mock('../../utils/action-context.js', () => {
     return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
 });
 vi.mock('../../utils/house-efficiency.js', () => ({ calculateHouseRareFind: () => 0 }));
-vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null, on: () => () => {} } }));
+vi.mock('../../api/marketplace.js', () => ({
+    default: {
+        getPrice: () => null,
+        on: () => () => {},
+        get priceVersion() {
+            return mocks.priceVersion;
+        },
+    },
+}));
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: { getCachedValue: () => null, calculateSingleContainer: () => 0, isInitialized: false },
 }));
@@ -202,6 +212,7 @@ beforeEach(() => {
     mocks.houseRooms = new Map();
     mocks.communityBuffs = [];
     mocks.contextCalls = 0;
+    mocks.priceVersion = 0;
     mocks.inventory = [
         { itemHrid: '/items/cheese', itemLocationHrid: INVENTORY, count: 100, enhancementLevel: 0 },
         { itemHrid: '/items/milk', itemLocationHrid: INVENTORY, count: 100, enhancementLevel: 0 },
@@ -568,6 +579,15 @@ describe('alchemyGoldRates', () => {
         // A new fetch, or an explicit clear, and it looks again
         expect(alchemyGoldRates({ priceStamp: 2 })[0].goldPerHour).toBeGreaterThan(first);
         clearAlchemyRateCache();
+        expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBeGreaterThan(first);
+    });
+
+    test('a price edit or opened order book (priceVersion) looks again under the same fetch stamp', () => {
+        const first = alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour;
+        mocks.itemPrices['/items/gem'] = 4000;
+        expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBe(first);
+
+        mocks.priceVersion += 1;
         expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBeGreaterThan(first);
     });
 

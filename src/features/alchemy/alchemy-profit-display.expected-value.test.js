@@ -59,6 +59,7 @@ vi.mock('../../utils/experience-parser.js', () => ({
 }));
 
 const { default: display } = await import('./alchemy-profit-display.js');
+const { default: marketAPI } = await import('../../api/marketplace.js');
 
 const listeners = () => bus.handlers.get('expected_value_initialized')?.size ?? 0;
 const emitReady = () => {
@@ -156,5 +157,45 @@ describe('redrawing when the calculator finishes', () => {
         emitReady();
 
         expect(redraw).not.toHaveBeenCalled();
+    });
+});
+
+describe('redrawing when market prices arrive', () => {
+    const emitPrices = (change) => {
+        for (const fn of [...marketAPI.listeners]) fn(change);
+    };
+
+    test('a price update forces a redraw of the panel on screen', () => {
+        display.initialize();
+        const redraw = vi.spyOn(display, 'checkAndUpdateDisplay').mockImplementation(() => {});
+        display.lastFingerprint = 'stale';
+
+        emitPrices({ full: true });
+
+        expect(display.lastFingerprint).toBeNull();
+        expect(redraw).toHaveBeenCalledTimes(1);
+    });
+
+    test('a burst that moved no price redraws nothing', () => {
+        display.initialize();
+        const redraw = vi.spyOn(display, 'checkAndUpdateDisplay').mockImplementation(() => {});
+        display.lastFingerprint = 'kept';
+
+        emitPrices({ full: false, keys: new Set() });
+
+        expect(display.lastFingerprint).toBe('kept');
+        expect(redraw).not.toHaveBeenCalled();
+    });
+
+    test('disable() removes the listener, and a re-enable registers exactly one', () => {
+        const before = marketAPI.listeners.length;
+        display.initialize();
+        expect(marketAPI.listeners.length).toBe(before + 1);
+
+        display.disable();
+        expect(marketAPI.listeners.length).toBe(before);
+
+        display.initialize();
+        expect(marketAPI.listeners.length).toBe(before + 1);
     });
 });

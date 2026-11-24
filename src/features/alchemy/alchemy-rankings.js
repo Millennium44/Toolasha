@@ -70,6 +70,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import marketAPI from '../../api/marketplace.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { resolveActionContext } from '../../utils/action-context.js';
@@ -416,7 +417,11 @@ function stateFingerprint(priceStamp) {
         .sort()
         .join(',');
 
-    return `${level}|${priceStamp}|${drinks}|${gear}|${stock}|${pricingMode}|${getCapeBaseValueMode()}|${house}|${community}|${talismanVersion}`;
+    // A snapshot moves the caller's fetch stamp; an order book opened or a custom price edited moves only
+    // `priceVersion`, and both move a rate
+    const priceVersion = marketAPI.priceVersion || 0;
+
+    return `${level}|${priceStamp}:${priceVersion}|${drinks}|${gear}|${stock}|${pricingMode}|${getCapeBaseValueMode()}|${house}|${community}|${talismanVersion}`;
 }
 
 /**
