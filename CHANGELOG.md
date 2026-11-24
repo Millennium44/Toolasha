@@ -12,7 +12,7 @@ With a target too large for the advisor to plan (six wanted lines at the top gra
 
 ### Craft & Enhance and Production Arbitrage follow the patient-tick settings
 
-Turning "patient tick" buy or sell pricing on or off now re-ranks the Craft & Enhance window and the Production Arbitrage board right away, instead of showing figures from the old setting until the next market refresh.
+Turning "patient tick" buy or sell pricing on or off now re-ranks the Craft & Enhance window and the Production Arbitrage board the next time they redraw (a sort or filter click, or reopening them), instead of keeping figures from the old setting until the next market refresh.
 
 ### Shrine planner keeps up with shrine levels
 
