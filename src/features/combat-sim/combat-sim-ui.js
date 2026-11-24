@@ -8492,7 +8492,9 @@ class CombatSimUI {
                 const resolved = resolveSimParty(this._editor, editedDTOs, soloVsParty ? { solo: false } : {});
                 const selectedHrid = soloVsParty ? this._soloPartySimulatedHrid(editedDTOs) : resolved.selfHrid;
                 playerDTOs = resolved.playerDTOs;
-                soloOtherMember = resolved.soloApplied && resolved.trueSelfHrid === null;
+                // Not the live character's sweep: Solo on another member, or a roster with no live character in it
+                // (a pasted build, an opened profile) whose first player the table then shows
+                soloOtherMember = resolved.trueSelfHrid === null;
                 allZonesTrueSelfHrid = resolved.trueSelfHrid;
                 // The roster the bestiary pace matches recorded runs against (`runMatchesSimParty`);
                 // the single-zone path copies it the same way, this one used to leave it empty

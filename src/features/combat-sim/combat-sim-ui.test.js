@@ -8556,6 +8556,28 @@ describe('the Solo checkbox end to end: Simulate and All Zones', () => {
         expect(ui._allZonesSnapshotMeta).toBeNull();
     });
 
+    test('an All Zones sweep of a roster with no live character in it is not saved as your forecast', async () => {
+        // A pasted or opened-from-profile build is nobody's live character: with Solo off nothing narrows the roster,
+        // and the sweep used to be filed under the character as their own zone profits
+        mocks.allZonesResult = [
+            { simulatedTime: 3600 * 1e9, encounters: 10, deaths: { player1: 0 }, experienceGained: {} },
+        ];
+        mocks.editedDTOs = { player1: { hrid: 'player1', equipment: {}, food: [null, null, null] } };
+        mocks.editorSelfHrid = null;
+        mocks.editorSoloMode = false;
+        ui._allZonesMode = 'group';
+        ui._updateAllZonesUI();
+        ui._allZonesSnapshotMeta = { ownerId: null, meta: { stale: true } };
+        await saveAllZonesSnapshot(buildAllZonesSnapshot([], { savedAt: 1700000000000, fingerprint: 'mine' }));
+        const before = await loadAllZonesSnapshot();
+
+        await ui._onSimulateAllZones();
+
+        expect(ui._allZonesResults).toHaveLength(1);
+        expect(ui._allZonesSnapshotMeta).toBeNull();
+        expect(await loadAllZonesSnapshot()).toEqual(before);
+    });
+
     test('a Solo change on the Settings page reaches the open panel’s editor', () => {
         mocks.editorSoloMode = false;
         // The real config calls a key's listeners with the new value alone
