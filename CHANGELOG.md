@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reroll advisor recognizes a met target that is too big to solve
+
+With a target too large for the advisor to plan (six wanted lines at the top grade), a talisman or pending roll that already meets it now reads "Target met" or "Use New Roll" instead of "Not reachable".
+
 ### Craft & Enhance and Production Arbitrage follow the patient-tick settings
 
 Turning "patient tick" buy or sell pricing on or off now re-ranks the Craft & Enhance window and the Production Arbitrage board right away, instead of showing figures from the old setting until the next market refresh.

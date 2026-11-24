@@ -134,7 +134,8 @@ export function describeAdvice(result, names) {
     if (build.status === 'empty') return { move: 'This talisman has no lines yet.', detail: [] };
     if (build.status === 'noData') return { move: 'The game data for talismans has not loaded.', detail: [] };
     if (build.status === 'noOrbs') return { move: 'The game data lists no reroll orbs.', detail: [] };
-    if (build.status === 'impossible') {
+    // A target too big to solve that the lines already meet carries its own advice (see update)
+    if (build.status === 'impossible' && !advice) {
         const reasons = {
             requiredNotRollable:
                 build.cause === 'gradeAboveCap'
@@ -734,11 +735,13 @@ class TalismanRerollAdvisor {
             addLeftOut: build.status === 'ok' && build.problem.addLeftOut === true,
         };
 
-        // Hard rules first, on the raw lines, whatever the solver says
+        // Hard rules first, on the raw lines, whatever the solver says. A target too big to solve can still be met
+        // already, or by the pending roll: that is judged on the lines alone
+        const judgeable = build.status === 'ok' || (build.status === 'impossible' && build.reason === 'tooManyStates');
         const pending = Array.isArray(talisman.pendingModifiers) && talisman.pendingModifiers.length > 0;
-        if (build.status === 'ok' && pending && meetsTarget(talisman.pendingModifiers, targets, need)) {
+        if (judgeable && pending && meetsTarget(talisman.pendingModifiers, targets, need)) {
             result.advice = { status: 'accept', met: true, counts: {} };
-        } else if (build.status === 'ok' && meetsTarget(talisman.modifiers, targets, need)) {
+        } else if (judgeable && meetsTarget(talisman.modifiers, targets, need)) {
             result.advice = pending ? { status: 'discard', counts: {} } : { status: 'met', counts: {} };
         } else if (build.status === 'ok') {
             // Which adds are weighed (priced) changes the moves the solution can name, so it is part of the shape
