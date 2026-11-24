@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Shrine planner keeps up with shrine levels
+
+The Shrine Upgrade Planner now redraws when your guild's shrine levels or your buff levels arrive after it is open, so its caps, "(not built)" labels and prerequisite notes no longer stay on the first reading. Targets you typed are kept.
+
 <!-- shipped in 3.92.0 -->
 
 ### "Instead of selling" shows the gain per hour

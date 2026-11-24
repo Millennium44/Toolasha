@@ -1471,6 +1471,25 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         expect(nextBuyRows(modal).some((row) => row.textContent.includes('Tempo'))).toBe(false);
     });
 
+    test('shrine levels arriving after the planner opened redraw its notes and keep the typed target', () => {
+        game.buildingLevels = {};
+        const modal = openModal();
+        expect(modal.textContent).not.toContain('not built');
+        const input = inputFor(modal, TEMPO);
+        input.value = '2';
+        input.dispatchEvent(new Event('input'));
+
+        game.buildingLevels = { '/guild_shrines/force': 10, '/guild_shrines/rarity': 5 };
+        for (const handler of [...(game.listeners['guild_shrine_levels_updated'] || [])]) handler({});
+
+        expect(modal.textContent).toContain('Tempo Shrine (not built)');
+        expect(inputFor(modal, TEMPO).value).toBe('2');
+        expect(modal.querySelectorAll('.mwi-shrine-planner')).toHaveLength(1);
+        expect(game.listeners['guild_shrine_levels_updated']).toHaveLength(1);
+        guildCreditValue.cleanup();
+        expect(game.listeners['guild_shrine_levels_updated']).toHaveLength(0);
+    });
+
     test('with no shrine level known at all, nothing is claimed about any shrine', () => {
         game.buildingLevels = {};
         const modal = openModal();
