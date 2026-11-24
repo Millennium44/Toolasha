@@ -2683,7 +2683,6 @@ function registerFeatures() {
             category: 'Alchemy',
             module: UI.transmuteHistoryTracker,
             async: false,
-            liveStop: true,
         },
         {
             key: 'alchemy_transmuteHistoryViewer',
@@ -2701,7 +2700,6 @@ function registerFeatures() {
             category: 'Alchemy',
             module: UI.coinifyHistoryTracker,
             async: false,
-            liveStop: true,
         },
         {
             key: 'alchemy_coinifyHistoryViewer',
@@ -2719,7 +2717,6 @@ function registerFeatures() {
             category: 'Alchemy',
             module: UI.decomposeHistoryTracker,
             async: false,
-            liveStop: true,
         },
         {
             key: 'alchemy_decomposeHistoryViewer',

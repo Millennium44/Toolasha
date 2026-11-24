@@ -107,6 +107,12 @@ const LIVE_BY_OWN_LISTENER = {
     labyrinthMonsterStatCheck: 'Its own listener calls disable() when switched off; isRunning() restarts it.',
     lootLogStats: 'Follows both of its settings live through syncParts() (explicit liveStop: false).',
     labyrinthClearRate: 'Follows both of its settings live through watchHalfSettings (explicit liveStop: false).',
+    alchemy_transmuteHistory:
+        'Keeps recording until a reload on purpose: a live restart resumes the saved session and would book trades made while it was off as alchemy results. Its viewer tab stops live.',
+    alchemy_coinifyHistory:
+        'As alchemy_transmuteHistory: recording stops at the next reload; the viewer tab stops live.',
+    alchemy_decomposeHistory:
+        'As alchemy_transmuteHistory: recording stops at the next reload; the viewer tab stops live.',
     combatScale: 'apply() removes its stylesheet when the setting is off, and a listener on the setting re-runs it.',
 };
 
@@ -200,9 +206,6 @@ describe('feature registry gates', () => {
         'combatConsumableRunway',
         'talismanWindowValues',
         'talismanRerollAdvisor',
-        'alchemy_transmuteHistory',
-        'alchemy_coinifyHistory',
-        'alchemy_decomposeHistory',
         'leaderboardXPTracker',
         'labyrinthTracker',
     ];
