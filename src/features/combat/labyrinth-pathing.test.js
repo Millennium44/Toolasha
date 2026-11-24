@@ -11,6 +11,7 @@ import { describe, test, expect } from 'vitest';
 import {
     computeLabyrinthPath,
     computeApproachPath,
+    orderRouteFromStart,
     computeBeaconPlan,
     countDisjointRoutes,
     orderBeaconsForPrefixes,
@@ -368,6 +369,64 @@ describe('computeApproachPath', () => {
     test('an empty plan has no approach', () => {
         const { tiles, cols } = grid(['ESSSS']);
         expect(computeApproachPath(tiles, cols, new Set())).toEqual([]);
+    });
+});
+
+describe('orderRouteFromStart', () => {
+    // S = cleared, E = entrance, . = uncleared room, # = wall
+    function grid(rows) {
+        const cols = rows[0].length;
+        const tiles = [];
+        for (const row of rows) {
+            for (const ch of row) {
+                tiles.push(ch === '#' ? null : { cleared: ch === 'S', isEntrance: ch === 'E' });
+            }
+        }
+        return { tiles, cols };
+    }
+
+    test('a route traced back from the exit comes out nearest room first', () => {
+        const { tiles, cols } = grid(['ES...']);
+        expect(orderRouteFromStart(tiles, cols, new Set([4, 3, 2]))).toEqual([2, 3, 4]);
+    });
+
+    test('a detour route stored leg by leg is still walked in one order', () => {
+        // Waypoint leg traced back first (5, 4), then the exit leg (8, 7, 6 back to the waypoint)
+        const { tiles, cols } = grid(['E..', '...', '...']);
+        expect(orderRouteFromStart(tiles, cols, new Set([4, 1, 8, 5]))).toEqual([1, 4, 5, 8]);
+    });
+
+    test('a cleared room in the middle of the route is walked through, not a dead end', () => {
+        const { tiles, cols } = grid(['E.S..']);
+        expect(orderRouteFromStart(tiles, cols, new Set([4, 3, 2, 1]))).toEqual([1, 2, 3, 4]);
+    });
+
+    test('counts from where you stand, so the near end can be the far side of the entrance', () => {
+        const { tiles, cols } = grid(['E.SSS.']);
+        expect(orderRouteFromStart(tiles, cols, new Set([1, 5]), 4)).toEqual([5, 1]);
+    });
+
+    test('a standing room the game has not given (-1) counts from the entrance', () => {
+        const { tiles, cols } = grid(['ES...']);
+        expect(orderRouteFromStart(tiles, cols, new Set([4, 3, 2]), -1)).toEqual([2, 3, 4]);
+    });
+
+    test('a chest branch is ordered by its own distance, and ties keep the route order', () => {
+        const { tiles, cols } = grid(['E..', '.#.', '...']);
+        // 1 and 3 are both one step away; 3 was stored first
+        expect(orderRouteFromStart(tiles, cols, new Set([3, 2, 1]))).toEqual([3, 1, 2]);
+    });
+
+    test('rooms no walk reaches stay at the end, in route order', () => {
+        const { tiles, cols } = grid(['E.#..']);
+        expect(orderRouteFromStart(tiles, cols, new Set([4, 3, 1]))).toEqual([1, 4, 3]);
+    });
+
+    test('an empty or single-room route comes back as it is', () => {
+        const { tiles, cols } = grid(['E...']);
+        expect(orderRouteFromStart(tiles, cols, new Set())).toEqual([]);
+        expect(orderRouteFromStart(tiles, cols, [3])).toEqual([3]);
+        expect(orderRouteFromStart(tiles, cols, null)).toEqual([]);
     });
 });
 

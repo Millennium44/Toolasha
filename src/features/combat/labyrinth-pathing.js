@@ -500,6 +500,53 @@ export function computeApproachPath(tiles, cols, route, startIdx = LABYRINTH_ENT
 }
 
 /**
+ * The planned rooms in the order you would reach them, nearest first.
+ *
+ * The planner's route is a set filled by tracing each leg back from its far end, so its own order starts
+ * at the exit. This walks out from where you are standing over cleared ground and the route itself, and
+ * sorts the route by steps taken. Rooms the walk cannot reach keep their place at the end.
+ *
+ * @param {Array<Object|null>} tiles - Flat grid, as `computeLabyrinthPath` takes
+ * @param {number} cols - Grid width
+ * @param {Set<number>|Iterable<number>} route - The planned rooms
+ * @param {number} [startIdx] - Where you are standing; the entrance when missing or off the grid
+ * @returns {number[]} Every room of `route`, nearest first
+ */
+export function orderRouteFromStart(tiles, cols, route, startIdx = LABYRINTH_ENTRANCE) {
+    const list = [...(route || [])];
+    const n = Array.isArray(tiles) ? tiles.length : 0;
+    if (list.length < 2 || !n || !cols) return list;
+    const planned = new Set(list);
+    const start = Number.isInteger(startIdx) && startIdx >= 0 && startIdx < n ? startIdx : LABYRINTH_ENTRANCE;
+    const walkable = (idx) => {
+        const tile = tiles[idx];
+        return !!tile && (planned.has(idx) || tile.cleared || tile.isEntrance);
+    };
+    const dist = new Array(n).fill(Infinity);
+    dist[start] = 0;
+    const queue = [start];
+    for (let head = 0; head < queue.length; head++) {
+        const cur = queue[head];
+        const x = cur % cols;
+        const around = [];
+        if (x > 0) around.push(cur - 1);
+        if (x < cols - 1) around.push(cur + 1);
+        if (cur - cols >= 0) around.push(cur - cols);
+        if (cur + cols < n) around.push(cur + cols);
+        for (const nb of around) {
+            if (dist[nb] !== Infinity || !walkable(nb)) continue;
+            dist[nb] = dist[cur] + 1;
+            queue.push(nb);
+        }
+    }
+    const far = (idx) => (dist[idx] === Infinity ? Number.MAX_SAFE_INTEGER : dist[idx]);
+    return list
+        .map((idx, order) => ({ idx, order }))
+        .sort((a, b) => far(a.idx) - far(b.idx) || a.order - b.order)
+        .map((entry) => entry.idx);
+}
+
+/**
  * Count vertex-disjoint entrance→exit routes through passable cells — the
  * unit vertex capacities; entrance and exit are uncapped endpoints). Two or
  * more routes means no single blocked room can sever the way to the exit.

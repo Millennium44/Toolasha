@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth step buttons light up their room and start at the nearest shroud
+
+Pointing at the Shroud or Beacon step button now lights the room its next press acts on, and the room stays lit once the supply is armed, which is how a phone sees it. The Shroud step also starts with the planned shroud nearest to where you stand and works toward the exit, instead of starting beside the exit.
+
 ### Alchemy "Instead of" lines value a crate's coins and cowbells
 
 The "Instead of buying" and "Instead of selling" lines now count a crate's coins at face value and its Cowbells the way the treasure tracker does, so an Artisan's Crate is no longer undervalued by about a third or tagged "(an output unpriced)". When an output is still unpriced, the line's hover now names it.

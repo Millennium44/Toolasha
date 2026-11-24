@@ -3644,6 +3644,27 @@ describe('a skilling tile badge and the Path quote one clear chance', () => {
         expect(badgePct(parent)).toBe('5%');
         expect(pathMark(parent)).toBe('Shroud');
     });
+
+    test('the Shroud step plan starts at the shroud nearest you, not the one beside the exit', async () => {
+        current = SLOW;
+        const { parent } = buildBoard(15);
+        // Three woodcutting rooms in a row between the entrance and the exit, each needing a shroud
+        const wood = { roomType: '/labyrinth_room_types/skilling', skillHrid: WOODCUTTING, recommendedLevel: 206 };
+        for (let i = 0; i < 2; i++) {
+            const extra = document.createElement('div');
+            extra.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(extra);
+            labyrinthClearRate.roomData[0].splice(1, 0, { ...wood });
+        }
+
+        await labyrinthClearRate.runPathCalculation();
+
+        expect(labyrinthClearRate._shroudStepPlan.targets.map((t) => t.idx)).toEqual([1, 2, 3]);
+        // A room re-judged later joins in the same walking order
+        labyrinthClearRate.amendShroudStepPlan(2, false);
+        labyrinthClearRate.amendShroudStepPlan(2, true);
+        expect(labyrinthClearRate._shroudStepPlan.targets.map((t) => t.idx)).toEqual([1, 2, 3]);
+    });
 });
 
 /**
@@ -8163,6 +8184,134 @@ describe('labyrinth toolbar layout', () => {
             labyrinthClearRate.amendShroudStepPlan(20, true);
             labyrinthClearRate.amendShroudStepPlan(40, true);
             expect(labyrinthClearRate._shroudStepPlan.targets.map((x) => x.idx)).toEqual([10, 20, 30, 40]);
+        });
+
+        describe('the room the next step acts on is lit', () => {
+            const lights = () => [...document.querySelectorAll('.mwi-labyrinth-step-target')];
+            const cellAt = (x, y) => {
+                const cell = document.createElement('div');
+                cell.className = 'LabyrinthPanel_roomCell_abc';
+                cell.dataset.roomX = String(x);
+                cell.dataset.roomY = String(y);
+                document.body.appendChild(cell);
+                return cell;
+            };
+            let steps;
+            const fakeStepper = () => {
+                labyrinthClearRate._stepper?.dispose();
+                labyrinthClearRate._stepper = {
+                    describe: (kind) => steps[kind],
+                    isBusy: () => false,
+                    dispose: () => {},
+                    press: async () => {},
+                };
+            };
+            const none = { action: 'none', code: 'no-plan', label: 'x', reason: 'x' };
+            const btn = (kind) => document.querySelector(`.mwi-labyrinth-step-${kind}`);
+            const fire = (el, type) => el.dispatchEvent(new Event(type));
+
+            beforeEach(() => {
+                flip(true);
+                labyrinthClearRate.injectTileControls();
+                steps = { shroud: none, beacon: none };
+                fakeStepper();
+            });
+
+            test('pointing at Shroud lights its room and leaving takes the light off', () => {
+                const cell = cellAt(7, 6);
+                steps.shroud = { action: 'use', code: 'ready', idx: 55, x: 7, y: 6, label: 'l', reason: 'r' };
+                fire(btn('shroud'), 'mouseenter');
+                expect(lights()).toHaveLength(1);
+                expect(lights()[0].parentElement).toBe(cell);
+                expect(lights()[0].dataset.stepKind).toBe('shroud');
+                expect(lights()[0].style.pointerEvents).toBe('none');
+                fire(btn('shroud'), 'mouseleave');
+                expect(lights()).toHaveLength(0);
+            });
+
+            test('pointing at Beacon lights the beacon room, and keyboard focus counts as pointing', () => {
+                cellAt(7, 6);
+                const beaconCell = cellAt(2, 3);
+                steps.shroud = { action: 'use', code: 'ready', idx: 55, x: 7, y: 6, label: 'l', reason: 'r' };
+                steps.beacon = { action: 'use', code: 'ready', idx: 26, x: 2, y: 3, label: 'l', reason: 'r' };
+                fire(btn('beacon'), 'focus');
+                expect(lights()).toHaveLength(1);
+                expect(lights()[0].parentElement).toBe(beaconCell);
+                expect(lights()[0].dataset.stepKind).toBe('beacon');
+                fire(btn('beacon'), 'blur');
+                expect(lights()).toHaveLength(0);
+            });
+
+            test('an armed supply lights its room with nothing pointed at (a phone never hovers)', () => {
+                const cell = cellAt(7, 6);
+                steps.shroud = { action: 'use', code: 'ready', idx: 55, x: 7, y: 6, label: 'l', reason: 'r' };
+                labyrinthClearRate.refreshStepButtons();
+                expect(lights()).toHaveLength(0);
+                steps.shroud = { ...steps.shroud, action: 'room' };
+                labyrinthClearRate.refreshStepButtons();
+                expect(lights()).toHaveLength(1);
+                expect(lights()[0].parentElement).toBe(cell);
+            });
+
+            test('the light follows the step to the next room and is not redrawn while it stays', () => {
+                const first = cellAt(1, 1);
+                const second = cellAt(2, 1);
+                steps.shroud = { action: 'use', code: 'ready', idx: 9, x: 1, y: 1, label: 'l', reason: 'r' };
+                fire(btn('shroud'), 'mouseenter');
+                const light = lights()[0];
+                expect(light.parentElement).toBe(first);
+                labyrinthClearRate.refreshStepButtons();
+                expect(lights()[0]).toBe(light);
+                steps.shroud = { ...steps.shroud, idx: 10, x: 2 };
+                labyrinthClearRate.refreshStepButtons();
+                expect(lights()).toHaveLength(1);
+                expect(lights()[0].parentElement).toBe(second);
+            });
+
+            test('nothing to do, or a room not on screen, lights nothing', () => {
+                fire(btn('shroud'), 'mouseenter');
+                expect(lights()).toHaveLength(0);
+                steps.shroud = { action: 'use', code: 'ready', idx: 9, x: 5, y: 5, label: 'l', reason: 'r' };
+                labyrinthClearRate.refreshStepButtons();
+                expect(lights()).toHaveLength(0);
+            });
+
+            test('a plan that ends while pointed at takes the light off', () => {
+                cellAt(1, 1);
+                steps.shroud = { action: 'room', code: 'ready', idx: 9, x: 1, y: 1, label: 'l', reason: 'r' };
+                fire(btn('shroud'), 'mouseenter');
+                expect(lights()).toHaveLength(1);
+                steps.shroud = none;
+                labyrinthClearRate.refreshStepButtons();
+                expect(lights()).toHaveLength(0);
+            });
+
+            test('a button removed without a mouseleave stops counting as pointed at', () => {
+                cellAt(1, 1);
+                steps.shroud = { action: 'use', code: 'ready', idx: 9, x: 1, y: 1, label: 'l', reason: 'r' };
+                fire(btn('shroud'), 'mouseenter');
+                expect(lights()).toHaveLength(1);
+                btn('shroud').remove();
+                labyrinthClearRate.syncStepButtons();
+                fakeStepper();
+                labyrinthClearRate.refreshStepButtons();
+                expect(lights()).toHaveLength(0);
+            });
+
+            test('turning the setting off, or disposing, takes the light off', () => {
+                cellAt(1, 1);
+                steps.shroud = { action: 'room', code: 'ready', idx: 9, x: 1, y: 1, label: 'l', reason: 'r' };
+                labyrinthClearRate.refreshStepButtons();
+                expect(lights()).toHaveLength(1);
+                flip(false);
+                expect(lights()).toHaveLength(0);
+                flip(true);
+                fakeStepper();
+                labyrinthClearRate.refreshStepButtons();
+                expect(lights()).toHaveLength(1);
+                labyrinthClearRate.disposeStepper();
+                expect(lights()).toHaveLength(0);
+            });
         });
 
         test('a new Path press (overlays cleared) withdraws the old shroud plan', () => {

@@ -6,7 +6,7 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
-import { createPathStepper, installPointerShield } from './labyrinth-path-stepper.js';
+import { createPathStepper, findRoomCell, installPointerShield } from './labyrinth-path-stepper.js';
 import webSocketHook from '../../core/websocket.js';
 import marketAPI from '../../api/marketplace.js';
 import {
@@ -57,6 +57,7 @@ import {
     isRoomRevealed,
     computeLabyrinthPath,
     computeApproachPath,
+    orderRouteFromStart,
     countDisjointRoutes,
     computeBeaconPlan,
     stageBeaconPlan,
@@ -194,6 +195,8 @@ const AUTO_PATH_DELAY_MS = 900;
 /** The room tooltips' headline row: one label, so the combat and skilling cards match */
 const CLEAR_CHANCE_LABEL = 'Clear Chance';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
+/** The light on the room the Shroud or Beacon step button acts on next */
+const STEP_TARGET_CLASS = 'mwi-labyrinth-step-target';
 /** The corner dot a covered room carries so a beacon's reach reads through a path tile's own border */
 const BEACON_DOT_ATTR = 'data-beacon-dot';
 
@@ -3956,9 +3959,54 @@ class LabyrinthClearRate {
         this._stepShieldOff = null;
         this._shroudStepPlan = null;
         this._beaconStepPlan = null;
+        this.clearStepTarget();
         document
             .querySelectorAll('.mwi-labyrinth-step-shroud, .mwi-labyrinth-step-beacon')
             .forEach((el) => el.remove());
+    }
+
+    /** Take the step-target light off the map and forget which button was pointed at */
+    clearStepTarget() {
+        this._stepPointed = null;
+        document.querySelectorAll(`.${STEP_TARGET_CLASS}`).forEach((el) => el.remove());
+    }
+
+    /**
+     * Light the room the next step press acts on: the pointed-at button's, or with no button pointed at the
+     * armed supply's (so a phone, which never hovers, sees it between the two presses). The room comes from the
+     * stepper's own reading of the next step, never from a second calculation.
+     */
+    syncStepTarget() {
+        // A toolbar rebuild removes a button without a mouseleave
+        if (this._stepPointed && !this._stepPointed.btn.isConnected) this._stepPointed = null;
+        let want = null;
+        if (config.getSetting('labyrinthPathStepper')) {
+            const kinds = this._stepPointed ? [this._stepPointed.kind] : ['shroud', 'beacon'];
+            for (const kind of kinds) {
+                if (!document.querySelector(`.mwi-labyrinth-step-${kind}`)) continue;
+                const step = this.getStepper().describe(kind);
+                if (step.action === 'none' || !Number.isInteger(step.x)) continue;
+                if (!this._stepPointed && step.action !== 'room') continue;
+                const cell = findRoomCell(step.x, step.y);
+                if (cell) want = { kind, cell };
+                break;
+            }
+        }
+        for (const el of document.querySelectorAll(`.${STEP_TARGET_CLASS}`)) {
+            if (want && el.parentElement === want.cell && el.dataset.stepKind === want.kind) want = null;
+            else el.remove();
+        }
+        if (!want) return;
+        const color = want.kind === 'shroud' ? '#ff5252' : '#26d0aa';
+        if (window.getComputedStyle(want.cell).position === 'static') want.cell.style.position = 'relative';
+        const light = document.createElement('div');
+        light.className = STEP_TARGET_CLASS;
+        light.dataset.stepKind = want.kind;
+        light.style.cssText =
+            'position:absolute; inset:-3px; border:3px solid #fff; border-radius:8px; pointer-events:none; ' +
+            `z-index:12; box-sizing:border-box; background:${color}40; box-shadow:0 0 10px 4px ${color};`;
+        want.cell.appendChild(light);
+        light.animate?.([{ opacity: 1 }, { opacity: 0.45 }, { opacity: 1 }], { duration: 900, iterations: Infinity });
     }
 
     /**
@@ -4025,6 +4073,19 @@ class LabyrinthClearRate {
             btn.addEventListener('click', () => {
                 void this.getStepper().press(kind);
             });
+            // Pointing at (or tabbing to) the button lights the room its next press acts on
+            const point = () => {
+                this._stepPointed = { kind, btn };
+                this.syncStepTarget();
+            };
+            const unpoint = () => {
+                if (this._stepPointed?.btn === btn) this._stepPointed = null;
+                this.syncStepTarget();
+            };
+            btn.addEventListener('mouseenter', point);
+            btn.addEventListener('focus', point);
+            btn.addEventListener('mouseleave', unpoint);
+            btn.addEventListener('blur', unpoint);
             anchor.after(btn);
         }
         if (!on) {
@@ -4034,6 +4095,7 @@ class LabyrinthClearRate {
             this._stepShieldOff = null;
             this._shroudStepPlan = null;
             this._beaconStepPlan = null;
+            this.clearStepTarget();
         } else if (!this._stepShieldOff) {
             this._stepShieldOff = installPointerShield();
         }
@@ -4054,6 +4116,7 @@ class LabyrinthClearRate {
             btn.style.opacity = step.action === 'none' || stepper.isBusy() ? '0.6' : '1';
             btn.dataset.stepAction = step.action;
         }
+        this.syncStepTarget();
     }
 
     /**
@@ -5148,13 +5211,13 @@ class LabyrinthClearRate {
                 });
             }
 
-            // The plan the Shroud step button carries out: exactly the rooms the planner counted as shrouds
+            // The plan the Shroud step button carries out: exactly the rooms the planner counted as shrouds,
+            // nearest to where you stand first (the route set itself starts at the exit)
+            const walkOrder = orderRouteFromStart(tiles, cols, path.route, standingIn);
             this.storeShroudStepPlan(
                 cols,
-                [...path.route].filter(
-                    (idx) => tiles[idx]?.needsShroud && !tiles[idx].cleared && !tiles[idx].isEntrance
-                ),
-                [...path.route]
+                walkOrder.filter((idx) => tiles[idx]?.needsShroud && !tiles[idx].cleared && !tiles[idx].isEntrance),
+                walkOrder
             );
 
             const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
