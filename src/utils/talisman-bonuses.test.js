@@ -63,6 +63,15 @@ describe('computeTalismanBonuses', () => {
         expect(out.noncombat.milkingSpeed).toBeCloseTo(2 * 0.05661, 10);
     });
 
+    test('a second record in one slot counts for nothing (the combat engine ignores it too)', () => {
+        const out = computeTalismanBonuses({
+            ...base,
+            belt: large10,
+            talismans: [talisman(1, 1, [['milking_speed', 2]]), talisman(2, 1, [['milking_speed', 6]])],
+        });
+        expect(out.noncombat.milkingSpeed).toBeCloseTo(0.05661, 10);
+    });
+
     test('a universal Skilling Speed line is stored as skillingSpeed, which every skill reads', () => {
         const out = computeTalismanBonuses({
             ...base,
