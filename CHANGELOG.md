@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Every switch either turns off right away or says it needs a reload
+
+13 more features now stop the moment you switch them off, among them the combat battle counter, boss timer, unit badges and buff bars, the catalyst mark and the talisman reroll advisor. 35 others that cannot stop cleanly, such as net worth, the watchlist, inventory tabs, the DPS panel, Combat Summary and the Combat Sim, now carry the "refresh to apply" tag instead of silently staying on screen.
+
 ### Bulk Sell re-checks holds and the kind of sale before selling
 
 The Bulk Sell Assistant now re-checks held items at every step and at Confirm, so an item that becomes held mid-run (a new loadout that wears it, say) is skipped instead of sold. Confirm also refuses when the game's open form is Sell Now but the step decided to list, or the reverse.

@@ -77,6 +77,66 @@ function isSelfGated(entry) {
     return /\bcustomCheck:/.test(entry.text) || /\bisRunning:/.test(entry.text) || settingIdsOf(entry) !== null;
 }
 
+/**
+ * Entries gated on a settings-schema id that neither state `liveStop: true` nor tag every gating setting
+ * `requiresRefresh: true`: the module follows its own setting live from an onSettingChange listener (registered at
+ * import or in its first initialize()) that removes what it drew, so the registry's stop is not needed. Each reason
+ * names that listener; a module whose listener does not tear down belongs in neither list (tag the setting).
+ */
+const LIVE_BY_OWN_LISTENER = {
+    market_listingDragOrder: 'Its own onSettingChange listener calls cleanup() when switched off.',
+    market_enhanceProfitPerHour: 'Its own onSettingChange listener calls disable() when switched off.',
+    sellQueue: 'Its own onSettingChange listener calls cleanup() when switched off.',
+    offlineProgressEconomics: 'Its own onSettingChange listener calls disable() when switched off.',
+    inventorySort: 'Its own invSort listener calls disable() when switched off.',
+    inventoryBadgePrices: 'Its own listener on the badge-mode select calls disable() when no price badge is wanted.',
+    abilityBookCalculator: 'Its own skillbook listener calls disable() when switched off.',
+    eliteAchievementReminder: 'Its own onSettingChange listener calls disable() when switched off.',
+    loadoutEnhancementDisplay:
+        'Its own listener removes the overlays when switched off, and drawing checks the setting.',
+    loadoutTalismanCheck: 'Its own listener re-runs annotate(), which removes the markers once the setting is off.',
+    zoneIndices: 'Gated on two settings (mapIndex, taskMapIndex); its own listeners enable or disable it on either.',
+    skillExperiencePercentage: 'Its own expPercentage listener calls disable() when switched off.',
+    combatLevelProgress: 'Its own onSettingChange listener calls disable() when switched off.',
+    altClickNavigation: 'Its own onSettingChange listener calls disable() when switched off.',
+    taskStatistics: 'Its own onSettingChange listener calls disable() when switched off.',
+    taskClaimToast: 'Its own onSettingChange listener calls disable() when switched off.',
+    taskRerollSpendBadge: 'Its own onSettingChange listener calls disable() when switched off.',
+    riskOfRuin: 'Its own onSettingChange listener calls disable() when switched off.',
+    actionTimingMonitor: 'Its own onSettingChange listener calls cleanup() when switched off.',
+    labyrinthMonsterStatCheck: 'Its own listener calls disable() when switched off; isRunning() restarts it.',
+    lootLogStats: 'Follows both of its settings live through syncParts() (explicit liveStop: false).',
+    labyrinthClearRate: 'Follows both of its settings live through watchHalfSettings (explicit liveStop: false).',
+    alchemy_transmuteHistory:
+        'Keeps recording until a reload on purpose: a live restart resumes the saved session and would book trades made while it was off as alchemy results. Its viewer tab stops live.',
+    alchemy_coinifyHistory:
+        'As alchemy_transmuteHistory: recording stops at the next reload; the viewer tab stops live.',
+    alchemy_decomposeHistory:
+        'As alchemy_transmuteHistory: recording stops at the next reload; the viewer tab stops live.',
+    combatScale: 'apply() removes its stylesheet when the setting is off, and a listener on the setting re-runs it.',
+};
+
+/**
+ * The schema ids that gate an entry: its `setting:` ids, else its key when that is a schema id, else the schema id
+ * behind a `config.features` key. Null for a `customCheck:` entry (no setting names its gate) and for an entry
+ * nothing gates.
+ */
+function gatingIdsOf(entry) {
+    if (/\bcustomCheck:/.test(entry.text)) return null;
+    const named = settingIdsOf(entry);
+    if (named) return named;
+    if (getSettingDefinition(entry.key)) return [entry.key];
+    const feature = config.features?.[entry.key];
+    return feature?.settingKey && getSettingDefinition(feature.settingKey) ? [feature.settingKey] : null;
+}
+
+/** True when the entry stops live, or every setting that gates it says a reload is needed. */
+function honorsItsSwitch(entry) {
+    if (/\bliveStop: true\b/.test(entry.text)) return true;
+    const ids = gatingIdsOf(entry);
+    return ids.every((id) => getSettingDefinition(id)?.requiresRefresh === true);
+}
+
 describe('feature registry gates', () => {
     const entries = readRegistryEntries();
 
@@ -135,6 +195,19 @@ describe('feature registry gates', () => {
         'tradeHistoryDisplay',
         'gatheringStats',
         'invCategoryTotals',
+        'actionPanelLayout',
+        'alchemyCatalystMark',
+        'chestKeyMarketButton',
+        'combatBattleCounter',
+        'combatBossEta',
+        'portraitDps',
+        'combatUnitBadges',
+        'combatUnitBuffBars',
+        'combatConsumableRunway',
+        'talismanWindowValues',
+        'talismanRerollAdvisor',
+        'leaderboardXPTracker',
+        'labyrinthTracker',
     ];
 
     test.each(LIVE_STOP)('%s stops live when its setting is switched off', (key) => {
@@ -200,6 +273,46 @@ describe('feature registry gates', () => {
     test('each reason on the allowlist is a sentence', () => {
         for (const [key, reason] of Object.entries(NO_GATE_NEEDED)) {
             expect(reason.length, key).toBeGreaterThan(15);
+        }
+    });
+
+    test('every entry gated on a setting stops live, or its setting says a reload is needed', () => {
+        const gated = entries.filter((entry) => gatingIdsOf(entry) !== null);
+        expect(gated.length).toBeGreaterThan(100);
+        const silent = gated
+            .filter((entry) => !honorsItsSwitch(entry))
+            .map((entry) => entry.key)
+            .filter((key) => !Object.hasOwn(LIVE_BY_OWN_LISTENER, key));
+        expect(
+            silent,
+            `Entries that keep running after their setting is switched off, with no "refresh to apply" tag: ` +
+                `${silent.join(', ')}. The registry starts a feature when its setting goes on but stops it only with ` +
+                `\`liveStop: true\`. Read the module's disable()/cleanup(): if it removes everything it drew and resets ` +
+                `its init flag, add \`liveStop: true\` (and list the key in LIVE_STOP here); if not, tag the setting ` +
+                `\`requiresRefresh: true\` in settings-schema.js; if the module stops itself from its own ` +
+                `onSettingChange listener, name it in LIVE_BY_OWN_LISTENER with the reason.`
+        ).toEqual([]);
+    });
+
+    test('LIVE_BY_OWN_LISTENER names only gated entries that still need it', () => {
+        const byKey = new Map(entries.map((entry) => [entry.key, entry]));
+        for (const key of Object.keys(LIVE_BY_OWN_LISTENER)) {
+            const entry = byKey.get(key);
+            expect(entry, `${key} is listed but is not a registry entry; remove it`).toBeTruthy();
+            expect(gatingIdsOf(entry), `${key} is listed but no setting gates it`).not.toBeNull();
+            expect(
+                honorsItsSwitch(entry),
+                `${key} now stops live or is tagged; remove it from LIVE_BY_OWN_LISTENER`
+            ).toBe(false);
+        }
+    });
+
+    test('an entry that stops live is not gated only by settings tagged requiresRefresh', () => {
+        // Any-of entries may share one tagged setting with a sibling that does not stop (craftingPlan and the merged walk)
+        for (const entry of entries.filter((candidate) => /liveStop: true/.test(candidate.text))) {
+            const ids = gatingIdsOf(entry) ?? [];
+            const allTagged = ids.length > 0 && ids.every((id) => getSettingDefinition(id)?.requiresRefresh === true);
+            expect(allTagged, entry.key + ' stops live, so its setting should not say refresh to apply').toBe(false);
         }
     });
 });

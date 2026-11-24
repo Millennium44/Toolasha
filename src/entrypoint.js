@@ -1322,6 +1322,7 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.actionPanelLayout,
             async: false,
+            liveStop: true,
         },
         {
             key: 'quickInputButtons',
@@ -1524,6 +1525,7 @@ function registerFeatures() {
             category: 'Alchemy',
             module: Actions.alchemyCatalystMark,
             async: false,
+            liveStop: true,
         },
         {
             key: 'alchemyCatalystCheck',
@@ -1693,6 +1695,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.chestKeyMarketButton,
             async: false,
+            liveStop: true,
         },
         {
             key: 'zoneIndices',
@@ -1800,6 +1803,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatBattleCounter,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatBossEta',
@@ -1807,6 +1811,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatBossEta,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatSummary',
@@ -1838,6 +1843,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.portraitDps,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatUnitBadges',
@@ -1845,6 +1851,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatUnitBadges,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatUnitBuffBars',
@@ -1852,6 +1859,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatUnitBuffBars,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatConsumableRunway',
@@ -1859,6 +1867,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.combatConsumableRunway,
             async: false,
+            liveStop: true,
         },
         {
             key: 'combatDpsPanel',
@@ -1917,6 +1926,7 @@ function registerFeatures() {
             // does - and re-reads the bests on a 500 ms catch-up timer, four
             // times the load it would be racing.
             concurrent: true,
+            liveStop: true,
         },
         {
             key: 'labyrinthRunLedger',
@@ -2129,6 +2139,7 @@ function registerFeatures() {
             category: 'UI',
             module: UI.talismanWindowValues,
             async: false,
+            liveStop: true,
         },
         {
             // Test server only: the module returns at once anywhere else
@@ -2137,6 +2148,7 @@ function registerFeatures() {
             category: 'UI',
             module: UI.talismanRerollAdvisor,
             async: false,
+            liveStop: true,
         },
         {
             key: 'hideLabyrinthBadge',
@@ -2855,6 +2867,7 @@ function registerFeatures() {
             category: 'Leaderboard',
             module: UI.leaderboardXPTracker,
             async: false,
+            liveStop: true,
         },
         {
             key: 'leaderboardXPDisplay',

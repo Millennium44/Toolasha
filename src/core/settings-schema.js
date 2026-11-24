@@ -71,6 +71,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Type /item, /wiki, or /market followed by an item name in chat (/shrines takes no name). Example: /item radiant fiber',
+                requiresRefresh: true,
             },
             chat_mentionTracker: {
                 id: 'chat_mentionTracker',
@@ -99,6 +100,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Preserves messages that the game removes from the live buffer, keeping them visible above the live chat',
+                requiresRefresh: true,
             },
             chatHistoryExtender_maxHistory: {
                 id: 'chatHistoryExtender_maxHistory',
@@ -658,6 +660,7 @@ export const settingsGroups = {
             },
             alchemyItemPins: {
                 id: 'alchemyItemPins',
+                requiresRefresh: true,
                 label: 'Alchemy panel: Pin items in the item picker',
                 type: 'checkbox',
                 default: true,
@@ -690,6 +693,7 @@ export const settingsGroups = {
             },
             alchemyItemSort: {
                 id: 'alchemyItemSort',
+                requiresRefresh: true,
                 label: 'Alchemy panel: Sort item picker by profit or XP',
                 type: 'checkbox',
                 default: true,
@@ -726,9 +730,11 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Blocks alchemy action buttons for 3 seconds when the selected item belongs to a protected category. A shield icon appears in the alchemy panel to configure protected categories.',
+                requiresRefresh: true,
             },
             alchemyItemDimming: {
                 id: 'alchemyItemDimming',
+                requiresRefresh: true,
                 label: 'Alchemy panel: Dim items requiring higher level',
                 type: 'checkbox',
                 default: true,
@@ -954,6 +960,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Tracks what every chest you open actually paid out against what its drop table says it owes. Open the panel from the Treasure button on the settings page',
+                requiresRefresh: true,
             },
             watchlist: {
                 id: 'watchlist',
@@ -962,6 +969,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'A list of items with what you hold and what it is worth. Tick a combat zone to add everything it drops, or a chest to add its contents. Tracked items get a dot in the inventory, and anything the vendor pays more for than the market is flagged. Open it from the Watchlist overlay row.',
+                requiresRefresh: true,
             },
             watchlist_menuButton: {
                 id: 'watchlist_menuButton',
@@ -1028,6 +1036,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Mana is the constraint nobody watches — it shows up only as the moment an ability does not fire. Adds a Mana/fight overlay row',
+                requiresRefresh: true,
             },
             lootLogStats: {
                 id: 'lootLogStats',
@@ -1050,6 +1059,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: "A sortable table over the current session plus stored history (needs the Loot Log history setting on), built from what your runs actually paid: one row per action and difficulty tier, with time spent, drop value at ask and bid, and XP/hr per skill. Adds a button to the game's own panel. Off by default.",
+                requiresRefresh: true,
             },
             lootLogPivotSplitLabyrinth: {
                 id: 'lootLogPivotSplitLabyrinth',
@@ -1260,6 +1270,7 @@ export const settingsGroups = {
             },
             showConsumTips: {
                 id: 'showConsumTips',
+                requiresRefresh: true,
                 label: 'HP/MP consumables: Restore speed, cost performance',
                 type: 'checkbox',
                 default: true,
@@ -1870,6 +1881,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a button to sort marketplace items by profit/hour. Items without profit data (drop-only) appear at the end.',
+                requiresRefresh: true,
             },
             marketSort_mode: {
                 id: 'marketSort_mode',
@@ -2628,6 +2640,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Master switch for the net worth calculator. Displays your current gold count next to Total Level in the page header; the inventory breakdown, history chart, and overlay rows below all need this on to have data',
+                requiresRefresh: true,
             },
             invWorth: {
                 id: 'invWorth',
@@ -2876,6 +2889,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a Toolasha tab to the character panel where you can organize inventory items into personal tabs.',
+                requiresRefresh: true,
             },
             inventoryTabs_showUnorganized: {
                 id: 'inventoryTabs_showUnorganized',
@@ -3199,6 +3213,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Tracks dungeon runs with server-validated duration from party messages',
+                requiresRefresh: true,
             },
             dungeonTrackerUI: {
                 id: 'dungeonTrackerUI',
@@ -3215,6 +3230,7 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds colored timer annotations to "Key counts" messages (green if fast, red if slow)',
                 requires: 'dungeonTracker',
+                requiresRefresh: true,
             },
             dungeonTracker_recordFailedRuns: {
                 id: 'dungeonTracker_recordFailedRuns',
@@ -3240,6 +3256,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: "Records each run's ending — the torches, shrouds and beacons it came back with and the deepest floor it reached — so the Consumables panel can say whether the rush-for-exit floor could come down. Kept per character, last 30 runs.",
+                requiresRefresh: true,
             },
             labyrinthTracker: {
                 id: 'labyrinthTracker',
@@ -3250,6 +3267,7 @@ export const settingsGroups = {
             },
             labyrinthShopPrices: {
                 id: 'labyrinthShopPrices',
+                requiresRefresh: true,
                 needsPrices: true,
                 label: 'Labyrinth Shop: Show market prices',
                 type: 'checkbox',
@@ -3514,6 +3532,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Records per-action success/fail/double logs for labyrinth skilling rooms and per-attempt win/death/timeout logs for combat rooms, next to the clear chance the calculator predicted, with experience per hour. Logs button in the labyrinth panel.',
+                requiresRefresh: true,
             },
             labyrinthRoomLogSize: {
                 id: 'labyrinthRoomLogSize',
@@ -3573,6 +3592,7 @@ export const settingsGroups = {
             },
             combatSummary: {
                 id: 'combatSummary',
+                requiresRefresh: true,
                 label: 'Combat Summary: Add rate stats to Battle Info panel',
                 type: 'checkbox',
                 default: true,
@@ -3598,6 +3618,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: "Puts the session's drop value in the distribution of everything those battles could have paid, as a percentile. Skips dungeons, which pay from a reward table rather than per monster",
+                requiresRefresh: true,
             },
             dropLuck_profitAdjust: {
                 id: 'dropLuck_profitAdjust',
@@ -3619,6 +3640,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'The guild trial per-player board for ordinary party and solo fights: damage (with kills), damage taken, healing received and healing done, ranked with shares and rates. Opens from a "Per-player" button on the battle panel. Damage and healing are attributed, not measured. Off by default.',
+                requiresRefresh: true,
             },
             portraitDps: {
                 id: 'portraitDps',
@@ -3770,6 +3792,7 @@ export const settingsGroups = {
             },
             combatSim: {
                 id: 'combatSim',
+                requiresRefresh: true,
                 label: 'Combat Simulator',
                 type: 'checkbox',
                 default: true,
@@ -3777,6 +3800,7 @@ export const settingsGroups = {
             },
             labSim: {
                 id: 'labSim',
+                requiresRefresh: true,
                 label: 'Lab Simulator',
                 type: 'checkbox',
                 default: true,
@@ -4027,6 +4051,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a Statistics button to the Combat panel showing income, profit, consumable costs, EXP, and drop details',
+                requiresRefresh: true,
             },
             combatStatsChatMessage: {
                 id: 'combatStatsChatMessage',
@@ -4171,6 +4196,7 @@ export const settingsGroups = {
             },
             taskIcons: {
                 id: 'taskIcons',
+                requiresRefresh: true,
                 label: 'Show visual icons on task cards',
                 type: 'checkbox',
                 default: true,
@@ -4313,6 +4339,7 @@ export const settingsGroups = {
             },
             taskRerollProtection: {
                 id: 'taskRerollProtection',
+                requiresRefresh: true,
                 label: 'Task reroll protection',
                 type: 'checkbox',
                 default: true,
@@ -4332,6 +4359,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Highlights tasks you want to reroll with a red border and reminder badge. Configure per-character via the target icon in the task panel.',
+                requiresRefresh: true,
             },
             taskAutoReroll_belowPar: {
                 id: 'taskAutoReroll_belowPar',
@@ -4350,6 +4378,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Adds a floating Reroll walk panel to the Tasks page (and a 🎲 in the task panel header to show or hide it). It works down the board using your protection list and "Block rerolls at" thresholds and tells you what the next click will do. One click is always exactly one game action; it never chains clicks or runs on a timer.',
+                requiresRefresh: true,
             },
             tasks_rerollWalkCurrency: {
                 id: 'tasks_rerollWalkCurrency',
@@ -4382,6 +4411,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Adds a "Merged crafting walk" button to the task panel header. It groups production tasks whose chains share a craft step and offers one guided walk per group, naming the tasks and the steps the merge saves, so a shared intermediate is crafted once at the combined count. Opens each step and fills in the count; never presses the button.',
+                requiresRefresh: true,
             },
             tasks_rerollWalkTrashAtLimit: {
                 id: 'tasks_rerollWalkTrashAtLimit',
@@ -4700,6 +4730,7 @@ export const settingsGroups = {
                     'When you queue an action, Toolasha predicts its XP, time and profit from the saved loadout for that ' +
                     'skill (skill default → all-skills default → any saved loadout → currently equipped). Save loadouts ' +
                     'in-game so they are captured. Off predicts with currently equipped gear.',
+                requiresRefresh: true,
             },
             showsKeyInfoInIcon: {
                 id: 'showsKeyInfoInIcon',
@@ -5054,6 +5085,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: "Keeps a per-member tally of every trial recorded on this client (trials joined, damage share, healing, damage taken, deaths, mana-starved time) for far longer than the trials panel's four cycles, with a Trial Ledger panel: sortable table, window selector, CSV export and a pre-sign-up composition check.",
+                requiresRefresh: true,
             },
             guildRoster: {
                 id: 'guildRoster',
@@ -5061,6 +5093,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a Guild Roster overlay tile and panel showing each member’s share of the XP actually observed over 7 and 30 days, who has gone quiet against their own weekly rate, and a guild level projection. Uses the XP the Guild XP Tracker has already recorded.',
+                requiresRefresh: true,
             },
         },
     },
@@ -5076,6 +5109,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Records what the profit calculators predicted for an action beside what the loot log says the run actually paid, and flags skills where the forecast is persistently off. Adds a Prediction Calibration overlay tile and panel.',
+                requiresRefresh: true,
             },
             insights_calibrationBadges: {
                 id: 'insights_calibrationBadges',
@@ -5116,6 +5150,7 @@ export const settingsGroups = {
             },
             leaderboardXPDisplay: {
                 id: 'leaderboardXPDisplay',
+                requiresRefresh: true,
                 label: 'Show XP/hr columns on Leaderboard',
                 type: 'checkbox',
                 default: true,
