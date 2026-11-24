@@ -1556,8 +1556,17 @@ function createBuyNextControl() {
         const name = tab.getAttribute('data-item-name') || '';
         const quantity = parseInt(tab.getAttribute('data-missing-quantity') || '0', 10);
         note.textContent = `buying ${name} × ${quantity}…`;
+        // The flow below waits on the game for seconds. A bill closed, replaced or switched to another character in
+        // that time, or a purchase that already covered the line, must not still press Buy for the old figure.
+        const generation = billGeneration;
+        const characterId = dataManager.getCurrentCharacterId?.();
+        const stillWanted = () =>
+            generation === billGeneration &&
+            dataManager.getCurrentCharacterId?.() === characterId &&
+            document.body.contains(tab) &&
+            parseInt(tab.getAttribute('data-missing-quantity') || '0', 10) >= quantity;
         try {
-            const outcome = await buyOneFromTesterShop(name, quantity);
+            const outcome = await buyOneFromTesterShop(name, quantity, stillWanted);
             note.textContent = outcome.ok ? `bought ${name} × ${quantity}` : `${name}: ${outcome.reason}`;
         } catch (error) {
             console.error('[MissingMats] Buy next failed:', error);
@@ -1632,9 +1641,11 @@ function findShopCard(itemName) {
  *
  * @param {string} itemName - The item, as the shop names it
  * @param {number} quantity - How many
+ * @param {() => boolean} [stillWanted] - Checked before the quantity is typed and again before Buy is pressed;
+ *   false stops the flow with the dialog left open
  * @returns {Promise<{ok: boolean, reason?: string}>}
  */
-async function buyOneFromTesterShop(itemName, quantity) {
+async function buyOneFromTesterShop(itemName, quantity, stillWanted = () => true) {
     const wait = (ms) =>
         new Promise((resolve) => {
             timerRegistry.scheduleTimeout(resolve, ms);
@@ -1669,6 +1680,7 @@ async function buyOneFromTesterShop(itemName, quantity) {
         );
     }
     if (!modal) return { ok: false, reason: 'no buy dialog' };
+    if (!stillWanted()) return { ok: false, reason: 'the list changed, nothing bought' };
 
     // The Quantity box, not the Enhancement Level box an equipment dialog
     // puts first — the same label-reading the marketplace autofill does
@@ -1683,6 +1695,7 @@ async function buyOneFromTesterShop(itemName, quantity) {
     // than you can pay); pressing it would do nothing, so say why instead
     for (let i = 0; i < 10 && buy.disabled; i++) await wait(100);
     if (buy.disabled) return { ok: false, reason: 'Buy is disabled in the dialog' };
+    if (!stillWanted()) return { ok: false, reason: 'the list changed, nothing bought' };
     // A plain .click() closes the dialog without buying — the game's handler
     // wants the real event path; React's own handler first, like the card
     clickThroughReact(buy, { reactFirst: true });

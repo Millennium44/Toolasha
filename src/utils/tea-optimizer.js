@@ -26,7 +26,13 @@ import { alchemyProfitCalculator, expectedValueCalculator } from './bundle-bridg
 import { runningAction } from './combat-actions.js';
 import { expectedProcessedItems } from './gathering-processing.js';
 import { getCommunityGatheringQuantity } from './community-buffs.js';
-import { SKILLING_SPECIAL_STATS, drinkEffectConcentration, drinkOutcomes, talismanStat } from './talisman-bonuses.js';
+import {
+    PROSPERITY_ACTION_TYPES,
+    SKILLING_SPECIAL_STATS,
+    drinkEffectConcentration,
+    drinkOutcomes,
+    talismanStat,
+} from './talisman-bonuses.js';
 
 /**
  * Skill name to action type mapping.
@@ -502,8 +508,10 @@ function calculateGatheringGoldPerHour(actionDetails, buffs, playerLevel, otherE
         // Get item price (use 'sell' side for output items to match tile calculation)
         const rawPrice = sellPrice(drop.itemHrid);
 
-        // Check for processing conversion
-        if (buffs.processing > 0) {
+        // Check for processing conversion (tea and talisman share, plus a Processing scroll or seal: the tile adds the
+        // personal buff to the same chance)
+        const processingChance = buffs.processing + (otherEfficiency.personalProcessing || 0);
+        if (processingChance > 0) {
             const processedData = findProcessingConversion(drop.itemHrid, gameData);
             if (processedData) {
                 const processedPrice = sellPrice(processedData.outputItemHrid);
@@ -513,7 +521,7 @@ function calculateGatheringGoldPerHour(actionDetails, buffs, playerLevel, otherE
                 // With Abundance the stack is tripled with its chance: whole conversions worked out on each stack, weighted
                 const stackDrop = { ...drop, dropRate, minCount, maxCount };
                 const processedPerCompletion =
-                    buffs.processing *
+                    processingChance *
                     ((1 - abundance) *
                         expectedProcessedItems(stackDrop, conversionRatio, gatheringBonus - 1, efficiencyMultiplier) +
                         (abundance > 0
@@ -637,7 +645,8 @@ function calculateProductionGoldPerHour(actionDetails, buffs, playerLevel, other
     let outputRevenue = 0;
     const isCookingOrBrewing =
         actionDetails.type === '/action_types/cooking' || actionDetails.type === '/action_types/brewing';
-    const gourmetBonus = isCookingOrBrewing ? 1 + buffs.gourmet : 1;
+    // Tea and talisman share plus a Gourmet scroll or seal, which the tile adds to the same chance
+    const gourmetBonus = isCookingOrBrewing ? 1 + buffs.gourmet + (otherEfficiency.personalGourmet || 0) : 1;
     for (const output of actionDetails.outputItems || []) {
         const price = getItemPrice(output.itemHrid, { context: 'profit', side: 'sell' }) || 0;
         const effectiveCount = output.count * gourmetBonus;
@@ -658,7 +667,21 @@ function calculateProductionGoldPerHour(actionDetails, buffs, playerLevel, other
     const revenuePerHour = actionsPerHour * outputRevenue * efficiencyMultiplier;
     const netContainerRevenue = (bonusRevenue?.taxExemptBonusRevenue || 0) * efficiencyMultiplier;
     const marketTax = (revenuePerHour + efficiencyBoostedBonusRevenue - netContainerRevenue) * outputTaxRate();
-    const netProfitPerHour = grossProfitPerHour + efficiencyBoostedBonusRevenue - marketTax;
+    // Prosperity (talisman Special line, Cheesesmithing, Crafting and Tailoring): with its chance the action also pays
+    // untaxed coins equal to the vendor value of what it produced, one per efficiency repeat, Gourmet copies left out
+    // (profit-calculator.js reads it the same way)
+    const prosperity = PROSPERITY_ACTION_TYPES.includes(actionDetails.type)
+        ? talismanStat(equipment, SKILLING_SPECIAL_STATS.prosperity)
+        : 0;
+    let prosperityCoinsPerAction = 0;
+    if (prosperity > 0) {
+        for (const output of actionDetails.outputItems || []) {
+            prosperityCoinsPerAction +=
+                prosperity * (Number(itemDetailMap?.[output.itemHrid]?.sellPrice) || 0) * output.count;
+        }
+    }
+    const prosperityCoinsPerHour = prosperityCoinsPerAction * actionsPerHour * efficiencyMultiplier;
+    const netProfitPerHour = grossProfitPerHour + efficiencyBoostedBonusRevenue + prosperityCoinsPerHour - marketTax;
 
     return netProfitPerHour;
 }
@@ -1184,6 +1207,8 @@ function getOtherEfficiencySources(actionType, houseRoomLevels = null) {
         gathering: 0,
         personal: 0,
         personalSpeed: 0,
+        personalGourmet: 0,
+        personalProcessing: 0,
         guild: 0,
         guildSpeed: 0,
     };
@@ -1194,6 +1219,9 @@ function getOtherEfficiencySources(actionType, houseRoomLevels = null) {
     // calculateActionStats count, so a combo scored here matches the action panel's figure
     result.personal = dataManager.getPersonalBuffFlatBoost(actionType, '/buff_types/efficiency') * 100;
     result.personalSpeed = dataManager.getPersonalBuffFlatBoost(actionType, '/buff_types/action_speed');
+    // Gourmet and Processing scrolls or seals add to the tea and talisman chance the way the action tile stacks them
+    result.personalGourmet = dataManager.getPersonalBuffFlatBoost(actionType, '/buff_types/gourmet');
+    result.personalProcessing = dataManager.getPersonalBuffFlatBoost(actionType, '/buff_types/processing');
     for (const buff of dataManager.characterData?.guildActionTypeBuffsMap?.[actionType] || []) {
         const boost = (buff.flatBoost || 0) + (buff.ratioBoost || 0);
         if (buff.typeHrid === '/buff_types/efficiency') result.guild += boost * 100;
