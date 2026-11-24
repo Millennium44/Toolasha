@@ -7,3 +7,6 @@ package-lock.json
 # lines of it. The notes and licence beside it stay formatted; only the script
 # itself is off limits.
 third-party/**/*.user.js
+
+# Untracked Discord drafts kept in the repo root (their markup is Discord's, not Prettier's)
+discord-*.md
