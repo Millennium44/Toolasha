@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Craft & Enhance and Production Arbitrage follow the patient-tick settings
+
+Turning "patient tick" buy or sell pricing on or off now re-ranks the Craft & Enhance window and the Production Arbitrage board right away, instead of showing figures from the old setting until the next market refresh.
+
 ### Shrine planner keeps up with shrine levels
 
 The Shrine Upgrade Planner now redraws when your guild's shrine levels or your buff levels arrive after it is open, so its caps, "(not built)" labels and prerequisite notes no longer stay on the first reading. Targets you typed are kept.

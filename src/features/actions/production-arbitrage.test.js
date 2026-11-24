@@ -44,7 +44,10 @@ const liquidity = vi.hoisted(() => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => (key === 'profitCalc_craftUpgradeItems' ? settings.craftUpgradeItems : true),
-        getSettingValue: (key, fallback) => (key === 'profitCalc_pricingMode' ? settings.pricingMode : fallback),
+        getSettingValue: (key, fallback) => {
+            if (key === 'profitCalc_pricingMode') return settings.pricingMode;
+            return key in settings ? settings[key] : fallback;
+        },
     },
 }));
 
@@ -389,6 +392,18 @@ describe('stateFingerprint', () => {
         const before = stateFingerprint(5);
         game.buffVersion += 1;
         expect(stateFingerprint(5)).not.toBe(before);
+    });
+
+    test('moves with each patient-tick setting, which moves the prices a row is built from', () => {
+        const off = stateFingerprint(5);
+        settings.profitCalc_patientTickSell = true;
+        const sell = stateFingerprint(5);
+        expect(sell).not.toBe(off);
+        settings.profitCalc_patientTickBuy = true;
+        expect(stateFingerprint(5)).not.toBe(sell);
+        delete settings.profitCalc_patientTickSell;
+        delete settings.profitCalc_patientTickBuy;
+        expect(stateFingerprint(5)).toBe(off);
     });
 
     test('moves with the volume-cap switch', () => {

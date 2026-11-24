@@ -49,6 +49,7 @@ import { yieldToEventLoop } from '../../utils/background-work.js';
 import { testerShopEnabled } from '../../utils/tester-shop.js';
 import { HOURS_PER_DAY } from '../../utils/profit-constants.js';
 import { canStartAction } from '../../utils/efficiency.js';
+import { isPatientTickOn } from '../../utils/patient-tick.js';
 
 /** The five production skills, in the order the board's filter lists them */
 export const PRODUCTION_SKILLS = [
@@ -110,6 +111,9 @@ export function stateFingerprint(priceStamp = marketAPI.lastFetchTimestamp || 0)
         config.getSetting('profitCalc_craftUpgradeItems') ? 'craft' : 'buy',
         liquidityCapEnabled() ? 'cap' : 'nocap',
         testerShopEnabled() ? 'tester' : 'market',
+        // The patient tick moves every profit-context price a row is built from
+        isPatientTickOn('buy') ? 'tick-buy' : '',
+        isPatientTickOn('sell') ? 'tick-sell' : '',
     ].join(',');
 
     // Talismans ride on getEquipment()'s Map, not on its entries; the buff state version moves when they do
