@@ -742,6 +742,18 @@ describe('buildEnhancementMilestonesHTML — stats source indicator', () => {
     });
 });
 
+describe('milestone costs with an input nobody can price', () => {
+    test('a partial bill reads as a floor, a complete one is plain', () => {
+        const full = buildEnhancementMilestonesHTML(ITEM, enhancingConfig);
+        expect(full).not.toContain('≥');
+        expect(full).not.toContain('costs are understated');
+
+        const partial = buildEnhancementMilestonesHTML(PARTLY_PRICED, enhancingConfig);
+        expect(partial).toMatch(/≥[\d.,]+[KMB]?<\/td>/);
+        expect(partial).toContain('the cost is understated');
+    });
+});
+
 describe('an input nobody can price', () => {
     // A material with no quote contributes 0 to the bill, so the quoted total is an
     // under-quote — and the tooltip colors that total green against the enhanced item's ask,
