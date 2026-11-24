@@ -895,6 +895,10 @@ class TreasureTracker {
             this.scrollGrants = {};
             this.ledger.reset();
             this.settings = { ...DEFAULT_SETTINGS };
+            // Those defaults are no character's saved choice: the alchemy lines' cowbell worth reads the saved one
+            // again (on its own while the tracker is off) rather than taking "counted" from the reset
+            this.settingsLoadedFor = undefined;
+            this.cowbellPreference = null;
             this.isInitialized = false;
         } catch (error) {
             console.error('[Treasure Tracker] Disable failed part-way:', error);

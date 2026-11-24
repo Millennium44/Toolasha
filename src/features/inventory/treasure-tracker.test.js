@@ -2361,6 +2361,19 @@ describe('cowbellWorth, for the alchemy "Instead of" lines', () => {
         }
     });
 
+    test('turning the tracker off after "Cowbells at zero" keeps the saved zero, not the reset defaults', async () => {
+        const { writeScoped } = await import('../../utils/character-key.js');
+        await writeScoped('treasureSettings', { valueCowbells: false }, 'settings');
+        treasureTracker.settingsLoadedFor = dm.characterId ?? null;
+        treasureTracker.settings.valueCowbells = false;
+        expect(treasureTracker.cowbellWorth()).toBe(0);
+        treasureTracker.disable();
+        // disable() puts the defaults (cowbells counted) back; the saved zero is read again on its own
+        expect(treasureTracker.settings.valueCowbells).toBe(true);
+        expect(treasureTracker.cowbellWorth()).toBeNull();
+        await vi.waitFor(() => expect(treasureTracker.cowbellWorth()).toBe(0));
+    });
+
     test("once the tracker has loaded this character's settings, its own toggle is followed", () => {
         treasureTracker.settingsLoadedFor = dm.characterId ?? null;
         treasureTracker.settings.valueCowbells = false;
