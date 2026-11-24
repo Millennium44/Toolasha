@@ -44,7 +44,7 @@ function partialNetworthNote(partial) {
     const shown = partial.names.slice(0, 5).map(escapeHtml).join(', ');
     const more = partial.names.length > 5 ? `, +${partial.names.length - 5} more` : '';
     const noun = partial.count === 1 ? 'item is' : 'items are';
-    return `<div style="margin-top: 4px; font-size: 0.75rem; color: #999;" title="${shown}${more}">* ${partial.count} ${noun} valued on a crafting cost with an unpriced input, so the total is a floor</div>`;
+    return `<div style="margin-top: 4px; font-size: 0.75rem; color: #999;" title="${shown}${more}">* ${partial.count} ${noun} valued without a full price (an unpriced input, ability book or currency counts as nothing), so the total is a floor</div>`;
 }
 
 /**

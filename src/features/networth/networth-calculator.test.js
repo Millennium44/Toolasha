@@ -1109,6 +1109,31 @@ describe('craft-cost parity between the main thread and the worker', () => {
         }
     });
 
+    test('the worker flags an enhanced piece carried at its +0 price when no enhancement path can be built', async () => {
+        await loadWorkerProductionCost();
+        const workerValue = new Function(
+            'self',
+            `${workerSource}
+; return calculateItemValue;`
+        )({ postMessage: () => {}, onmessage: null });
+        const ctx = (level, count) => ({
+            itemIndex: 0,
+            item: { itemHrid: '/items/sword', enhancementLevel: level, count },
+            priceMap: { '/items/sword:0': 1000 },
+            recipes: {},
+            useHighEnhancementCost: false,
+            minLevel: 99,
+            enhancementParams: { enhancingLevel: 60, toolBonus: 10, blessedTeaBonus: 0, guzzlingBonus: 1 },
+            // Nothing to enhance with: the path cannot be built, so the +0 price stands in
+            itemDetails: { itemLevel: 10 },
+            shopCosts: {},
+        });
+
+        expect(workerValue(ctx(3, 3))).toMatchObject({ value: 3000, partial: true });
+        // The same item unenhanced is a plain price
+        expect(workerValue(ctx(0, 3))).toMatchObject({ value: 3000, partial: false });
+    });
+
     test('the worker flags a bill with an unpriced input partial, as the main thread does', async () => {
         mocks.settings.networth_pricingMode = 'ask';
         mocks.initData = {
@@ -2228,5 +2253,132 @@ describe('untradable capes', () => {
             value: 4000,
             partial: false,
         });
+    });
+});
+
+describe('a total never reads as whole when it rests on a missing price', () => {
+    const SWORD_HRID = '/items/sword';
+    const INV = '/item_locations/inventory';
+    const base = () => ({
+        myMarketListings: [],
+        characterHouseRoomMap: {},
+        characterAbilities: [],
+        abilityCombatTriggersMap: {},
+        itemDetailMap: mocks.initData.itemDetailMap ?? {},
+    });
+
+    test('an enhanced item carried at its +0 price because its path is a partial bill is flagged', async () => {
+        mocks.itemPrices[SWORD_HRID] = { ask: 1000, bid: 900 };
+        mocks.enhancementPaths[`${SWORD_HRID}:3`] = 4200;
+        mocks.partialPaths.add(`${SWORD_HRID}:3`);
+
+        // The batch cache holds the +0 book only: no +3 quote exists
+        const priceCache = new Map([[`${SWORD_HRID}:0`, { ask: 1000, bid: 900 }]]);
+
+        expect(
+            await calculateItemValueDetailed({ itemHrid: SWORD_HRID, enhancementLevel: 3, count: 3 }, priceCache)
+        ).toEqual({
+            value: 3000,
+            partial: true,
+        });
+    });
+
+    test('the same item above the high-enhancement threshold is flagged too', async () => {
+        mocks.settings.networth_highEnhancementUseCost = true;
+        mocks.settings.networth_highEnhancementMinLevel = 10;
+        mocks.itemPrices[SWORD_HRID] = { ask: 1000, bid: 900 };
+        mocks.enhancementPaths[`${SWORD_HRID}:12`] = 90000;
+        mocks.partialPaths.add(`${SWORD_HRID}:12`);
+
+        expect(await calculateItemValueDetailed({ itemHrid: SWORD_HRID, enhancementLevel: 12, count: 1 })).toEqual({
+            value: 1000,
+            partial: true,
+        });
+    });
+
+    test('a priced +N item is not flagged', async () => {
+        mocks.itemPrices[SWORD_HRID] = { ask: 1000, bid: 900 };
+        const priceCache = new Map([
+            [`${SWORD_HRID}:0`, { ask: 1000, bid: 900 }],
+            [`${SWORD_HRID}:3`, { ask: 5000, bid: 4000 }],
+        ]);
+
+        expect(await calculateItemValueDetailed({ itemHrid: SWORD_HRID, enhancementLevel: 3 }, priceCache)).toEqual({
+            value: 5000,
+            partial: false,
+        });
+    });
+
+    test('a sell listing of an unpriced +N item with nothing priced is still named as a floor', async () => {
+        mocks.enhancementPaths[`${SWORD_HRID}:3`] = 4200;
+        mocks.partialPaths.add(`${SWORD_HRID}:3`);
+        mocks.initData = { houseRoomDetailMap: {}, itemDetailMap: { [SWORD_HRID]: { name: 'Sword' } } };
+        mocks.combinedData = {
+            ...base(),
+            characterItems: [],
+            myMarketListings: [
+                {
+                    itemHrid: SWORD_HRID,
+                    enhancementLevel: 3,
+                    isSell: true,
+                    status: '/market_listing_status/active',
+                    orderQuantity: 4,
+                    filledQuantity: 1,
+                    unclaimedCoinCount: 0,
+                    unclaimedItemCount: 0,
+                },
+            ],
+        };
+
+        const result = await calculateNetworth();
+
+        expect(result.partial).toEqual({ count: 1, names: ['Sword'] });
+    });
+
+    test('an ability nothing prices makes the total a floor', async () => {
+        mocks.unpricedAbilities.add('/abilities/heal');
+        mocks.combinedData = {
+            ...base(),
+            characterItems: [],
+            characterAbilities: [
+                { abilityHrid: '/abilities/fireball', level: 3 },
+                { abilityHrid: '/abilities/heal', level: 2 },
+            ],
+        };
+
+        const result = await calculateNetworth();
+
+        expect(result.fixedAssets.abilities.totalCost).toBe(3000);
+        expect(result.partial).toEqual({ count: 1, names: ['Heal 2'] });
+    });
+
+    test('an excluded unpriced ability does not make the total a floor', async () => {
+        mocks.unpricedAbilities.add('/abilities/heal');
+        mocks.excluded.add('ability:/abilities/heal');
+        mocks.combinedData = {
+            ...base(),
+            characterItems: [],
+            characterAbilities: [{ abilityHrid: '/abilities/heal', level: 2 }],
+        };
+
+        const result = await calculateNetworth();
+
+        expect(result.partial.count).toBe(0);
+        // An excluded ability that costs nothing still leaves the list
+        expect(result.fixedAssets.abilities.breakdown).toEqual([]);
+    });
+
+    test('held task tokens the shop cannot price yet make the total a floor, and priced ones do not', async () => {
+        mocks.settings.networth_includeTaskTokens = true;
+        mocks.combinedData = {
+            ...base(),
+            characterItems: [{ itemHrid: '/items/task_token', itemLocationHrid: INV, count: 40, enhancementLevel: 0 }],
+        };
+
+        mocks.taskTokenValue = { tokenValue: null, error: 'Market data not loaded' };
+        expect((await calculateNetworth()).partial.count).toBe(1);
+
+        mocks.taskTokenValue = { tokenValue: 2500 };
+        expect((await calculateNetworth()).partial.count).toBe(0);
     });
 });

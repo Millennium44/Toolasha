@@ -84,9 +84,12 @@ export function selectKept(index, { recent = RECENT_READINGS, maxJumps = MAX_JUM
 
 /**
  * The pricing context a reading was made under, so a later diff can say when it changed.
+ * @param {Record<string, *>|null} [valuation] - The settings the calculation was valued under (`data.valuation`).
+ *   They win over the live settings: a reading is stored some time after its calculation began, and a side switched
+ *   in between must not be written against rows valued on the other one.
  * @returns {{pm: string, vs: string, ic: string|null}} Net worth side, value source, Iron Cow valuation or null
  */
-export function currentPricingContext() {
+export function currentPricingContext(valuation = null) {
     let ic = null;
     try {
         if (isIronCowCharacter()) ic = getIronCowValuationMode();
@@ -94,8 +97,8 @@ export function currentPricingContext() {
         ic = null;
     }
     return {
-        pm: config.getSettingValue('networth_pricingMode') || 'ask',
-        vs: config.getSettingValue('networth_valueSource') || 'orderBook',
+        pm: valuation?.networth_pricingMode || config.getSettingValue('networth_pricingMode') || 'ask',
+        vs: valuation?.networth_valueSource || config.getSettingValue('networth_valueSource') || 'orderBook',
         ic,
     };
 }
@@ -428,7 +431,13 @@ class NetworthMovers {
 
             const generation = this._generation;
             const prev = this.index.filter((entry) => entry.t < snapshot.t).pop() || null;
-            const record = buildRecord({ characterId, snapshot, data, prev, context: currentPricingContext() });
+            const record = buildRecord({
+                characterId,
+                snapshot,
+                data,
+                prev,
+                context: currentPricingContext(data.valuation),
+            });
             this.last = record;
 
             const index = this.index.filter((entry) => entry.t !== snapshot.t);

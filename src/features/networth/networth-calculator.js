@@ -117,6 +117,9 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
                     // Enhancement calculation failed, fallback to base item price
                     console.warn('[Networth] Enhancement calculation failed for:', itemHrid, '+' + enhancementLevel);
                     ({ price: itemValue, partial } = priceWithPartial(itemHrid, 0, priceCache));
+                    // The +0 figure stands in for an enhanced piece: a floor, never a complete price. An
+                    // untradable cape keeps its own rule (its fallback says whether it is partial)
+                    if (cacheable) partial = true;
                 }
             }
         } else {
@@ -150,6 +153,7 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
                             '+' + enhancementLevel
                         );
                         ({ price: itemValue, partial } = priceWithPartial(itemHrid, 0, priceCache));
+                        if (cacheable) partial = true;
                     }
                 }
             }
@@ -1360,7 +1364,10 @@ export async function calculateNetworth() {
         }
 
         if (tokenEntries.has(item.itemHrid)) tokenEntries.get(item.itemHrid).counted = true;
-        if (itemData.partial) partialItems.set(`${item.itemHrid}:${item.enhancementLevel || 0}`, displayName);
+        // A counted currency nothing can price yet is a floor too, not a stack worth nothing
+        if (itemData.partial || itemData.unpriced) {
+            partialItems.set(`${item.itemHrid}:${item.enhancementLevel || 0}`, displayName);
+        }
 
         if (isAbilityBook && !booksAsInventory) {
             // Add to ability books (Fixed Assets)
@@ -1445,7 +1452,8 @@ export async function calculateNetworth() {
                 // Units the figure stands for, so the history's mover view can split a change into units and price
                 count: ended ? listing.unclaimedItemCount || 0 : quantity,
                 value: listingValue,
-                partial: listingPartial && value > 0,
+                // Units yet to value: an ended listing with none left has no figure to be a floor of
+                partial: listingPartial && (ended ? listing.unclaimedItemCount || 0 : quantity) > 0,
             });
         } else {
             // Buying: value is locked coins + unclaimed items
@@ -1470,7 +1478,7 @@ export async function calculateNetworth() {
                 isSell: false,
                 count: quantity,
                 value: listingValue,
-                partial: unclaimedPartial && unclaimedValue > 0,
+                partial: unclaimedPartial && (listing.unclaimedItemCount || 0) > 0,
             });
         }
     }
@@ -1544,7 +1552,8 @@ export async function calculateNetworth() {
                 }
             }
         }
-        if (excludedAbilityCost > 0) {
+        // By count, not cost: an excluded ability nothing prices costs 0 and still has to leave the lists
+        if (remainingBreakdown.length !== abilitiesData.breakdown.length) {
             abilitiesData = {
                 totalCost: abilitiesData.totalCost - excludedAbilityCost,
                 equippedCost: abilitiesData.equippedCost - excludedEquippedCost,
@@ -1553,6 +1562,11 @@ export async function calculateNetworth() {
                 otherBreakdown: remainingOther,
             };
         }
+    }
+
+    // A counted ability whose book nothing prices adds 0: the total is a floor by that much
+    for (const ability of abilitiesData.breakdown) {
+        if (ability.unpriced) partialItems.set(`ability:${ability.hrid}`, ability.name);
     }
 
     // Calculate guild shrines value — apply per-shrine and whole-section exclusions.

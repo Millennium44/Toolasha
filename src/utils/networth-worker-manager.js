@@ -512,6 +512,16 @@ function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, outFlags, inp
 }
 
 /**
+ * Whether an item's fallback is the shipped untradable-cape bill, which carries its own partial reading.
+ * @param {Object} inputPrices - Shipped input prices
+ * @param {string} itemHrid - Item HRID
+ * @returns {boolean}
+ */
+function isCapeFallback(inputPrices, itemHrid) {
+    return Boolean(inputPrices && inputPrices.capeFallback && inputPrices.capeFallback[itemHrid]);
+}
+
+/**
  * Calculate value for a single item
  * @param {Object} data - Item data
  * @returns {Object} {itemIndex, value}
@@ -551,6 +561,9 @@ function calculateItemValue(data) {
             } else {
                 // Fallback to base item price, production cost or shop price
                 itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags, inputPrices);
+                // An enhanced piece carried at its +0 figure is a floor, whatever that figure is; an
+                // untradable cape keeps its own rule (its fallback bill above says whether it is partial)
+                if (!isCapeFallback(inputPrices, itemHrid)) flags.partial = true;
             }
         } else {
             // Normal logic: try market price first
@@ -577,6 +590,7 @@ function calculateItemValue(data) {
                     if (pathFlags.partial) flags.partial = true;
                 } else {
                     itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags, inputPrices);
+                    if (!isCapeFallback(inputPrices, itemHrid)) flags.partial = true;
                 }
             }
         }
