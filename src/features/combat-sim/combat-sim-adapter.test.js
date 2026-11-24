@@ -1801,3 +1801,153 @@ describe("buildPlayerDTOFromProfile — the player's game mode", () => {
         expect(without.gameMode).toBeUndefined();
     });
 });
+
+/**
+ * What a pasted build can do to the import, and what the talismans do on the way out and back in.
+ *
+ * The worst outcome is a build that loads quietly different from the one copied (a belt without its talismans, a
+ * level above the game's cap); a refused paste with its message is the mild one.
+ */
+describe('Shykai import and export: slotted talismans and hand-edited pastes', () => {
+    const COMBAT = '/talisman_types/combat';
+    const SKILLING = '/talisman_types/skilling';
+    const ITEMS = {
+        '/items/helm': { equipmentDetail: { type: '/equipment_types/head' } },
+        '/items/belt': { equipmentDetail: { type: '/equipment_types/belt' } },
+    };
+
+    beforeEach(() => {
+        mocks.clientData = {
+            itemDetailMap: ITEMS,
+            abilityDetailMap: {},
+            talismanModifierDetailMap: {
+                '/talisman_modifiers/armor': { hrid: '/talisman_modifiers/armor', talismanTypeHrid: COMBAT },
+                '/talisman_modifiers/haste': { hrid: '/talisman_modifiers/haste', talismanTypeHrid: COMBAT },
+                '/talisman_modifiers/gather': { hrid: '/talisman_modifiers/gather', talismanTypeHrid: SKILLING },
+            },
+        };
+    });
+
+    const paste = (player, extra = {}) => JSON.stringify({ player: { attackLevel: 80, equipment: [], ...player }, ...extra });
+    const line = (hrid, grade) => ({ hrid: `/talisman_modifiers/${hrid}`, grade });
+
+    test('the talismans a Shykai export carries land on the player, in the sim shape', () => {
+        const result = parseShykaiImport(
+            paste({
+                slottedTalismans: [
+                    { talismanTypeHrid: COMBAT, slotIndex: 2, modifiers: [line('haste', 4)] },
+                    { talismanTypeHrid: COMBAT, slotIndex: 1, modifiers: [line('armor', 6), line('haste', 2)] },
+                    // A skilling talisman and a slot-0 record are not the sim's to wear
+                    { talismanTypeHrid: SKILLING, slotIndex: 3, modifiers: [line('gather', 6)] },
+                    { talismanTypeHrid: COMBAT, slotIndex: 0, modifiers: [line('armor', 6)] },
+                ],
+            })
+        );
+
+        expect(result.players[0].talismans).toEqual([
+            { slotIndex: 1, modifiers: [line('armor', 6), line('haste', 2)] },
+            { slotIndex: 2, modifiers: [line('haste', 4)] },
+        ]);
+    });
+
+    test('an export with no talismans, or junk in the field, leaves the player with none', () => {
+        expect(parseShykaiImport(paste({})).players[0].talismans).toBeUndefined();
+        expect(parseShykaiImport(paste({ slottedTalismans: 'x' })).players[0].talismans).toBeUndefined();
+        expect(parseShykaiImport(paste({ slottedTalismans: [null, 5, {}] })).players[0].talismans).toBeUndefined();
+    });
+
+    test('a hand-edited talisman list is cleaned on the way in', () => {
+        const dto = parseShykaiImport(
+            paste({
+                slottedTalismans: [
+                    {
+                        talismanTypeHrid: COMBAT,
+                        slotIndex: 1,
+                        modifiers: [
+                            line('armor', 99),
+                            line('armor', 2),
+                            line('haste', 0),
+                            line('gone_in_a_patch', 3),
+                            line('gather', 3),
+                            line('haste', 2.7),
+                        ],
+                    },
+                    // A second record for slot 1, and a slot past the belt's three
+                    { talismanTypeHrid: COMBAT, slotIndex: 1, modifiers: [line('armor', 1)] },
+                    { talismanTypeHrid: COMBAT, slotIndex: 4, modifiers: [line('armor', 1)] },
+                    { talismanTypeHrid: COMBAT, slotIndex: 2.5, modifiers: [line('armor', 1)] },
+                ],
+            })
+        ).players[0];
+
+        // First record wins its slot; a line type once; unknown and non-combat lines dropped; grades whole, 1..max
+        expect(dto.talismans).toEqual([{ slotIndex: 1, modifiers: [line('armor', 6), line('haste', 1)] }]);
+    });
+
+    test('a null where a record belongs is read past or refuses the paste, and never throws', () => {
+        expect(parseShykaiImport('null')).toBeNull();
+        expect(parseShykaiImport(JSON.stringify({ 1: 'null', 2: '5' }))).toBeNull();
+        expect(parseShykaiImport(paste({ equipment: [null] }))).not.toBeNull();
+        expect(parseShykaiImport(paste({}, { food: { '/action_types/combat': [null, { itemHrid: '/items/x' }] } }))).not.toBeNull();
+        expect(parseShykaiImport(paste({}, { abilities: [null, { abilityHrid: '/abilities/a', level: 2 }] }))).not.toBeNull();
+        expect(parseShykaiImport(paste({}, { food: 7, drinks: 'x', abilities: {} }))).not.toBeNull();
+        expect(
+            parseShykaiImport(paste({}, { abilities: [{ abilityHrid: '/abilities/a' }], triggerMap: { '/abilities/a': [null] } }))
+        ).toBeNull();
+    });
+
+    test('levels and enhancement are whole numbers inside the game ranges', () => {
+        const result = parseShykaiImport(
+            paste(
+                {
+                    attackLevel: '120',
+                    meleeLevel: 99999,
+                    defenseLevel: -5,
+                    magicLevel: 'abc',
+                    equipment: [
+                        { itemLocationHrid: '/item_locations/head', itemHrid: '/items/helm', enhancementLevel: 35 },
+                        { itemLocationHrid: '/item_locations/belt', itemHrid: '/items/belt', enhancementLevel: -2 },
+                    ],
+                },
+                {
+                    abilities: [{ abilityHrid: '/abilities/a', level: '15' }],
+                    houseRooms: { '/house_rooms/dojo': 500, '/house_rooms/gym': '3', '/house_rooms/forge': -1 },
+                }
+            )
+        );
+        const dto = result.players[0];
+
+        expect(dto.attackLevel).toBe(120);
+        expect(dto.meleeLevel).toBe(200);
+        expect(dto.defenseLevel).toBe(1);
+        expect(dto.magicLevel).toBe(1);
+        expect(dto.equipment['/equipment_types/head'].enhancementLevel).toBe(20);
+        expect(dto.equipment['/equipment_types/belt'].enhancementLevel).toBe(0);
+        expect(dto.abilities[0].level).toBe(15);
+        expect(dto.houseRooms).toEqual({ '/house_rooms/dojo': 8, '/house_rooms/gym': 3, '/house_rooms/forge': 0 });
+    });
+
+    test('a pasted name is plain text: no markup, a string, a sane length', () => {
+        const names = (name) => parseShykaiImport(paste({}, { name })).names[0];
+
+        expect(names('<img src=x onerror=alert(1)>')).toBe('img src=x onerror=alert(1)');
+        expect(names({ toString: () => 'x' })).toBe('Player 1');
+        expect(names('A'.repeat(500))).toHaveLength(40);
+        expect(names('<>')).toBe('Player 1');
+    });
+
+    test('lists past the game slot counts are cut, not loaded', () => {
+        const slots = (n, key) => Array.from({ length: n }, (_, i) => ({ [key]: `/x/${i}` }));
+        const dto = parseShykaiImport(
+            paste(
+                {},
+                {
+                    food: { '/action_types/combat': slots(6, 'itemHrid') },
+                    drinks: { '/action_types/combat': slots(6, 'itemHrid') },
+                    abilities: slots(9, 'abilityHrid'),
+                }
+            )
+        ).players[0];
+        expect([dto.food.length, dto.drinks.length, dto.abilities.length]).toEqual([3, 3, 5]);
+    });
+});

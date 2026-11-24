@@ -25,8 +25,16 @@ import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { getLoadout, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
-import { resolveLoadoutTalismans, sharedSlottedTalismans, toSimTalismans } from '../../utils/talisman-bonuses.js';
+import {
+    resolveLoadoutTalismans,
+    sharedSlottedTalismans,
+    slottedCombatTalismansForSim,
+    toSimTalismans,
+} from '../../utils/talisman-bonuses.js';
 import { isTestServer } from '../../utils/game-server.js';
+import { maxEnhancementLevel, maxHouseRoomLevel, maxLevel } from '../../utils/game-maximums.js';
+import { COMBAT_TALISMAN_TYPE, talismanLimits } from '../../utils/talisman-line-sets.js';
+import { clampGrade } from './sim-talisman-edit.js';
 
 /**
  * The combat scrolls the player currently has active.
@@ -600,6 +608,80 @@ export function guildBuffsFromExportLevels(shortKeyLevels, buffHridLevels) {
  *   Parsed DTOs plus any equipment that could not be placed, or null on error
  */
 export function parseShykaiImport(jsonString) {
+    // A pasted or hand-edited build can hold a null where a record belongs; that refuses the paste (the caller's
+    // "Invalid format" line) instead of throwing out of the click handler with nothing on screen
+    try {
+        return decodeShykaiImport(jsonString);
+    } catch (error) {
+        console.warn('[CombatSimAdapter] Shykai import refused:', error);
+        return null;
+    }
+}
+
+/**
+ * A whole number inside [min, max]; anything that is not a number reads as `min`.
+ * @param {*} value - Raw value from a pasted build
+ * @param {number} min
+ * @param {number} max
+ * @returns {number}
+ */
+function clampWhole(value, min, max) {
+    const whole = Math.floor(Number(value));
+    if (!Number.isFinite(whole)) return min;
+    return Math.min(max, Math.max(min, whole));
+}
+
+/**
+ * A pasted display name as text that is safe to draw: a string, no markup characters, a sensible length.
+ * @param {*} raw
+ * @param {number} slot - Pasted slot, for the fallback name
+ * @returns {string}
+ */
+function importedName(raw, slot) {
+    const name = (typeof raw === 'string' ? raw : '').replace(/[<>&"'`]/g, '').trim().slice(0, 40);
+    return name || `Player ${slot}`;
+}
+
+/** A belt has one to three talisman slots */
+const MAX_TALISMAN_SLOT = 3;
+
+/**
+ * The talismans a pasted build lists, as a sim player carries them: combat records only, one per slot (the first),
+ * slots 1..3, no line type twice on one talisman, lines the game data knows, grades whole and inside the game's
+ * range, and no more lines than a talisman holds. A paste can hold anything, and the rows and the engine read
+ * these without checking.
+ * @param {*} list - `player.slottedTalismans` as pasted
+ * @param {Object} clientData - Client data (talisman limits and modifier table)
+ * @returns {Array<{slotIndex: number, modifiers: Array<{hrid: string, grade: number}>}>}
+ */
+function importedSimTalismans(list, clientData) {
+    const limits = talismanLimits(clientData?.talismanInfo);
+    const modifierDetailMap = clientData?.talismanModifierDetailMap;
+    const seenSlots = new Set();
+    const out = [];
+    for (const talisman of slottedCombatTalismansForSim(list) || []) {
+        if (talisman.slotIndex > MAX_TALISMAN_SLOT || seenSlots.has(talisman.slotIndex)) continue;
+        seenSlots.add(talisman.slotIndex);
+        const seenLines = new Set();
+        const modifiers = [];
+        for (const line of talisman.modifiers) {
+            if (modifiers.length >= limits.linesPerTalisman || seenLines.has(line.hrid)) continue;
+            // A line the table does not list as a combat one was renamed or removed by a patch
+            if (modifierDetailMap && modifierDetailMap[line.hrid]?.talismanTypeHrid !== COMBAT_TALISMAN_TYPE) continue;
+            seenLines.add(line.hrid);
+            modifiers.push({ hrid: line.hrid, grade: clampGrade(line.grade, limits.maxGrade) });
+        }
+        out.push({ slotIndex: talisman.slotIndex, modifiers });
+    }
+    return toSimTalismans(out);
+}
+
+/**
+ * Decode a Shykai export. Throws on a shape it cannot read; {@link parseShykaiImport} turns that into null.
+ * @param {string} jsonString
+ * @returns {Object|null}
+ */
+function decodeShykaiImport(jsonString) {
     const clientData = dataManager.getInitClientData();
     if (!clientData) return null;
     const itemDetailMap = clientData.itemDetailMap || {};
@@ -629,12 +711,18 @@ export function parseShykaiImport(jsonString) {
                 // Skip unparseable slots
             }
         }
-    } else if (typeof parsed === 'object' && parsed.player) {
+    } else if (typeof parsed === 'object' && parsed !== null && parsed.player) {
         // Single-player format
         slotEntries = [{ slot: 1, data: parsed }];
     } else {
         return null;
     }
+
+    // The game's own ceilings: the editor's inputs clamp to them, so a pasted 250 or -3 cannot sit above or
+    // below what a player could type in
+    const levelCap = maxLevel(clientData);
+    const enhancementCap = maxEnhancementLevel(clientData);
+    const houseCap = maxHouseRoomLevel(clientData);
 
     const players = [];
     const names = [];
@@ -657,7 +745,7 @@ export function parseShykaiImport(jsonString) {
         // a fresh character can have every one of those set up before their
         // combat levels move at all, and dropping the slot would silently
         // discard that setup on the round trip.
-        const hasEquipment = Array.isArray(p.equipment) ? p.equipment.some((e) => e.itemHrid) : false;
+        const hasEquipment = Array.isArray(p.equipment) ? p.equipment.some((e) => e?.itemHrid) : false;
         const hasLevels = [
             p.staminaLevel,
             p.intelligenceLevel,
@@ -698,16 +786,16 @@ export function parseShykaiImport(jsonString) {
         }
 
         const dto = {
-            staminaLevel: p.staminaLevel || 1,
-            intelligenceLevel: p.intelligenceLevel || 1,
+            staminaLevel: clampWhole(p.staminaLevel, 1, levelCap),
+            intelligenceLevel: clampWhole(p.intelligenceLevel, 1, levelCap),
             // The simulation needs a number, so an absent level reads as 1; this says it was never known, so the
             // ability bar locks nothing on its account (see `abilitySlotUnlocks`)
             ...(Number(p.intelligenceLevel) > 0 ? {} : { intelligenceUnknown: true }),
-            attackLevel: p.attackLevel || 1,
-            meleeLevel: p.meleeLevel || 1,
-            defenseLevel: p.defenseLevel || 1,
-            rangedLevel: p.rangedLevel || 1,
-            magicLevel: p.magicLevel || 1,
+            attackLevel: clampWhole(p.attackLevel, 1, levelCap),
+            meleeLevel: clampWhole(p.meleeLevel, 1, levelCap),
+            defenseLevel: clampWhole(p.defenseLevel, 1, levelCap),
+            rangedLevel: clampWhole(p.rangedLevel, 1, levelCap),
+            magicLevel: clampWhole(p.magicLevel, 1, levelCap),
             hrid: `player${slot}`,
             debuffOnLevelGap: 0,
             equipment: {},
@@ -728,12 +816,12 @@ export function parseShykaiImport(jsonString) {
         // noncanonical key.
         if (Array.isArray(p.equipment)) {
             for (const eq of p.equipment) {
-                if (!eq.itemHrid) continue;
+                if (!eq?.itemHrid) continue;
                 const eqType = itemDetailMap[eq.itemHrid]?.equipmentDetail?.type;
                 if (eqType) {
                     dto.equipment[eqType] = {
                         hrid: eq.itemHrid,
-                        enhancementLevel: eq.enhancementLevel || 0,
+                        enhancementLevel: clampWhole(eq.enhancementLevel, 0, enhancementCap),
                     };
                 } else {
                     // Reported back to the caller as well as logged: a skipped piece is
@@ -766,10 +854,11 @@ export function parseShykaiImport(jsonString) {
             }));
         };
 
-        // Food
-        const foodSlots = slotData.food?.['/action_types/combat'] || [];
+        // Food: three slots, as the game has; a longer pasted list is cut rather than loaded past them
+        const pastedFood = slotData.food?.['/action_types/combat'];
+        const foodSlots = Array.isArray(pastedFood) ? pastedFood.slice(0, 3) : [];
         for (const slot of foodSlots) {
-            if (slot.itemHrid) {
+            if (slot?.itemHrid) {
                 dto.food.push({ hrid: slot.itemHrid, triggers: buildTriggers(slot.itemHrid) });
             } else {
                 dto.food.push(null);
@@ -777,9 +866,10 @@ export function parseShykaiImport(jsonString) {
         }
 
         // Drinks
-        const drinkSlots = slotData.drinks?.['/action_types/combat'] || [];
+        const pastedDrinks = slotData.drinks?.['/action_types/combat'];
+        const drinkSlots = Array.isArray(pastedDrinks) ? pastedDrinks.slice(0, 3) : [];
         for (const slot of drinkSlots) {
-            if (slot.itemHrid) {
+            if (slot?.itemHrid) {
                 dto.drinks.push({ hrid: slot.itemHrid, triggers: buildTriggers(slot.itemHrid) });
             } else {
                 dto.drinks.push(null);
@@ -787,12 +877,12 @@ export function parseShykaiImport(jsonString) {
         }
 
         // Abilities
-        const abilitySlots = slotData.abilities || [];
+        const abilitySlots = Array.isArray(slotData.abilities) ? slotData.abilities.slice(0, 5) : [];
         for (const slot of abilitySlots) {
-            if (slot.abilityHrid) {
+            if (slot?.abilityHrid) {
                 dto.abilities.push({
                     hrid: slot.abilityHrid,
-                    level: slot.level || 1,
+                    level: clampWhole(slot.level, 1, levelCap),
                     triggers: buildTriggers(slot.abilityHrid),
                 });
             } else {
@@ -801,9 +891,17 @@ export function parseShykaiImport(jsonString) {
         }
 
         // House rooms
-        if (slotData.houseRooms) {
-            dto.houseRooms = { ...slotData.houseRooms };
+        if (slotData.houseRooms && typeof slotData.houseRooms === 'object') {
+            for (const [roomHrid, level] of Object.entries(slotData.houseRooms)) {
+                dto.houseRooms[roomHrid] = clampWhole(level, 0, houseCap);
+            }
         }
+
+        // Slotted combat talismans (`player.slottedTalismans`, the field the Shykai simulator exports and this
+        // side's own export writes). Only the combat ones: the sim models no other line. Absent leaves the
+        // build without any, the pessimistic side; the belt in the equipment above scales them.
+        const pastedTalismans = importedSimTalismans(p.slottedTalismans, clientData);
+        if (pastedTalismans.length > 0) dto.talismans = pastedTalismans;
 
         // Guild shrines. Szerra's fork of the export carries them as
         // `guildCombatBuffLevels: { force, tempo, ... }` — keyed by the tail of the
@@ -889,7 +987,7 @@ export function parseShykaiImport(jsonString) {
         }
 
         players.push(dto);
-        names.push(slotData.name || p.name || `Player ${slot}`);
+        names.push(importedName(slotData.name || p.name, slot));
     }
 
     if (!players.length) return null;
