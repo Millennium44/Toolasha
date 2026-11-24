@@ -6,7 +6,7 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
-import { createPathStepper, findRoomCell, installPointerShield } from './labyrinth-path-stepper.js';
+import { createPathStepper, findLabyrinthPanel, findRoomCell, installPointerShield } from './labyrinth-path-stepper.js';
 import webSocketHook from '../../core/websocket.js';
 import marketAPI from '../../api/marketplace.js';
 import {
@@ -197,6 +197,8 @@ const CLEAR_CHANCE_LABEL = 'Clear Chance';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
 /** The light on the room the Shroud or Beacon step button acts on next */
 const STEP_TARGET_CLASS = 'mwi-labyrinth-step-target';
+/** How often an armed step button re-reads whether the game still has the supply armed */
+const STEP_ARMED_POLL_MS = 300;
 /** The corner dot a covered room carries so a beacon's reach reads through a path tile's own border */
 const BEACON_DOT_ATTR = 'data-beacon-dot';
 
@@ -3968,7 +3970,28 @@ class LabyrinthClearRate {
     /** Take the step-target light off the map and forget which button was pointed at */
     clearStepTarget() {
         this._stepPointed = null;
+        this.watchArmedStep(null);
         document.querySelectorAll(`.${STEP_TARGET_CLASS}`).forEach((el) => el.remove());
+    }
+
+    /**
+     * While a supply is armed, notice the game disarming it on its own (its X button, a press outside the
+     * grid): that changes only the panel's client state, which nothing announces, and would leave a step
+     * button saying "room" and its light on. Runs only between the two presses of a step.
+     * @param {string|null} mode - The armed supply ('shroud' or 'beacon'), or null to stop watching
+     */
+    watchArmedStep(mode) {
+        if (!mode) {
+            if (this._stepArmedTimer) clearInterval(this._stepArmedTimer);
+            this._stepArmedTimer = null;
+            return;
+        }
+        this._stepArmedMode = mode;
+        if (this._stepArmedTimer) return;
+        this._stepArmedTimer = setInterval(() => {
+            if ((findLabyrinthPanel()?.state?.supplyMode ?? null) === this._stepArmedMode) return;
+            this.refreshStepButtons();
+        }, STEP_ARMED_POLL_MS);
     }
 
     /**
@@ -4105,17 +4128,20 @@ class LabyrinthClearRate {
     /** Redraw the step buttons' labels from the live panel */
     refreshStepButtons() {
         if (!config.getSetting('labyrinthPathStepper')) return;
+        let armed = null;
         for (const kind of ['shroud', 'beacon']) {
             const btn = document.querySelector(`.mwi-labyrinth-step-${kind}`);
             if (!btn) continue;
             const stepper = this.getStepper();
             const step = stepper.describe(kind);
+            if (step.action === 'room') armed = kind;
             btn.textContent = step.label;
             btn.title = step.reason;
             btn.setAttribute('aria-label', step.reason);
             btn.style.opacity = step.action === 'none' || stepper.isBusy() ? '0.6' : '1';
             btn.dataset.stepAction = step.action;
         }
+        this.watchArmedStep(armed);
         this.syncStepTarget();
     }
 

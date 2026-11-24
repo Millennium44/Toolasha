@@ -8253,6 +8253,41 @@ describe('labyrinth toolbar layout', () => {
                 expect(lights()[0].parentElement).toBe(cell);
             });
 
+            test('the game disarming on its own takes the armed light and the "room" label off', () => {
+                vi.useFakeTimers();
+                try {
+                    cellAt(7, 6);
+                    steps.shroud = { action: 'room', code: 'ready', idx: 55, x: 7, y: 6, label: 'room', reason: 'r' };
+                    labyrinthClearRate.refreshStepButtons();
+                    expect(lights()).toHaveLength(1);
+                    expect(labyrinthClearRate._stepArmedTimer).toBeTruthy();
+                    // The game's own X: client state only, no message. No panel in the page reads as disarmed
+                    steps.shroud = { ...steps.shroud, action: 'use', label: 'use' };
+                    vi.advanceTimersByTime(350);
+                    expect(lights()).toHaveLength(0);
+                    expect(btn('shroud').textContent).toBe('use');
+                    // And the watch stops with nothing armed
+                    expect(labyrinthClearRate._stepArmedTimer).toBeNull();
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            test('the armed watch stops when the stepper is disposed or the setting goes off', () => {
+                cellAt(7, 6);
+                steps.shroud = { action: 'room', code: 'ready', idx: 55, x: 7, y: 6, label: 'room', reason: 'r' };
+                labyrinthClearRate.refreshStepButtons();
+                expect(labyrinthClearRate._stepArmedTimer).toBeTruthy();
+                flip(false);
+                expect(labyrinthClearRate._stepArmedTimer).toBeNull();
+                flip(true);
+                fakeStepper();
+                labyrinthClearRate.refreshStepButtons();
+                expect(labyrinthClearRate._stepArmedTimer).toBeTruthy();
+                labyrinthClearRate.disposeStepper();
+                expect(labyrinthClearRate._stepArmedTimer).toBeNull();
+            });
+
             test('the light follows the step to the next room and is not redrawn while it stays', () => {
                 const first = cellAt(1, 1);
                 const second = cellAt(2, 1);
