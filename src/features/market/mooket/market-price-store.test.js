@@ -14,6 +14,12 @@ const storageMock = vi.hoisted(() => {
         unavailable: false,
         /** Held open so a test can park a start-up inside its first read */
         gate: null,
+        /** The listener the store registered with onBeforeTeardown, run by a test as the closing page would */
+        teardown: null,
+        onBeforeTeardown: vi.fn((listener) => {
+            mock.teardown = listener;
+            return () => {};
+        }),
         tryGet: vi.fn(async (key) => {
             if (mock.gate) await mock.gate;
             if (mock.unavailable) return null;
@@ -21,7 +27,8 @@ const storageMock = vi.hoisted(() => {
                 ? { found: true, value: structuredClone(mock.saved[key]) }
                 : { found: false, value: null };
         }),
-        set: vi.fn(async (key, value) => {
+        set: vi.fn(async (key, value, _store, _immediate, options) => {
+            if (options?.fold && key in mock.saved) value = options.fold(structuredClone(mock.saved[key]), value);
             if (mock.unavailable) return false;
             mock.saved[key] = structuredClone(value);
             return true;
@@ -273,6 +280,71 @@ describe('the stored cache survives a read that cannot be made', () => {
         expect(savedAsk('/items/cheese')).toBe(120);
         expect(savedAsk('/items/milk')).toBe(5);
         expect(savedAsk('/items/log')).toBe(7);
+    });
+});
+
+describe('a page closing with readings the timer has not flushed', () => {
+    const book = (itemHrid, ask) =>
+        dataManagerMock.handlers['market_item_order_books_updated']({
+            marketItemOrderBooks: {
+                itemHrid,
+                orderBooks: [{ asks: [{ price: ask, quantity: 1 }], bids: [] }],
+            },
+        });
+
+    test('hands them to storage synchronously, from the before-teardown listener', () => {
+        book('/items/log', 7);
+        storageMock.set.mockClear();
+
+        expect(typeof storageMock.teardown).toBe('function');
+        storageMock.teardown();
+
+        // Before any await: a closing page never resumes one
+        expect(storageMock.set).toHaveBeenCalledWith(
+            'mooketPrices',
+            expect.objectContaining({ '/items/log:0': expect.objectContaining({ ask: 7 }) }),
+            'marketListings',
+            true,
+            expect.objectContaining({ fold: expect.any(Function) })
+        );
+    });
+
+    test("folds the stored copy under memory, so another tab's newer reading is kept", async () => {
+        book('/items/log', 7);
+        const now = Date.now();
+        storageMock.saved.mooketPrices = {
+            '/items/oak:0': { ask: 90, bid: 80, askQty: 0, bidQty: 0, rise: 0, riseSpanMs: 0, at: now },
+            '/items/log:0': { ask: 5, bid: -1, askQty: 0, bidQty: 0, rise: 0, riseSpanMs: 0, at: now + 5 },
+        };
+
+        storageMock.teardown();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(storageMock.saved.mooketPrices['/items/oak:0']).toMatchObject({ ask: 90 });
+        // The other tab's reading of the log is newer than ours
+        expect(storageMock.saved.mooketPrices['/items/log:0']).toMatchObject({ ask: 5 });
+    });
+
+    test('writes nothing when nothing is unsaved, or before the first readable load', () => {
+        storageMock.set.mockClear();
+        storageMock.teardown();
+        expect(storageMock.set).not.toHaveBeenCalled();
+
+        marketPriceStore.dirty = true;
+        marketPriceStore.loaded = false;
+        storageMock.teardown();
+        expect(storageMock.set).not.toHaveBeenCalled();
+    });
+
+    test('a write that does not land leaves the store dirty for a page that comes back', async () => {
+        book('/items/log', 7);
+        storageMock.set.mockImplementationOnce(async () => false);
+
+        storageMock.teardown();
+        expect(marketPriceStore.dirty).toBe(false);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(marketPriceStore.dirty).toBe(true);
     });
 });
 

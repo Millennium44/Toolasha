@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market prices you browsed are saved when the tab closes
+
+Prices and order-book depth read from the marketplace in the last minute are now written when the page closes, instead of being lost if the tab shut before the next save.
+
 <!-- shipped in 3.92.0 -->
 
 ### "Instead of selling" shows the gain per hour

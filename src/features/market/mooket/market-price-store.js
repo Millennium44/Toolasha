@@ -21,6 +21,7 @@
  */
 
 import dataManager from '../../../core/data-manager.js';
+import storage from '../../../core/storage.js';
 import { createPersistedRecord } from '../../../utils/persisted-record.js';
 import {
     entryFromBook,
@@ -53,6 +54,7 @@ const DEPTH_KEY = 'mooketDepth';
  */
 const DEPTH_HISTORY_KEY = 'mooketDepthHistory';
 const SAVE_INTERVAL_MS = 60 * 1000;
+const STORE_NAME = 'marketListings';
 
 /**
  * Fold a stored cache under the one in memory: per item, the reading taken
@@ -425,6 +427,49 @@ class MarketPriceStore {
         await Promise.all([this.flushDepth(), this.flushPrices()]);
     }
 
+    /**
+     * The page is closing: hand what the 60-second timer has not yet written to storage.
+     *
+     * Runs from `storage.onBeforeTeardown`, before the connection closes, so it must reach `storage.set`
+     * synchronously: {@link MarketPriceStore#flush} reads the stored copy first (an await), and nothing
+     * after an await runs on a closing page, which lost up to a minute of browsed books. Each write
+     * folds the stored copy under memory inside its own transaction, as a record's save does, so
+     * another tab's newer readings are kept. Depth follows the same rule as {@link MarketPriceStore#flushDepth}:
+     * only once a reader has asked for it.
+     */
+    _writeBeforeTeardown() {
+        if (!this.loaded) return;
+        const hand = (key, value, merge, restore) => {
+            const landed = storage.set(key, value, STORE_NAME, true, {
+                fold: (stored, held) => (stored === undefined ? held : merge(stored, held)),
+            });
+            // A page that comes back from the back/forward cache still holds what did not land
+            Promise.resolve(landed).then(
+                (ok) => {
+                    if (!ok) restore();
+                },
+                () => restore()
+            );
+        };
+        if (this.dirty) {
+            this.dirty = false;
+            this.entries = pruneStale(this.entries, Date.now() - PRICE_MAX_AGE_MS);
+            hand(STORAGE_KEY, this.entries, mergePrices, () => {
+                this.dirty = true;
+            });
+        }
+        if (this.depthWanted && this.depthDirty) {
+            this.depthDirty = false;
+            this.depth = mergeDepths({}, this.depth);
+            this.depthHistory = mergeHistories({}, this.depthHistory);
+            const restore = () => {
+                this.depthDirty = true;
+            };
+            hand(DEPTH_KEY, this.depth, mergeDepths, restore);
+            hand(DEPTH_HISTORY_KEY, this.depthHistory, mergeHistories, restore);
+        }
+    }
+
     /** @private */
     async flushPrices() {
         if (!this.dirty) return;
@@ -441,4 +486,8 @@ class MarketPriceStore {
 }
 
 const marketPriceStore = new MarketPriceStore();
+
+// The last chance for readings the timer has not flushed: a `pagehide` listener of this module's own would run
+// after the connection closed
+storage.onBeforeTeardown?.(() => marketPriceStore._writeBeforeTeardown());
 export default marketPriceStore;
