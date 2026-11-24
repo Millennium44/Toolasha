@@ -25,7 +25,7 @@ import settingsStorage from '../../core/settings-storage.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
-import { getItemPrice, getPricingMode } from '../../utils/market-data.js';
+import { getItemPrice, getItemPriceInfo, getPricingMode } from '../../utils/market-data.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import {
     recordOpening,
@@ -699,6 +699,12 @@ export function placeBesideDialog(anchor, self, viewport) {
 class TreasureTracker {
     constructor() {
         this.isInitialized = false;
+        /** The character whose saved settings `this.settings` holds, once `initialize()` has read them */
+        this.settingsLoadedFor = undefined;
+        /** The cowbell choice read on its own for a character whose tracker is off: `{ charId, value }` */
+        this.cowbellPreference = null;
+        /** The character a stand-alone cowbell read is under way for */
+        this.cowbellPreferenceLoading = undefined;
         this.tally = {};
         /**
          * Scroll openings this session, by scroll: `{ opened, last: [granted buffs] }`. Display only
@@ -811,6 +817,7 @@ class TreasureTracker {
         const saved = await readScoped(SETTINGS_KEY, 'settings', null, ADOPT_LEGACY);
         if (!this._stillOurs(owner)) return;
         if (saved) this.settings = { ...DEFAULT_SETTINGS, ...saved };
+        this.settingsLoadedFor = owner.charId;
         // Reapplied every initialize, not just the first: a character switch
         // re-initializes the same instance, and the previous character's
         // expanded chests would otherwise still be sitting in `this.expanded`
@@ -1365,8 +1372,47 @@ class TreasureTracker {
      * @returns {number|null}
      */
     cowbellWorth() {
-        if (!this.settings.valueCowbells) return 0;
-        return this._cowbellValue();
+        const counted = this._cowbellsCounted();
+        if (counted === null) return null;
+        if (!counted) return 0;
+        // A real order-book bid only: a custom or estimated bag price is no sale, and these lines leave estimates out
+        const info = getItemPriceInfo(COWBELL_BAG_HRID, { context: 'profit', side: 'sell', marketQuote: true });
+        if (!(info?.price > 0) || info.source !== 'book') return null;
+        const tax = isIronCowCharacter() ? 0 : COWBELL_BAG_TAX;
+        return (info.price * (1 - tax)) / COWBELLS_PER_BAG;
+    }
+
+    /**
+     * Whether this character counts cowbells, from their saved choice even while the tracker is off.
+     *
+     * The tracker reads its settings only in `initialize()`, which a player with the tracker off never runs; the
+     * defaults would then count cowbells against a saved "Cowbells at zero". So the choice is read on its own here,
+     * once per character, and null until it arrives (the caller treats cowbells as unpriced meanwhile).
+     * @returns {boolean|null}
+     */
+    _cowbellsCounted() {
+        const charId = dataManager.getCurrentCharacterId?.() ?? null;
+        if (this.settingsLoadedFor === charId) return Boolean(this.settings.valueCowbells);
+        if (this.cowbellPreference?.charId === charId) return this.cowbellPreference.value;
+        if (this.cowbellPreferenceLoading !== charId) this._readCowbellPreference(charId);
+        return null;
+    }
+
+    /**
+     * Read one character's saved cowbell choice without starting the tracker.
+     * @param {string|null} charId - The character it is read for; a switch before it lands drops it
+     */
+    async _readCowbellPreference(charId) {
+        this.cowbellPreferenceLoading = charId;
+        try {
+            const saved = await readScoped(SETTINGS_KEY, 'settings', null, ADOPT_LEGACY);
+            if ((dataManager.getCurrentCharacterId?.() ?? null) !== charId) return;
+            this.cowbellPreference = { charId, value: saved?.valueCowbells ?? DEFAULT_SETTINGS.valueCowbells };
+        } catch (error) {
+            console.error('[TreasureTracker] Reading the cowbell setting failed:', error);
+        } finally {
+            if (this.cowbellPreferenceLoading === charId) this.cowbellPreferenceLoading = undefined;
+        }
     }
 
     /**

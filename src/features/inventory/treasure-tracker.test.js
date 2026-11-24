@@ -155,8 +155,14 @@ vi.mock('../../utils/choice-dialog.js', () => ({
 }));
 /** Prices by hrid; anything unlisted answers 1, as before */
 const prices = vi.hoisted(() => ({}));
+/** The Bag of 10 Cowbells quote with its source, for the alchemy lines' book-only cowbell worth */
+const bagQuote = vi.hoisted(() => ({ price: 1000, source: 'book' }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => (hrid in prices ? prices[hrid] : 1),
+    getItemPriceInfo: (hrid) =>
+        hrid === '/items/bag_of_10_cowbells'
+            ? { ...bagQuote }
+            : { price: hrid in prices ? prices[hrid] : 1, source: 'book' },
     getPricingMode: () => 'bid',
 }));
 // The overlay tile's `version()` counts price feeds, so the module imports the
@@ -2312,5 +2318,54 @@ describe('the popup’s headings sort its rows', () => {
         value.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
         expect(rowsText(popup)).toEqual(['2', '1', '5', '7']);
         expect(popup.querySelector('[data-role="opening-labels"]').title).toMatch(/sort/i);
+    });
+});
+
+describe('cowbellWorth, for the alchemy "Instead of" lines', () => {
+    const reset = () => {
+        treasureTracker.settingsLoadedFor = undefined;
+        treasureTracker.cowbellPreference = null;
+        treasureTracker.cowbellPreferenceLoading = undefined;
+        bagQuote.price = 1000;
+        bagQuote.source = 'book';
+    };
+    beforeEach(reset);
+    afterEach(reset);
+
+    test('with the tracker off, a saved "Cowbells at zero" is read on its own: null until it lands, then 0', async () => {
+        const { writeScoped } = await import('../../utils/character-key.js');
+        await writeScoped('treasureSettings', { valueCowbells: false }, 'settings');
+        treasureTracker.settings.valueCowbells = true; // the defaults a tracker that never started holds
+        expect(treasureTracker.cowbellWorth()).toBeNull();
+        await vi.waitFor(() => expect(treasureTracker.cowbellWorth()).toBe(0));
+    });
+
+    test('with the tracker off and cowbells counted, a cowbell is the bag bid less bag tax, split ten ways', async () => {
+        const { writeScoped } = await import('../../utils/character-key.js');
+        const { COWBELL_BAG_TAX } = await import('../../utils/profit-constants.js');
+        await writeScoped('treasureSettings', { valueCowbells: true }, 'settings');
+        treasureTracker.cowbellWorth();
+        await vi.waitFor(() =>
+            expect(treasureTracker.cowbellWorth()).toBeCloseTo((1000 * (1 - COWBELL_BAG_TAX)) / 10, 6)
+        );
+    });
+
+    test('a custom or estimated bag price is no sale: the worth is unknown', async () => {
+        const { writeScoped } = await import('../../utils/character-key.js');
+        await writeScoped('treasureSettings', { valueCowbells: true }, 'settings');
+        treasureTracker.cowbellWorth();
+        await vi.waitFor(() => expect(treasureTracker.cowbellWorth()).not.toBeNull());
+        for (const source of ['custom', 'estimate']) {
+            bagQuote.source = source;
+            expect(treasureTracker.cowbellWorth()).toBeNull();
+        }
+    });
+
+    test("once the tracker has loaded this character's settings, its own toggle is followed", () => {
+        treasureTracker.settingsLoadedFor = dm.characterId ?? null;
+        treasureTracker.settings.valueCowbells = false;
+        expect(treasureTracker.cowbellWorth()).toBe(0);
+        treasureTracker.settings.valueCowbells = true;
+        expect(treasureTracker.cowbellWorth()).toBeGreaterThan(0);
     });
 });
