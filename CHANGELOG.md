@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim import reads talismans and handles bad pastes
+
+Importing a build in the other simulator's format now brings its slotted combat talismans, which were dropped before. A malformed paste shows "Invalid format" instead of doing nothing, and out-of-range levels are brought back inside the game's limits.
+
+### Sim All Zones keeps a pasted build out of your forecast
+
+Running Sim All Zones on a pasted or replaced build no longer saves its zone profits as your character's own, which the pinned actions, planner and Dungeon ROI board read.
+
 ### Alchemy figures follow price changes
 
 The alchemy Profitability section now redraws when market prices arrive or change, so a panel opened before prices loaded fills in and a "no market price" notice clears once the price exists. The goal planner's alchemy gold per hour also follows an opened order book or a custom price right away.
