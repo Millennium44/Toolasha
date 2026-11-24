@@ -1,4 +1,4 @@
-import { artisanInputTotal, getArtisanMaterialMode } from '../../utils/artisan-material-mode.js';
+import { artisanInputTotal, getArtisanMaterialMode, usesWorstCaseRounding } from '../../utils/artisan-material-mode.js';
 import { INVENTORY_LOCATION } from '../../utils/inventory-reservations.js';
 
 /**
@@ -112,8 +112,14 @@ export function normalizePlannedSurplus(plan, { inventory = [] } = {}) {
         for (const child of node.children || []) {
             let childQuantity = child.quantity;
             if (actionsForRemainder !== null && child.craftInputMeta) {
-                const { countPerAction, artisanBonus } = child.craftInputMeta;
-                childQuantity = artisanInputTotal(countPerAction, artisanBonus, actionsForRemainder, artisanMode);
+                const { countPerAction, artisanBonus, noProcBonus } = child.craftInputMeta;
+                // Worst-case rounding bills a craft that did not proc: the same bonus the plan itself sized
+                // this input with, or the list here would be shorter than the Buy button's
+                const billed =
+                    usesWorstCaseRounding(artisanMode, actionsForRemainder) && noProcBonus !== undefined
+                        ? noProcBonus
+                        : artisanBonus;
+                childQuantity = artisanInputTotal(countPerAction, billed, actionsForRemainder, artisanMode);
             } else if (actionsForRemainder !== null && child.isUpgradeItem) {
                 childQuantity = actionsForRemainder;
             } else if (actionsForRemainder !== null && node.actionsNeeded > 0) {
