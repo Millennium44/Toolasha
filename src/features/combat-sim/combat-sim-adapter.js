@@ -638,7 +638,10 @@ function clampWhole(value, min, max) {
  * @returns {string}
  */
 function importedName(raw, slot) {
-    const name = (typeof raw === 'string' ? raw : '').replace(/[<>&"'`]/g, '').trim().slice(0, 40);
+    const name = (typeof raw === 'string' ? raw : '')
+        .replace(/[<>&"'`]/g, '')
+        .trim()
+        .slice(0, 40);
     return name || `Player ${slot}`;
 }
 

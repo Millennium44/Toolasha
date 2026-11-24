@@ -1828,7 +1828,8 @@ describe('Shykai import and export: slotted talismans and hand-edited pastes', (
         };
     });
 
-    const paste = (player, extra = {}) => JSON.stringify({ player: { attackLevel: 80, equipment: [], ...player }, ...extra });
+    const paste = (player, extra = {}) =>
+        JSON.stringify({ player: { attackLevel: 80, equipment: [], ...player }, ...extra });
     const line = (hrid, grade) => ({ hrid: `/talisman_modifiers/${hrid}`, grade });
 
     test('the talismans a Shykai export carries land on the player, in the sim shape', () => {
@@ -1888,11 +1889,17 @@ describe('Shykai import and export: slotted talismans and hand-edited pastes', (
         expect(parseShykaiImport('null')).toBeNull();
         expect(parseShykaiImport(JSON.stringify({ 1: 'null', 2: '5' }))).toBeNull();
         expect(parseShykaiImport(paste({ equipment: [null] }))).not.toBeNull();
-        expect(parseShykaiImport(paste({}, { food: { '/action_types/combat': [null, { itemHrid: '/items/x' }] } }))).not.toBeNull();
-        expect(parseShykaiImport(paste({}, { abilities: [null, { abilityHrid: '/abilities/a', level: 2 }] }))).not.toBeNull();
+        expect(
+            parseShykaiImport(paste({}, { food: { '/action_types/combat': [null, { itemHrid: '/items/x' }] } }))
+        ).not.toBeNull();
+        expect(
+            parseShykaiImport(paste({}, { abilities: [null, { abilityHrid: '/abilities/a', level: 2 }] }))
+        ).not.toBeNull();
         expect(parseShykaiImport(paste({}, { food: 7, drinks: 'x', abilities: {} }))).not.toBeNull();
         expect(
-            parseShykaiImport(paste({}, { abilities: [{ abilityHrid: '/abilities/a' }], triggerMap: { '/abilities/a': [null] } }))
+            parseShykaiImport(
+                paste({}, { abilities: [{ abilityHrid: '/abilities/a' }], triggerMap: { '/abilities/a': [null] } })
+            )
         ).toBeNull();
     });
 
