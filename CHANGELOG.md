@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Net worth marks its total when something could not be priced
+
+The net worth total now carries its "not fully priced" mark when an enhanced item is counted at its +0 price, or an ability or currency has no price, instead of showing a clean figure that was really a floor. Values themselves are unchanged. The "pricing changed" note in Movers now follows the mode each reading was valued under.
+
+### Enhancement milestone costs show when they are a floor
+
+The +5, +7, +10 and +12 cost rows in an item tooltip now show "≥" when a material or the base item has no price, instead of a plain total that counted it as zero.
+
 ### Combat Sim import reads talismans and handles bad pastes
 
 Importing a build in the other simulator's format now brings its slotted combat talismans, which were dropped before. A malformed paste shows "Invalid format" instead of doing nothing, and out-of-range levels are brought back inside the game's limits.
