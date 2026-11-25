@@ -4229,6 +4229,8 @@ class CombatSimUI {
             onScenarioReplaced: () => this._dropUpgradeResultsForNewScenario(),
             // The live character is loaded back: rows measured for a stranger are not theirs
             onRosterReloaded: () => this._dropStrangersUpgradeResults(),
+            // One slot now holds someone else
+            onPlayerReplaced: (hrid, wasSelf) => this._dropUpgradeResultsForReplacedPlayer(hrid, wasSelf),
         });
         // The same setting is on the Settings page: a change there while this
         // panel is open must reach the editor, or the next run uses the old value
@@ -17369,6 +17371,27 @@ class CombatSimUI {
         const mine = dataManager.getCurrentCharacterName?.();
         if (!name || !mine || ranForHrid !== 'player1') return true;
         return name === mine;
+    }
+
+    /**
+     * One slot of the loaded roster was replaced by an import. The rows on screen belong to someone who is gone
+     * when the slot held the live character, or the player they were measured for (every section of an All players
+     * view counts); they go like any roster replacement. Another slot, a party partner's, leaves rows and the
+     * stale-build banner as they are, since only the build changed. A run in progress is told only when the
+     * live character's own slot went: the run's table is then not drawn over the new roster.
+     * @param {string} hrid - The replaced slot
+     * @param {boolean} wasSelf - Whether it held the live character
+     * @private
+     */
+    _dropUpgradeResultsForReplacedPlayer(hrid, wasSelf) {
+        const analyzed = this._allPlayersRun
+            ? (this._allPlayersRun.entries || []).some((entry) => entry.hrid === hrid)
+            : this._upgradeResultsData?.ranFor?.hrid === hrid;
+        if (this._upgradeRunning) {
+            if (wasSelf) this._rosterSwapGen = (this._rosterSwapGen || 0) + 1;
+            return;
+        }
+        if (wasSelf || analyzed) this._dropUpgradeResultsForNewScenario();
     }
 
     /**

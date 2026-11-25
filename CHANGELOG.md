@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Importing over a player drops their old Upgrade rows
+
+Replacing a player with an import in the Combat Sim now clears the Upgrade rows measured for that player (or for you, when it was your slot). Rows for a different party member stay, under the "measured before the build changed" note.
+
 ### Clear resets the status line
 
 After Clear empties the remembered Upgrade table in the Combat Sim or the Lab Sim, the footer goes back to its idle text instead of the old run's progress.

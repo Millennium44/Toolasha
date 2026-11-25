@@ -2024,3 +2024,106 @@ describe('Stop or failure before anything is drawn', () => {
         expect(rows().textContent).toBe('');
     });
 });
+
+describe('Upgrade rows when one slot is replaced by an import', () => {
+    const settle = async () => {
+        for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const rows = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const note = () => ui.panel.querySelector('#mwi-csim-analysis-note');
+    const party = () => ({
+        player1: { hrid: 'player1', equipment: {} },
+        player2: { hrid: 'player2', equipment: {} },
+    });
+    const replaced = (hrid, wasSelf) => mocks.editorOptions.onPlayerReplaced(hrid, wasSelf);
+
+    beforeEach(async () => {
+        mocks.store.clear();
+        mocks.characterId = 'char1';
+        mocks.characterName = 'Me';
+        mocks.editedDTOs = party();
+        mocks.editorSelfHrid = 'player1';
+        mocks.playerNames = { player1: 'Me', player2: 'Partner' };
+        ui.buildPanel();
+        await settle();
+        selectZone();
+        ui._populateUpgradePlayerSelector();
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = null;
+        mocks.characterName = undefined;
+        mocks.onRun = null;
+        mocks.upgradeResultFor = null;
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.store.clear();
+    });
+    const analyzeIndex = async (index, label) => {
+        ui.panel.querySelector('#mwi-csim-upgrade-player').value = String(index);
+        mocks.upgradeResult = {
+            baseline: BASELINE,
+            results: [row(label)],
+            food: null,
+            context: { gameData: {} },
+        };
+        await ui._onUpgradeAnalyze();
+        await settle();
+    };
+
+    test('the live character slot replaced: the rows of their analysis go', async () => {
+        await analyzeIndex(0, 'My gear');
+        expect(rows().textContent).toContain('My gear');
+        replaced('player1', true);
+        expect(rows().textContent).not.toContain('My gear');
+        expect(ui._upgradeResultsData).toBeNull();
+    });
+
+    test('the live character slot replaced: a partner analysis goes too, the owner roster is gone', async () => {
+        await analyzeIndex(1, 'Partner gear');
+        replaced('player1', true);
+        expect(rows().textContent).not.toContain('Partner gear');
+    });
+
+    test('the analyzed partner slot replaced: the rows belong to someone gone, and go', async () => {
+        await analyzeIndex(1, 'Partner gear');
+        replaced('player2', false);
+        expect(rows().textContent).not.toContain('Partner gear');
+    });
+
+    test('an All players view with the replaced slot among its sections goes whole', async () => {
+        await analyzeIndex(0, 'My gear');
+        ui._allPlayersRun = {
+            entries: [
+                { hrid: 'player1', results: ui._upgradeResultsData },
+                { hrid: 'player2', results: null },
+            ],
+            active: 'player1',
+        };
+        replaced('player2', false);
+        expect(ui._allPlayersRun).toBeNull();
+        expect(rows().textContent).not.toContain('My gear');
+    });
+
+    test('another partner replaced: rows stay under the stale banner', async () => {
+        await analyzeIndex(0, 'My gear');
+        mocks.editedDTOs = { ...party(), player2: { hrid: 'player2', equipment: { '/item_locations/body': {} } } };
+        replaced('player2', false);
+        ui._refreshAnalysisNote();
+        expect(rows().textContent).toContain('My gear');
+        expect(note().style.display).toBe('block');
+    });
+
+    test('a run in progress is only told when the live character slot went', async () => {
+        await analyzeIndex(0, 'My gear');
+        ui._upgradeRunning = true;
+        const gen = ui._rosterSwapGen || 0;
+        replaced('player2', false);
+        expect(ui._rosterSwapGen || 0).toBe(gen);
+        replaced('player1', true);
+        expect(ui._rosterSwapGen).toBe(gen + 1);
+        ui._upgradeRunning = false;
+    });
+});

@@ -213,6 +213,9 @@ export class SimEditor {
      * @param {Function} [options.onScenarioReplaced] - Called when the whole loaded roster is swapped for
      *   another (an external profile, a party load, a pasted party), so the owner can drop results that
      *   were measured for the players that are gone. Not called by a Fetch, an Apply or an edit.
+     * @param {Function} [options.onPlayerReplaced] - Called with `(hrid, wasSelf)` when one loaded player's build
+     *   is replaced by an import ("Replace <name>"): the slot keeps its hrid, and `wasSelf` says it held the live
+     *   character. Adding players (`importPlayers`) does not call it: nobody is gone.
      * @param {Function} [options.onRosterReloaded] - Called when the live character (and party) were loaded back
      *   (Reset to Me, Reset to Party, Fetch), so the owner can drop results that were measured for a stranger.
      *   Not called by a first load or the automatic rebuild when a party member's profile arrives.
@@ -229,6 +232,7 @@ export class SimEditor {
         onRender = null,
         onScenarioReplaced = null,
         onRosterReloaded = null,
+        onPlayerReplaced = null,
         onResetToParty = null,
     }) {
         this._editorEl = editorEl;
@@ -291,6 +295,7 @@ export class SimEditor {
         this._onRender = onRender;
         this._onScenarioReplaced = onScenarioReplaced;
         this._onRosterReloaded = onRosterReloaded;
+        this._onPlayerReplaced = onPlayerReplaced;
         this._onResetToParty = onResetToParty;
         // The last Export click's outcome ("Copied Milkman's build." or, when
         // the clipboard is unavailable, a note plus the text itself so the user
@@ -1110,6 +1115,20 @@ export class SimEditor {
     }
 
     /**
+     * Tell the owner one slot now holds a different person.
+     * @param {string} hrid - The slot
+     * @param {boolean} wasSelf - Whether it held the live character
+     * @private
+     */
+    _notifyPlayerReplaced(hrid, wasSelf) {
+        try {
+            this._onPlayerReplaced?.(hrid, wasSelf);
+        } catch (error) {
+            console.error('[SimEditor] onPlayerReplaced listener failed:', error);
+        }
+    }
+
+    /**
      * Tell the owner the live character was loaded back in (Fetch, Reset to Party, Reset to Me).
      * @private
      */
@@ -1336,6 +1355,8 @@ export class SimEditor {
      */
     replacePlayer(hrid, dto, name, skipped = []) {
         if (!this._editedDTOs || !this._editedDTOs[hrid]) return false;
+        // Read before the slot stops being "you" below
+        const wasSelf = this._selfHrid === hrid;
 
         // The panel-wide Loadout dropdown is applied to whichever player was
         // `_activeEditPlayer` at the moment it was applied (see
@@ -1386,6 +1407,7 @@ export class SimEditor {
         this._activeEditPlayer = hrid;
         this._editorInitialized = true;
         this._scenarioToken++;
+        this._notifyPlayerReplaced(hrid, wasSelf);
         // The replaced player may be a different level than whoever they took
         // the slot from, which can move who in the roster is highest (or lift
         // a solo build into a party for the first time) — every other
