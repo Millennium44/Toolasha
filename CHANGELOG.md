@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth Next button offers the next floor
+
+Once the exit is cleared and nothing is left for Next to queue, it reads "Next ▸ next floor" and opens the game's own Next Floor prompt for you to answer. Hover text says how many treasure rooms the descent forfeits.
+
 ### Clear on remembered Upgrade results now empties the table
 
 In the Combat Sim and the Lab Sim, the Clear button beside "Showing results remembered from..." used to forget the saved run but leave the table on screen; it now removes the table too.

@@ -41,6 +41,8 @@ import { labyrinthGridSize } from './labyrinth-formulas.js';
 
 const ROOM_CELL_SELECTOR = 'div[class*="LabyrinthPanel_roomCell"]';
 const SUPPLY_HOLDER_SELECTOR = 'div[class*="LabyrinthPanel_supplyWithButton"]';
+const NEXT_FLOOR_TILE_SELECTOR = '[class*="LabyrinthPanel_nextFloorLabel__"]';
+const DIALOG_BUTTONS_SELECTOR = '[class*="DialogModal_buttonContainer"]';
 const RENDER_WAIT_MS = 1500;
 const RESULT_WAIT_MS = 4000;
 const POLL_MS = 50;
@@ -103,6 +105,25 @@ export function findSupplyButton(kind) {
         if (href.endsWith(`#${kind}`) || href.endsWith(`_${kind}`)) return holder.querySelector('button');
     }
     return null;
+}
+
+/**
+ * The game's own "Next Floor" tile, which it draws in the exit cell exactly when the exit is cleared. Found by
+ * the class prefix, never by its text: players run the game in other languages.
+ * @returns {Element|null}
+ */
+export function findNextFloorTile() {
+    if (typeof document === 'undefined') return null;
+    return document.querySelector(NEXT_FLOOR_TILE_SELECTOR);
+}
+
+/**
+ * Whether the game's yes/no confirmation dialog is on screen (its button row has the DialogModal class prefix).
+ * @returns {boolean}
+ */
+export function isConfirmDialogOpen() {
+    if (typeof document === 'undefined') return false;
+    return !!document.querySelector(DIALOG_BUTTONS_SELECTOR);
 }
 
 /**
@@ -530,6 +551,59 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
         }
     };
 
+    /**
+     * One Next Floor press: press the game's own tile so its confirmation dialog opens. Nothing is sent to the
+     * server and the dialog is never answered here; the player says Yes or No.
+     * @param {function(): Object} describeNow - The Next step as it reads right now
+     */
+    const pressDescent = async (describeNow) => {
+        if (disposed) return;
+        if (busy) {
+            setStatus('Still working on the last press');
+            return;
+        }
+        const step = describeNow();
+        if (step.action !== 'descend') {
+            setStatus(step.reason, true);
+            onChange();
+            return;
+        }
+        busy = true;
+        const myGeneration = ++generation;
+        const characterId = getCharacterId();
+        onChange();
+        try {
+            // After Toolasha's own click handler has returned
+            await sleep(0);
+            if (disposed || myGeneration !== generation) return;
+            const again = describeNow();
+            if (again.action !== 'descend' || again.floor !== step.floor || getCharacterId() !== characterId) {
+                setStatus('The map changed since the last step, press again', true);
+                return;
+            }
+            const tile = findNextFloorTile();
+            if (!tile) {
+                setStatus("The game's Next Floor tile was not found, press it on the map", true);
+                return;
+            }
+            if (clickThroughReact(tile, { reactFirst: true }) === 'none') {
+                setStatus('The press did not reach the game, press the Next Floor tile by hand', true);
+                return;
+            }
+            const opened = await waitFor(isConfirmDialogOpen, RENDER_WAIT_MS);
+            if (disposed || myGeneration !== generation) return;
+            setStatus(
+                opened
+                    ? 'The game is asking whether to descend: answer its dialog (Toolasha never answers it)'
+                    : "The game's dialog did not open, press the Next Floor tile on the map",
+                !opened
+            );
+        } finally {
+            busy = false;
+            if (!disposed) onChange();
+        }
+    };
+
     /** The game answered with a labyrinth_updated; called by the planner's handler. */
     const notifyUpdated = () => {
         const waiters = updatedWaiters;
@@ -666,13 +740,15 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
         busy = false;
     };
 
-    return { describe, press, notifyUpdated, dispose, isBusy: () => busy };
+    return { describe, press, pressDescent, notifyUpdated, dispose, isBusy: () => busy };
 }
 
 export default {
     findLabyrinthPanel,
     findSupplyButton,
     findRoomCell,
+    findNextFloorTile,
+    isConfirmDialogOpen,
     describeStep,
     describeRouteStep,
     parseGamePath,

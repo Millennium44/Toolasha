@@ -110,6 +110,13 @@ vi.mock('./labyrinth-room-distribution.js', async (importOriginal) => {
     return { ...actual, refreshRoomDistribution: distributionSpy.refresh };
 });
 
+/** Whether a labyrinth action is the one running; the descent step reads it */
+const activity = vi.hoisted(() => ({ running: false }));
+vi.mock('./labyrinth-activity.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    isLabyrinthFightActive: () => activity.running,
+}));
+
 const cancelSpy = vi.hoisted(() => ({ fn: vi.fn() }));
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({
     runLabyrinthSimulation: vi.fn(),
@@ -603,5 +610,280 @@ describe('Next places the exit beacons before it queues rooms', () => {
             labyrinthClearRate.repathAfterExitBeacon({ stepper, floor: 1, characterId: 'me', plan, idx: 4 });
             expect(runPath).not.toHaveBeenCalled();
         });
+    });
+});
+
+describe('Next offers the descent once the exit is cleared', () => {
+    let lab;
+    let advance;
+    let tileClick;
+    let tileEl;
+
+    const SHOWN = { roomType: '/labyrinth_room_types/combat', recommendedLevel: 95 };
+    const CLEARED = { ...SHOWN, isCleared: true };
+    // What the game holds for the exit: null until revealed, then the descend type, then blanked once entered
+    const EXIT_REVEALED = { roomType: '/labyrinth_room_types/descend', recommendedLevel: 95 };
+    const EXIT_CLEARED = { roomType: '', recommendedLevel: 0, isCleared: true };
+
+    /**
+     * Mount a floor of the game's grid size (4x4 on floor 1, 8x8 from floor 5) with the exit in the bottom-right
+     * cell. Cells in `cleared` are cleared, every other cell is shown; the exit takes `exit`.
+     */
+    const mount = ({
+        floor = 1,
+        exit = EXIT_CLEARED,
+        cleared = [],
+        tile = true,
+        remaining = 0,
+        pathData = '[]',
+    } = {}) => {
+        const size = floor >= 5 ? 8 : 3 + floor;
+        const roomData = Array.from({ length: size }, (_, y) =>
+            Array.from({ length: size }, (_, x) => (cleared.includes(y * size + x) ? CLEARED : SHOWN))
+        );
+        roomData[size - 1][size - 1] = exit;
+        lab = {
+            isActive: true,
+            currentFloor: floor,
+            roomData,
+            pathData,
+            beaconCount: 4,
+            shroudCount: 2,
+            totalTreasureRooms: 4,
+            remainingTreasureRooms: remaining,
+        };
+        advance = vi.fn();
+        tileClick = vi.fn();
+        const panel = {
+            handleRoomClick() {},
+            state: { supplyMode: null },
+            props: {
+                characterLabyrinth: lab,
+                updateLabyrinthPathHandler: vi.fn(),
+                advanceLabyrinthFloorHandler: advance,
+            },
+        };
+        let rootEl = document.getElementById('root');
+        if (!rootEl) {
+            rootEl = document.createElement('div');
+            rootEl.id = 'root';
+            document.body.appendChild(rootEl);
+        }
+        rootEl.textContent = '';
+        tileEl = null;
+        let tileFiber = null;
+        if (tile) {
+            tileEl = document.createElement('div');
+            tileEl.className = 'LabyrinthPanel_nextFloorLabel__3wBRi';
+            tileEl.textContent = 'Next Floor';
+            rootEl.appendChild(tileEl);
+            tileFiber = { stateNode: tileEl, memoizedProps: { onClick: tileClick }, child: null, sibling: null };
+        }
+        rootEl._reactRootContainer = {
+            current: { stateNode: null, sibling: null, child: { stateNode: panel, child: null, sibling: tileFiber } },
+        };
+        resetPanelCache();
+        labyrinthClearRate.currentFloor = floor;
+        labyrinthClearRate.roomData = roomData;
+        return { panel, size };
+    };
+
+    /** A drawn route over flat indexes (walking order); the exit is its last room */
+    const plan = (size, route, exit = size * size - 1) => labyrinthClearRate.storeShroudStepPlan(size, [], route, exit);
+
+    // 4x4 floor: rooms 0 (entrance), 1, 2, 3, 7, 11 cleared; the exit is 15
+    const DONE_4X4 = [0, 1, 2, 3, 7, 11];
+
+    beforeEach(() => {
+        activity.running = false;
+        labyrinthClearRate._shroudStepPlan = null;
+        labyrinthClearRate._beaconPlanCells = null;
+        labyrinthClearRate._beaconStepPlan = null;
+        labyrinthClearRate._revealBeaconPlan = null;
+        labyrinthClearRate._exitBeaconsTried = null;
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        dataManager.getCurrentCharacterId.mockReturnValue('me');
+        labyrinthClearRate._stepper?.dispose();
+        labyrinthClearRate._stepper = null;
+        labyrinthClearRate._shroudStepPlan = null;
+        document.body.textContent = '';
+    });
+
+    test('exit not revealed (null): no descent, the route reads as before', () => {
+        mount({ exit: null, tile: false, cleared: [0] });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next.kind).not.toBe('descend');
+        expect(next.label).toBe('Next ▸ queue 2,1');
+    });
+
+    test('exit revealed but not cleared: no descent', () => {
+        mount({ exit: EXIT_REVEALED, tile: false, cleared: DONE_4X4 });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next.kind).not.toBe('descend');
+        expect(next.label).toBe('Next ▸ queue 4,4');
+    });
+
+    test('4x4 floor, exit cleared, route done, 0 treasure rooms left: descent, no forfeit warning', () => {
+        mount({ cleared: DONE_4X4, remaining: 0 });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next).toMatchObject({ kind: 'descend', action: 'descend', label: 'Next ▸ next floor', x: 3, y: 3 });
+        expect(next.reason).toContain('No treasure rooms are left');
+        expect(next.reason).not.toContain('forfeited');
+        // Fits the fixed 126 px button as "No beacons planned" (18 characters) does
+        expect(next.label.length).toBeLessThanOrEqual(18);
+    });
+
+    test('8x8 floor 5: the exit is bottom-right (7,7); 3 treasure rooms left are named as forfeited', () => {
+        mount({ floor: 5, cleared: [0, 1, 9, 18], remaining: 3 });
+        plan(8, [1, 9, 18, 63]);
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next).toMatchObject({ kind: 'descend', action: 'descend', x: 7, y: 7 });
+        expect(next.reason).toContain('3 treasure rooms are still unvisited and forfeited');
+    });
+
+    test('one treasure room left reads in the singular', () => {
+        mount({ cleared: DONE_4X4, remaining: 1 });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        expect(labyrinthClearRate.describeNextStep().reason).toContain('1 treasure room is still unvisited');
+    });
+
+    test('a count the game did not send says nothing about treasure', () => {
+        mount({ cleared: DONE_4X4 });
+        delete lab.remainingTreasureRooms;
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next.action).toBe('descend');
+        expect(next.reason).not.toMatch(/treasure/);
+    });
+
+    test('exit cleared with chest detours still on the route: Next keeps queueing them and the hover names the tile', () => {
+        mount({ cleared: DONE_4X4, remaining: 3 });
+        // Chest rooms 5 and 9 sit on the route before the exit and are not cleared
+        plan(4, [1, 5, 9, 2, 3, 7, 11, 15]);
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next).toMatchObject({ kind: 'route', action: 'path', label: 'Next ▸ queue 2,2' });
+        expect(next.reason).toContain('orange Next Floor tile descends early');
+    });
+
+    test('no hover note while the exit is not cleared', () => {
+        mount({ exit: EXIT_REVEALED, tile: false, cleared: [0] });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        expect(labyrinthClearRate.describeNextStep().reason).not.toContain('Next Floor tile');
+    });
+
+    test('exit cleared but the tile is not on screen (game automation): no descent, Route done as before', () => {
+        mount({ cleared: DONE_4X4, tile: false });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next.kind).toBeNull();
+        expect(next.label).toBe('Route done');
+    });
+
+    test('no plan on a floor whose exit is cleared: descent', () => {
+        mount({ cleared: DONE_4X4, remaining: 2 });
+        expect(labyrinthClearRate.describeNextStep()).toMatchObject({ kind: 'descend', action: 'descend' });
+    });
+
+    test('a plan from another floor with the exit cleared here: descent', () => {
+        mount({ cleared: DONE_4X4 });
+        plan(5, [1, 2, 24], 24);
+        labyrinthClearRate._shroudStepPlan.floor = 2;
+        expect(labyrinthClearRate.describeNextStep().kind).toBe('descend');
+    });
+
+    test('rooms still queued in the game path: no descent ("Route queued" stays)', () => {
+        mount({ cleared: DONE_4X4, pathData: '[{"x":1,"y":1}]' });
+        plan(4, [1, 5, 2, 3, 7, 11, 15]);
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next.kind).toBeNull();
+        expect(next.label).toBe('Route queued');
+    });
+
+    test('rooms queued with no plan: no descent', () => {
+        mount({ cleared: DONE_4X4, pathData: '[{"x":1,"y":1}]' });
+        expect(labyrinthClearRate.describeNextStep().kind).not.toBe('descend');
+    });
+
+    test('a labyrinth action still running: no descent', () => {
+        mount({ cleared: DONE_4X4 });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        activity.running = true;
+        expect(labyrinthClearRate.describeNextStep().kind).not.toBe('descend');
+    });
+
+    test('a supply armed with nothing to pick: no descent', () => {
+        const { panel } = mount({ cleared: DONE_4X4 });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        panel.state.supplyMode = 'shroud';
+        expect(labyrinthClearRate.describeNextStep().kind).not.toBe('descend');
+    });
+
+    test('not in a labyrinth run (isActive false): no descent', () => {
+        mount({ cleared: DONE_4X4 });
+        lab.isActive = false;
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        expect(labyrinthClearRate.describeNextStep().kind).not.toBe('descend');
+    });
+
+    test('pressing opens the game dialog through its own handler and never descends or answers it', async () => {
+        mount({ cleared: DONE_4X4 });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        tileClick.mockImplementation(() => {
+            const dialog = document.createElement('div');
+            dialog.className = 'DialogModal_buttonContainer__x1';
+            document.body.appendChild(dialog);
+        });
+        await labyrinthClearRate.pressNextStep();
+        expect(tileClick).toHaveBeenCalledTimes(1);
+        expect(advance).not.toHaveBeenCalled();
+    });
+
+    test('a second press while the dialog is open does nothing', async () => {
+        mount({ cleared: DONE_4X4 });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        const dialog = document.createElement('div');
+        dialog.className = 'DialogModal_buttonContainer__x1';
+        document.body.appendChild(dialog);
+        expect(labyrinthClearRate.describeNextStep()).toMatchObject({
+            kind: 'descend',
+            action: 'none',
+            label: 'Next ▸ next floor',
+        });
+        await labyrinthClearRate.pressNextStep();
+        expect(tileClick).not.toHaveBeenCalled();
+    });
+
+    test('the tile gone at press time: nothing pressed', async () => {
+        mount({ cleared: DONE_4X4 });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        const pending = labyrinthClearRate.pressNextStep();
+        tileEl.remove();
+        await pending;
+        expect(tileClick).not.toHaveBeenCalled();
+    });
+
+    test('the character switching after the press started: nothing pressed', async () => {
+        mount({ cleared: DONE_4X4 });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        const pending = labyrinthClearRate.pressNextStep();
+        dataManager.getCurrentCharacterId.mockReturnValue('other');
+        await pending;
+        expect(tileClick).not.toHaveBeenCalled();
+    });
+
+    test('after the descent (same panel, new floor): the old plan reads stale and no descent is offered', () => {
+        mount({ cleared: DONE_4X4 });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        expect(labyrinthClearRate.describeNextStep().kind).toBe('descend');
+        // Floor 2 is 5x5, the new exit reads null and the game has removed the tile
+        mount({ floor: 2, exit: null, tile: false });
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next.kind).not.toBe('descend');
+        expect(next.code).toBe('stale');
     });
 });

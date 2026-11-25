@@ -9,8 +9,10 @@ import dataManager from '../../core/data-manager.js';
 import {
     createPathStepper,
     findLabyrinthPanel,
+    findNextFloorTile,
     findRoomCell,
     installPointerShield,
+    isConfirmDialogOpen,
     parseGamePath,
 } from './labyrinth-path-stepper.js';
 import webSocketHook from '../../core/websocket.js';
@@ -214,6 +216,8 @@ const NEXT_STEP_COLORS = {
     shroud: '#c0392b',
     beacon: '#16806a',
     'plan-beacons': '#16806a',
+    // The game's own Next Floor tile is orange
+    descend: '#d9822b',
     none: '#2e8b57',
 };
 /** How long after a labyrinth_updated the step buttons re-read the game panel, by then re-rendered */
@@ -4095,7 +4099,7 @@ class LabyrinthClearRate {
             else el.remove();
         }
         if (!want) return;
-        const color = { shroud: '#ff5252', beacon: '#26d0aa', route: '#57d08a' }[want.kind];
+        const color = { shroud: '#ff5252', beacon: '#26d0aa', route: '#57d08a', descend: '#ff9f43' }[want.kind];
         if (window.getComputedStyle(want.cell).position === 'static') want.cell.style.position = 'relative';
         const light = document.createElement('div');
         light.className = STEP_TARGET_CLASS;
@@ -4341,6 +4345,10 @@ class LabyrinthClearRate {
     async pressNextStep() {
         const stepper = this.getStepper();
         const d = this.describeNextStep();
+        if (d.kind === 'descend') {
+            await stepper.pressDescent(() => this.describeNextStep());
+            return;
+        }
         if (d.kind === 'plan-beacons') {
             this.planExitBeacons();
             return;
@@ -4410,17 +4418,91 @@ class LabyrinthClearRate {
         const exit = this.exitBeaconStep();
         if (exit) return exit;
         const r = stepper.describe('route');
-        if (r.action === 'path') return { ...r, kind: 'route', label: `Next ▸ queue ${at(r)}` };
+        if (r.action === 'path') return this.withDescentHint({ ...r, kind: 'route', label: `Next ▸ queue ${at(r)}` });
         if (r.code === 'shroud-first') {
             const s = stepper.describe('shroud');
-            if (s.action !== 'none') return { ...s, kind: 'shroud', label: `Next ▸ shroud ${at(s)}` };
+            if (s.action !== 'none')
+                return this.withDescentHint({ ...s, kind: 'shroud', label: `Next ▸ shroud ${at(s)}` });
             const b = stepper.describe('beacon');
             if (b.action !== 'none' && Number.isInteger(b.forShroud)) {
-                return { ...b, kind: 'beacon', label: `Next ▸ beacon ${at(b)}` };
+                return this.withDescentHint({ ...b, kind: 'beacon', label: `Next ▸ beacon ${at(b)}` });
             }
             return { ...r, kind: null, action: 'none', label: 'Next ▸ blocked', reason: s.reason };
         }
+        // Nothing further for Next to queue and the exit is cleared: the floor is done, offer the descent. A route
+        // still queued, blocked or full keeps its own label (there is something left to do).
+        if (['done', 'no-plan', 'stale', 'nothing-needed'].includes(r.code)) {
+            const descent = this.descentStep();
+            if (descent) return descent;
+        }
         return { ...r, kind: null, label: String(r.label ?? '').replace(/^Route ▸/, 'Next ▸') };
+    }
+
+    /**
+     * The live labyrinth state when the floor's exit is cleared and the game is showing its Next Floor tile, else
+     * null. The exit is the bottom-right cell; once entered the game blanks its roomType, so it is told by
+     * position and `isCleared`. With the game's own full automation on the tile may never be drawn: then no
+     * descent is offered (Next follows what is on screen).
+     * @returns {{ lab: Object, size: number }|null}
+     */
+    clearedExitView() {
+        const panel = findLabyrinthPanel();
+        const lab = panel?.props?.characterLabyrinth;
+        if (!lab?.roomData || lab.isActive === false) return null;
+        const size = labyrinthGridSize(lab.currentFloor);
+        if (lab.roomData[size - 1]?.[size - 1]?.isCleared !== true) return null;
+        if (!findNextFloorTile()) return null;
+        return { lab, size, panel };
+    }
+
+    /** How many treasure rooms the game says are unvisited, as a sentence; '' when the game did not say */
+    treasureLeftLine(lab) {
+        const n = Number(lab?.remainingTreasureRooms);
+        if (!Number.isInteger(n) || n < 0) return '';
+        if (n === 0) return 'No treasure rooms are left on this floor.';
+        return `${n} treasure room${n === 1 ? ' is' : 's are'} still unvisited and forfeited if you descend.`;
+    }
+
+    /** Add the early-descent note to a step that still has rooms to work, once the exit is cleared */
+    withDescentHint(step) {
+        if (!this.clearedExitView()) return step;
+        return {
+            ...step,
+            reason: `${step.reason} The game's orange Next Floor tile descends early, forfeiting unvisited treasure rooms.`,
+        };
+    }
+
+    /**
+     * The descent step: the exit is cleared, the game shows its Next Floor tile and nothing is running, queued or
+     * armed. Pressing it only opens the game's own confirmation; the player answers it.
+     * @returns {Object|null}
+     */
+    descentStep() {
+        const view = this.clearedExitView();
+        if (!view) return null;
+        const { lab, size, panel } = view;
+        // A supply armed, a labyrinth action running or rooms queued in the game's path is still something to do
+        if (panel.state?.supplyMode || isLabyrinthFightActive()) return null;
+        const queued = parseGamePath(lab.pathData) || [];
+        if (queued.some((r) => !lab.roomData?.[r.y]?.[r.x]?.isCleared)) return null;
+        const base = {
+            kind: 'descend',
+            code: 'descend',
+            floor: lab.currentFloor,
+            x: size - 1,
+            y: size - 1,
+            label: 'Next ▸ next floor',
+        };
+        if (isConfirmDialogOpen()) {
+            return { ...base, action: 'none', reason: "Answer the game's descent dialog first" };
+        }
+        return {
+            ...base,
+            action: 'descend',
+            reason:
+                "Press to open the game's own Next Floor confirmation; you answer it, Toolasha never descends for you. " +
+                this.treasureLeftLine(lab),
+        };
     }
 
     /** Add or remove the Next and Beacon step buttons to match `labyrinthPathStepper`; redraw their labels */
