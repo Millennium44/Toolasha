@@ -1883,6 +1883,119 @@ describe('planning against the supplies actually held', () => {
             labyrinthClearRate._stagedBeaconPlan = null;
         });
 
+        describe('the automatic count is shown in the field as a count that round-trips', () => {
+            const nowCenters = () =>
+                [...document.querySelectorAll('[data-beacon-center="1"]:not([data-beacon-later])')]
+                    .map((el) => [...drawn()].indexOf(el.parentElement))
+                    .sort((x, y) => x - y);
+            const settingNow = () => settings.map.get('labyrinthBeaconCount');
+            /** Run with a fresh count field holding `value` typed by hand (no automatic mark) */
+            const runTyped = (value) => {
+                document.querySelector('.mwi-labyrinth-tile-controls-beacon-count').remove();
+                const input = beaconInput(value);
+                labyrinthClearRate.runBeaconCalculation();
+                return input;
+            };
+
+            afterEach(() => {
+                labyrinthClearRate._beaconAutoShown = null;
+            });
+
+            test.each([
+                ['no plan-for', 0],
+                ['a plan-for of 6', 6],
+            ])('nothing used, %s: the field shows the plan size and stays automatic', (_name, planFor) => {
+                buildGrid(7);
+                const input = beaconInput(0);
+                planForInput(planFor);
+                labyrinthClearRate.runBeaconCalculation();
+
+                const auto = nowCenters();
+                expect(auto.length).toBeGreaterThan(0);
+                expect(input.value).toBe(String(auto.length));
+                expect(input.dataset.autoShown).toBe(String(auto.length));
+                expect(input.style.fontStyle).toBe('italic');
+                expect(settingNow()).toBe(0);
+
+                // Pressing again reads the shown number as automatic, not as a request
+                labyrinthClearRate.runBeaconCalculation();
+                expect(settingNow()).toBe(0);
+                expect(nowCenters()).toEqual(auto);
+
+                // The same number typed by hand draws the same beacons now
+                const typed = runTyped(auto.length);
+                expect(settingNow()).toBe(auto.length);
+                expect(typed.dataset.autoShown).toBeUndefined();
+                expect(nowCenters()).toEqual(auto);
+
+                // One step up is one more beacon now
+                runTyped(auto.length + 1);
+                expect(nowCenters()).toHaveLength(auto.length + 1);
+            });
+
+            test.each([
+                ['no plan-for', 0],
+                ['a plan-for of 6', 6],
+            ])(
+                'one beacon used, %s: the field counts the used one, so one step up is still one more',
+                (_n, planFor) => {
+                    buildGrid(7);
+                    const input = beaconInput(0);
+                    planForInput(planFor);
+                    labyrinthClearRate.runBeaconCalculation();
+                    const first = Number(input.value);
+                    expect(first).toBeGreaterThan(1);
+                    // B1 goes down
+                    reveal(labyrinthClearRate._stagedBeaconPlan.all[0].watch, 7);
+
+                    labyrinthClearRate.runBeaconCalculation();
+                    const auto = nowCenters();
+                    expect(settingNow()).toBe(0);
+                    // Used on this floor plus placed now, never the bare "placed now"
+                    expect(Number(input.value)).toBe(1 + auto.length);
+                    expect(input.title).toContain('1 already used');
+
+                    runTyped(1 + auto.length);
+                    expect(nowCenters()).toEqual(auto);
+
+                    runTyped(2 + auto.length);
+                    expect(nowCenters()).toHaveLength(auto.length + 1);
+                }
+            );
+
+            test('a number typed over the automatic one is a request; the same number is not', () => {
+                buildGrid(7);
+                const input = beaconInput(0);
+                planForInput(0);
+                labyrinthClearRate.runBeaconCalculation();
+                const shown = Number(input.value);
+
+                input.value = String(shown + 2);
+                labyrinthClearRate.runBeaconCalculation();
+                expect(settingNow()).toBe(shown + 2);
+                expect(input.dataset.autoShown).toBeUndefined();
+                expect(input.style.fontStyle).toBe('');
+
+                // ⟲ goes back to automatic, and the next plan fills the field again
+                labyrinthClearRate.resetBeaconCountToAuto();
+                expect(input.value).toBe('0');
+                labyrinthClearRate.runBeaconCalculation();
+                expect(settingNow()).toBe(0);
+                expect(Number(input.value)).toBe(shown);
+            });
+
+            test('a path already open shows 0 and stays automatic', () => {
+                const status = buildGrid(3);
+                for (let i = 0; i < 9; i++) reveal([i], 3);
+                const input = beaconInput(0);
+                planForInput(0);
+                labyrinthClearRate.runBeaconCalculation();
+                expect(status.textContent).toContain('no beacons needed');
+                expect(input.value).toBe('0');
+                expect(settingNow()).toBe(0);
+            });
+        });
+
         test('plan-for equal to the count draws exactly what no plan-for draws', () => {
             const status = buildGrid(7);
             beaconInput(2);

@@ -197,6 +197,9 @@ const CLEAR_CHANCE_LABEL = 'Clear Chance';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
 /** The light on the room the Shroud or Beacon step button acts on next */
 const STEP_TARGET_CLASS = 'mwi-labyrinth-step-target';
+const BEACON_COUNT_TITLE =
+    'Beacons to place on this floor — 0 uses the fewest that cover a path to the exit, and every ' +
+    'new floor starts back there';
 /** Width of both step buttons, so a changing label never moves the controls beside them */
 const STEP_BUTTON_WIDTH_PX = 126;
 /** How often an armed step button re-reads whether the game still has the supply armed */
@@ -3520,15 +3523,29 @@ class LabyrinthClearRate {
         beaconInput.max = '20';
         beaconInput.step = '1';
         beaconInput.value = String(config.getSettingValue('labyrinthBeaconCount', 0));
-        beaconInput.title =
-            'Beacons to place on this floor — 0 uses the fewest that cover a path to the exit, and every ' +
-            'new floor starts back there';
+        beaconInput.title = BEACON_COUNT_TITLE;
         beaconInput.style.cssText = precisionInput.style.cssText;
         beaconInput.addEventListener('change', () => {
+            // Still showing the automatic count: the setting stays automatic (0)
+            if (this.beaconCountIsAuto(beaconInput)) return;
             const n = Math.min(20, Math.max(0, Math.floor(Number(beaconInput.value) || 0)));
             beaconInput.value = String(n);
             config.setSettingValue('labyrinthBeaconCount', n);
+            this.markBeaconCountManual(beaconInput);
         });
+        beaconInput.addEventListener('input', () => {
+            beaconInput.style.fontStyle = this.beaconCountIsAuto(beaconInput) ? 'italic' : '';
+        });
+        // A toolbar rebuilt mid-floor shows the automatic count again, not a bare 0
+        const shown = this._beaconAutoShown;
+        if (
+            shown &&
+            shown.floor === this.currentFloor &&
+            shown.characterId === (dataManager.getCurrentCharacterId() ?? null) &&
+            Number(beaconInput.value) === 0
+        ) {
+            this.showAutoBeaconCount(shown.value, shown.used, beaconInput);
+        }
 
         // One click back to the automatic count, rather than spinning the field
         // down to zero a step at a time
@@ -5470,6 +5487,51 @@ class LabyrinthClearRate {
     }
 
     /**
+     * Whether the count field still shows the automatic count the planner last put there. Judged by value,
+     * not by an event: a number typed over it, or stepped with the spinner, no longer matches and is a request.
+     * @param {HTMLInputElement|null} input
+     * @returns {boolean}
+     */
+    beaconCountIsAuto(input) {
+        const shown = input?.dataset?.autoShown;
+        return shown !== undefined && shown !== '' && String(input.value).trim() === shown;
+    }
+
+    /** The count field holds a number the player set (or a bare 0): drop the automatic marks */
+    markBeaconCountManual(input) {
+        if (!input) return;
+        delete input.dataset.autoShown;
+        input.style.fontStyle = '';
+        input.title = BEACON_COUNT_TITLE;
+    }
+
+    /**
+     * In automatic mode, show in the count field what the plan amounts to as a count for the floor: the
+     * beacons already used here plus the ones to place now. That is the number that draws the same plan when
+     * typed by hand, and one step up from it is one more beacon. The setting itself stays 0 (automatic).
+     * @param {number} total - Used on this floor plus placed now
+     * @param {number} used - Beacons already used on this floor
+     * @param {HTMLInputElement|null} [input] - The field; looked up in the page when omitted
+     */
+    showAutoBeaconCount(total, used, input = document.querySelector(`.${TILE_CONTROLS_CLASS}-beacon-count`)) {
+        const value = Math.max(0, Math.floor(Number(total) || 0));
+        this._beaconAutoShown = {
+            floor: this.currentFloor,
+            characterId: dataManager.getCurrentCharacterId() ?? null,
+            value,
+            used,
+        };
+        if (!input) return;
+        input.value = String(value);
+        input.dataset.autoShown = String(value);
+        input.style.fontStyle = 'italic';
+        input.title =
+            `Automatic: ${value} is the fewest beacons that cover a path to the exit on this floor` +
+            (used > 0 ? ` (${used} already used)` : '') +
+            '. Type a number to set your own; ⟲ goes back to automatic.';
+    }
+
+    /**
      * Compute and highlight beacon placements — the fewest beacons, or the
      * count set for this floor, put where they cover a path to the exit first,
      * a second independent route next, and as many new rooms as what is left
@@ -5493,11 +5555,17 @@ class LabyrinthClearRate {
         }
 
         const countInput = document.querySelector(`.${TILE_CONTROLS_CLASS}-beacon-count`);
-        const requested = Math.min(20, Math.max(0, Math.floor(Number(countInput?.value) || 0)));
+        // The automatic count shown in the field is the planner's answer, not a request
+        const requested = this.beaconCountIsAuto(countInput)
+            ? 0
+            : Math.min(20, Math.max(0, Math.floor(Number(countInput?.value) || 0)));
         // The input keeps what was asked for — clamping the field itself would
         // lose the request the moment a beacon is spent, and it is the setting
         // the user chose, not a reading of the bag
-        if (countInput) countInput.value = String(requested);
+        if (countInput && requested > 0) {
+            countInput.value = String(requested);
+            this.markBeaconCountManual(countInput);
+        }
         config.setSettingValue('labyrinthBeaconCount', requested);
 
         // 0 means "the fewest that open a corridor", which is a question about
@@ -5633,6 +5701,8 @@ class LabyrinthClearRate {
             placedBefore: beaconsUsedOnFloor(revealed, prior).placedBefore,
             all: [],
         };
+        // Automatic: the field shows the floor total that plan amounts to, used beacons included
+        if (requested === 0) this.showAutoBeaconCount(usedBefore + plan.beacons.length, usedBefore);
         if (!plan.beacons.length) {
             const routeNote = plan.routes >= 2 ? ` (${plan.routes} independent routes)` : '';
             this.setTileStatus(
@@ -5757,6 +5827,7 @@ class LabyrinthClearRate {
      */
     drawStagedBeaconPlan({ staged, plan, cells, cols, flat, count, budget, supplies, planFor, optionsKey }) {
         const { beacons, labels, nowCount, prefixes, total, placedBefore } = staged;
+        if (count === 0 && !budget) this.showAutoBeaconCount(placedBefore + nowCount, placedBefore);
         const now = nowCount > 0 ? prefixes[nowCount - 1] : null;
         const all = prefixes[prefixes.length - 1];
 
@@ -5866,7 +5937,11 @@ class LabyrinthClearRate {
         const current = Math.max(0, Math.floor(Number(config.getSettingValue('labyrinthBeaconCount', 0)) || 0));
         config.setSettingValue('labyrinthBeaconCount', 0);
         const countInput = document.querySelector(`.${TILE_CONTROLS_CLASS}-beacon-count`);
-        if (countInput) countInput.value = '0';
+        this._beaconAutoShown = null;
+        if (countInput) {
+            countInput.value = '0';
+            this.markBeaconCountManual(countInput);
+        }
         if (announce) {
             this.setTileStatus(
                 current > 0

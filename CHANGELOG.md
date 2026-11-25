@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The labyrinth Beacons count fills itself in
+
+Left on automatic, the Beacons count field now shows the number of beacons the plan needs to cover a path to the exit (in italics, counting beacons already used on the floor) instead of a bare 0. Type a number or step it up to set your own; ⟲ goes back to automatic.
+
 ### Labyrinth toolbar buttons stay put between presses
 
 The Shroud and Beacon step buttons now keep one width whatever their label says, and the summary text has its own line under the controls instead of sitting beside the gear. A changing label or a long summary no longer moves the buttons, wraps the toolbar or pushes the map down between two presses. A long summary is cut with "…" on a desktop and shown whole on hover.
