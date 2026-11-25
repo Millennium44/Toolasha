@@ -12,7 +12,7 @@ In the Combat Sim and the Lab Sim, the Clear button beside "Showing results reme
 
 ### Combat Sim Upgrade tab no longer shows another player's results
 
-Opening another player, a party or a pasted roster in the Combat Sim now clears the Upgrade results on screen, and Reset to Me clears a stranger's rows and brings your own saved ones back. An analysis of someone else's build is no longer remembered, so it can't replace your saved results or reappear under your name after a reload; a record an earlier version saved that way is no longer shown.
+Opening another player or a party in the Combat Sim now clears the Upgrade results on screen, and Reset to Me, Reset to Party and Fetch bring your own saved ones back. An analysis of someone else's build is no longer remembered, so it can't replace your saved results.
 
 ### Guild shrine prices no longer pass a guess off as the price
 

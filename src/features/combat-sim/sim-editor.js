@@ -214,7 +214,8 @@ export class SimEditor {
      *   another (an external profile, a party load, a pasted party), so the owner can drop results that
      *   were measured for the players that are gone. Not called by a Fetch, an Apply or an edit.
      * @param {Function} [options.onRosterReloaded] - Called when the live character (and party) were loaded back
-     *   (Fetch, Reset to Party, Reset to Me), so the owner can drop results that were measured for a stranger.
+     *   (Reset to Me, Reset to Party, Fetch), so the owner can drop results that were measured for a stranger.
+     *   Not called by a first load or the automatic rebuild when a party member's profile arrives.
      * @param {Function} [options.onResetToParty] - Called with `{zoneHrid, tier}` when the Reset to Party
      *   button is clicked and the party has a combat zone; applies it to the owner's Zone and Tier
      *   selects and returns a short note when it could not ('' otherwise)
@@ -986,8 +987,11 @@ export class SimEditor {
      * @param {Object} [options]
      * @param {boolean} [options.restoreLoadout=true] - Re-apply the remembered Loadout
      *   selection; false for the explicit resets, whose whole point is current gear
+     * @param {boolean} [options.reload=false] - This build puts the live character back in place of whatever was
+     *   loaded (Fetch, Reset to Party): the owner is told through `onRosterReloaded`. A first load, and the
+     *   automatic rebuild when a party member's profile arrives, are not reloads
      */
-    async initEditor({ restoreLoadout = true, onlyIf = null } = {}) {
+    async initEditor({ restoreLoadout = true, onlyIf = null, reload = false } = {}) {
         const editorArea = this._editorEl;
         if (!editorArea) return;
 
@@ -1043,11 +1047,9 @@ export class SimEditor {
             this._externalNote = '';
             this._partyKeyAtLoad = this._partySignature().key;
             this._rosterFromPaste = false;
-            // The first load of a panel is not "the live character loaded back": nothing was shown before it
-            const reloaded = this._editorInitialized;
             this._editorInitialized = true;
             this._scenarioToken++;
-            if (reloaded) this._notifyRosterReloaded();
+            if (reload) this._notifyRosterReloaded();
             // Which scenario this build made, so a caller can tell its own build from a later replacement
             this._builtToken = this._scenarioToken;
 
@@ -2027,9 +2029,11 @@ export class SimEditor {
     async resetToParty({ fromButton = false, withLoadout = fromButton } = {}) {
         this._selectedLoadoutName = '';
         this._loadoutFetchNote = '';
+        // Read before it is cleared below: a reset of an editor that was never loaded is a first load, not a reload
+        const wasLoaded = this._editorInitialized;
         this._editorInitialized = false;
         const builtBefore = this._builtToken;
-        await this.initEditor({ restoreLoadout: false });
+        await this.initEditor({ restoreLoadout: false, reload: wasLoaded });
         // A character switch or a newer scenario landing inside the build leaves the editor uninitialised, and a
         // reset to self or an import that landed mid-build must win: the scenario must still be the one this build made
         if (

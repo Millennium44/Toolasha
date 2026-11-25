@@ -10370,7 +10370,12 @@ class LabSimUI {
         if (!clearBtn) return;
         clearBtn.addEventListener('click', async () => {
             clearBtn.disabled = true;
+            // Who clicked, named before the write: a character switch while it is out rebuilds the panel, and
+            // the arriving one's restored table is not this click's to clear
+            const panel = this.panel;
+            const ownerId = dataManager.getCurrentCharacterId();
             await clearUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
+            if (this.panel !== panel || !this._stillSameCharacter(ownerId)) return;
             if (this._upgradeRunning || this._upgradeRunStarted) return;
             this._restoredUpgradeAt = null;
             this._restoredUpgradeMeta = null;

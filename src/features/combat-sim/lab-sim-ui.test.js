@@ -2301,6 +2301,29 @@ describe('the upgrade table reads like the combat sim’s', () => {
         expect(container.innerHTML).toBe('');
     });
 
+    test('Clear does not touch the panel a character switch built while the write was out', async () => {
+        ui._restoredUpgradeAt = Date.now();
+        ui._restoredUpgradeMeta = { characterName: 'Millennium44' };
+        ui._renderUpgradeResults(analysis(), container);
+        container.querySelector('[data-clear-remembered-upgrade]').click();
+        // The switch lands inside the write: the panel is rebuilt for the arriving character, whose own restored
+        // table must stand
+        ui.destroy();
+        game.characterId = 'alt';
+        try {
+            ui.buildPanel();
+            ui._restoredUpgradeAt = 777;
+            ui._rememberedLabResults = { results: [{}] };
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(ui._restoredUpgradeAt).toBe(777);
+            expect(ui._rememberedLabResults).not.toBeNull();
+        } finally {
+            game.characterId = 'me';
+        }
+    });
+
     test('Clear leaves a run that took the panel while the write was out alone', async () => {
         ui._restoredUpgradeAt = Date.now();
         ui._restoredUpgradeMeta = { characterName: 'Millennium44' };

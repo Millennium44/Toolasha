@@ -1588,3 +1588,129 @@ describe('the Clear button on a remembered Upgrade table', () => {
         expect(mocks.store.get(KEY).cleared).toBe(true);
     });
 });
+
+describe('Upgrade results, pre-PR round', () => {
+    const KEY = 'combatExport:combatSimUpgradeResults_char1';
+    const settle = async () => {
+        for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const rows = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const me = { hrid: 'player1', equipment: {} };
+    const stranger = { hrid: 'player1', equipment: { '/item_locations/body': { itemHrid: '/items/z' } } };
+    const ownRecord = () => ({
+        data: { baseline: BASELINE, results: [row('Owner gear')], ranFor: { hrid: 'player1', name: 'Me' } },
+        savedAt: 5,
+        characterName: 'Me',
+        ownerId: 'char1',
+    });
+    const holdSelf = () => {
+        mocks.editedDTOs = { player1: structuredClone(me) };
+        mocks.editorSelfHrid = 'player1';
+        mocks.playerNames = { player1: 'Me' };
+    };
+    const holdStranger = () => {
+        mocks.editedDTOs = { player1: structuredClone(stranger) };
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = { player1: 'NikuDango' };
+    };
+    const openPanel = async () => {
+        ui.buildPanel();
+        await settle();
+        for (const job of mocks.bgJobs.splice(0)) await job();
+        await settle();
+        selectZone();
+    };
+
+    beforeEach(async () => {
+        mocks.store.clear();
+        mocks.characterId = 'char1';
+        mocks.characterName = 'Me';
+        const { default: config } = await import('../../core/config.js');
+        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+            key === 'combatSim_rememberUpgradeResults' ? true : fallback
+        );
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = null;
+        mocks.characterName = undefined;
+        mocks.onRun = null;
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.store.clear();
+    });
+
+    test('3: an own run that drew nothing keeps the old record from coming back on Reset to Me', async () => {
+        mocks.store.set(KEY, ownRecord());
+        holdSelf();
+        await openPanel();
+        expect(rows().textContent).toContain('Owner gear');
+        // An own run that fails: the table was emptied for it and the latch stays set on purpose
+        mocks.onRun = () => {
+            throw new Error('sim blew up');
+        };
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await ui._onUpgradeAnalyze();
+        await settle();
+        ui._upgradeResultsData = null;
+        expect(rows().textContent).toBe('');
+        mocks.editorOptions.onRosterReloaded();
+        await settle();
+        expect(rows().textContent).toBe('');
+        expect(ui._upgradeResultsData).toBeNull();
+    });
+
+    test('3: a stranger run that drew nothing does not hold the owner record back after Reset', async () => {
+        mocks.store.set(KEY, ownRecord());
+        holdStranger();
+        await openPanel();
+        mocks.onRun = () => {
+            throw new Error('sim blew up');
+        };
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await ui._onUpgradeAnalyze();
+        await settle();
+        ui._upgradeResultsData = null;
+        holdSelf();
+        mocks.editorOptions.onRosterReloaded();
+        await settle();
+        expect(rows().textContent).toContain('Owner gear');
+    });
+
+    test('3: with the owner state on screen, or deliberately empty and never run, a reload is a no-op', async () => {
+        holdSelf();
+        await openPanel();
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        mocks.editorOptions.onRosterReloaded();
+        await settle();
+        expect(rows().textContent).toBe('');
+        expect(errors).not.toHaveBeenCalled();
+    });
+
+    test('4: an own run swapped away says the table comes back from the remembered results', async () => {
+        holdSelf();
+        await openPanel();
+        mocks.onRun = () => {
+            holdStranger();
+            mocks.editorOptions.onScenarioReplaced();
+        };
+        mocks.upgradeResult = { baseline: BASELINE, results: [row('Mid gear')], food: null, context: { gameData: {} } };
+        await ui._onUpgradeAnalyze();
+        await settle();
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain('shown again');
+    });
+
+    test("4: a stranger's run swapped away just says the table is not shown", async () => {
+        holdStranger();
+        await openPanel();
+        mocks.onRun = () => mocks.editorOptions.onScenarioReplaced();
+        mocks.upgradeResult = { baseline: BASELINE, results: [row('Mid gear')], food: null, context: { gameData: {} } };
+        await ui._onUpgradeAnalyze();
+        await settle();
+        const status = ui.panel.querySelector('#mwi-csim-status').textContent;
+        expect(status).toContain('so the table is not shown');
+        expect(status).not.toContain('shown again');
+    });
+});

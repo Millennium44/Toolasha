@@ -11789,6 +11789,7 @@ class CombatSimUI {
         this._upgradeAllChosenFlag = false;
         // The runs it counts were the departing panel's
         this._upgradeRunStarted = false;
+        this._runOwnRoster = null;
         this._restoredUpgradeAt = null;
         this._rememberedResults = null;
         this._restoredUpgradeMeta = null;
@@ -13299,7 +13300,7 @@ class CombatSimUI {
         this._upgradeRunStarted = true;
         // Read with the rest of this run's identity, before any await (see `_onUpgradeAnalyze`)
         const swapGen = this._rosterSwapGen || 0;
-        this._runOwnRoster = null;
+        this._runOwnRoster = this._editor?.getEditedDTOs?.() ? this._editor.getSelfHrid?.() != null : null;
         const release = () => {
             if (latchGen === this._analysisGen) this._upgradeRunning = false;
         };
@@ -13881,7 +13882,9 @@ class CombatSimUI {
         // Which roster swap this run begins under, read with the rest of its identity before any await; the roster
         // kind is learned below, and until then a Reset cannot tell whose run it is
         const swapGen = this._rosterSwapGen || 0;
-        this._runOwnRoster = null;
+        // Known now when the editor holds a roster; on the editor-not-ready path the roster is the live
+        // character's own (it is built from the game), which no reset can turn into a stranger's
+        this._runOwnRoster = this._editor?.getEditedDTOs?.() ? this._editor.getSelfHrid?.() != null : null;
 
         // Get player DTOs (edited or live)
         let playerDTOs;
@@ -14071,10 +14074,15 @@ class CombatSimUI {
                 // The table was emptied when this run began, so what the panel still holds is not on screen either
                 this._clearUpgradeResultsView();
                 if (this._upgradeAborted && completed) this._stampStoppedRun(results, completed, upgradeModes);
+                // An own run is saved when the option is on, and drawn from that save once the owner's roster is loaded
+                const comesBack = ownRoster && config.getSetting('combatSim_rememberUpgradeResults', false);
                 this._setStatus(
                     this._upgradeAborted
                         ? 'Analysis cancelled.'
-                        : 'Analysis finished, but the loaded players changed meanwhile, so the table is not shown.'
+                        : comesBack
+                          ? 'Analysis finished, but the loaded players changed meanwhile. The table is shown again ' +
+                            'from the remembered results when your own roster is loaded.'
+                          : 'Analysis finished, but the loaded players changed meanwhile, so the table is not shown.'
                 );
             } else if (this._upgradeAborted) {
                 if (completed) {
@@ -17357,10 +17365,12 @@ class CombatSimUI {
         }
         // The owner's own rows stay, banner and all
         if (this._upgradeResultsData && this._upgradeResultsData._ownRoster !== false) return;
+        // The latch only stops a read racing a run, and is left set by an own run that drew nothing (Stopped with no
+        // rows, failed): the record it was meant to replace must not come back. It is cleared when what was drawn,
+        // or the last run, was a stranger's. With nothing drawn and no run made (a profile was opened) the owner's
+        // record is read back all the same; the read refuses itself while the latch is set
+        if (this._upgradeResultsData || this._runOwnRoster === false) this._upgradeRunStarted = false;
         if (this._upgradeResultsData) this._clearUpgradeResultsView();
-        // The latch only stops a read racing a run; no run is on, and anything drawn was a stranger's. With nothing
-        // drawn (a profile was opened and no run made) the owner's record is read back all the same
-        this._upgradeRunStarted = false;
         this._restoreUpgradeResults();
     }
 

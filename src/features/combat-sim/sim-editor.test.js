@@ -2128,6 +2128,31 @@ describe('Fetch a party loadout', () => {
         ];
     });
 
+    test('Fetch (the Fetch button, a reply that reloads the party)', async () => {
+        viewLoadout.available = true;
+        viewLoadout.captured = { a: { capturedAt: 1 } };
+        viewLoadout.result = { status: 'done', entry: { characterId: 'b', name: 'Buddy', hasLoadout: true } };
+        game.allPlayers.profileStatus = [
+            {
+                hrid: 'player2',
+                name: 'Partner',
+                found: true,
+                capturedAt: Date.now(),
+                gearless: false,
+                gearSource: 'loadout',
+                loadoutCapturedAt: Date.now(),
+            },
+        ];
+        const calls = [];
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el, onRosterReloaded: () => calls.push('reloaded') });
+        await editor.initEditor();
+        expect(calls).toHaveLength(0);
+        el.querySelector('[data-fetch-loadout]').click();
+        await vi.waitFor(() => expect(el.textContent).toContain("Fetched Buddy's party loadout."));
+        expect(calls).toHaveLength(1);
+    });
+
     test('is not offered after Replace party, whose roster is not the game party, and returns on Reset to Party', async () => {
         viewLoadout.available = true;
         viewLoadout.captured = {};
@@ -4434,7 +4459,7 @@ describe('the owner is told when the whole roster is replaced', () => {
 });
 
 describe('the owner is told when the live character is loaded back', () => {
-    test('Reset to Me and Fetch say so; a hand edit and an external load do not', async () => {
+    test('Reset to Me and Reset to Party say so; a hand edit and an external load do not', async () => {
         const calls = [];
         const editor = new SimEditor({
             editorEl: document.createElement('div'),
@@ -4445,7 +4470,7 @@ describe('the owner is told when the live character is loaded back', () => {
         expect(calls).toHaveLength(0);
         editor.resetToSelf();
         expect(calls).toHaveLength(1);
-        await editor.initEditor();
+        await editor.resetToParty();
         expect(calls).toHaveLength(2);
     });
 
@@ -4464,7 +4489,7 @@ describe('the owner is told when the live character is loaded back', () => {
 });
 
 describe('the first load of a panel is not a reload', () => {
-    test('initEditor on a fresh editor does not say the live character was loaded back', async () => {
+    test('a first load, a profile-arrival rebuild and a first reset do not say the live character was loaded back', async () => {
         const calls = [];
         const editor = new SimEditor({
             editorEl: document.createElement('div'),
@@ -4472,7 +4497,46 @@ describe('the first load of a panel is not a reload', () => {
         });
         await editor.initEditor({ restoreLoadout: false });
         expect(calls).toHaveLength(0);
+        // The automatic rebuild when a party member's profile arrives is a plain initEditor too
         await editor.initEditor({ restoreLoadout: false });
+        expect(calls).toHaveLength(0);
+        // A reset of an editor never loaded is a first load as well
+        const fresh = new SimEditor({
+            editorEl: document.createElement('div'),
+            onRosterReloaded: () => calls.push('fresh'),
+        });
+        await fresh.resetToParty();
+        expect(calls).toHaveLength(0);
+    });
+});
+
+describe('the real reset paths tell the owner the live character is back', () => {
+    const stranger = () => {
+        const calls = [];
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el, onRosterReloaded: () => calls.push('reloaded') });
+        editor.openWithExternalDTO(emptyDTO('player1'), 'Venaam');
+        return { el, editor, calls };
+    };
+
+    test('the Reset to Party button', async () => {
+        game.characterData.partyInfo = { partySlotMap: { 1: { characterID: 'me' }, 2: { characterID: 'them' } } };
+        const { el, calls } = stranger();
+        el.querySelector('[data-reset-players="party"]').click();
+        await vi.waitFor(() => expect(calls).toHaveLength(1));
+    });
+
+    test('the Reset to Me button', () => {
+        const { el, calls } = stranger();
+        el.querySelector('[data-reset-players="self"]').click();
         expect(calls).toHaveLength(1);
+    });
+
+    test('a rebuild that a newer scenario beat does not say so', async () => {
+        const { editor, calls } = stranger();
+        const rebuilding = editor.resetToParty();
+        editor.openWithExternalDTO(emptyDTO('player1'), 'Other');
+        await rebuilding;
+        expect(calls).toHaveLength(0);
     });
 });
