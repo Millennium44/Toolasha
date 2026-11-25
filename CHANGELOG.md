@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Clear resets the status line
+
+After Clear empties the remembered Upgrade table in the Combat Sim or the Lab Sim, the footer goes back to its idle text instead of the old run's progress.
+
 ### Stopping a Combat Sim analysis early keeps your table
 
 Pressing Stop (or a failed run) before any upgrade was measured now puts back the table that was on screen, instead of leaving the Upgrade tab empty. Your saved results are not touched.

@@ -2301,6 +2301,20 @@ describe('the upgrade table reads like the combat sim’s', () => {
         expect(container.innerHTML).toBe('');
     });
 
+    test('Clear puts the footer back to the idle text', async () => {
+        ui._restoredUpgradeAt = Date.now();
+        ui._restoredUpgradeMeta = { characterName: 'Millennium44' };
+        ui._renderUpgradeResults(analysis(), container);
+        ui._setStatus('All-fights analysis complete: 5 upgrades across 1 fights, 6 simulations.');
+        container.querySelector('[data-clear-remembered-upgrade]').click();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(ui.panel.querySelector('#mwi-labsim-status').textContent).toBe(
+            'Select a monster in Configure, then use Single Sim or Upgrade to simulate.'
+        );
+    });
+
     test('Clear does not touch the panel a character switch built while the write was out', async () => {
         ui._restoredUpgradeAt = Date.now();
         ui._restoredUpgradeMeta = { characterName: 'Millennium44' };

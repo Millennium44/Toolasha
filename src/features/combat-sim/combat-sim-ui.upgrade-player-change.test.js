@@ -1564,6 +1564,13 @@ describe('the Clear button on a remembered Upgrade table', () => {
         expect(stored.data).toBeUndefined();
     });
 
+    test('the footer goes back to the idle text, not the old run progress', async () => {
+        ui._setStatus('MillenniumIC3 (3/3): 20 / 20');
+        clearBtn().click();
+        await settle();
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe('Select a player and click Analyze.');
+    });
+
     test('Analyze still works afterwards', async () => {
         clearBtn().click();
         await settle();

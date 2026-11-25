@@ -442,6 +442,8 @@ const TRIGGER_CHOICE_IDS = {
 const BUDGET_CONSTRAINTS_KEY = 'combatSimBudgetConstraints';
 /** Storage key for the last Upgrade-tab results, remembered across refreshes (opt-in) */
 const UPGRADE_RESULTS_KEY = 'combatSimUpgradeResults';
+/** The status line the Upgrade tab shows when nothing is running */
+const UPGRADE_IDLE_STATUS = 'Select a player and click Analyze.';
 
 /**
  * Storage key for the Ability Swaps "Aura only" sub-option.
@@ -7981,7 +7983,7 @@ class CombatSimUI {
             if (upgradeContent) upgradeContent.style.display = 'flex';
             if (tabUpgrade) tabUpgrade.style.cssText = activeStyle;
             this._populateUpgradePlayerSelector();
-            if (idle) this._setStatus('Select a player and click Analyze.');
+            if (idle) this._setStatus(UPGRADE_IDLE_STATUS);
             // The zone, tier or build may have been changed on Configure since a remembered result was drawn
             this._refreshCachedTriggerResult();
             this._refreshAnalysisNote();
@@ -18477,6 +18479,8 @@ class CombatSimUI {
                 await clearUpgradeResults(UPGRADE_RESULTS_KEY);
                 if (this._upgradeRunning || this._upgradeResultsData !== shown) return;
                 this._clearUpgradeResultsView();
+                // The footer still described the run that drew the table; this is the Upgrade tab's idle text
+                this._setStatus(UPGRADE_IDLE_STATUS);
             });
         }
         this._wireUpgradeColumnMenu(container);
