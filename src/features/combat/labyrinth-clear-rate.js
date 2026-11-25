@@ -4374,16 +4374,17 @@ class LabyrinthClearRate {
         if (findLabyrinthPanel()?.state?.supplyMode) return;
         if (this.exitBeaconStep()?.kind === 'beacon') return;
         this._exitStage = null;
-        if (
-            this.pathCalcRunning ||
-            this.tileCalcRunning ||
-            this.autoTileTimer ||
-            this.autoPathTimer ||
-            this._pathQueued
-        ) {
+        // A path already running, waiting or about to start (Auto-path), or run since the stage armed, is the re-run
+        if (this.pathCalcRunning || this.autoPathTimer || this._pathQueued) return;
+        if ((this._pathRunId || 0) !== stage.pathRun) return;
+        // The reveal's own room calculation (Auto-calc) may be running or scheduled: the re-run waits its turn
+        // behind it as a pressed Path does, and `runTileCalculation` starts it once the rooms settle
+        if (this.tileCalcRunning || this.autoTileTimer) {
+            this._pathQueued = true;
+            this._pathQueuedAuto = false;
+            this.setPathButtonRunning(false);
             return;
         }
-        if ((this._pathRunId || 0) !== stage.pathRun) return;
         void this.runPathCalculation();
     }
 

@@ -478,7 +478,6 @@ describe('Next places the exit beacons before it queues rooms', () => {
 
         test.each([
             ['a path run in flight', () => (labyrinthClearRate.pathCalcRunning = true)],
-            ['a room calculation running', () => (labyrinthClearRate.tileCalcRunning = true)],
             ['an Auto-path timer pending', () => (labyrinthClearRate.autoPathTimer = 1)],
             ['a path already waiting', () => (labyrinthClearRate._pathQueued = true)],
             ['a path run started since the stage armed', () => (labyrinthClearRate._pathRunId = 5)],
@@ -488,6 +487,20 @@ describe('Next places the exit beacons before it queues rooms', () => {
             expect(runPath).not.toHaveBeenCalled();
             // The wait toggle of a second Path press is never reached
             expect(labyrinthClearRate._pathQueued).toBe(name === 'a path already waiting');
+        });
+
+        test.each([
+            ['running', () => (labyrinthClearRate.tileCalcRunning = true)],
+            ['scheduled (Auto-calc after the reveal, Auto-path off)', () => (labyrinthClearRate.autoTileTimer = 1)],
+        ])('with a room calculation %s the re-run waits behind it instead of being dropped', (_name, busy) => {
+            busy();
+            afterLastBeacon();
+            // Not started alongside the room calculation, but queued as a pressed Path would be
+            expect(runPath).not.toHaveBeenCalled();
+            expect(labyrinthClearRate._pathQueued).toBe(true);
+            expect(labyrinthClearRate._pathQueuedAuto).toBe(false);
+            expect(labyrinthClearRate._exitStage).toBeNull();
+            labyrinthClearRate._pathQueued = false;
         });
 
         test('a beacon the Beacon button placed (no stage flag) never triggers it', () => {
