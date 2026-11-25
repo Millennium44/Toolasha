@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The labyrinth Next button places the exit beacons first
+
+While the drawn route still crosses rooms you cannot see, Next now places the beacons that light the way to the exit before it queues anything, working the plan out for you if you have not pressed Beacons. Path then re-runs on the revealed rooms, and Next goes on to queue rooms and shrouds.
+
+### The labyrinth Next button queues the way to the exit before chest detours
+
+Next counted steps from the entrance, so a room that only links to a chest could be queued ahead of the way out. It now goes from any cleared room joined to the entrance, queues the rooms toward the exit first, then the chest detours, and the exit last.
+
 ### One Next button carries out the labyrinth route
 
 The Shroud step button beside Path is now a Next button that carries out the whole drawn route, one game action per press, naming the action first:
