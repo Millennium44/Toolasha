@@ -12,7 +12,6 @@ import {
     findNextFloorTile,
     findRoomCell,
     installPointerShield,
-    isConfirmDialogOpen,
     parseGamePath,
 } from './labyrinth-path-stepper.js';
 import webSocketHook from '../../core/websocket.js';
@@ -4011,6 +4010,10 @@ class LabyrinthClearRate {
                 getPlan: (kind) => (kind === 'beacon' ? this.currentBeaconStepPlan() : this._shroudStepPlan || null),
                 getCharacterId: () => dataManager.getCurrentCharacterId() ?? null,
                 setStatus: (text, warn) => this.setTileStatus(text, !!warn),
+                clearStatus: (text) => {
+                    const status = document.querySelector(`.${TILE_CONTROLS_CLASS}-status`);
+                    if (status?.textContent === text) this.setTileStatus('');
+                },
                 onChange: () => this.refreshStepButtons(),
             });
         }
@@ -4480,9 +4483,13 @@ class LabyrinthClearRate {
         if (!view) return step;
         return {
             ...step,
-            reason:
-                `${step.reason} ${view.lab.remainingTreasureRooms > 0 ? this.treasureLeftLine(view.lab) + ' ' : ''}` +
+            reason: [
+                step.reason.replace(/[.!?]?\s*$/, '.'),
+                view.lab.remainingTreasureRooms > 0 ? this.treasureLeftLine(view.lab) : '',
                 "The game's orange Next Floor tile descends early.",
+            ]
+                .filter(Boolean)
+                .join(' '),
         };
     }
 
@@ -4510,20 +4517,13 @@ class LabyrinthClearRate {
         if (this.getStepper().isDescentDialogOpen()) {
             return { ...base, action: 'none', reason: "Answer the game's descent dialog first" };
         }
-        // Some other game dialog: a press here does nothing until it is closed, and the offer returns after
-        if (isConfirmDialogOpen()) {
-            return {
-                ...base,
-                action: 'none',
-                reason: 'Another game dialog is open: close it first, pressing does nothing',
-            };
-        }
         return {
             ...base,
             action: 'descend',
-            reason:
+            reason: (
                 "Press to open the game's own Next Floor confirmation; you answer it, Toolasha never descends for you. " +
-                this.treasureLeftLine(lab),
+                this.treasureLeftLine(lab)
+            ).trim(),
         };
     }
 
@@ -4620,8 +4620,6 @@ class LabyrinthClearRate {
             const step = this.describeNextStep();
             if (step.action === 'room') armed = step.kind;
             paint(nextBtn, step, NEXT_STEP_COLORS[step.kind] || NEXT_STEP_COLORS.none);
-            // The inert "another dialog is open" text must redraw when that dialog closes
-            if (step.kind === 'descend' && step.action === 'none') stepper.watchForeignDialog();
             nextBtn.dataset.stepKind = step.kind || '';
         }
         const beaconBtn = document.querySelector('.mwi-labyrinth-step-beacon');

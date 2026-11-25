@@ -767,7 +767,10 @@ describe('Next offers the descent once the exit is cleared', () => {
         plan(4, [1, 5, 9, 2, 3, 7, 11, 15]);
         const next = labyrinthClearRate.describeNextStep();
         expect(next).toMatchObject({ kind: 'route', action: 'path', label: 'Next ▸ queue 2,2' });
-        expect(next.reason).toContain('orange Next Floor tile descends early');
+        expect(next.reason).toMatch(
+            /\. 3 treasure rooms are still unvisited and forfeited if you descend\. The game's/
+        );
+        expect(next.reason).toMatch(/\.$/);
     });
 
     test('no hover note while the exit is not cleared', () => {
@@ -794,8 +797,10 @@ describe('Next offers the descent once the exit is cleared', () => {
         const next = labyrinthClearRate.describeNextStep();
         expect(next.kind).toBeNull();
         expect(next.label).toBe('Next ▸');
-        expect(next.reason).toContain('Press Path first');
-        expect(next.reason).toContain('3 treasure rooms are still unvisited');
+        expect(next.reason).toBe(
+            'Press Path first to draw a route. 3 treasure rooms are still unvisited and forfeited if you descend. ' +
+                "The game's orange Next Floor tile descends early."
+        );
         expect(next.reason).toContain('orange Next Floor tile descends early');
     });
 
@@ -804,8 +809,7 @@ describe('Next offers the descent once the exit is cleared', () => {
         delete lab.remainingTreasureRooms;
         const next = labyrinthClearRate.describeNextStep();
         expect(next.kind).toBeNull();
-        expect(next.reason).toContain('Press Path first');
-        expect(next.reason).toContain('orange Next Floor tile descends early');
+        expect(next.reason).toBe("Press Path first to draw a route. The game's orange Next Floor tile descends early.");
     });
 
     test('stale plan, exit cleared: descent only with 0 treasure rooms left', () => {
@@ -879,19 +883,22 @@ describe('Next offers the descent once the exit is cleared', () => {
         expect(advance).not.toHaveBeenCalled();
     });
 
-    test('a second press while the dialog is open does nothing', async () => {
+    test('a second press while our dialog is open does nothing', async () => {
         mount({ cleared: DONE_4X4 });
         plan(4, [1, 2, 3, 7, 11, 15]);
-        const dialog = document.createElement('div');
-        dialog.className = 'DialogModal_buttonContainer__x1';
-        document.body.appendChild(dialog);
+        tileClick.mockImplementation(() => {
+            const dialog = document.createElement('div');
+            dialog.className = 'DialogModal_buttonContainer__x1';
+            document.body.appendChild(dialog);
+        });
+        await labyrinthClearRate.pressNextStep();
         expect(labyrinthClearRate.describeNextStep()).toMatchObject({
             kind: 'descend',
             action: 'none',
             label: 'Next ▸ next floor',
         });
         await labyrinthClearRate.pressNextStep();
-        expect(tileClick).not.toHaveBeenCalled();
+        expect(tileClick).toHaveBeenCalledTimes(1);
     });
 
     test('the tile gone at press time: nothing pressed', async () => {
@@ -991,16 +998,6 @@ describe('Next offers the descent once the exit is cleared', () => {
             expect(stepper.hasDialogWatch()).toBe(false);
         });
 
-        test('another game dialog (not ours): inert, a press does nothing, the offer returns when it closes', async () => {
-            const dialog = addDialog();
-            const next = labyrinthClearRate.describeNextStep();
-            expect(next).toMatchObject({ kind: 'descend', action: 'none' });
-            expect(next.reason).toContain('Another game dialog');
-            await labyrinthClearRate.pressNextStep();
-            expect(tileClick).not.toHaveBeenCalled();
-            dialog.remove();
-            expect(labyrinthClearRate.describeNextStep().action).toBe('descend');
-        });
         test('a dialog already open before the press is not taken as ours: nothing new opened', async () => {
             const btn = document.createElement('button');
             btn.className = 'mwi-labyrinth-step-next';
@@ -1016,20 +1013,46 @@ describe('Next offers the descent once the exit is cleared', () => {
             foreign.remove();
         }, 5000);
 
-        test('a foreign dialog closing redraws the inert text, with one observer and none left after', async () => {
-            const btn = document.createElement('button');
-            btn.className = 'mwi-labyrinth-step-next';
-            document.body.appendChild(btn);
-            const foreign = addDialog();
-            labyrinthClearRate.refreshStepButtons();
-            expect(btn.title).toContain('Another game dialog');
-            const stepper = labyrinthClearRate.getStepper();
-            expect(stepper.hasDialogWatch()).toBe(true);
-            expect(stepper.isDescentDialogOpen()).toBe(false);
-            foreign.remove();
+        test('the status line stops asking once our dialog is gone, and only ours ever shows it', async () => {
+            const status = document.createElement('div');
+            status.className = 'mwi-labyrinth-tile-controls-status';
+            document.body.appendChild(status);
+            const { dialog } = await pressOpening();
+            expect(status.textContent).toContain('The game is asking whether to descend');
+            dialog.remove();
             await settle();
-            expect(btn.dataset.stepAction).toBe('descend');
-            expect(stepper.hasDialogWatch()).toBe(false);
+            expect(status.textContent).toBe('');
+        });
+
+        test('a status line that moved on is left alone when our dialog goes', async () => {
+            const status = document.createElement('div');
+            status.className = 'mwi-labyrinth-tile-controls-status';
+            document.body.appendChild(status);
+            const { dialog } = await pressOpening();
+            status.textContent = 'Shrouded room 2,2';
+            dialog.remove();
+            await settle();
+            expect(status.textContent).toBe('Shrouded room 2,2');
+        });
+
+        test('a press that opened no dialog never shows the asking line', async () => {
+            const status = document.createElement('div');
+            status.className = 'mwi-labyrinth-tile-controls-status';
+            document.body.appendChild(status);
+            const foreign = addDialog();
+            tileClick.mockImplementation(() => {});
+            await labyrinthClearRate.getStepper().pressDescent(() => ({ action: 'descend', floor: 1, reason: '' }));
+            expect(status.textContent).toContain('did not open');
+            foreign.remove();
+        }, 5000);
+
+        test('the setting turned off while our dialog is up clears the line', async () => {
+            const status = document.createElement('div');
+            status.className = 'mwi-labyrinth-tile-controls-status';
+            document.body.appendChild(status);
+            await pressOpening();
+            labyrinthClearRate.disposeStepper();
+            expect(status.textContent).toBe('');
         });
     });
 });
