@@ -21,6 +21,11 @@ const BUTTON_CLASS = 'mwi-guild-profile-back-button';
 const POSITIONED_ATTR = 'data-mwi-guild-back-positioned';
 /** How long after the guild link click a guild window still counts as opened from the profile */
 const LINK_WINDOW_MS = 5000;
+/** Where the button sits in the window's header row, and the gap it keeps before the centered guild name */
+const BUTTON_LEFT_PX = 6;
+const TITLE_GAP_PX = 6;
+/** Never narrower than the arrow itself */
+const MIN_BUTTON_WIDTH_PX = 28;
 const FAILED_MESSAGE = 'Could not reopen the profile. Open it from the player list or chat instead.';
 
 /**
@@ -98,6 +103,32 @@ function openProfile(characterName) {
     }, 0);
 }
 
+/**
+ * The widest the button may be so it stops short of the window's centered guild name (icon included). A long
+ * character name in a narrow (phone) window is cut with an ellipsis instead of covering the guild's icon.
+ * @param {number} hostLeft - Left edge of the guild window
+ * @param {number} titleLeft - Left edge of the guild name block in the header
+ * @returns {number|null} Pixels, or null when the header has not been laid out (no limit known)
+ */
+export function backButtonMaxWidth(hostLeft, titleLeft) {
+    if (!Number.isFinite(hostLeft) || !Number.isFinite(titleLeft) || titleLeft <= hostLeft) return null;
+    return Math.max(MIN_BUTTON_WIDTH_PX, Math.floor(titleLeft - hostLeft - BUTTON_LEFT_PX - TITLE_GAP_PX));
+}
+
+/**
+ * Keep the button clear of the guild name. The name arrives after the window mounts and its width differs per
+ * guild, so this runs at mount and again whenever the header's size changes.
+ * @param {HTMLElement} button
+ * @param {Element} host - The guild window
+ */
+function fitButton(button, host) {
+    const title = host.querySelector('[class*="GuildName_guildName__"]');
+    const maxWidth = title
+        ? backButtonMaxWidth(host.getBoundingClientRect().left, title.getBoundingClientRect().left)
+        : null;
+    button.style.maxWidth = maxWidth === null ? '40%' : `${maxWidth}px`;
+}
+
 function createButton(profile) {
     const button = document.createElement('button');
     button.type = 'button';
@@ -105,7 +136,11 @@ function createButton(profile) {
     button.textContent = `◂ ${profile.characterName}`;
     button.title = `Back to ${profile.characterName}'s profile`;
     button.style.cssText =
-        'position: absolute; top: 6px; left: 6px; z-index: 2; margin: 0; padding: 2px 10px; font: inherit; ' +
+        `position: absolute; top: 1px; left: ${BUTTON_LEFT_PX}px; z-index: 2; margin: 0; padding: 0 10px; font: inherit; ` +
+        // 28 px fills the header row (30 px above the tabs) so a finger can hit it; the ellipsis keeps a long name
+        // off the centered guild name
+        'box-sizing: border-box; height: 28px; line-height: 28px; max-width: 40%; overflow: hidden; ' +
+        'text-overflow: ellipsis; white-space: nowrap; ' +
         'font-size: 13px; color: #ffffff; background: rgba(91, 141, 239, 0.15); border: none; ' +
         'box-shadow: inset 0 0 0 1px rgba(91, 141, 239, 0.5); border-radius: 6px; cursor: pointer;';
     button.addEventListener('click', () => {
@@ -117,7 +152,12 @@ function createButton(profile) {
     return button;
 }
 
+/** @type {ResizeObserver|null} Watches the header of the window that holds the button */
+let headerObserver = null;
+
 function removeButtons() {
+    headerObserver?.disconnect();
+    headerObserver = null;
     for (const button of document.querySelectorAll(`.${BUTTON_CLASS}`)) {
         const host = button.parentElement;
         button.remove();
@@ -145,7 +185,17 @@ export function onGuildWindow(windowEl) {
         host.style.position = 'relative';
         host.setAttribute(POSITIONED_ATTR, '');
     }
-    host.insertBefore(createButton(from), host.firstChild);
+    const button = createButton(from);
+    host.insertBefore(button, host.firstChild);
+    fitButton(button, host);
+    if (typeof ResizeObserver === 'function') {
+        headerObserver = new ResizeObserver(() => fitButton(button, host));
+        headerObserver.observe(host);
+        const content = [...host.children].find((child) => hasGameClass(child, 'SharableGuildProfile_modalContent'));
+        const header =
+            content && [...content.children].find((child) => hasGameClass(child, 'SharableGuildProfile_header'));
+        if (header) headerObserver.observe(header);
+    }
 }
 
 /** Capture listener: the profile window's guild link was clicked */

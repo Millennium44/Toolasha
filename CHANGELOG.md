@@ -20,7 +20,7 @@ Guild tokens spent on shrine levels are now valued like the tokens you hold, so 
 
 ### Back button on guild windows opened from a profile
 
-When you click the guild name on a player's profile, the guild window now has a "◂ <name>" button at its top left that reopens that player's profile.
+When you click the guild name on a player's profile, the guild window now has a "◂ <name>" button at its top left that reopens that player's profile. It fills the header row so a finger can hit it, and a long name is shortened so it never covers the guild's name.
 
 ### Labyrinth "Buy supplies" no longer turns up above the description
 

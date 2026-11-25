@@ -32,7 +32,7 @@ vi.mock('../../core/websocket.js', () => ({
 vi.mock('../../utils/toast.js', () => ({ showToast: vi.fn() }));
 
 import { showToast } from '../../utils/toast.js';
-import feature from './guild-profile-back.js';
+import feature, { backButtonMaxWidth } from './guild-profile-back.js';
 
 const BUTTON = '.mwi-guild-profile-back-button';
 
@@ -124,6 +124,27 @@ describe('guild profile back button', () => {
         expect(button.textContent).toContain('Alice');
         // Inside the window itself, not on the full-screen overlay
         expect(button.parentElement.className).toMatch(/^SharableGuildProfile_modal__/);
+    });
+
+    test('is as tall as the header row and cuts a long name instead of wrapping', () => {
+        shareProfile(77, 'Alice');
+        const button = clickGuildLinkAndOpenGuild(openProfileWindow('Alice')).querySelector(BUTTON);
+        expect(button.style.height).toBe('28px');
+        expect(button.style.textOverflow).toBe('ellipsis');
+        expect(button.style.whiteSpace).toBe('nowrap');
+        // No header laid out in this DOM: falls back to a share of the window, never unlimited
+        expect(button.style.maxWidth).toBe('40%');
+    });
+
+    test('stops short of the centered guild name (phone, live 2026-11-25: window at 65, name at 163)', () => {
+        // 163 - 65 = 98 px to the name; 6 px inset and a 6 px gap leave 86. The old button was 98 wide and
+        // covered the guild's icon.
+        expect(backButtonMaxWidth(65, 163)).toBe(86);
+        // A long guild name leaves almost no room: the arrow still shows
+        expect(backButtonMaxWidth(65, 90)).toBe(28);
+        // Header not laid out yet
+        expect(backButtonMaxWidth(0, 0)).toBeNull();
+        expect(backButtonMaxWidth(65, NaN)).toBeNull();
     });
 
     test('does not appear on a guild window opened any other way', () => {
