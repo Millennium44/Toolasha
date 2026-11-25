@@ -1714,3 +1714,137 @@ describe('Upgrade results, pre-PR round', () => {
         expect(status).not.toContain('shown again');
     });
 });
+
+describe('Upgrade results: back on your own roster after a profile', () => {
+    const settle = async () => {
+        for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const rows = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const me = { hrid: 'player1', equipment: {} };
+    const stranger = { hrid: 'player1', equipment: { '/item_locations/body': { itemHrid: '/items/z' } } };
+    const holdSelf = () => {
+        mocks.editedDTOs = { player1: structuredClone(me) };
+        mocks.editorSelfHrid = 'player1';
+        mocks.playerNames = { player1: 'Me' };
+    };
+    const holdStranger = () => {
+        mocks.editedDTOs = { player1: structuredClone(stranger) };
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = { player1: 'NikuDango' };
+    };
+    const openProfile = () => {
+        holdStranger();
+        mocks.editorOptions.onScenarioReplaced();
+    };
+    const result = (label) => ({
+        baseline: BASELINE,
+        results: [row(label)],
+        food: null,
+        context: { gameData: {} },
+    });
+    let remember = true;
+
+    beforeEach(async () => {
+        remember = true;
+        mocks.store.clear();
+        mocks.characterId = 'char1';
+        mocks.characterName = 'Me';
+        const { default: config } = await import('../../core/config.js');
+        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+            key === 'combatSim_rememberUpgradeResults' ? remember : fallback
+        );
+        holdSelf();
+        ui.buildPanel();
+        await settle();
+        for (const job of mocks.bgJobs.splice(0)) await job();
+        await settle();
+        selectZone();
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = null;
+        mocks.characterName = undefined;
+        mocks.onRun = null;
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.store.clear();
+    });
+
+    const ownRun = async (label = 'Own gear') => {
+        mocks.upgradeResult = result(label);
+        await ui._onUpgradeAnalyze();
+        await settle();
+    };
+    const back = async () => {
+        holdSelf();
+        mocks.editorOptions.onRosterReloaded();
+        await settle();
+    };
+
+    test('own run drew a table, a profile was opened, no analysis of it: Reset brings the saved analysis back', async () => {
+        await ownRun();
+        expect(rows().textContent).toContain('Own gear');
+        openProfile();
+        expect(rows().textContent).not.toContain('Own gear');
+        await back();
+        expect(rows().textContent).toContain('Own gear');
+    });
+
+    test('own run, a profile, the stranger analyzed, Reset: the own analysis is back', async () => {
+        await ownRun();
+        openProfile();
+        mocks.upgradeResult = result('Stranger gear');
+        await ui._onUpgradeAnalyze();
+        await settle();
+        await back();
+        expect(rows().textContent).toContain('Own gear');
+        expect(rows().textContent).not.toContain('Stranger gear');
+    });
+
+    test('own run still going when the profile is opened, finishing undrawn and saved: Reset shows it', async () => {
+        mocks.onRun = () => openProfile();
+        await ownRun('Mid gear');
+        expect(rows().textContent).not.toContain('Mid gear');
+        await back();
+        expect(rows().textContent).toContain('Mid gear');
+    });
+
+    test('own run that failed and drew nothing: Reset to Me does not bring an older record back', async () => {
+        mocks.store.set('combatExport:combatSimUpgradeResults_char1', {
+            data: { baseline: BASELINE, results: [row('Older gear')], ranFor: { hrid: 'player1', name: 'Me' } },
+            savedAt: 5,
+            characterName: 'Me',
+            ownerId: 'char1',
+        });
+        mocks.onRun = () => {
+            throw new Error('sim blew up');
+        };
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await ui._onUpgradeAnalyze();
+        await settle();
+        ui._upgradeResultsData = null;
+        await back();
+        expect(rows().textContent).not.toContain('Older gear');
+    });
+
+    test('remembering turned off: nothing comes back', async () => {
+        await ownRun();
+        remember = false;
+        openProfile();
+        await back();
+        expect(rows().textContent).not.toContain('Own gear');
+    });
+
+    test('a character switch forgets why the view was empty', async () => {
+        await ownRun();
+        openProfile();
+        expect(ui._tableDroppedByRoster).toBe(true);
+        ui.destroy();
+        mocks.characterId = 'char2';
+        ui.buildPanel();
+        expect(ui._tableDroppedByRoster).toBe(false);
+        mocks.characterId = 'char1';
+    });
+});

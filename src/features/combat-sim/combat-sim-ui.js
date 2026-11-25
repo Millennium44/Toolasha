@@ -11790,6 +11790,7 @@ class CombatSimUI {
         // The runs it counts were the departing panel's
         this._upgradeRunStarted = false;
         this._runOwnRoster = null;
+        this._tableDroppedByRoster = false;
         this._restoredUpgradeAt = null;
         this._rememberedResults = null;
         this._restoredUpgradeMeta = null;
@@ -13301,6 +13302,7 @@ class CombatSimUI {
         // Read with the rest of this run's identity, before any await (see `_onUpgradeAnalyze`)
         const swapGen = this._rosterSwapGen || 0;
         this._runOwnRoster = this._editor?.getEditedDTOs?.() ? this._editor.getSelfHrid?.() != null : null;
+        this._tableDroppedByRoster = false;
         const release = () => {
             if (latchGen === this._analysisGen) this._upgradeRunning = false;
         };
@@ -13885,6 +13887,7 @@ class CombatSimUI {
         // Known now when the editor holds a roster; on the editor-not-ready path the roster is the live
         // character's own (it is built from the game), which no reset can turn into a stranger's
         this._runOwnRoster = this._editor?.getEditedDTOs?.() ? this._editor.getSelfHrid?.() != null : null;
+        this._tableDroppedByRoster = false;
 
         // Get player DTOs (edited or live)
         let playerDTOs;
@@ -17369,7 +17372,10 @@ class CombatSimUI {
         // rows, failed): the record it was meant to replace must not come back. It is cleared when what was drawn,
         // or the last run, was a stranger's. With nothing drawn and no run made (a profile was opened) the owner's
         // record is read back all the same; the read refuses itself while the latch is set
-        if (this._upgradeResultsData || this._runOwnRoster === false) this._upgradeRunStarted = false;
+        if (this._upgradeResultsData || this._runOwnRoster === false || this._tableDroppedByRoster) {
+            this._upgradeRunStarted = false;
+        }
+        this._tableDroppedByRoster = false;
         if (this._upgradeResultsData) this._clearUpgradeResultsView();
         this._restoreUpgradeResults();
     }
@@ -17406,6 +17412,10 @@ class CombatSimUI {
         this._rosterSwapGen = (this._rosterSwapGen || 0) + 1;
         if (this._upgradeRunning) return;
         if (!this._upgradeResultsData && !this._rememberedResults) return;
+        // Why the view is empty from here: a roster replacement took the table of a run that did draw one, as
+        // against a run that drew nothing. Back on the owner's roster the saved record is shown again only for
+        // the former (see `_dropStrangersUpgradeResults`)
+        this._tableDroppedByRoster = Boolean(this._upgradeRunStarted);
         this._clearUpgradeResultsView();
     }
 
