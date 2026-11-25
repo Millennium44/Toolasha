@@ -90,20 +90,69 @@ export function injectButton(grid) {
     label.insertAdjacentElement('afterend', holder);
 }
 
+/**
+ * True when a button's holder still sits where it was put: in a LabyrinthPanel_supplies block that has its grid,
+ * right after the heading this module hid.
+ * @param {Element} holder
+ * @returns {boolean}
+ */
+function holderInPlace(holder) {
+    const wrapper = holder?.parentElement;
+    if (!wrapper || !hasGameClass(wrapper, 'LabyrinthPanel_supplies')) return false;
+    const label = holder.previousElementSibling;
+    if (!label || !label.hasAttribute(HIDDEN_LABEL_ATTR) || !hasGameClass(label, 'LabyrinthPanel_label')) return false;
+    return [...wrapper.children].some((child) => hasGameClass(child, 'LabyrinthPanel_suppliesGrid'));
+}
+
+/**
+ * Put the page right after the game has redrawn the labyrinth: take out a button the redraw stranded, show any
+ * heading left hidden without its button, then add the button to each supplies block that lacks one.
+ *
+ * The button's holder is not React's. When the game redraws, React keeps the page elements it can reuse, drops
+ * its own children and adds new ones, and the holder stays behind in whatever its parent has become. Seen on the
+ * test server (2026-11-24): in a run the supplies block held the holder, then a new unhidden "Supplies" heading,
+ * then the grid, so both showed. On leaving a run the button turned up above the description text.
+ */
+export function reconcile() {
+    for (const button of document.querySelectorAll(`.${BUTTON_CLASS}`)) {
+        const holder = button.parentElement;
+        if (!holderInPlace(holder)) (holder || button).remove();
+    }
+    for (const label of document.querySelectorAll(`[${HIDDEN_LABEL_ATTR}]`)) {
+        const next = label.nextElementSibling;
+        if (next?.firstElementChild?.classList.contains(BUTTON_CLASS) && holderInPlace(next)) continue;
+        label.style.display = '';
+        label.removeAttribute(HIDDEN_LABEL_ATTR);
+    }
+    document.querySelectorAll('[class*="LabyrinthPanel_suppliesGrid"]').forEach((grid) => injectButton(grid));
+}
+
 let unregister = null;
+let reconcileTimer = null;
+
+/** One reconcile for a whole redraw, however many labyrinth elements it added */
+function scheduleReconcile() {
+    if (reconcileTimer) return;
+    reconcileTimer = setTimeout(() => {
+        reconcileTimer = null;
+        if (unregister) reconcile();
+    }, 0);
+}
 
 export function initialize() {
     if (unregister) return;
     if (!config.getSetting(SETTING_KEY)) return;
-    unregister = domObserver.onClass('LabyrinthMissingSupplies', 'LabyrinthPanel_suppliesGrid', (grid) =>
-        injectButton(grid)
-    );
-    document.querySelectorAll('[class*="LabyrinthPanel_suppliesGrid"]').forEach((grid) => injectButton(grid));
+    // Any labyrinth element the game adds is a redraw: the supplies grid arriving, a heading replaced, the
+    // description panel drawn where a run's panel was
+    unregister = domObserver.onClass('LabyrinthMissingSupplies', 'LabyrinthPanel_', () => scheduleReconcile());
+    reconcile();
 }
 
 export function disable() {
     unregister?.();
     unregister = null;
+    if (reconcileTimer) clearTimeout(reconcileTimer);
+    reconcileTimer = null;
     document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((el) => el.parentElement?.remove());
     document.querySelectorAll(`[${HIDDEN_LABEL_ATTR}]`).forEach((label) => {
         label.style.display = '';
@@ -111,4 +160,4 @@ export function disable() {
     });
 }
 
-export default { name: 'Labyrinth Missing Supplies Button', initialize, disable };
+export default { name: 'Labyrinth Missing Supplies Button', initialize, disable, reconcile };

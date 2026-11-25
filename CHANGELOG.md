@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth "Buy supplies" no longer turns up above the description
+
+When the game redrew the Labyrinth page, leaving a run for instance, the "Buy supplies" button could be left behind above the description text, or sit beside a second "Supplies" heading. It is now removed whenever the game redraws and put back only in place of the Supplies heading.
+
 ### The labyrinth Next button places the exit beacons first
 
 While the drawn route still crosses rooms you cannot see, Next now places the beacons that light the way to the exit before it queues anything, working the plan out for you if you have not pressed Beacons. Path then re-runs on the revealed rooms, and Next goes on to queue rooms and shrouds.

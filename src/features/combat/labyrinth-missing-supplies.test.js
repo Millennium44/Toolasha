@@ -147,8 +147,15 @@ describe('labyrinth missing supplies', () => {
         feature.initialize();
         expect(document.querySelectorAll('button')).toHaveLength(1);
 
+        vi.useFakeTimers();
         const later = makeSuppliesBlock();
+        // A redraw adds many labyrinth elements; they make one pass, on the next task
         game.gridCallback(later.grid);
+        game.gridCallback(later.label);
+        game.gridCallback(later.wrapper);
+        expect(document.querySelectorAll('button')).toHaveLength(1);
+        vi.runAllTimers();
+        vi.useRealTimers();
         expect(document.querySelectorAll('button')).toHaveLength(2);
 
         feature.disable();
@@ -159,6 +166,85 @@ describe('labyrinth missing supplies', () => {
             expect(label.style.display).toBe('');
         }
         expect(document.querySelectorAll('[class*="LabyrinthPanel_label"]')).toHaveLength(2);
+    });
+
+    describe('a redraw by the game strands the button (live, test server 2026-11-24)', () => {
+        const buttons = () => [...document.querySelectorAll('.mwi-labyrinth-missing-supplies-button')];
+
+        test('in a run: React replaces the hidden heading, leaving the button and a second visible heading', () => {
+            const { wrapper, label, grid } = makeSuppliesBlock();
+            injectButton(grid);
+            // What the page held on floor 4: [holder, a new unhidden heading, grid]
+            const fresh = document.createElement('div');
+            fresh.className = label.className;
+            fresh.textContent = 'Supplies';
+            label.remove();
+            grid.before(fresh);
+            expect(buttons()).toHaveLength(1);
+            expect(fresh.style.display).toBe('');
+
+            feature.reconcile();
+            expect(buttons()).toHaveLength(1);
+            // The button sits right after the heading it hides, and no empty holder is left
+            expect(fresh.style.display).toBe('none');
+            expect(fresh.nextElementSibling.firstElementChild).toBe(buttons()[0]);
+            expect(wrapper.children).toHaveLength(3);
+            // A second pass changes nothing
+            feature.reconcile();
+            expect(buttons()).toHaveLength(1);
+            expect(wrapper.children).toHaveLength(3);
+        });
+
+        test('leaving a run: the reused block becomes the description panel, and the button goes', () => {
+            const { wrapper, label, grid } = makeSuppliesBlock();
+            injectButton(grid);
+            // React keeps the element, renames it, drops the grid and adds the description; the hidden heading
+            // and the holder are still inside
+            wrapper.className = 'LabyrinthPanel_instructionsPanel__1a-j6';
+            grid.remove();
+            const text = document.createElement('div');
+            text.className = 'LabyrinthPanel_instructionsText__1zfuT';
+            text.textContent = 'The Labyrinth consists of floors of skilling and combat challenges.';
+            wrapper.appendChild(text);
+            // The entry screen's own supplies block arrives below
+            const entry = makeSuppliesBlock();
+            expect(buttons()).toHaveLength(1);
+            expect(wrapper.contains(buttons()[0])).toBe(true);
+
+            feature.reconcile();
+            expect(buttons()).toHaveLength(1);
+            expect(wrapper.contains(buttons()[0])).toBe(false);
+            expect(entry.wrapper.contains(buttons()[0])).toBe(true);
+            // The heading React kept is shown again and unmarked
+            expect(label.style.display).toBe('');
+            expect(label.hasAttribute('data-mwi-lab-supplies-label-hidden')).toBe(false);
+            expect(wrapper.children).toHaveLength(2);
+        });
+
+        test('a block whose grid has gone keeps no button, and a button in place is left alone', () => {
+            const gone = makeSuppliesBlock();
+            const kept = makeSuppliesBlock();
+            injectButton(gone.grid);
+            injectButton(kept.grid);
+            const keptButton = kept.wrapper.querySelector('button');
+            gone.grid.remove();
+            feature.reconcile();
+            expect(gone.wrapper.querySelector('button')).toBeNull();
+            expect(gone.label.style.display).toBe('');
+            expect(kept.wrapper.querySelector('button')).toBe(keptButton);
+            expect(kept.label.style.display).toBe('none');
+        });
+
+        test('a pass still waiting when the setting goes off never runs', () => {
+            vi.useFakeTimers();
+            feature.initialize();
+            const { grid } = makeSuppliesBlock();
+            game.gridCallback(grid);
+            feature.disable();
+            vi.runAllTimers();
+            vi.useRealTimers();
+            expect(buttons()).toHaveLength(0);
+        });
     });
 
     test('does nothing when the setting is off', () => {
