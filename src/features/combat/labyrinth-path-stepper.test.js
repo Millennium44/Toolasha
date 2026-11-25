@@ -2,7 +2,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
     createPathStepper,
+    describeRouteStep,
     describeStep,
+    parseGamePath,
     findLabyrinthPanel,
     findSupplyButton,
     installPointerShield,
@@ -639,5 +641,265 @@ describe('review fixes', () => {
         const next = makePanel();
         mount(next); // new DOM: the cached panel's cells are gone
         expect(findLabyrinthPanel()).toBe(next);
+    });
+});
+
+/**
+ * The Route step. Shapes from the test server, 2026-11-24: `pathData` is a JSON string of 0-based rooms
+ * (`[{"x":1,"y":0}]`), the cap rides `characterInfo.labyrinthPathCap`, and the game's own call for one
+ * pressed room is `props.updateLabyrinthPathHandler([{ x, y }], false)`, answered by a labyrinth_updated.
+ */
+describe('the Route step', () => {
+    /** A panel with the game's path pieces: pathData string, cap, isRoomPathable, updateLabyrinthPathHandler */
+    function routePanel({ path = [], cap = 30, pathable = () => true, accept = true, ...rest } = {}) {
+        const panel = makePanel(rest);
+        const lab = panel.props.characterLabyrinth;
+        lab.pathData = JSON.stringify(path);
+        panel.props.characterInfo = { labyrinthPathCap: cap };
+        panel.isRoomPathable = vi.fn((x, y, l, p, size) => pathable(x, y, l, p, size));
+        panel.props.updateLabyrinthPathHandler = vi.fn((rooms, unqueue) => {
+            if (!accept || unqueue) return;
+            lab.pathData = JSON.stringify([...JSON.parse(lab.pathData), ...rooms]);
+        });
+        return panel;
+    }
+    // Route 1 → 2 → 5 → 8 in walking order on the 3x3 grid; room 5 needs a shroud
+    const routePlan = (over = {}) => ({
+        floor: 1,
+        characterId: 7,
+        cols: COLS,
+        route: [1, 2, 5, 8],
+        targets: [{ idx: 5 }],
+        ...over,
+    });
+    const step = (panel, plan = routePlan(), characterId = 7) => describeRouteStep({ plan, panel, characterId });
+
+    describe('parseGamePath', () => {
+        it('reads the JSON string the game sends, an array, and nothing', () => {
+            expect(parseGamePath('[{"x":1,"y":0}]')).toEqual([{ x: 1, y: 0 }]);
+            expect(parseGamePath([{ x: 2, y: 1, extra: true }])).toEqual([{ x: 2, y: 1 }]);
+            expect(parseGamePath('[]')).toEqual([]);
+            expect(parseGamePath(null)).toEqual([]);
+            expect(parseGamePath('')).toEqual([]);
+        });
+        it('is null, not empty, when it cannot be read: an unread path must never look like an empty one', () => {
+            expect(parseGamePath('{broken')).toBeNull();
+            expect(parseGamePath('{"x":1}')).toBeNull();
+        });
+    });
+
+    describe('every ending', () => {
+        it('no plan, no map, another character, another floor', () => {
+            expect(step(routePanel(), null).code).toBe('no-plan');
+            expect(describeRouteStep({ plan: routePlan(), panel: null, characterId: 7 }).code).toBe('no-map');
+            expect(step(routePanel(), routePlan(), 8).code).toBe('stale');
+            expect(step(routePanel({ floor: 2 })).code).toBe('stale');
+        });
+
+        it('ready: the first uncleared room not yet in the game path, with the count it will make', () => {
+            const s = step(routePanel());
+            expect(s).toMatchObject({ action: 'path', code: 'ready', idx: 1, x: 1, y: 0, label: 'Route ▸ 2,1' });
+            expect(s.reason).toContain('1 of 30');
+        });
+
+        it('rooms already in the game path are passed over, and the game is asked with the path it has', () => {
+            const panel = routePanel({ path: [{ x: 1, y: 0 }] });
+            const s = step(panel);
+            expect(s).toMatchObject({ action: 'path', idx: 2, label: 'Route ▸ 3,1' });
+            expect(panel.isRoomPathable).toHaveBeenCalledWith(
+                2,
+                0,
+                panel.props.characterLabyrinth,
+                [{ x: 1, y: 0 }],
+                4
+            );
+        });
+
+        it('cleared rooms are passed over, and the entrance is never queued', () => {
+            const panel = routePanel();
+            panel.props.characterLabyrinth.roomData[0][1].isCleared = true;
+            expect(step(panel, routePlan({ route: [0, 1, 2, 5, 8] }))).toMatchObject({ action: 'path', idx: 2 });
+        });
+
+        it('a room that needs a shroud stops the step and is named, never skipped', () => {
+            const panel = routePanel({
+                path: [
+                    { x: 1, y: 0 },
+                    { x: 2, y: 0 },
+                ],
+            });
+            const s = step(panel);
+            expect(s).toMatchObject({ action: 'none', code: 'shroud-first', idx: 5, x: 2, y: 1 });
+            expect(s.reason).toContain('Room 3,2 needs a shroud first');
+            expect(panel.props.updateLabyrinthPathHandler).not.toHaveBeenCalled();
+        });
+
+        it('a shrouded (cleared) room no longer stops it', () => {
+            const panel = routePanel({
+                path: [
+                    { x: 1, y: 0 },
+                    { x: 2, y: 0 },
+                ],
+            });
+            panel.props.characterLabyrinth.roomData[1][2].isCleared = true;
+            expect(step(panel)).toMatchObject({ action: 'path', idx: 8, label: 'Route ▸ 3,3' });
+        });
+
+        it('Max Path full, with the default cap of 3 when the character carries none', () => {
+            const full = routePanel({ path: [{ x: 1, y: 0 }], cap: 1 });
+            expect(step(full)).toMatchObject({ action: 'none', code: 'cap', label: 'Max Path full', idx: 2 });
+            const noCap = routePanel({
+                path: [
+                    { x: 0, y: 1 },
+                    { x: 0, y: 2 },
+                    { x: 1, y: 2 },
+                ],
+            });
+            delete noCap.props.characterInfo;
+            expect(step(noCap).code).toBe('cap');
+        });
+
+        it('the game refusing the room (not adjacent, or its skip settings) stops the step', () => {
+            const s = step(routePanel({ pathable: () => false }));
+            expect(s).toMatchObject({ action: 'none', code: 'not-pathable', idx: 1 });
+            const throwing = routePanel({
+                pathable: () => {
+                    throw new Error('x');
+                },
+            });
+            expect(step(throwing).code).toBe('not-pathable');
+        });
+
+        it('an armed shroud or beacon comes first', () => {
+            const s = step(routePanel({ mode: 'shroud' }));
+            expect(s).toMatchObject({ action: 'none', code: 'armed' });
+            expect(s.reason).toContain('armed shroud');
+        });
+
+        it('every room queued, every room cleared, an empty route, an unreadable path, no handler', () => {
+            const queued = routePanel({
+                path: [
+                    { x: 1, y: 0 },
+                    { x: 2, y: 0 },
+                    { x: 2, y: 1 },
+                    { x: 2, y: 2 },
+                ],
+            });
+            expect(step(queued)).toMatchObject({ action: 'none', code: 'queued', label: 'Route queued' });
+
+            const cleared = routePanel();
+            for (const row of cleared.props.characterLabyrinth.roomData) for (const r of row) r.isCleared = true;
+            expect(step(cleared).code).toBe('done');
+
+            expect(step(routePanel(), routePlan({ route: [] })).code).toBe('nothing-needed');
+
+            const broken = routePanel();
+            broken.props.characterLabyrinth.pathData = '{broken';
+            expect(step(broken).code).toBe('no-path');
+
+            const noHandler = routePanel();
+            delete noHandler.props.updateLabyrinthPathHandler;
+            expect(step(noHandler).code).toBe('no-handler');
+        });
+
+        it('a duplicate room in the route is asked for once', () => {
+            const panel = routePanel({ path: [{ x: 1, y: 0 }] });
+            expect(step(panel, routePlan({ route: [1, 1, 2, 2, 5] }))).toMatchObject({ action: 'path', idx: 2 });
+        });
+    });
+
+    describe('presses', () => {
+        let panel;
+        let plan;
+        let status;
+        let stepper;
+        const make = () => {
+            stepper = createPathStepper({
+                getPlan: () => plan,
+                getCharacterId: () => 7,
+                setStatus: (text, warn) => status.push([text, !!warn]),
+                onChange: () => {},
+            });
+        };
+        beforeEach(() => {
+            status = [];
+            plan = routePlan();
+        });
+        afterEach(() => stepper?.dispose());
+
+        it('one press makes the game’s own call with one room, after the click handler has returned', async () => {
+            panel = routePanel();
+            mount(panel);
+            make();
+            const done = stepper.press('route');
+            expect(panel.props.updateLabyrinthPathHandler).not.toHaveBeenCalled();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(panel.props.updateLabyrinthPathHandler).toHaveBeenCalledTimes(1);
+            expect(panel.props.updateLabyrinthPathHandler).toHaveBeenCalledWith([{ x: 1, y: 0 }], false);
+            await vi.advanceTimersByTimeAsync(100);
+            await done;
+            expect(status.at(-1)).toEqual(['Room 2,1 added to the game’s path'.replace('’', "'"), false]);
+            // The next press moves on to the next room
+            expect(stepper.describe('route')).toMatchObject({ action: 'path', idx: 2 });
+        });
+
+        it('a silent refusal: the game answered, the room is not in the path', async () => {
+            panel = routePanel({ accept: false });
+            mount(panel);
+            make();
+            const done = stepper.press('route');
+            await vi.advanceTimersByTimeAsync(0);
+            stepper.notifyUpdated();
+            await vi.advanceTimersByTimeAsync(1000);
+            await done;
+            expect(status.at(-1)[0]).toContain('The game did not take room 2,1');
+            expect(status.at(-1)[1]).toBe(true);
+            expect(panel.props.updateLabyrinthPathHandler).toHaveBeenCalledTimes(1);
+        });
+
+        it('no answer at all says so, and never calls twice', async () => {
+            panel = routePanel({ accept: false });
+            mount(panel);
+            make();
+            const done = stepper.press('route');
+            await vi.advanceTimersByTimeAsync(5000);
+            await done;
+            expect(status.at(-1)).toEqual(['No answer from the game, press again', true]);
+            expect(panel.props.updateLabyrinthPathHandler).toHaveBeenCalledTimes(1);
+        });
+
+        it('a step that cannot go says why and calls nothing', async () => {
+            panel = routePanel({ pathable: () => false });
+            mount(panel);
+            make();
+            await stepper.press('route');
+            expect(status.at(-1)[0]).toContain('The game will not take room 2,1');
+            expect(panel.props.updateLabyrinthPathHandler).not.toHaveBeenCalled();
+        });
+
+        it('a route replaced between the press and the call does nothing', async () => {
+            panel = routePanel();
+            mount(panel);
+            make();
+            const done = stepper.press('route');
+            plan = routePlan();
+            await vi.advanceTimersByTimeAsync(100);
+            await done;
+            expect(status.at(-1)[0]).toBe('The map changed since the last step, press again');
+            expect(panel.props.updateLabyrinthPathHandler).not.toHaveBeenCalled();
+        });
+
+        it('a second press while the first is waiting is refused', async () => {
+            panel = routePanel({ accept: false });
+            mount(panel);
+            make();
+            const first = stepper.press('route');
+            await vi.advanceTimersByTimeAsync(0);
+            await stepper.press('route');
+            expect(status.at(-1)[0]).toBe('Still working on the last press');
+            await vi.advanceTimersByTimeAsync(5000);
+            await first;
+            expect(panel.props.updateLabyrinthPathHandler).toHaveBeenCalledTimes(1);
+        });
     });
 });

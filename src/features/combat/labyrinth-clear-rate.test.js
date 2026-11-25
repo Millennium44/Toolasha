@@ -8239,7 +8239,13 @@ describe('labyrinth toolbar layout', () => {
             expect(shroud[0].style.width).toBe('126px');
             expect(beacon[0].style.width).toBe(shroud[0].style.width);
             expect(shroud[0].style.boxSizing).toBe('border-box');
-            expect(shroud[0].previousElementSibling).toBe(q('path-button'));
+            // Path, then the Route step, then the Shroud step
+            const route = document.querySelectorAll('.mwi-labyrinth-step-route');
+            expect(route).toHaveLength(1);
+            expect(route[0].previousElementSibling).toBe(q('path-button'));
+            expect(shroud[0].previousElementSibling).toBe(route[0]);
+            expect(route[0].style.width).toBe(shroud[0].style.width);
+            expect(route[0].title).toContain('Press Path first');
             expect(shroud[0].title).toContain('Press Path first');
             expect(beacon[0].previousElementSibling).toBe(q('beacon-button'));
         });
@@ -8250,6 +8256,7 @@ describe('labyrinth toolbar layout', () => {
             labyrinthClearRate._shroudStepPlan = { floor: 1, targets: [] };
             flip(false);
             expect(document.querySelector('.mwi-labyrinth-step-shroud')).toBeNull();
+            expect(document.querySelector('.mwi-labyrinth-step-route')).toBeNull();
             expect(document.querySelector('.mwi-labyrinth-step-beacon')).toBeNull();
             expect(labyrinthClearRate._stepper).toBeNull();
         });
@@ -8315,6 +8322,8 @@ describe('labyrinth toolbar layout', () => {
             labyrinthClearRate.amendShroudStepPlan(20, true);
             labyrinthClearRate.amendShroudStepPlan(40, true);
             expect(labyrinthClearRate._shroudStepPlan.targets.map((x) => x.idx)).toEqual([10, 20, 30, 40]);
+            // The Route step reads the whole route, in the same walking order
+            expect(labyrinthClearRate._shroudStepPlan.route).toEqual([10, 20, 30, 40]);
         });
 
         describe('the room the next step acts on is lit', () => {
@@ -8344,7 +8353,7 @@ describe('labyrinth toolbar layout', () => {
             beforeEach(() => {
                 flip(true);
                 labyrinthClearRate.injectTileControls();
-                steps = { shroud: none, beacon: none };
+                steps = { shroud: none, beacon: none, route: none };
                 fakeStepper();
             });
 
@@ -8358,6 +8367,61 @@ describe('labyrinth toolbar layout', () => {
                 expect(lights()[0].style.pointerEvents).toBe('none');
                 fire(btn('shroud'), 'mouseleave');
                 expect(lights()).toHaveLength(0);
+            });
+
+            test('pointing at Route lights its room, also when the step is held up at that room', () => {
+                const cell = cellAt(4, 2);
+                steps.route = { action: 'path', code: 'ready', idx: 20, x: 4, y: 2, label: 'l', reason: 'r' };
+                fire(btn('route'), 'mouseenter');
+                expect(lights()).toHaveLength(1);
+                expect(lights()[0].parentElement).toBe(cell);
+                expect(lights()[0].dataset.stepKind).toBe('route');
+                // Waiting on a shroud there: still shown, so the player sees which room
+                steps.route = { action: 'none', code: 'shroud-first', idx: 20, x: 4, y: 2, label: 'l', reason: 'r' };
+                labyrinthClearRate.refreshStepButtons();
+                expect(lights()).toHaveLength(1);
+                // Nothing left: no room, no light
+                steps.route = none;
+                labyrinthClearRate.refreshStepButtons();
+                expect(lights()).toHaveLength(0);
+                fire(btn('route'), 'mouseleave');
+            });
+
+            test('a labyrinth_updated redraws the buttons again once the game has re-rendered', () => {
+                vi.useFakeTimers();
+                try {
+                    steps.route = {
+                        action: 'path',
+                        code: 'ready',
+                        idx: 1,
+                        x: 1,
+                        y: 0,
+                        label: 'Route ▸ 2,1',
+                        reason: 'r',
+                    };
+                    labyrinthClearRate.refreshStepButtons();
+                    expect(btn('route').textContent).toBe('Route ▸ 2,1');
+                    // A room queued by hand: the panel's props only change after the message handler returns
+                    labyrinthClearRate.refreshStepButtonsSoon();
+                    steps.route = { ...steps.route, idx: 2, x: 2, label: 'Route ▸ 3,1' };
+                    expect(btn('route').textContent).toBe('Route ▸ 2,1');
+                    vi.advanceTimersByTime(250);
+                    expect(btn('route').textContent).toBe('Route ▸ 3,1');
+                    // Disposing drops a pending redraw
+                    labyrinthClearRate.refreshStepButtonsSoon();
+                    labyrinthClearRate.disposeStepper();
+                    expect(labyrinthClearRate._stepRefreshTimer).toBeNull();
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            test('a Route step is never "armed": with nothing pointed at it lights nothing', () => {
+                cellAt(4, 2);
+                steps.route = { action: 'path', code: 'ready', idx: 20, x: 4, y: 2, label: 'l', reason: 'r' };
+                labyrinthClearRate.refreshStepButtons();
+                expect(lights()).toHaveLength(0);
+                expect(labyrinthClearRate._stepArmedTimer).toBeFalsy();
             });
 
             test('pointing at Beacon lights the beacon room, and keyboard focus counts as pointing', () => {

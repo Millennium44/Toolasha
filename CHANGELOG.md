@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A Route step button queues the labyrinth route one room per press
+
+After Path draws a route, the new Route button beside it adds the next room of that route (clearable rooms and chests, in walking order) to the game's own path, the same as pressing the room on the map. It stops and says why when the next room needs a shroud first, when Max Path is full, or when the game will not take the room yet. Pointing at the button lights the room.
+
 ### The labyrinth Beacons count fills itself in
 
 Left on automatic, the Beacons count field now shows the number of beacons the plan needs to cover a path to the exit (in italics, counting beacons already used on the floor) instead of a bare 0. Type a number or step it up to set your own; ⟲ goes back to automatic.

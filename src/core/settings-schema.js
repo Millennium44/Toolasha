@@ -3307,10 +3307,10 @@ export const settingsGroups = {
             },
             labyrinthPathStepper: {
                 id: 'labyrinthPathStepper',
-                label: 'Labyrinth: Show shroud and beacon step buttons',
+                label: 'Labyrinth: Show route, shroud and beacon step buttons',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a step button beside Path and Beacons that carries out the plan one game action per press (arm the shroud or beacon, then pick the next room). Checks the live map first and stops if the plan no longer matches. Never presses on its own.',
+                help: "Adds step buttons beside Path and Beacons that carry out the plan one game action per press: add the next route room to the game's path, or arm a shroud or beacon and pick its room. Checks the live map first and stops if the plan no longer matches. Never presses on its own.",
                 requires: 'labyrinthClearRate',
             },
             labyrinthGridScaleControl: {

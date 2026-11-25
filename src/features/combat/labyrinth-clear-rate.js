@@ -202,6 +202,8 @@ const BEACON_COUNT_TITLE =
     'new floor starts back there';
 /** Width of both step buttons, so a changing label never moves the controls beside them */
 const STEP_BUTTON_WIDTH_PX = 126;
+/** How long after a labyrinth_updated the step buttons re-read the game panel, by then re-rendered */
+const STEP_REFRESH_AFTER_UPDATE_MS = 200;
 /** How often an armed step button re-reads whether the game still has the supply armed */
 const STEP_ARMED_POLL_MS = 300;
 /** The corner dot a covered room carries so a beacon's reach reads through a path tile's own border */
@@ -1011,6 +1013,9 @@ class LabyrinthClearRate {
             this.pruneClearedPathOverlays();
             this.pruneUsedBeaconOverlays();
             this.refreshStepButtons();
+            // The step buttons read the game panel's own props, which React updates after this handler
+            // returns: a room queued or unqueued by hand on the map shows up there a moment later
+            this.refreshStepButtonsSoon();
             // Not on a floor change: the overlays are about to be wiped with the old floor
             if (previousFloor === this.currentFloor) this.refreshRevealedPathOverlays();
             if (previousFloor !== this.currentFloor) {
@@ -3951,6 +3956,8 @@ class LabyrinthClearRate {
     storeShroudStepPlan(cols, indexes, route = indexes) {
         this._shroudStepPlan = {
             order: new Map([...route].map((idx, n) => [idx, n])),
+            // Every room of the route in walking order: what the Route step queues, one room per press
+            route: [...route],
             floor: this.currentFloor,
             characterId: dataManager.getCurrentCharacterId() ?? null,
             cols,
@@ -3973,7 +3980,8 @@ class LabyrinthClearRate {
     getStepper() {
         if (!this._stepper) {
             this._stepper = createPathStepper({
-                getPlan: (kind) => (kind === 'shroud' ? this._shroudStepPlan || null : this.currentBeaconStepPlan()),
+                // The Route step reads the same plan as the Shroud step: its rooms and which of them need a shroud
+                getPlan: (kind) => (kind === 'beacon' ? this.currentBeaconStepPlan() : this._shroudStepPlan || null),
                 getCharacterId: () => dataManager.getCurrentCharacterId() ?? null,
                 setStatus: (text, warn) => this.setTileStatus(text, !!warn),
                 onChange: () => this.refreshStepButtons(),
@@ -3992,13 +4000,15 @@ class LabyrinthClearRate {
         this._beaconStepPlan = null;
         this.clearStepTarget();
         document
-            .querySelectorAll('.mwi-labyrinth-step-shroud, .mwi-labyrinth-step-beacon')
+            .querySelectorAll('.mwi-labyrinth-step-shroud, .mwi-labyrinth-step-beacon, .mwi-labyrinth-step-route')
             .forEach((el) => el.remove());
     }
 
     /** Take the step-target light off the map and forget which button was pointed at */
     clearStepTarget() {
         this._stepPointed = null;
+        if (this._stepRefreshTimer) clearTimeout(this._stepRefreshTimer);
+        this._stepRefreshTimer = null;
         this.watchArmedStep(null);
         document.querySelectorAll(`.${STEP_TARGET_CLASS}`).forEach((el) => el.remove());
     }
@@ -4040,7 +4050,10 @@ class LabyrinthClearRate {
             for (const kind of kinds) {
                 if (!document.querySelector(`.mwi-labyrinth-step-${kind}`)) continue;
                 const step = this.getStepper().describe(kind);
-                if (step.action === 'none' || !Number.isInteger(step.x)) continue;
+                // A Route step that cannot go yet still names its room (the one needing a shroud, the one the
+                // game will not take), and pointing at the button shows which
+                const held = kind === 'route' && Number.isInteger(step.x);
+                if ((step.action === 'none' && !held) || !Number.isInteger(step.x)) continue;
                 if (!this._stepPointed && step.action !== 'room') continue;
                 const cell = findRoomCell(step.x, step.y);
                 if (cell) want = { kind, cell };
@@ -4052,7 +4065,7 @@ class LabyrinthClearRate {
             else el.remove();
         }
         if (!want) return;
-        const color = want.kind === 'shroud' ? '#ff5252' : '#26d0aa';
+        const color = { shroud: '#ff5252', beacon: '#26d0aa', route: '#57d08a' }[want.kind];
         if (window.getComputedStyle(want.cell).position === 'static') want.cell.style.position = 'relative';
         const light = document.createElement('div');
         light.className = STEP_TARGET_CLASS;
@@ -4107,8 +4120,10 @@ class LabyrinthClearRate {
     /** Add or remove the two step buttons to match `labyrinthPathStepper`; redraw their labels */
     syncStepButtons() {
         const on = config.getSetting('labyrinthPathStepper');
+        // Route goes in first so it sits between Path and the Shroud step (each is put right after its anchor)
         for (const [kind, anchorClass, color] of [
             ['shroud', `${TILE_CONTROLS_CLASS}-path-button`, '#c0392b'],
+            ['route', `${TILE_CONTROLS_CLASS}-path-button`, '#2e8b57'],
             ['beacon', `${TILE_CONTROLS_CLASS}-beacon-button`, '#16806a'],
         ]) {
             const cls = `mwi-labyrinth-step-${kind}`;
@@ -4161,11 +4176,20 @@ class LabyrinthClearRate {
         this.refreshStepButtons();
     }
 
+    /** Redraw the step buttons once the game has re-rendered its panel with the message just handled */
+    refreshStepButtonsSoon() {
+        if (this._stepRefreshTimer) clearTimeout(this._stepRefreshTimer);
+        this._stepRefreshTimer = setTimeout(() => {
+            this._stepRefreshTimer = null;
+            this.refreshStepButtons();
+        }, STEP_REFRESH_AFTER_UPDATE_MS);
+    }
+
     /** Redraw the step buttons' labels from the live panel */
     refreshStepButtons() {
         if (!config.getSetting('labyrinthPathStepper')) return;
         let armed = null;
-        for (const kind of ['shroud', 'beacon']) {
+        for (const kind of ['route', 'shroud', 'beacon']) {
             const btn = document.querySelector(`.mwi-labyrinth-step-${kind}`);
             if (!btn) continue;
             const stepper = this.getStepper();

@@ -14,6 +14,21 @@
  * returned, and the next press waits for the game to re-render. A press whose
  * plan, floor or character no longer matches does nothing and says why.
  *
+ * The Route step adds the next room of the drawn route to the game's own path (the queue the map fills when
+ * a room is pressed), one room per press. A press-and-release on the map ends in
+ * `props.updateLabyrinthPathHandler([{ x, y }], false)`; the step makes that same call after the game's own
+ * checks (`isRoomPathable`, the path cap, not cleared, not already queued), because faking the drag would
+ * unqueue a room that is already in the path and would pick up any room the real mouse crossed meanwhile.
+ * The game answers with a `labyrinth_updated` whose `pathData` is a JSON string, `[{"x":1,"y":0}]`
+ * (0-based, seen on the test server 2026-11-24). A refusal is silent, so the room being in `pathData` is the
+ * only proof.
+ *
+ * The game marks a message as automated (`isAuto`) when it is sent within 100 ms of an untrusted click and
+ * no trusted click (its `exceeded(100)` check in `messageSend`), and such a message is not acted on. A real
+ * press on a step button is a trusted click, and the call goes out on the next task, well inside that
+ * window, so one real press is one game action. A test that presses the button with `element.click()` gets
+ * "No answer from the game": live checks must use a real mouse click.
+ *
  * Expert shrouds always succeed but have a chance to be preserved, so a shroud
  * count that stays put proves nothing: a shroud worked when the room reads
  * `isCleared` in the live props. A beacon worked when the game answered with a
@@ -259,7 +274,124 @@ export function describeStep({ kind, plan, panel, characterId }) {
     };
 }
 
-const STEP_BUTTON_SELECTOR = '.mwi-labyrinth-step-shroud, .mwi-labyrinth-step-beacon';
+/** The game's default when the character carries no path cap */
+const DEFAULT_PATH_CAP = 3;
+
+/**
+ * The game's queued path as a list of rooms. `pathData` arrives as a JSON string; an array is taken as is.
+ * @param {string|Array|null|undefined} pathData
+ * @returns {Array<{x: number, y: number}>|null} The rooms, or null when it cannot be read
+ */
+export function parseGamePath(pathData) {
+    if (pathData == null || pathData === '') return [];
+    let path = pathData;
+    if (typeof path === 'string') {
+        try {
+            path = JSON.parse(path);
+        } catch {
+            return null;
+        }
+    }
+    if (!Array.isArray(path)) return null;
+    return path.filter((r) => r && Number.isInteger(r.x) && Number.isInteger(r.y)).map((r) => ({ x: r.x, y: r.y }));
+}
+
+/**
+ * What the next Route press would do, from the live panel. Pure over its inputs.
+ *
+ * The next room is the first room of the route, in walking order, that is neither cleared nor already in the
+ * game's path. It is never skipped: a room that needs a shroud, or that the game will not take, stops the
+ * step and says so.
+ *
+ * @param {Object} args
+ * @param {Object|null} args.plan - { floor, characterId, cols, route: number[], targets: [{ idx }] }
+ * @param {Object|null} args.panel - The game's panel instance
+ * @param {number|null} args.characterId - Current character
+ * @returns {{ action: 'path'|'none', label: string, reason: string, code: string, idx?: number, x?: number,
+ *   y?: number }}
+ */
+export function describeRouteStep({ plan, panel, characterId }) {
+    const none = (code, label, reason = label, at = {}) => ({ action: 'none', code, label, reason, ...at });
+    if (!plan) return none('no-plan', 'Route ▸', 'Press Path first to draw a route');
+    const lab = panel?.props?.characterLabyrinth;
+    if (!panel || !lab?.roomData) return none('no-map', 'Route ▸', 'Open the labyrinth map to continue the route');
+    if (plan.characterId !== characterId) {
+        return none('stale', 'Route ▸', 'The route is for another character, press Path again');
+    }
+    if (plan.floor !== lab.currentFloor)
+        return none('stale', 'Route ▸', 'The route is for another floor, press Path again');
+    const route = Array.isArray(plan.route) ? plan.route : [];
+    if (!route.length) return none('nothing-needed', 'No route rooms', 'The route has no rooms to enter');
+    const path = parseGamePath(lab.pathData);
+    if (!path) return none('no-path', 'Route ▸ blocked', "The game's path could not be read, press Path again");
+    const cols = plan.cols;
+    const inPath = new Set(path.map((r) => r.y * cols + r.x));
+    const seen = new Set();
+    const open = route.filter((idx) => {
+        if (seen.has(idx) || idx === 0) return false;
+        seen.add(idx);
+        return !lab.roomData?.[Math.floor(idx / cols)]?.[idx % cols]?.isCleared;
+    });
+    if (!open.length) return none('done', 'Route done', 'Every room of the route is cleared');
+    const next = open.find((idx) => !inPath.has(idx));
+    if (next === undefined) {
+        return none('queued', 'Route queued', "Every room of the route is in the game's path");
+    }
+    const x = next % cols;
+    const y = Math.floor(next / cols);
+    const at = { idx: next, x, y };
+    if (panel.state?.supplyMode) {
+        return none('armed', 'Route ▸ blocked', `Use or cancel the armed ${panel.state.supplyMode} first`, at);
+    }
+    if ((plan.targets || []).some((t) => t.idx === next)) {
+        return none(
+            'shroud-first',
+            'Route ▸ shroud',
+            `Room ${where(x, y)} needs a shroud first: use the Shroud step`,
+            at
+        );
+    }
+    const cap = Math.max(1, Math.floor(Number(panel.props?.characterInfo?.labyrinthPathCap) || DEFAULT_PATH_CAP));
+    if (path.length >= cap) {
+        return none(
+            'cap',
+            'Max Path full',
+            `The game's path is full (${path.length} of ${cap}): room ${where(x, y)} is next once a queued room is cleared`,
+            at
+        );
+    }
+    let pathable = true;
+    if (typeof panel.isRoomPathable === 'function') {
+        try {
+            pathable = !!panel.isRoomPathable(x, y, lab, path, labyrinthGridSize(lab.currentFloor));
+        } catch {
+            pathable = false;
+        }
+    }
+    if (!pathable) {
+        return none(
+            'not-pathable',
+            'Route ▸ blocked',
+            `The game will not take room ${where(x, y)} yet: it is not next to a cleared or queued room, or your skip ` +
+                'settings would skip it',
+            at
+        );
+    }
+    if (typeof panel.props?.updateLabyrinthPathHandler !== 'function') {
+        return none('no-handler', 'Route ▸ blocked', `Press room ${where(x, y)} on the map by hand`, at);
+    }
+    return {
+        ...at,
+        action: 'path',
+        code: 'ready',
+        label: `Route ▸ ${where(x, y)}`,
+        reason:
+            `Press to add room ${where(x, y)} to the game's path (${path.length + 1} of ${cap}), the same as pressing it ` +
+            'on the map. A labyrinth run in progress enters queued rooms in order.',
+    };
+}
+
+const STEP_BUTTON_SELECTOR = '.mwi-labyrinth-step-shroud, .mwi-labyrinth-step-beacon, .mwi-labyrinth-step-route';
 const SHIELDED_EVENTS = ['pointerdown', 'pointerup', 'pointercancel', 'mousedown', 'mouseup', 'touchstart', 'touchend'];
 
 /**
@@ -319,7 +451,76 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
     };
 
     const describe = (kind) =>
-        describeStep({ kind, plan: getPlan(kind), panel: findLabyrinthPanel(), characterId: getCharacterId() });
+        kind === 'route'
+            ? describeRouteStep({ plan: getPlan('route'), panel: findLabyrinthPanel(), characterId: getCharacterId() })
+            : describeStep({ kind, plan: getPlan(kind), panel: findLabyrinthPanel(), characterId: getCharacterId() });
+
+    /** One Route press: add the next route room to the game's path, then wait for the game to show it there */
+    const pressRoute = async () => {
+        const step = describe('route');
+        if (step.action === 'none') {
+            setStatus(step.reason, !['done', 'queued', 'nothing-needed'].includes(step.code));
+            onChange();
+            return;
+        }
+        busy = true;
+        const myGeneration = ++generation;
+        const plan = getPlan('route');
+        const characterId = getCharacterId();
+        onChange();
+        try {
+            // After Toolasha's own click handler has returned
+            await sleep(0);
+            if (disposed || myGeneration !== generation) return;
+            const again = describe('route');
+            if (again.action !== 'path' || again.idx !== step.idx || getPlan('route') !== plan) {
+                setStatus('The map changed since the last step, press again', true);
+                return;
+            }
+            const panel = findLabyrinthPanel();
+            let updated = false;
+            updatedWaiters.push(() => {
+                updated = true;
+            });
+            try {
+                panel.props.updateLabyrinthPathHandler([{ x: step.x, y: step.y }], false);
+            } catch {
+                setStatus(`The press did not reach the game, press room ${where(step.x, step.y)} by hand`, true);
+                return;
+            }
+            const queued = () =>
+                (parseGamePath(findLabyrinthPanel()?.props?.characterLabyrinth?.pathData) || []).some(
+                    (r) => r.x === step.x && r.y === step.y
+                );
+            const end = Date.now() + RESULT_WAIT_MS;
+            let seenAt = null;
+            let worked = false;
+            while (!disposed) {
+                if (queued()) {
+                    worked = true;
+                    break;
+                }
+                const now = Date.now();
+                if (updated && seenAt === null) seenAt = now;
+                if (now >= end || (seenAt !== null && now - seenAt >= UPDATE_GRACE_MS)) break;
+                await sleep(POLL_MS);
+            }
+            if (disposed || myGeneration !== generation) return;
+            if (getCharacterId() !== characterId || getPlan('route') !== plan) return;
+            setStatus(
+                worked
+                    ? `Room ${where(step.x, step.y)} added to the game's path`
+                    : updated
+                      ? `The game did not take room ${where(step.x, step.y)}, press again or press it on the map`
+                      : 'No answer from the game, press again',
+                !worked
+            );
+        } finally {
+            updatedWaiters = [];
+            busy = false;
+            if (!disposed) onChange();
+        }
+    };
 
     /** The game answered with a labyrinth_updated; called by the planner's handler. */
     const notifyUpdated = () => {
@@ -332,6 +533,10 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
         if (disposed) return;
         if (busy) {
             setStatus('Still working on the last press');
+            return;
+        }
+        if (kind === 'route') {
+            await pressRoute();
             return;
         }
         const step = describe(kind);
@@ -456,4 +661,12 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
     return { describe, press, notifyUpdated, dispose, isBusy: () => busy };
 }
 
-export default { findLabyrinthPanel, findSupplyButton, findRoomCell, describeStep, createPathStepper };
+export default {
+    findLabyrinthPanel,
+    findSupplyButton,
+    findRoomCell,
+    describeStep,
+    describeRouteStep,
+    parseGamePath,
+    createPathStepper,
+};
