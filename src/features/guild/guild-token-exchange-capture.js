@@ -319,9 +319,11 @@ function announceExchangeChange(detail) {
  *
  * @returns {Promise<Object>} The table, keyed by credit hrid
  */
-export function hydrateCapturedTokenExchanges() {
+export async function hydrateCapturedTokenExchanges() {
+    // One shared read: a second caller awaits the same promise instead of getting the empty table
     if (!hydrating) hydrating = readStoredTokenExchanges();
-    return hydrating.then(() => ({ ...captured }));
+    await hydrating;
+    return { ...captured };
 }
 
 /**
