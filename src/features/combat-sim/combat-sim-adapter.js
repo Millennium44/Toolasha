@@ -1334,7 +1334,9 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         drinks: [],
         abilities: [],
         houseRooms: {},
-        guildShrineLevels: {},
+        // No `guildShrineLevels` here: a profile that carries no `guildBuffLevelMap` says nothing about the
+        // player's shrines, and an empty map would read as "every shrine at Lv0", so the advisor would offer
+        // Lv0 to Lv1 rows for a guild nobody read. Set below, only when the map is there
         guildCombatBuffs: [],
         achievementCombatBuffs,
         achievementBuffsOff,

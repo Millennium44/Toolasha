@@ -68,7 +68,11 @@ import { copiesForPricing, heldCopies, isSelfEnhancedItem, planSelfEnhance } fro
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { createWorkEstimator } from '../../utils/progress-eta.js';
-import { describeGuildTokenGold, explainGuildTokenValue } from '../guild/guild-token-value.js';
+import {
+    describeGuildTokenGold,
+    explainGuildTokenValue,
+    hydrateTokenExchangeCaptures,
+} from '../guild/guild-token-value.js';
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import {
     FALLBACK_MAX_HOUSE_ROOM_LEVEL,
@@ -1614,6 +1618,7 @@ export function generateCandidates(
                 perBuffTargets: options?.guildShrineTargets || null,
                 capToGuildLevel: Boolean(options?.guildShrineCapToGuild),
                 steps: options?.guildShrineSteps,
+                isSelf: options?.isSelf !== false,
             })
         );
     }
@@ -2075,23 +2080,28 @@ export function shrineName(shrineHrid) {
  * jump from 3 to 6 is three separate purchases, and the row is only honest if it
  * carries all three. Credits of the same kind are folded into one line so the
  * cost detail reads as a shopping list rather than a per-level ledger, and
- * tokens are summed alongside them without ever being priced.
+ * tokens are summed alongside them (and priced by `explainGuildShrineCost`).
  *
- * A level with no entry in the cost table contributes nothing rather than
- * aborting the total: the table is the game's own, and a hole in it means an
- * unbuyable level, which `guildBuffMaxLevel` has already cut the target down to.
+ * A level with no entry in the cost table is reported in `missingLevels`, never
+ * counted as free. `guildBuffMaxLevel` cuts a target down to the highest level the
+ * table lists, which only trims the top: a hole *inside* the range is still
+ * reachable, and a level the game gives no price for has an unknown cost, not a
+ * zero one. The row's cost is then unknown, as the house row's is.
  *
  * @param {Object} detail - Entry from guildBuffDetailMap
  * @param {number} fromLevel - Level the character is at now (exclusive)
  * @param {number} toLevel - Level being bought up to (inclusive)
- * @returns {{guildTokenCost: number, creditCosts: Array<{itemHrid: string, count: number}>}}
+ * @returns {{guildTokenCost: number, creditCosts: Array<{itemHrid: string, count: number}>, missingLevels: number[]}}
  */
 function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
     let guildTokenCost = 0;
     const creditTotals = new Map();
+    const missingLevels = [];
 
     for (let level = fromLevel + 1; level <= toLevel; level++) {
-        const levelCost = detail?.levelCosts?.[String(level)] || {};
+        const listed = detail?.levelCosts?.[String(level)];
+        if (!listed) missingLevels.push(level);
+        const levelCost = listed || {};
         guildTokenCost += Math.max(0, Math.floor(Number(levelCost.guildTokenCost) || 0));
         for (const entry of levelCost.creditCosts || []) {
             const count = Number(entry?.count) || 0;
@@ -2103,6 +2113,7 @@ function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
     return {
         guildTokenCost,
         creditCosts: [...creditTotals.entries()].map(([itemHrid, count]) => ({ itemHrid, count })),
+        missingLevels,
     };
 }
 
@@ -2175,11 +2186,15 @@ function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
  * @param {number} [options.steps=1] - The Steps box: above 1 every shrine is offered at +1, +2, ... +steps
  *   (each its own row, cost summed from the current level, capped at the same ceiling as one row) and
  *   `targetLevel` is not read; `perBuffTargets` still wins, one row per shrine
+ * @param {boolean} [options.isSelf=true] - Whether the DTO is the live character. The shrine building
+ *   levels read here (`getGuildBuildingLevel`) are the live character's guild's, so for a party member or an
+ *   imported profile the cap and the `needsShrineLevel` note are not applied and `shrineLevelKnown` is false:
+ *   their guild's buildings are unknown, not the local guild's
  * @returns {Array<Object>} Candidates of type 'guild_shrine'
  */
 export function generateGuildShrineCandidates(
     playerDTO,
-    { combat = true, targetLevel = 0, perBuffTargets = null, capToGuildLevel = false, steps = 1 } = {}
+    { combat = true, targetLevel = 0, perBuffTargets = null, capToGuildLevel = false, steps = 1, isSelf = true } = {}
 ) {
     const detailMap = getGuildBuffDetailMap();
     const levels = playerDTO?.guildShrineLevels;
@@ -2198,14 +2213,15 @@ export function generateGuildShrineCandidates(
      * @returns {number} Building level
      */
     const buildingLevel = (shrineHrid) =>
-        Math.max(0, Math.floor(Number(dataManager.getGuildBuildingLevel?.(shrineHrid)) || 0));
+        isSelf ? Math.max(0, Math.floor(Number(dataManager.getGuildBuildingLevel?.(shrineHrid)) || 0)) : 0;
 
     const inScope = Object.entries(detailMap).filter(([, detail]) => Boolean(detail.isCombat) === combat);
     // See the cap note above: all-zero building levels across *every* shrine mean
     // the data never arrived, so there is nothing to cap against. Scoped to the
     // combat half it would also read that way for a guild that has only built
     // skilling shrines, which is data, not the absence of it
-    const capping = capToGuildLevel && Object.values(detailMap).some((detail) => buildingLevel(detail.shrineHrid) > 0);
+    const capping =
+        isSelf && capToGuildLevel && Object.values(detailMap).some((detail) => buildingLevel(detail.shrineHrid) > 0);
 
     const candidates = [];
     for (const [buffHrid, detail] of inScope) {
@@ -2233,7 +2249,11 @@ export function generateGuildShrineCandidates(
         for (const wanted of wantedLevels) {
             const upgradeLevel = Math.min(ceiling, wanted);
             if (upgradeLevel <= currentLevel) continue;
-            const { guildTokenCost, creditCosts } = sumGuildShrineLevelCosts(detail, currentLevel, upgradeLevel);
+            const { guildTokenCost, creditCosts, missingLevels } = sumGuildShrineLevelCosts(
+                detail,
+                currentLevel,
+                upgradeLevel
+            );
             candidates.push({
                 type: 'guild_shrine',
                 slot: `guild_shrine|${buffHrid}`,
@@ -2247,6 +2267,8 @@ export function generateGuildShrineCandidates(
                 buffTypes: (detail.buffs || []).map((buff) => buff?.typeHrid).filter(Boolean),
                 guildTokenCost,
                 creditCosts,
+                // Levels inside the range the game lists no cost for: the row's cost is unknown, not free
+                missingCostLevels: missingLevels,
                 shrineLevel,
                 shrineLevelKnown: shrineLevel > 0,
                 needsShrineLevel: shrineLevel > 0 && upgradeLevel > shrineLevel ? upgradeLevel : null,
@@ -2729,7 +2751,7 @@ function applyGuildShrineToDTO(dto, candidate) {
 /**
  * Itemised cost of a shrine level: credits and tokens, both at their gold value.
  *
- * Both halves are now priced. Credits are the cheapest tradeable items that
+ * Both halves are priced. Credits are the cheapest tradeable items that
  * convert into them; tokens are those credits again, one exchange further back —
  * the guild shop trades tokens for credits, so a token is worth what the credits
  * it buys are worth (`guild-token-value.js`). The row is therefore ranked on the
@@ -2754,11 +2776,46 @@ function explainGuildShrineCost(candidate) {
     });
 
     const tokens = candidate.guildTokenCost || 0;
-    const tokenValue = explainGuildTokenValue('ask', { context: 'profit' });
+    // `defaultRates`: with no rate from the client or a dialog reading, the game's own per-color table
+    // stands in before the setting's guess, the way the shrine planner reads it
+    const tokenValue = explainGuildTokenValue('ask', { context: 'profit', defaultRates: true });
     const tokenGold = describeGuildTokenGold(tokens, 'ask', { valuation: tokenValue });
+    const missingCostLevels = candidate.missingCostLevels || [];
+    const holes = missingCostLevels.length > 0;
+    const tokensUnpriced = tokens > 0 && tokenGold === null;
     // An unpriced credit already made the total unknown; adding a token value to
-    // null would turn "we do not know" into a confident understatement
-    const net = total === null ? null : total + (tokenGold?.gold || 0);
+    // null would turn "we do not know" into a confident understatement. A level
+    // the game lists no cost for is unknown too, and credits that are all zero
+    // with tokens nothing prices is "no price", never a free level
+    let net;
+    if (holes || total === null) net = null;
+    else if (tokensUnpriced) net = total > 0 ? total : null;
+    else net = total + (tokenGold?.gold || 0);
+
+    // What the net leaves out or guesses at. 'floor': the guild tokens have no rate, so the net is credits
+    // alone and the price is at least that. 'assumed': the tokens are valued at the setting's guess, which
+    // is neither a floor nor a ceiling. A plan total, the Cost cell and every figure built on it say so
+    let partialCost = null;
+    let partialCostKind = null;
+    if (net !== null && tokensUnpriced) {
+        partialCost = 'guild tokens not priced';
+        partialCostKind = 'floor';
+    } else if (net !== null && tokens > 0 && tokenValue.assumed) {
+        partialCost = 'guild tokens valued at an assumed exchange rate';
+        partialCostKind = 'assumed';
+    }
+
+    let rankedNote;
+    if (holes) {
+        rankedNote = `The game lists no cost for level${missingCostLevels.length === 1 ? '' : 's'} ${missingCostLevels.join(', ')}, so this price is unknown.`;
+    } else if (tokensUnpriced) {
+        rankedNote = 'Ranked on the credit half only — no guild shop exchange rate is known for tokens.';
+    } else if (partialCostKind === 'assumed') {
+        rankedNote =
+            'Ranked on credits plus tokens, but the token rate is the guildTokenCreditRate setting, a guess the game did not publish.';
+    } else {
+        rankedNote = 'Ranked on credits plus tokens, the tokens priced through the guild shop exchange.';
+    }
 
     return {
         guild: {
@@ -2770,10 +2827,8 @@ function explainGuildShrineCost(candidate) {
             tokenSource: tokenValue.source,
             tokenAssumed: tokenValue.assumed,
             tokenNote: tokenGold ? formatTokenNote(tokens, tokenGold) : null,
-            rankedNote:
-                tokenGold === null
-                    ? 'Ranked on the credit half only — no guild shop exchange rate is known for tokens.'
-                    : 'Ranked on credits plus tokens, the tokens priced through the guild shop exchange.',
+            missingCostLevels,
+            rankedNote,
             shrineLevel: candidate.shrineLevel,
             shrineLevelKnown: candidate.shrineLevelKnown,
             needsShrineLevel: candidate.needsShrineLevel,
@@ -2787,10 +2842,21 @@ function explainGuildShrineCost(candidate) {
         unpriced,
         creditApplied: false,
         source: 'guild',
-        // The net leaves the token half out when no exchange rate is known. The row stays rankable on
-        // the credits, but a plan total built from it must say it is not the whole price
-        ...(tokens > 0 && tokenGold === null ? { partialCost: 'guild tokens not priced' } : {}),
+        // The row stays rankable on what could be priced, but whatever is shown beside a figure built on
+        // it (a plan total, a Cost cell, a payback) must say it is not the whole, exact price
+        ...(partialCost ? { partialCost, partialCostKind } : {}),
     };
+}
+
+/**
+ * The two fields a result row carries when its shrine price is partial or guessed.
+ * @param {Object} explained - From `explainGuildShrineCost`
+ * @returns {{partialCost?: string, partialCostKind?: string}} Empty for a whole, exact price
+ */
+function shrinePartialCostFields(explained) {
+    return explained.partialCost
+        ? { partialCost: explained.partialCost, partialCostKind: explained.partialCostKind }
+        : {};
 }
 
 /**
@@ -3596,7 +3662,12 @@ export const COST_SOURCES = {
         title: 'No market listing, so the price is what the materials to make it come to.',
     },
     books: { label: 'books', title: 'Ability books at their market price.' },
-    guild: { label: 'guild', title: 'Guild credits at the gold value of the cheapest items that make them.' },
+    guild: {
+        label: 'guild',
+        title:
+            'Guild credits at the gold value of the cheapest items that make them, plus the guild tokens ' +
+            'through the guild shop exchange rate.',
+    },
     ongoing: {
         label: 'per-hr',
         title: 'No purchase price — this is an ongoing per-hour spend, already netted out of Profit/hr.',
@@ -5655,6 +5726,8 @@ export function estimateUpgradeSims(params) {
  *   re-run a chosen set of picks under the same conditions this analysis ran under
  */
 export async function runUpgradeAnalysis(params, onProgress, options = {}) {
+    // Shrine rows value guild tokens off the stored Guild Shop readings, which only load on request
+    await hydrateTokenExchangeCaptures();
     const {
         playerDTOs,
         playerIndex,
@@ -7694,6 +7767,7 @@ function explainLabCandidateCostAtTax(candidate, gameData, isSelf, route = true)
  * @returns {Promise<Object>} { baseline, results: [{candidate, costType, ...}] }
  */
 export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = {}) {
+    await hydrateTokenExchangeCaptures();
     const {
         playerDTOs,
         playerIndex,
@@ -9138,11 +9212,14 @@ function planWithinBudgetOnce(
     return {
         picks,
         totalCost: spent,
-        // Picks whose price leaves a half out (a shrine's guild tokens with no exchange rate), so the
-        // total reads as "at least this" rather than the whole bill
+        // Picks whose price leaves a half out (a shrine's guild tokens with no exchange rate) or guesses at
+        // it (tokens at the setting's rate), so the total reads as "at least this", or "about this",
+        // rather than the whole bill
         partialCostPicks: picks
             .filter((pick) => pick.partialCost || pick.costDetail?.partialCost)
             .map((pick) => pick.candidate?.description),
+        // Each distinct reason once, with whether it makes the total a floor, so the footer names it
+        partialCostNotes: partialCostNotes(picks),
         attemptsSaved,
         skipped,
         budget,
@@ -9150,6 +9227,21 @@ function planWithinBudgetOnce(
         required: [...requiredIds].sort(),
         excluded: [...excludedIds].sort(),
     };
+}
+
+/**
+ * The distinct reasons a plan's total is partial or guessed.
+ * @param {Array<Object>} picks - Plan picks
+ * @returns {Array<{reason: string, kind: string}>} One entry per reason; `kind` is 'floor' or 'assumed'
+ */
+function partialCostNotes(picks) {
+    const notes = new Map();
+    for (const pick of picks) {
+        const reason = pick.partialCost || pick.costDetail?.partialCost;
+        if (!reason || notes.has(reason)) continue;
+        notes.set(reason, pick.partialCostKind || pick.costDetail?.partialCostKind || 'floor');
+    }
+    return [...notes].map(([reason, kind]) => ({ reason, kind }));
 }
 
 /**
@@ -9738,6 +9830,7 @@ export function labAllFightsTrialBudget(sims, hours, budget = ALL_FIGHTS_SIM_BUD
  *   attemptsDelta, avgWinDelta}], budget }
  */
 export async function runLabyrinthAllFightsAnalysis(params, onProgress, options = {}) {
+    await hydrateTokenExchangeCaptures();
     const {
         fights,
         crates,
@@ -10160,9 +10253,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 ),
             // A shrine row carries no breakdown here, but a budget plan still has to know its price leaves
             // the guild tokens out. The one cheap field rather than a full costDetail per row
-            ...(candidate.type === 'guild_shrine'
-                ? { partialCost: explainGuildShrineCost(candidate).partialCost }
-                : {}),
+            ...(candidate.type === 'guild_shrine' ? shrinePartialCostFields(explainGuildShrineCost(candidate)) : {}),
             appliedFights: applied.length,
             runClearChance,
             runClearDelta: runClearChance - baselineRunClear,
@@ -11787,7 +11878,16 @@ export function priceMergedAcquisition(members, gameData, pricing = {}) {
  * @returns {Promise<Object>} { baseline, results }
  */
 export async function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
-    const { editorDTO, roomLevel, crateHrids, skillEquipmentMap = {}, targetSkill = null, isSelf = true } = params;
+    await hydrateTokenExchangeCaptures();
+    const {
+        editorDTO,
+        roomLevel,
+        crateHrids,
+        skillEquipmentMap = {},
+        targetSkill = null,
+        isSelf = true,
+        guildShrineCapToGuild = false,
+    } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
     if (!gameData) throw new Error('No game data available');
@@ -11811,7 +11911,14 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
     const equipCandidates = groupSkillingAcquisitions(
         generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap, targetSkill).map(priceForPlayer)
     );
-    const guildCandidates = generateGuildShrineCandidates(editorDTO, { combat: false }).map((candidate) => {
+    // The cap the combat path sends (the Upgrade tab's checkbox, default on). Its target, Steps and
+    // per-shrine grid are left out: they are the combat dimension's inputs, and the grid names combat
+    // buffs only, so a map built from it would make the generator skip every skilling shrine
+    const guildCandidates = generateGuildShrineCandidates(editorDTO, {
+        combat: false,
+        capToGuildLevel: Boolean(guildShrineCapToGuild),
+        isSelf,
+    }).map((candidate) => {
         const c = saleTaxRate == null ? candidate : { ...candidate, saleTaxRate };
         return { ...c, cost: calculateUpgradeCost(c, gameData, isSelf) };
     });

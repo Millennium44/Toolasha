@@ -118,7 +118,15 @@ import { capProfitRateCached, liquidityMarkerHtml } from '../../utils/liquidity-
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import { scrollTokenRate, priceScrollRow, scrollGoldPerStep } from './scroll-pricing.js';
 import { MIRROR_ITEM_HRID, mirrorsToBuy } from '../../utils/mirror-route.js';
-import { ladderSentence, refineQuoteSentence, sharedRouteText } from './cost-basis-text.js';
+import {
+    budgetPartialCostText,
+    ladderSentence,
+    partialCostFlagHtml,
+    partialCostMarkHtml,
+    partialCostOf,
+    refineQuoteSentence,
+    sharedRouteText,
+} from './cost-basis-text.js';
 import {
     isSkillingGearItem,
     isAuraAbility,
@@ -12337,8 +12345,8 @@ class CombatSimUI {
             '<span style="color:' +
             GAME_COLORS.textDim +
             '; font-size:11px; flex-basis:100%;"><b>Guild Shrine</b> target levels (blank ' +
-            'or ≤ current level evaluates one level up; <b>0 skips the shrine</b>; used instead of the Lv ' +
-            'value while open):</span>' +
+            'evaluates one level up; <b>0 skips the shrine</b>, as does a level at or below the current one; ' +
+            'used instead of the Lv value while open):</span>' +
             shrines
                 .map(
                     (shrine) => `
@@ -15362,8 +15370,9 @@ class CombatSimUI {
             );
         } else if (!candidate.shrineLevelKnown) {
             parts.push(
-                `<div style="color:#888;">No guild shrine levels reached the client, so whether the shrine can
-                already support this level is unknown.</div>`
+                `<div style="color:#888;">This guild's shrine buildings are not known (no guild data reached
+                the client, or this is another player's guild), so whether the shrine can already support this
+                level is unknown.</div>`
             );
         }
 
@@ -15729,6 +15738,9 @@ class CombatSimUI {
         };
 
         const scoreNote = (key) => (scored.has(key) ? ' Counts toward Score.' : '');
+        // A shrine row priced on part of its bill (tokens with no rate) or a guess at it: every figure built on
+        // that price says so. A dash is no figure, so it is left bare
+        const markPartial = (r, html, options) => (html === '—' ? html : partialCostMarkHtml(r, html, options));
 
         const defs = [
             {
@@ -15758,7 +15770,7 @@ class CombatSimUI {
                         : cell.title
                           ? `<span title="${cell.title}">${cell.text}</span>`
                           : cell.text;
-                    return `${body}${costSourceTagHtml(r.costSource, r.costDetail)}`;
+                    return `${partialCostMarkHtml(r, body)}${costSourceTagHtml(r.costSource, r.costDetail)}`;
                 },
             },
             {
@@ -15770,7 +15782,7 @@ class CombatSimUI {
                     'that same rate, so this orders candidates exactly as Cost does — it is the Cost ' +
                     'column in hours, which is why it cannot be scored.',
                 value: (r) => r.economics?.paybackHours ?? Infinity,
-                render: (r, v) => hours(v),
+                render: (r, v) => markPartial(r, hours(v)),
             },
             {
                 key: 'repay',
@@ -15783,7 +15795,7 @@ class CombatSimUI {
                     'bought it for DPS.' +
                     scoreNote('repay'),
                 value: (r) => r.economics?.repayHours ?? Infinity,
-                render: (r, v) => hours(v),
+                render: (r, v) => markPartial(r, hours(v)),
             },
             {
                 key: 'roi',
@@ -15797,7 +15809,7 @@ class CombatSimUI {
                     'ranks candidates identically — scoring both counts one signal twice.' +
                     scoreNote('roi'),
                 value: (r) => r.economics?.roiAnnualPct ?? -Infinity,
-                render: (r, v) => (Number.isFinite(v) ? `${v.toFixed(0)}%` : '—'),
+                render: (r, v) => markPartial(r, Number.isFinite(v) ? `${v.toFixed(0)}%` : '—', { inverse: true }),
             },
             {
                 key: 'deltaDps',
@@ -15815,7 +15827,7 @@ class CombatSimUI {
                 highlight: true,
                 title: 'Cost of one 0.01% DPS improvement. Lower is better.' + scoreNote('dps'),
                 value: (r) => r.goldPer.dps,
-                render: (r, v) => goldPer(v),
+                render: (r, v) => markPartial(r, goldPer(v)),
             },
             {
                 key: 'deltaXp',
@@ -15834,7 +15846,7 @@ class CombatSimUI {
                 highlight: true,
                 title: 'Cost of one 0.01% EXP/hr improvement. Lower is better.' + scoreNote('xp'),
                 value: (r) => r.goldPer.xp,
-                render: (r, v) => goldPer(v),
+                render: (r, v) => markPartial(r, goldPer(v)),
             },
             {
                 key: 'deltaProfit',
@@ -15861,7 +15873,7 @@ class CombatSimUI {
                 highlight: true,
                 title: 'Cost of one 0.01% profit improvement. Lower is better.' + scoreNote('profit'),
                 value: (r) => r.goldPer.profit,
-                render: (r, v) => goldPer(v),
+                render: (r, v) => markPartial(r, goldPer(v)),
             },
             {
                 key: 'deltaEph',
@@ -15879,7 +15891,7 @@ class CombatSimUI {
                 highlight: true,
                 title: 'Cost of one 0.01% encounters-per-hour improvement.' + scoreNote('encounters'),
                 value: (r) => r.goldPer.encounters,
-                render: (r, v) => goldPer(v),
+                render: (r, v) => markPartial(r, goldPer(v)),
             },
             {
                 key: 'deltaDph',
@@ -15898,7 +15910,7 @@ class CombatSimUI {
                     'Cost of one 0.01% reduction in deaths per hour. Blank when deaths did not fall.' +
                     scoreNote('deaths'),
                 value: (r) => r.goldPer.deaths,
-                render: (r, v) => goldPer(v),
+                render: (r, v) => markPartial(r, goldPer(v)),
             },
             {
                 key: 'score',
@@ -15912,7 +15924,7 @@ class CombatSimUI {
                     scoreScaleTitle(depthKey, 'Gold/0.01%') +
                     ' Use ⚙ Columns to choose what counts, the scale, and whether to color it.',
                 value: (r) => r.score ?? 0,
-                render: (r, v) => formatScore(v),
+                render: (r, v) => `${formatScore(v)}${partialCostFlagHtml(r)}`,
             },
         ];
 
@@ -16537,7 +16549,7 @@ class CombatSimUI {
                                         estimate</span>`
                                     : ''
                             }</span>
-                            <span style="white-space:nowrap; color:#aaa;">${money(pick.cost)}
+                            <span style="white-space:nowrap; color:#aaa;">${partialCostMarkHtml(pick, money(pick.cost))}
                                 <span style="color:${budgetGainColor(pick.marginalAttemptsSaved)};">${plan.metric.format(pick.marginalAttemptsSaved)}</span>
                                 ${this._budgetToggleButtons(pick)}
                             </span>
@@ -16561,11 +16573,11 @@ class CombatSimUI {
                         ${plan.picks.length} upgrade${plan.picks.length === 1 ? '' : 's'}${orderPlan.appended ? ' + order' : ''} ·
                         ${money(plan.totalCost)} of ${money(budget)}${
                             // A pick priced on part of its bill (shrine credits with no token rate) makes
-                            // the total a floor, so it says what it leaves out
+                            // the total a floor, and one on a guessed rate makes it approximate: it says which
                             plan.partialCostPicks?.length
                                 ? ` <span data-budget-partial-cost style="color:#ff9800;" title="${plan.partialCostPicks
                                       .join(', ')
-                                      .replace(/"/g, '&quot;')}">+ guild tokens not priced</span>`
+                                      .replace(/"/g, '&quot;')}">${budgetPartialCostText(plan)}</span>`
                                 : ''
                         } ·
                         <span style="color:${budgetGainColor(plan.gainTotal + orderPlan.gain)}; font-weight:600;">${plan.metric.format(plan.gainTotal + orderPlan.gain)}</span>
@@ -18291,6 +18303,7 @@ class CombatSimUI {
                     { key: 'dpsNoisePct', label: 'DPS error ±%' },
                     { key: 'profitNoisePct', label: 'Profit error ±%' },
                     { key: 'measured', label: 'Clears the noise' },
+                    { key: 'costPartial', label: 'Price left out or guessed' },
                     { key: 'costUnpriced', label: 'Unpriced running cost' },
                     { key: 'costUnpricedBaseline', label: 'Unpriced replaced drink' },
                     { key: 'tradeNote', label: 'Cheaper swap' },
@@ -18337,6 +18350,9 @@ class CombatSimUI {
                         profitNoisePct: finite(r.noise?.profit),
                         measured: r.significant === undefined ? '' : r.significant ? 'yes' : 'no',
                         // The items nothing priced: the profit columns of such a row are a ceiling
+                        // A shrine price missing its tokens (a floor) or valuing them at a guess: the cost columns
+                        // above are not the whole, exact price
+                        costPartial: partialCostOf(r) ? `${partialCostOf(r).kind}: ${partialCostOf(r).reason}` : '',
                         costUnpriced: (r.costUnpriced || []).join('; '),
                         costUnpricedBaseline: (r.costUnpricedBaseline || []).join('; '),
                         tradeNote: isCheaperSwap(r) ? cheaperSwapText(r) : '',

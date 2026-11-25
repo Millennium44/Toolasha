@@ -110,6 +110,24 @@ describe('topUpgradeTexts', () => {
         ]);
     });
 
+    test('a shrine row ranked on part of its price, or a guessed token rate, says so in the chat line', () => {
+        const texts = topUpgradeTexts({
+            results: [
+                row('Force Shrine Lv1 → Lv2', 90, { partialCost: 'guild tokens not priced', partialCostKind: 'floor' }),
+                row('Tempo Shrine Lv1 → Lv2', 70, {
+                    costDetail: { partialCost: 'guessed', partialCostKind: 'assumed' },
+                }),
+                row('Ring', 30),
+            ],
+        });
+
+        expect(texts).toEqual([
+            'Top upgrade: Force Shrine Lv1 → Lv2 (score 90, +3.1% DPS, price incomplete)',
+            'Also: Tempo Shrine Lv1 → Lv2 (score 70, +3.1% DPS, price assumed)',
+            'Also: Ring (score 30, +3.1% DPS)',
+        ]);
+    });
+
     test('a cheaper coffee swap, which the Score ranks at 0, is never named as a top upgrade', () => {
         const cheaper = row('Ultra Melee Coffee → Defense Coffee', 0, {
             candidate: { description: 'Ultra Melee Coffee → Defense Coffee', type: 'drink' },

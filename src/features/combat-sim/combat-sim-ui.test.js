@@ -1956,6 +1956,61 @@ describe('the panel', () => {
         expect(sheet.rows[0].costUnpriced).toBe('Wisdom Coffee');
     });
 
+    test('a shrine row priced without its tokens marks every figure built on that price, and a guess reads as one', async () => {
+        const shrine = (name, partial) => ({
+            // The row's own `type` is left out: the table reads the stamp, and a real shrine type would make the
+            // panel re-explain the cost through the unmocked guild token valuation
+            ...row(name, { cost: 5_000_000, profitGain: 100 }),
+            ...partial,
+            economics: { profitGainPerHour: 100, paybackHours: 50, repayHours: 80, roiAnnualPct: 20 },
+        });
+        mocks.upgradeResult = {
+            baseline: BASELINE,
+            results: [
+                shrine('Floor Shrine Lv1 → Lv2', {
+                    costDetail: { partialCost: 'guild tokens not priced', partialCostKind: 'floor' },
+                }),
+                shrine('Guess Shrine Lv1 → Lv2', {
+                    partialCost: 'guild tokens valued at an assumed exchange rate',
+                    partialCostKind: 'assumed',
+                }),
+                shrine('Whole Shrine Lv1 → Lv2', {}),
+            ],
+            food: null,
+        };
+        selectZone();
+        ui._upgradeHiddenColumns = new Set();
+        const exported = [];
+        const original = ui._addCsvExport.bind(ui);
+        vi.spyOn(ui, '_addCsvExport').mockImplementation((container, stem, build) => {
+            exported.push(build);
+            return original(container, stem, build);
+        });
+
+        await ui._onUpgradeAnalyze();
+
+        const results = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        const trs = [...results.querySelectorAll('tr')];
+        const rowOf = (name) => trs.find((tr) => tr.textContent.includes(name) && tr.querySelector('td'));
+        const marks = (name) =>
+            [...rowOf(name).querySelectorAll('[data-cost-partial]')].map((node) => node.textContent.trim());
+
+        // Cost, Time, Repay, (inverted) ROI and the Gold/0.01% columns
+        expect(marks('Floor Shrine')).toEqual(expect.arrayContaining(['≥ 5.0M', '≥ 2.1d', '≥ 3.3d', '≤ 20%']));
+        // The Gold/0.01% columns shown by default carry it too, and the Score a flag
+        expect(marks('Floor Shrine').filter((text) => text === '≥ 5.0M').length).toBeGreaterThanOrEqual(3);
+        expect(marks('Floor Shrine')).toContain('*');
+        expect(marks('Guess Shrine')[0]).toBe('≈ 5.0M');
+        expect(marks('Whole Shrine')).toEqual([]);
+        expect(results.textContent).not.toContain('could not be drawn');
+
+        const sheet = exported[exported.length - 1]();
+        const byUpgrade = Object.fromEntries(sheet.rows.map((r) => [r.upgrade, r.costPartial]));
+        expect(byUpgrade['Floor Shrine Lv1 → Lv2']).toBe('floor: guild tokens not priced');
+        expect(byUpgrade['Guess Shrine Lv1 → Lv2']).toMatch(/^assumed: /);
+        expect(byUpgrade['Whole Shrine Lv1 → Lv2']).toBe('');
+    });
+
     test('drink replacements disclose the one-slot search and ongoing costs in the control', () => {
         const title = ui.panel.querySelector('[data-upgrade-mode="drink"]').closest('label').title;
         expect(title).toContain('each combat coffee and tier');

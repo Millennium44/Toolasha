@@ -5052,7 +5052,7 @@ export const settingsGroups = {
                 type: 'number',
                 default: 1,
                 min: 0,
-                help: 'Guild tokens aren\'t on the market, so they are priced through the Guild Shop exchange: credits per token × the gold value of a credit. This number is used only until a Guild Shop exchange dialog has been read with a Guild Token selected; figures from it say "assumed rate". Set to 0 to leave tokens unpriced.',
+                help: 'A last-resort guess for credits per guild token, used only when the game publishes no exchange rate and no Guild Shop dialog has been read. Figures built on it say "assumed rate", the upgrade advisor marks them, and net worth ignores them. Set to 0 to leave tokens unpriced.',
             },
             guildCreditValue: {
                 id: 'guildCreditValue',

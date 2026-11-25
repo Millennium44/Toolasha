@@ -10,8 +10,9 @@
  * the upgrade advisor and the build score agree with the exchange table and with
  * each other rather than each inventing a rate.
  *
- * Guild *tokens* are deliberately not priced. Nothing converts into them, so any
- * gold figure would be invented; callers show the token count separately.
+ * Guild *tokens* are not priced here: they are bought *with* the guild shop's exchange
+ * and have no conversion of their own. `guild-token-value.js` prices them (credits per
+ * token times the gold per credit this file builds); callers add that to this total.
  */
 
 import dataManager from '../core/data-manager.js';

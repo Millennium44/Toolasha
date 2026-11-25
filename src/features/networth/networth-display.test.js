@@ -399,7 +399,62 @@ describe('token worth breakdown', () => {
             .querySelector('#mwi-guild-shrines-toggle')
             .getAttribute('title');
         expect(title).not.toContain('carry no gold value');
-        expect(title).toContain('tokens spent on shrines are not counted');
+        expect(title).toContain('valued like the guild tokens you hold');
+    });
+
+    test('spent tokens with no rate make the shrine total a floor and are listed as not valued', () => {
+        networthInventoryDisplay.update(
+            networthData({
+                totalCost: 52_500,
+                tokens: 60,
+                known: true,
+                tokensUnpriced: true,
+                breakdown: [
+                    {
+                        hrid: '/guild_buffs/force_combat',
+                        name: 'Force Combat 3',
+                        level: 3,
+                        cost: 52_500,
+                        tokens: 60,
+                        tokenGold: 0,
+                    },
+                ],
+            })
+        );
+
+        const toggle = networthInventoryDisplay.container.querySelector('#mwi-guild-shrines-toggle');
+        expect(toggle.textContent).toContain('at least');
+        expect(toggle.getAttribute('title')).toContain('count as 0 and the total is a floor');
+        expect(networthInventoryDisplay.container.querySelector('#mwi-guild-shrines-breakdown').textContent).toContain(
+            'not valued'
+        );
+    });
+
+    test('spent tokens that were valued sit inside the row figure', () => {
+        networthInventoryDisplay.update(
+            networthData({
+                totalCost: 292_500,
+                tokens: 60,
+                known: true,
+                tokensUnpriced: false,
+                breakdown: [
+                    {
+                        hrid: '/guild_buffs/force_combat',
+                        name: 'Force Combat 3',
+                        level: 3,
+                        cost: 292_500,
+                        tokens: 60,
+                        tokenGold: 240_000,
+                    },
+                ],
+            })
+        );
+
+        const toggle = networthInventoryDisplay.container.querySelector('#mwi-guild-shrines-toggle');
+        expect(toggle.textContent).not.toContain('at least');
+        expect(networthInventoryDisplay.container.querySelector('#mwi-guild-shrines-breakdown').textContent).toContain(
+            'incl.'
+        );
     });
 });
 
