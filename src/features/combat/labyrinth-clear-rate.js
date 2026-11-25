@@ -3808,13 +3808,13 @@ class LabyrinthClearRate {
         settingsPanel.appendChild(beaconDotsButton);
         this.syncBeaconDotsButton(beaconDotsButton);
 
-        // The Shroud ▸ / Beacon ▸ step buttons beside Path and Beacons; the same setting as the Settings page
+        // The Next ▸ / Beacon ▸ step buttons beside Path and Beacons; the same setting as the Settings page
         const stepButtonsButton = document.createElement('button');
         stepButtonsButton.type = 'button';
         stepButtonsButton.className = `${TILE_CONTROLS_CLASS}-step-buttons`;
         stepButtonsButton.style.cssText = autoButton.style.cssText;
         stepButtonsButton.title =
-            'The Shroud ▸ and Beacon ▸ buttons beside Path and Beacons, which carry out the plan one game action ' +
+            'The Next ▸ and Beacon ▸ buttons beside Path and Beacons, which carry out the plan one game action ' +
             'per press. Never presses on its own';
         stepButtonsButton.addEventListener('click', () => {
             config.setSetting('labyrinthPathStepper', !config.getSetting('labyrinthPathStepper'));
@@ -3988,7 +3988,7 @@ class LabyrinthClearRate {
         this.refreshStepButtons();
     }
 
-    /** The stepper behind the Shroud and Beacon step buttons, made on first use */
+    /** The stepper behind the Next and Beacon step buttons, made on first use */
     getStepper() {
         if (!this._stepper) {
             this._stepper = createPathStepper({

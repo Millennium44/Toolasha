@@ -6,13 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### One Next button carries out the labyrinth route
+
+The Shroud step button beside Path is now a Next button that carries out the whole drawn route, one game action per press, naming the action first:
+
+- queue the next room (clearable rooms and chests, in walking order, the exit last) in the game's own path, as pressing it on the map does;
+- arm a shroud and pick its room;
+- place the beacon that reveals a hidden shroud room.
+
+Its color follows the action and pointing at it lights the room. It stops and says why when Max Path is full or the game will not take a room. The Beacon step beside Beacons is unchanged.
+
 ### The labyrinth Beacon step offers a beacon when a shroud room is still hidden
 
-A shroud cannot be used on a room that is not revealed, which left the Route and Shroud steps both stuck at a "Shroud?" room. When the route's next room is one of those, the Beacon step now offers the beacon that reveals it: a beacon from your drawn plan if one covers the room, otherwise the spot near it that reveals the most hidden rooms. The button's hover says which room it is for.
-
-### A Route step button queues the labyrinth route one room per press
-
-After Path draws a route, the new Route button beside it adds the next room of that route (clearable rooms and chests, in walking order) to the game's own path, the same as pressing the room on the map. It stops and says why when the next room needs a shroud first, when Max Path is full, or when the game will not take the room yet. Pointing at the button lights the room.
+A shroud cannot be used on a room that is not revealed, which left the route stuck at a "Shroud?" room. When the route's next room is one of those, the Beacon step now offers the beacon that reveals it: a beacon from your drawn plan if one covers the room, otherwise the spot near it that reveals the most hidden rooms. The button's hover says which room it is for.
 
 ### The labyrinth Beacons count fills itself in
 
