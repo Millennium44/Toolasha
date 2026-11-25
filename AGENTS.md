@@ -217,6 +217,11 @@ Every brief to a sub-agent carries these lines:
   that before it is applied. Twice a confident fix protected against the mild failure and caused the severe one.
 - **Confirm the diagnosis before building**; if the brief's diagnosis is wrong or backwards, stop and
   say so with file:line.
+- **Call a game handler, or read a message field, live before briefing it.** The briefing session calls the
+  game method once in a test tab (`javascript_tool`, no click nearby) and pastes the call and its result into
+  the brief, and logs one real message for any field it names. Reading the minified source is not enough: on
+  2026-11-25 a brief said `handleViewProfile(characterId)` and `profile_shared.characterID`, while the handler
+  takes the name and the raw message is only `{type, profile}`, which cost two live rounds.
 - **Consumer sweep**: list every reader and writer of the state you change, check each, and put the list
   in the report. Most bugs reviewers caught were in a reader, not the changed function.
 - **Report the enumeration, not just the findings**, so nobody pays to re-derive it.
