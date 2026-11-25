@@ -4462,3 +4462,17 @@ describe('the owner is told when the live character is loaded back', () => {
         errors.mockRestore();
     });
 });
+
+describe('the first load of a panel is not a reload', () => {
+    test('initEditor on a fresh editor does not say the live character was loaded back', async () => {
+        const calls = [];
+        const editor = new SimEditor({
+            editorEl: document.createElement('div'),
+            onRosterReloaded: () => calls.push('reloaded'),
+        });
+        await editor.initEditor({ restoreLoadout: false });
+        expect(calls).toHaveLength(0);
+        await editor.initEditor({ restoreLoadout: false });
+        expect(calls).toHaveLength(1);
+    });
+});

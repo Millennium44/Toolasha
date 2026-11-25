@@ -1043,9 +1043,11 @@ export class SimEditor {
             this._externalNote = '';
             this._partyKeyAtLoad = this._partySignature().key;
             this._rosterFromPaste = false;
+            // The first load of a panel is not "the live character loaded back": nothing was shown before it
+            const reloaded = this._editorInitialized;
             this._editorInitialized = true;
             this._scenarioToken++;
-            this._notifyRosterReloaded();
+            if (reloaded) this._notifyRosterReloaded();
             // Which scenario this build made, so a caller can tell its own build from a later replacement
             this._builtToken = this._scenarioToken;
 

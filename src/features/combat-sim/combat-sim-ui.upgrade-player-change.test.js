@@ -1136,6 +1136,9 @@ describe('Upgrade results and the remembered record across rosters', () => {
             selfHrid: null,
         });
         expect(rows().textContent).toContain('Fresh gear');
+        // The editor holds the live character again by the time it says so
+        mocks.editedDTOs = { player1: structuredClone(me) };
+        mocks.editorSelfHrid = 'player1';
         mocks.editorOptions.onRosterReloaded();
         await settle();
         expect(rows().textContent).not.toContain('Fresh gear');
@@ -1176,6 +1179,9 @@ describe('Upgrade results and the remembered record across rosters', () => {
             selfHrid: null,
         });
         ui.destroy();
+        // A reload starts with the live character in the editor
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
         await openPanel();
         expect(rows().textContent).toContain('Owner gear');
         expect(rows().textContent).not.toContain('Fresh gear');
@@ -1231,7 +1237,12 @@ describe('Upgrade results and the remembered record across rosters', () => {
         test('owner roster, swapped to a stranger meanwhile: not drawn, still saved for the owner', async () => {
             mocks.store.set(KEY, ownRecord());
             await openPanel();
-            mocks.onRun = () => mocks.editorOptions.onScenarioReplaced();
+            mocks.onRun = () => {
+                // A profile is opened: the editor now holds a stranger
+                mocks.editedDTOs = { player1: structuredClone(stranger) };
+                mocks.editorSelfHrid = null;
+                mocks.editorOptions.onScenarioReplaced();
+            };
             await analyze({ selfHrid: 'player1', label: 'Mid-run gear' });
             expect(rows().textContent).not.toContain('Mid-run gear');
             expect(ui._upgradeResultsData).toBeNull();
@@ -1285,5 +1296,213 @@ describe('Upgrade results and the remembered record across rosters', () => {
         mocks.editorOptions.onRosterReloaded();
         await settle();
         expect(rows().textContent).not.toContain('Everyone gear');
+    });
+});
+
+/**
+ * Review round: the callbacks the real paths fire. Reset to Me and Fetch fire `onRosterReloaded`, never
+ * `onScenarioReplaced`; a profile or party load fires the latter.
+ */
+describe('Upgrade results, review round', () => {
+    const KEY = 'combatExport:combatSimUpgradeResults_char1';
+    const settle = async () => {
+        for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const rows = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const me = { hrid: 'player1', equipment: {} };
+    const stranger = { hrid: 'player1', equipment: { '/item_locations/body': { itemHrid: '/items/z' } } };
+    const ownRecord = () => ({
+        data: { baseline: BASELINE, results: [row('Owner gear')], ranFor: { hrid: 'player1', name: 'Me' } },
+        savedAt: 5,
+        characterName: 'Me',
+        ownerId: 'char1',
+    });
+    const holdSelf = () => {
+        mocks.editedDTOs = { player1: structuredClone(me) };
+        mocks.editorSelfHrid = 'player1';
+        mocks.playerNames = { player1: 'Me' };
+    };
+    const holdStranger = () => {
+        mocks.editedDTOs = { player1: structuredClone(stranger) };
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = { player1: 'NikuDango' };
+    };
+    const runWith = async (label) => {
+        mocks.upgradeResult = { baseline: BASELINE, results: [row(label)], food: null, context: { gameData: {} } };
+        await ui._onUpgradeAnalyze();
+        await settle();
+    };
+    const openPanel = async () => {
+        ui.buildPanel();
+        await settle();
+        for (const job of mocks.bgJobs.splice(0)) await job();
+        await settle();
+        selectZone();
+    };
+
+    beforeEach(async () => {
+        mocks.store.clear();
+        mocks.characterId = 'char1';
+        mocks.characterName = 'Me';
+        const { default: config } = await import('../../core/config.js');
+        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+            key === 'combatSim_rememberUpgradeResults' ? true : fallback
+        );
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = null;
+        mocks.characterName = undefined;
+        mocks.onRun = null;
+        mocks.upgradeResultFor = null;
+        mocks.buildPlayerDTOs = null;
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.store.clear();
+    });
+
+    test('1: a stranger run still going when Reset to Me is pressed is not drawn, and the owner record comes back', async () => {
+        mocks.store.set(KEY, ownRecord());
+        holdStranger();
+        await openPanel();
+        mocks.onRun = () => {
+            holdSelf();
+            mocks.editorOptions.onRosterReloaded();
+        };
+        await runWith('Mid-run gear');
+        expect(rows().textContent).not.toContain('Mid-run gear');
+        expect(rows().textContent).toContain('Owner gear');
+        expect(mocks.store.get(KEY).data.results[0].candidate.description).toBe('Owner gear');
+    });
+
+    test('2: a restore that lands after a profile was opened does not draw the owner record over it', async () => {
+        mocks.store.set(KEY, ownRecord());
+        ui.buildPanel();
+        await settle();
+        holdStranger();
+        mocks.editorOptions.onScenarioReplaced();
+        for (const job of mocks.bgJobs.splice(0)) await job();
+        await settle();
+        expect(rows().textContent).not.toContain('Owner gear');
+    });
+
+    test('2: a sync pull with a profile loaded does not draw the owner record either', async () => {
+        mocks.store.set(KEY, ownRecord());
+        await openPanel();
+        holdStranger();
+        mocks.editorOptions.onScenarioReplaced();
+        await ui._restoreUpgradeResults({ replace: true });
+        expect(rows().textContent).not.toContain('Owner gear');
+    });
+
+    test('3: Reset to Me with no analysis made reads the owner record back', async () => {
+        mocks.store.set(KEY, ownRecord());
+        holdSelf();
+        await openPanel();
+        expect(rows().textContent).toContain('Owner gear');
+        holdStranger();
+        mocks.editorOptions.onScenarioReplaced();
+        expect(rows().textContent).not.toContain('Owner gear');
+        holdSelf();
+        mocks.editorOptions.onRosterReloaded();
+        await settle();
+        expect(rows().textContent).toContain('Owner gear');
+    });
+
+    test('4: a record saved after a mid-run swap names the player the run was for', async () => {
+        holdSelf();
+        await openPanel();
+        mocks.onRun = () => {
+            holdStranger();
+            mocks.editorOptions.onScenarioReplaced();
+        };
+        await runWith('Mid-run gear');
+        const saved = mocks.store.get(KEY);
+        expect(saved.characterName).toBe('Me');
+        expect(saved.ownerId).toBe('char1');
+    });
+
+    test('5: a swap during the editor-not-ready load is seen by the run', async () => {
+        mocks.editedDTOs = null;
+        await openPanel();
+        mocks.buildPlayerDTOs = () => {
+            holdStranger();
+            mocks.editorOptions.onScenarioReplaced();
+            return { players: [structuredClone(me)], playerInfo: [], selfHrid: 'player1', missingMembers: [] };
+        };
+        await runWith('Late gear');
+        expect(rows().textContent).not.toContain('Late gear');
+    });
+
+    test('the Player box follows the roster the editor holds, not the one the tab was last shown with', async () => {
+        holdStranger();
+        await openPanel();
+        ui._populateUpgradePlayerSelector();
+        const names = () => [...ui.panel.querySelectorAll('#mwi-csim-upgrade-player option')].map((o) => o.textContent);
+        expect(names()).toEqual(['NikuDango']);
+        holdSelf();
+        mocks.editorOptions.onRender();
+        expect(names()).toEqual(['Me']);
+    });
+
+    describe('All players', () => {
+        const roster = () => ({
+            player1: { hrid: 'player1', equipment: {} },
+            player2: { hrid: 'player2', equipment: {} },
+        });
+        const chooseAll = () => {
+            ui._populateUpgradePlayerSelector();
+            const select = ui.panel.querySelector('#mwi-csim-upgrade-player');
+            select.value = 'all';
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        const perPlayer = ({ playerDTOs, playerIndex }) => ({
+            baseline: BASELINE,
+            results: [row(`${playerDTOs[playerIndex].hrid} gear`)],
+            candidateCount: 1,
+            food: null,
+            context: { playerHrid: playerDTOs[playerIndex].hrid, playerIndex, playerDTOs },
+        });
+        const prepare = async (selfHrid) => {
+            await openPanel();
+            mocks.editedDTOs = roster();
+            mocks.editorSelfHrid = selfHrid;
+            mocks.playerNames = { player1: 'Ann', player2: 'Bob' };
+            mocks.upgradeResultFor = perPlayer;
+            chooseAll();
+        };
+
+        test("6: the owner's All players run is not drawn over a profile loaded meanwhile", async () => {
+            await prepare('player1');
+            mocks.onRun = () => mocks.editorOptions.onScenarioReplaced();
+            await ui._onUpgradeAnalyze();
+            await settle();
+            expect(rows().textContent).not.toContain('player1 gear');
+            expect(ui._allPlayersRun).toBeNull();
+        });
+
+        test("6: a stranger's All players run is not drawn after Reset to Me meanwhile", async () => {
+            await prepare(null);
+            mocks.onRun = () => {
+                mocks.editorSelfHrid = 'player1';
+                mocks.editorOptions.onRosterReloaded();
+            };
+            await ui._onUpgradeAnalyze();
+            await settle();
+            expect(rows().textContent).not.toContain('player1 gear');
+            expect(ui._allPlayersRun).toBeNull();
+        });
+
+        test('an All players run with no swap still draws, and a load keeps the Player box choice', async () => {
+            await prepare('player1');
+            await ui._onUpgradeAnalyze();
+            await settle();
+            expect(rows().textContent).toContain('player1 gear');
+            ui._upgradeAllChosenFlag = true;
+            mocks.editorOptions.onScenarioReplaced();
+            expect(ui._upgradeAllChosenFlag).toBe(true);
+        });
     });
 });
