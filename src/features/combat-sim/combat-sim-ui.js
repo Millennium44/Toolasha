@@ -13933,6 +13933,14 @@ class CombatSimUI {
         const runBtn = this.panel.querySelector('#mwi-csim-upgrade-run');
         const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
         progressEl.style.display = 'block';
+        // What is on screen now, so a run that is stopped or fails before drawing anything can put it back
+        const prevView = {
+            data: this._upgradeResultsData,
+            restoredAt: this._restoredUpgradeAt,
+            meta: this._restoredUpgradeMeta,
+            remembered: this._rememberedResults,
+            allPlayers: this._allPlayersRun,
+        };
         resultsEl.innerHTML = '';
         // A single-player run replaces an All players view
         this._allPlayersRun = null;
@@ -13947,6 +13955,7 @@ class CombatSimUI {
         this._upgradeRunStarted = true;
         let analysisFailed = false;
         let swappedRun = false;
+        let drewNothing = false;
         let finishedResults = null;
         // The previous analysis' verdicts go with the table this run replaces
         if (this._upgradeResultsData) delete this._upgradeResultsData.verifyVerdicts;
@@ -14098,6 +14107,7 @@ class CombatSimUI {
                         `Analysis cancelled — showing ${completed} completed candidate${completed === 1 ? '' : 's'}.`
                     );
                 } else {
+                    drewNothing = true;
                     this._setStatus('Analysis cancelled.');
                 }
             } else {
@@ -14136,6 +14146,7 @@ class CombatSimUI {
             }
         } catch (error) {
             analysisFailed = true;
+            drewNothing = true;
             console.error('[CombatSimUI] Upgrade analysis failed:', error);
             this._setStatus('Analysis failed: ' + error.message);
         } finally {
@@ -14145,6 +14156,10 @@ class CombatSimUI {
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
             if (latchGen === this._analysisGen) this._setTuneButtonBusy(false);
+            // Stopped or failed before anything was drawn: what was on screen is put back, not an empty tab
+            if (drewNothing && !swappedRun && this._stillSameCharacter(ownerId) && latchGen === this._analysisGen) {
+                this._putBackUpgradeView(prevView);
+            }
             // A view change during the run was held back; a run that drew its own results is already in the view
             if (this._stillSameCharacter(ownerId) && latchGen === this._analysisGen) this._afterRun();
         }
@@ -17393,6 +17408,31 @@ class CombatSimUI {
         this._budgetConfirm = null;
         const container = this.panel?.querySelector('#mwi-csim-upgrade-results');
         if (container) container.innerHTML = '';
+        this._refreshAnalysisNote();
+    }
+
+    /**
+     * Put back the table that was on screen before a run that was stopped or failed without drawing anything. It
+     * is the same object, in memory: nothing is read from storage and nothing is written, so the remembered record
+     * is exactly what it was. A table a roster replacement or Clear has taken meanwhile is not put back, and the
+     * stale-build banner is worked out afresh against the build now loaded.
+     * (This is not the delayed read `_restoreUpgradeResults` guards against drawing over a run.)
+     * @param {Object} prev - `{data, restoredAt, meta, remembered, allPlayers}` as the run found them
+     * @private
+     */
+    _putBackUpgradeView(prev) {
+        if (!this.panel || !prev?.data || this._upgradeRunning) return;
+        // Still the table the run found: nothing replaced or cleared it while it ran
+        if (this._upgradeResultsData !== prev.data) return;
+        this._restoredUpgradeAt = prev.restoredAt;
+        this._restoredUpgradeMeta = prev.meta;
+        this._rememberedResults = prev.remembered;
+        if (prev.allPlayers) {
+            this._allPlayersRun = prev.allPlayers;
+            this._renderUpgradeAllPlayers();
+        } else {
+            this._renderUpgradeResults(prev.data);
+        }
         this._refreshAnalysisNote();
     }
 

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Stopping a Combat Sim analysis early keeps your table
+
+Pressing Stop (or a failed run) before any upgrade was measured now puts back the table that was on screen, instead of leaving the Upgrade tab empty. Your saved results are not touched.
+
 ### Clear on remembered Upgrade results now empties the table
 
 In the Combat Sim and the Lab Sim, the Clear button beside "Showing results remembered from..." used to forget the saved run but leave the table on screen; it now removes the table too.
