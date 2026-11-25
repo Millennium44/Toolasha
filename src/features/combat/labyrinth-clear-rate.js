@@ -4493,8 +4493,16 @@ class LabyrinthClearRate {
             y: size - 1,
             label: 'Next ▸ next floor',
         };
-        if (isConfirmDialogOpen()) {
+        if (this.getStepper().isDescentDialogOpen()) {
             return { ...base, action: 'none', reason: "Answer the game's descent dialog first" };
+        }
+        // Some other game dialog: a press here does nothing until it is closed, and the offer returns after
+        if (isConfirmDialogOpen()) {
+            return {
+                ...base,
+                action: 'none',
+                reason: 'Another game dialog is open: close it first, pressing does nothing',
+            };
         }
         return {
             ...base,

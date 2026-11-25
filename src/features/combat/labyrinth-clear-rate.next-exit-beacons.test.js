@@ -886,4 +886,84 @@ describe('Next offers the descent once the exit is cleared', () => {
         expect(next.kind).not.toBe('descend');
         expect(next.code).toBe('stale');
     });
+
+    describe('the descent dialog going away', () => {
+        const addDialog = () => {
+            const dialog = document.createElement('div');
+            dialog.className = 'DialogModal_buttonContainer__x1';
+            document.body.appendChild(dialog);
+            return dialog;
+        };
+        /** A toolbar Next button, and a press that opens the game's dialog */
+        const pressOpening = async () => {
+            const btn = document.createElement('button');
+            btn.className = 'mwi-labyrinth-step-next';
+            document.body.appendChild(btn);
+            let dialog = null;
+            tileClick.mockImplementation(() => {
+                dialog = addDialog();
+            });
+            await labyrinthClearRate.pressNextStep();
+            return { btn, dialog };
+        };
+        const settle = async () => {
+            await Promise.resolve();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        };
+
+        beforeEach(() => {
+            mount({ cleared: DONE_4X4, remaining: 2 });
+            plan(4, [1, 2, 3, 7, 11, 15]);
+        });
+
+        test('closed with No or a backdrop click: label, title and action return to the descent offer', async () => {
+            const { btn, dialog } = await pressOpening();
+            expect(btn.dataset.stepAction).toBe('none');
+            expect(btn.title).toContain('Answer the game');
+            dialog.remove();
+            await settle();
+            expect(btn.textContent).toBe('Next ▸ next floor');
+            expect(btn.dataset.stepAction).toBe('descend');
+            expect(btn.title).toContain('2 treasure rooms');
+            expect(labyrinthClearRate.getStepper().hasDialogWatch()).toBe(false);
+        });
+
+        test('closed with Yes and the floor changing: no stale descent is left', async () => {
+            const { btn, dialog } = await pressOpening();
+            mount({ floor: 2, exit: null, tile: false });
+            dialog.remove();
+            await settle();
+            expect(btn.dataset.stepAction).not.toBe('descend');
+            expect(btn.textContent).not.toBe('Next ▸ next floor');
+            expect(labyrinthClearRate.getStepper().hasDialogWatch()).toBe(false);
+        });
+
+        test('the watcher is disposed with the stepper (setting off)', async () => {
+            await pressOpening();
+            const stepper = labyrinthClearRate.getStepper();
+            expect(stepper.hasDialogWatch()).toBe(true);
+            labyrinthClearRate.disposeStepper();
+            expect(stepper.hasDialogWatch()).toBe(false);
+        });
+
+        test('the watcher is dropped when the character switches', async () => {
+            await pressOpening();
+            const stepper = labyrinthClearRate.getStepper();
+            dataManager.getCurrentCharacterId.mockReturnValue('other');
+            document.body.appendChild(document.createElement('span'));
+            await settle();
+            expect(stepper.hasDialogWatch()).toBe(false);
+        });
+
+        test('another game dialog (not ours): inert, a press does nothing, the offer returns when it closes', async () => {
+            const dialog = addDialog();
+            const next = labyrinthClearRate.describeNextStep();
+            expect(next).toMatchObject({ kind: 'descend', action: 'none' });
+            expect(next.reason).toContain('Another game dialog');
+            await labyrinthClearRate.pressNextStep();
+            expect(tileClick).not.toHaveBeenCalled();
+            dialog.remove();
+            expect(labyrinthClearRate.describeNextStep().action).toBe('descend');
+        });
+    });
 });

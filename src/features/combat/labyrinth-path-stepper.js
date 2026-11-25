@@ -459,6 +459,30 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
     let generation = 0;
     let updatedWaiters = [];
     const timers = new Set();
+    // The descent dialog our press opened, and the observer that redraws the buttons when it goes away
+    let ourDialog = null;
+    let dialogObserver = null;
+
+    const stopDialogWatch = () => {
+        dialogObserver?.disconnect();
+        dialogObserver = null;
+        ourDialog = null;
+    };
+
+    /** Watch (only while the dialog is up) for the dialog leaving the page, however it was dismissed */
+    const watchDialog = (dialog, characterId) => {
+        stopDialogWatch();
+        if (typeof MutationObserver === 'undefined' || !document.body) return;
+        ourDialog = dialog;
+        dialogObserver = new MutationObserver(() => {
+            if (disposed) return stopDialogWatch();
+            const gone = !ourDialog?.isConnected;
+            if (!gone && getCharacterId() === characterId) return;
+            stopDialogWatch();
+            onChange();
+        });
+        dialogObserver.observe(document.body, { childList: true, subtree: true });
+    };
 
     const sleep = (ms) =>
         new Promise((resolve) => {
@@ -592,6 +616,8 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
             }
             const opened = await waitFor(isConfirmDialogOpen, RENDER_WAIT_MS);
             if (disposed || myGeneration !== generation) return;
+            const dialog = opened ? document.querySelector(DIALOG_BUTTONS_SELECTOR) : null;
+            if (dialog) watchDialog(dialog, characterId);
             setStatus(
                 opened
                     ? 'The game is asking whether to descend: answer its dialog (Toolasha never answers it)'
@@ -738,9 +764,19 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
         timers.clear();
         updatedWaiters = [];
         busy = false;
+        stopDialogWatch();
     };
 
-    return { describe, press, pressDescent, notifyUpdated, dispose, isBusy: () => busy };
+    return {
+        isDescentDialogOpen: () => !!ourDialog?.isConnected,
+        hasDialogWatch: () => !!dialogObserver,
+        describe,
+        press,
+        pressDescent,
+        notifyUpdated,
+        dispose,
+        isBusy: () => busy,
+    };
 }
 
 export default {
