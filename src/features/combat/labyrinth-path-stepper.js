@@ -461,19 +461,22 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
     const timers = new Set();
     // The descent dialog our press opened, and the observer that redraws the buttons when it goes away
     let ourDialog = null;
+    let ourDialogOwn = false;
     let dialogObserver = null;
 
     const stopDialogWatch = () => {
         dialogObserver?.disconnect();
         dialogObserver = null;
         ourDialog = null;
+        ourDialogOwn = false;
     };
 
     /** Watch (only while the dialog is up) for the dialog leaving the page, however it was dismissed */
-    const watchDialog = (dialog, characterId) => {
+    const watchDialog = (dialog, characterId, own) => {
         stopDialogWatch();
         if (typeof MutationObserver === 'undefined' || !document.body) return;
         ourDialog = dialog;
+        ourDialogOwn = own;
         dialogObserver = new MutationObserver(() => {
             if (disposed) return stopDialogWatch();
             const gone = !ourDialog?.isConnected;
@@ -610,14 +613,17 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
                 setStatus("The game's Next Floor tile was not found, press it on the map", true);
                 return;
             }
+            const before = new Set(document.querySelectorAll(DIALOG_BUTTONS_SELECTOR));
             if (clickThroughReact(tile, { reactFirst: true }) === 'none') {
                 setStatus('The press did not reach the game, press the Next Floor tile by hand', true);
                 return;
             }
-            const opened = await waitFor(isConfirmDialogOpen, RENDER_WAIT_MS);
+            // The dialog our press opened is the container that was not on the page before it
+            const fresh = () => [...document.querySelectorAll(DIALOG_BUTTONS_SELECTOR)].find((d) => !before.has(d));
+            const opened = await waitFor(() => !!fresh(), RENDER_WAIT_MS);
             if (disposed || myGeneration !== generation) return;
-            const dialog = opened ? document.querySelector(DIALOG_BUTTONS_SELECTOR) : null;
-            if (dialog) watchDialog(dialog, characterId);
+            const dialog = opened ? fresh() : null;
+            if (dialog) watchDialog(dialog, characterId, true);
             setStatus(
                 opened
                     ? 'The game is asking whether to descend: answer its dialog (Toolasha never answers it)'
@@ -768,7 +774,13 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
     };
 
     return {
-        isDescentDialogOpen: () => !!ourDialog?.isConnected,
+        isDescentDialogOpen: () => ourDialogOwn && !!ourDialog?.isConnected,
+        /** Redraw when a game dialog that is not ours closes (one observer at most, none with no dialog) */
+        watchForeignDialog: () => {
+            if (disposed || (ourDialog?.isConnected && dialogObserver)) return;
+            const dialog = document.querySelector(DIALOG_BUTTONS_SELECTOR);
+            if (dialog) watchDialog(dialog, getCharacterId(), false);
+        },
         hasDialogWatch: () => !!dialogObserver,
         describe,
         press,

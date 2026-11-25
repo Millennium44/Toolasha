@@ -4431,11 +4431,22 @@ class LabyrinthClearRate {
         }
         // Nothing further for Next to queue and the exit is cleared: the floor is done, offer the descent. A route
         // still queued, blocked or full keeps its own label (there is something left to do).
-        if (['done', 'no-plan', 'stale', 'nothing-needed'].includes(r.code)) {
+        if (['done', 'nothing-needed'].includes(r.code)) {
             const descent = this.descentStep();
             if (descent) return descent;
         }
-        return { ...r, kind: null, label: String(r.label ?? '').replace(/^Route ▸/, 'Next ▸') };
+        let none = { ...r, kind: null, label: String(r.label ?? '').replace(/^Route ▸/, 'Next ▸') };
+        if (['no-plan', 'stale'].includes(r.code)) {
+            // Chests first: with no usable plan the chests were never worked out, so the descent is offered only
+            // when the game says none are left; otherwise Path comes first and the hover names the early way down
+            const lab = findLabyrinthPanel()?.props?.characterLabyrinth;
+            if (lab?.remainingTreasureRooms === 0) {
+                const descent = this.descentStep();
+                if (descent) return descent;
+            }
+            none = this.withDescentHint(none);
+        }
+        return none;
     }
 
     /**
@@ -4465,10 +4476,13 @@ class LabyrinthClearRate {
 
     /** Add the early-descent note to a step that still has rooms to work, once the exit is cleared */
     withDescentHint(step) {
-        if (!this.clearedExitView()) return step;
+        const view = this.clearedExitView();
+        if (!view) return step;
         return {
             ...step,
-            reason: `${step.reason} The game's orange Next Floor tile descends early, forfeiting unvisited treasure rooms.`,
+            reason:
+                `${step.reason} ${view.lab.remainingTreasureRooms > 0 ? this.treasureLeftLine(view.lab) + ' ' : ''}` +
+                "The game's orange Next Floor tile descends early.",
         };
     }
 
@@ -4606,6 +4620,8 @@ class LabyrinthClearRate {
             const step = this.describeNextStep();
             if (step.action === 'room') armed = step.kind;
             paint(nextBtn, step, NEXT_STEP_COLORS[step.kind] || NEXT_STEP_COLORS.none);
+            // The inert "another dialog is open" text must redraw when that dialog closes
+            if (step.kind === 'descend' && step.action === 'none') stepper.watchForeignDialog();
             nextBtn.dataset.stepKind = step.kind || '';
         }
         const beaconBtn = document.querySelector('.mwi-labyrinth-step-beacon');

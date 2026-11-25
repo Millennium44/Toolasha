@@ -784,9 +784,45 @@ describe('Next offers the descent once the exit is cleared', () => {
         expect(next.label).toBe('Route done');
     });
 
-    test('no plan on a floor whose exit is cleared: descent', () => {
-        mount({ cleared: DONE_4X4, remaining: 2 });
+    test('no plan, exit cleared, 0 treasure rooms left: descent', () => {
+        mount({ cleared: DONE_4X4, remaining: 0 });
         expect(labyrinthClearRate.describeNextStep()).toMatchObject({ kind: 'descend', action: 'descend' });
+    });
+
+    test('no plan, exit cleared, 3 treasure rooms left: Path first, the hover names the count and the tile', () => {
+        mount({ cleared: DONE_4X4, remaining: 3 });
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next.kind).toBeNull();
+        expect(next.label).toBe('Next ▸');
+        expect(next.reason).toContain('Press Path first');
+        expect(next.reason).toContain('3 treasure rooms are still unvisited');
+        expect(next.reason).toContain('orange Next Floor tile descends early');
+    });
+
+    test('no plan, exit cleared, count missing: Path first', () => {
+        mount({ cleared: DONE_4X4 });
+        delete lab.remainingTreasureRooms;
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next.kind).toBeNull();
+        expect(next.reason).toContain('Press Path first');
+        expect(next.reason).toContain('orange Next Floor tile descends early');
+    });
+
+    test('stale plan, exit cleared: descent only with 0 treasure rooms left', () => {
+        mount({ cleared: DONE_4X4, remaining: 2 });
+        plan(5, [1, 2, 24], 24);
+        labyrinthClearRate._shroudStepPlan.floor = 2;
+        expect(labyrinthClearRate.describeNextStep().kind).toBeNull();
+        lab.remainingTreasureRooms = 0;
+        expect(labyrinthClearRate.describeNextStep().kind).toBe('descend');
+    });
+
+    test('done plan with chests the plan could not reach: descent, hover says how many are forfeited', () => {
+        mount({ cleared: DONE_4X4, remaining: 3 });
+        plan(4, [1, 2, 3, 7, 11, 15]);
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next.kind).toBe('descend');
+        expect(next.reason).toContain('3 treasure rooms are still unvisited and forfeited');
     });
 
     test('a plan from another floor with the exit cleared here: descent', () => {
@@ -964,6 +1000,36 @@ describe('Next offers the descent once the exit is cleared', () => {
             expect(tileClick).not.toHaveBeenCalled();
             dialog.remove();
             expect(labyrinthClearRate.describeNextStep().action).toBe('descend');
+        });
+        test('a dialog already open before the press is not taken as ours: nothing new opened', async () => {
+            const btn = document.createElement('button');
+            btn.className = 'mwi-labyrinth-step-next';
+            document.body.appendChild(btn);
+            const foreign = addDialog();
+            tileClick.mockImplementation(() => {});
+            const stepper = labyrinthClearRate.getStepper();
+            const pending = stepper.pressDescent(() => ({ action: 'descend', floor: 1, reason: '' }));
+            await pending;
+            expect(tileClick).toHaveBeenCalledTimes(1);
+            // Not ours: the press reports it did not open, and the foreign dialog is only watched as foreign
+            expect(stepper.isDescentDialogOpen()).toBe(false);
+            foreign.remove();
+        }, 5000);
+
+        test('a foreign dialog closing redraws the inert text, with one observer and none left after', async () => {
+            const btn = document.createElement('button');
+            btn.className = 'mwi-labyrinth-step-next';
+            document.body.appendChild(btn);
+            const foreign = addDialog();
+            labyrinthClearRate.refreshStepButtons();
+            expect(btn.title).toContain('Another game dialog');
+            const stepper = labyrinthClearRate.getStepper();
+            expect(stepper.hasDialogWatch()).toBe(true);
+            expect(stepper.isDescentDialogOpen()).toBe(false);
+            foreign.remove();
+            await settle();
+            expect(btn.dataset.stepAction).toBe('descend');
+            expect(stepper.hasDialogWatch()).toBe(false);
         });
     });
 });
