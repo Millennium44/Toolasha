@@ -1328,6 +1328,12 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         rangedLevel: 1,
         magicLevel: 1,
         hrid: 'player',
+        // Whose profile this is, so a guild-mate can be told from a stranger (shrine buildings are guild-wide).
+        // Absent for a profile that names no character
+        // A shared profile (live, test server 2026-11-24: `{type, profile, characterID, characterName, timestamp}`)
+        // carries `profile.guildId` (a number, e.g. 899) and `guildBuffLevelMap`, and no guild building levels
+        ...(profile.characterID != null ? { characterID: profile.characterID } : {}),
+        ...(profile.profile?.guildId != null ? { guildId: profile.profile.guildId } : {}),
         debuffOnLevelGap: 0,
         equipment: {},
         food: [],

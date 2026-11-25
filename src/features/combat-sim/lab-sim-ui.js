@@ -11290,7 +11290,7 @@ class LabSimUI {
             } else if (!guild.shrineLevelKnown) {
                 parts.push(
                     line(
-                        "This guild's shrine buildings are not known (no guild data reached the client, or this is another player's guild), so any cap on this level is unknown.",
+                        "This guild's shrine buildings are not known (no guild data reached the client, or this player is in another guild, whose shrine levels the game does not send), so any cap on this level is unknown.",
                         '#888'
                     )
                 );

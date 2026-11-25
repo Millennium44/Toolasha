@@ -14,6 +14,8 @@ const guild = vi.hoisted(() => ({
     detailMap: {},
     /** shrineHrid → the level the LOCAL guild has built it to */
     shrineLevels: {},
+    /** The login payload's character: our guild and its roster */
+    character: { characterAbilities: [], guild: { id: 899 }, guildCharacterMap: {} },
 }));
 
 /** What the token valuation the advisor asks for comes back as, and what it was asked with */
@@ -25,7 +27,9 @@ vi.mock('../../core/data-manager.js', () => ({
         getInventory: () => [],
         getSkills: () => [],
         getInitClientData: () => ({ itemDetailMap: {} }),
-        characterData: { characterAbilities: [] },
+        get characterData() {
+            return guild.character;
+        },
     },
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
@@ -85,6 +89,7 @@ vi.mock('../guild/guild-token-value.js', () => ({
 const {
     generateCandidates,
     generateGuildShrineCandidates,
+    inLocalGuild,
     explainUpgradeCost,
     calculateUpgradeCost,
     planWithinBudget,
@@ -146,6 +151,7 @@ function forceRow(over = {}) {
 beforeEach(() => {
     guild.detailMap = { [FORCE_HRID]: FORCE, '/guild_buffs/rarity_skilling': SKILLING };
     guild.shrineLevels = {};
+    guild.character = { characterAbilities: [], guild: { id: 899 }, guildCharacterMap: {} };
     token.valuation = rate(10);
     token.hydrated = 0;
     token.askedWith = [];
@@ -335,7 +341,7 @@ describe("another player's guild is not the local guild", () => {
     });
 
     test('a party member or imported profile is neither capped nor annotated with the local building', () => {
-        const [row] = generateGuildShrineCandidates(dto, options({ isSelf: false }));
+        const [row] = generateGuildShrineCandidates(dto, options({ sameGuild: false }));
 
         expect(row.upgradeLevel).toBe(3);
         expect(row.shrineLevelKnown).toBe(false);
@@ -344,7 +350,7 @@ describe("another player's guild is not the local guild", () => {
 
     test('without the cap the local note still reads the local building, and a stranger gets none', () => {
         const [own] = generateGuildShrineCandidates(dto, { targetLevel: 3 });
-        const [other] = generateGuildShrineCandidates(dto, { targetLevel: 3, isSelf: false });
+        const [other] = generateGuildShrineCandidates(dto, { targetLevel: 3, sameGuild: false });
 
         expect(own.needsShrineLevel).toBe(3);
         expect(other.needsShrineLevel).toBeNull();
@@ -363,7 +369,7 @@ describe("another player's guild is not the local guild", () => {
     });
 
     test('a profile with no level map at all offers nothing, where a guildless character with {} still can', () => {
-        expect(generateGuildShrineCandidates({}, { isSelf: false })).toEqual([]);
+        expect(generateGuildShrineCandidates({}, { sameGuild: false })).toEqual([]);
         expect(generateGuildShrineCandidates({ guildShrineLevels: undefined }, {})).toEqual([]);
         expect(generateGuildShrineCandidates({ guildShrineLevels: {} }, {})).not.toEqual([]);
     });
@@ -377,7 +383,7 @@ describe("another player's guild is not the local guild", () => {
             combat: false,
             capToGuildLevel: true,
             steps: 2,
-            isSelf: false,
+            sameGuild: false,
         });
 
         expect(own.upgradeLevel).toBe(1);
@@ -398,12 +404,72 @@ describe('the analyses load the stored exchange readings first', () => {
         expect(token.hydrated).toBe(1);
     });
 
-    test('the skilling run forwards the Upgrade tab cap and the local-character flag to the generator', () => {
+    test('the skilling run forwards the Upgrade tab cap and the same-guild rule to the generator', () => {
         const source = readFileSync(new URL('./upgrade-advisor.js', import.meta.url), 'utf8');
         const call = source.slice(source.indexOf('generateGuildShrineCandidates(editorDTO, {'));
 
         expect(call.slice(0, 260)).toMatch(
-            /combat: false,\s+capToGuildLevel: Boolean\(guildShrineCapToGuild\),\s+isSelf,/
+            /combat: false,\s+capToGuildLevel: Boolean\(guildShrineCapToGuild\),\s+sameGuild: inLocalGuild\(editorDTO, isSelf\),/
         );
+    });
+});
+
+describe("who shares the local guild's shrine buildings", () => {
+    // A live shared profile (test server, 2026-11-24): `profile.guildId` is a number (899), `guildName`,
+    // `guildRole` and `guildBuffLevelMap` ride on it, and no guild building levels do
+    const mate = { characterID: 900201, guildId: 899 };
+    const dto = (over) => ({ guildShrineLevels: { [FORCE_HRID]: 0 }, ...over });
+    const capped = (player, isSelf = false) => {
+        guild.shrineLevels = { '/guild_shrines/force': 1 };
+        return generateCandidates(player, {}, 'guild_shrine', 0, 'increment', false, null, null, 0, null, null, 3, {
+            guildShrineCapToGuild: true,
+            isSelf,
+        })[0];
+    };
+
+    test('the live character is always in the guild', () => {
+        expect(inLocalGuild({}, true)).toBe(true);
+    });
+
+    test('a guild-mate (profile guild id, number or string) is capped by the guild buildings and annotated', () => {
+        for (const guildId of [899, '899']) {
+            const row = capped(dto({ ...mate, guildId }));
+            expect(row.upgradeLevel).toBe(1);
+            expect(row.shrineLevelKnown).toBe(true);
+        }
+        guild.character.guild = { id: '899' };
+        expect(capped(dto(mate)).upgradeLevel).toBe(1);
+    });
+
+    test('a party member from another guild is not capped and the building level is unknown', () => {
+        const row = capped(dto({ ...mate, guildId: 12 }));
+
+        expect(row.upgradeLevel).toBe(3);
+        expect(row.shrineLevelKnown).toBe(false);
+        expect(row.needsShrineLevel).toBeNull();
+    });
+
+    test('an imported profile with no guild id and no character id is not capped', () => {
+        expect(capped(dto({})).upgradeLevel).toBe(3);
+    });
+
+    test('with no guild id on the profile the roster is the fallback, ids as number or string', () => {
+        guild.character.guildCharacterMap = { 900201: { characterID: 900201, guildID: 899 } };
+
+        expect(inLocalGuild({ characterID: 900201 }, false)).toBe(true);
+        expect(inLocalGuild({ characterID: '900201' }, false)).toBe(true);
+        expect(inLocalGuild({ characterID: 900999 }, false)).toBe(false);
+        // A roster row of another guild does not count
+        guild.character.guildCharacterMap = { 900201: { characterID: 900201, guildID: 12 } };
+        expect(inLocalGuild({ characterID: 900201 }, false)).toBe(false);
+    });
+
+    test('a roster that has not loaded, or an unknown own guild, caps nobody', () => {
+        guild.character.guildCharacterMap = undefined;
+        expect(inLocalGuild({ characterID: 900201 }, false)).toBe(false);
+
+        guild.character.guild = undefined;
+        expect(inLocalGuild({ characterID: 900201, guildId: 899 }, false)).toBe(false);
+        expect(inLocalGuild({ characterID: 900201 }, false)).toBe(false);
     });
 });

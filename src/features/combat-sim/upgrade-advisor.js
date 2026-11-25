@@ -1618,7 +1618,7 @@ export function generateCandidates(
                 perBuffTargets: options?.guildShrineTargets || null,
                 capToGuildLevel: Boolean(options?.guildShrineCapToGuild),
                 steps: options?.guildShrineSteps,
-                isSelf: options?.isSelf !== false,
+                sameGuild: inLocalGuild(playerDTO, options?.isSelf !== false),
             })
         );
     }
@@ -2118,6 +2118,34 @@ function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
 }
 
 /**
+ * Whether a player's guild shrine buildings are the live character's: the character themself, or a member of
+ * the same guild. Guild buildings are shared, so a guild-mate is held to the same cap.
+ *
+ * A guild-mate is found by the guild id the member's shared profile carries (`profile.guildId`, kept on the DTO
+ * as `guildId`) against our own `guild.id`. A DTO with no `guildId` falls back to its `characterID` in the login
+ * payload's `guildCharacterMap` (whose rows carry their `guildID`). Ids are compared as strings. A missing id, an
+ * unloaded map, an unknown own guild or a member of another guild is not the same guild, so no cap is applied and
+ * the building level is unknown (the game never sends another guild's shrine levels).
+ *
+ * The fallback map is the login snapshot: it is not refreshed by `guild_characters_updated`, so a member who
+ * joined or left, or a guild change, after login is judged on the roster as it was then.
+ * @param {Object} playerDTO - Player DTO
+ * @param {boolean} isSelf - Whether the DTO is the live character
+ * @returns {boolean}
+ */
+export function inLocalGuild(playerDTO, isSelf) {
+    if (isSelf) return true;
+    const character = dataManager.characterData;
+    const ownGuildId = character?.guild?.id;
+    if (ownGuildId == null) return false;
+    if (playerDTO?.guildId != null) return String(playerDTO.guildId) === String(ownGuildId);
+    const id = playerDTO?.characterID;
+    const row = id == null ? null : character?.guildCharacterMap?.[String(id)];
+    if (!row) return false;
+    return row.guildID == null || String(row.guildID) === String(ownGuildId);
+}
+
+/**
  * Generate level-up candidates for the guild shrine buffs.
  *
  * ## What the shrine level does and does not gate
@@ -2186,15 +2214,15 @@ function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
  * @param {number} [options.steps=1] - The Steps box: above 1 every shrine is offered at +1, +2, ... +steps
  *   (each its own row, cost summed from the current level, capped at the same ceiling as one row) and
  *   `targetLevel` is not read; `perBuffTargets` still wins, one row per shrine
- * @param {boolean} [options.isSelf=true] - Whether the DTO is the live character. The shrine building
- *   levels read here (`getGuildBuildingLevel`) are the live character's guild's, so for a party member or an
- *   imported profile the cap and the `needsShrineLevel` note are not applied and `shrineLevelKnown` is false:
- *   their guild's buildings are unknown, not the local guild's
+ * @param {boolean} [options.sameGuild=true] - Whether the DTO is in the live character's guild (the live
+ *   character, or a guild-mate: see {@link inLocalGuild}). The shrine building levels read here
+ *   (`getGuildBuildingLevel`) are that guild's, so for anyone else the cap and the `needsShrineLevel` note are
+ *   not applied and `shrineLevelKnown` is false: their guild's buildings are unknown, not the local guild's
  * @returns {Array<Object>} Candidates of type 'guild_shrine'
  */
 export function generateGuildShrineCandidates(
     playerDTO,
-    { combat = true, targetLevel = 0, perBuffTargets = null, capToGuildLevel = false, steps = 1, isSelf = true } = {}
+    { combat = true, targetLevel = 0, perBuffTargets = null, capToGuildLevel = false, steps = 1, sameGuild = true } = {}
 ) {
     const detailMap = getGuildBuffDetailMap();
     const levels = playerDTO?.guildShrineLevels;
@@ -2213,7 +2241,7 @@ export function generateGuildShrineCandidates(
      * @returns {number} Building level
      */
     const buildingLevel = (shrineHrid) =>
-        isSelf ? Math.max(0, Math.floor(Number(dataManager.getGuildBuildingLevel?.(shrineHrid)) || 0)) : 0;
+        sameGuild ? Math.max(0, Math.floor(Number(dataManager.getGuildBuildingLevel?.(shrineHrid)) || 0)) : 0;
 
     const inScope = Object.entries(detailMap).filter(([, detail]) => Boolean(detail.isCombat) === combat);
     // See the cap note above: all-zero building levels across *every* shrine mean
@@ -2221,7 +2249,7 @@ export function generateGuildShrineCandidates(
     // combat half it would also read that way for a guild that has only built
     // skilling shrines, which is data, not the absence of it
     const capping =
-        isSelf && capToGuildLevel && Object.values(detailMap).some((detail) => buildingLevel(detail.shrineHrid) > 0);
+        sameGuild && capToGuildLevel && Object.values(detailMap).some((detail) => buildingLevel(detail.shrineHrid) > 0);
 
     const candidates = [];
     for (const [buffHrid, detail] of inScope) {
@@ -11917,7 +11945,7 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
     const guildCandidates = generateGuildShrineCandidates(editorDTO, {
         combat: false,
         capToGuildLevel: Boolean(guildShrineCapToGuild),
-        isSelf,
+        sameGuild: inLocalGuild(editorDTO, isSelf),
     }).map((candidate) => {
         const c = saleTaxRate == null ? candidate : { ...candidate, saleTaxRate };
         return { ...c, cost: calculateUpgradeCost(c, gameData, isSelf) };
@@ -12194,6 +12222,7 @@ export default {
     generateLabyrinthBuffCandidates,
     generateLabyrinthBuffCandidatesFromEditor,
     generateGuildShrineCandidates,
+    inLocalGuild,
     generateDrinkCandidates,
     generateCommunityBuffCandidates,
     getEquipmentTierProgression,

@@ -15371,7 +15371,7 @@ class CombatSimUI {
         } else if (!candidate.shrineLevelKnown) {
             parts.push(
                 `<div style="color:#888;">This guild's shrine buildings are not known (no guild data reached
-                the client, or this is another player's guild), so whether the shrine can already support this
+                the client, or this player is in another guild, whose shrine levels the game does not send), so whether the shrine can already support this
                 level is unknown.</div>`
             );
         }

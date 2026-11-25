@@ -742,6 +742,19 @@ describe('buildPlayerDTOFromProfile — a shared profile has no resolved achieve
         expect(dto.guildCombatBuffs).toEqual([]);
     });
 
+    test("the profile's character and guild ids ride on the DTO, so a guild-mate can be told from a stranger", () => {
+        const dto = buildPlayerDTOFromProfile({
+            characterID: 900201,
+            profile: { characterSkills: [], wearableItemMap: {}, guildId: 899 },
+        });
+
+        expect(dto.characterID).toBe(900201);
+        expect(dto.guildId).toBe(899);
+        const bare = buildPlayerDTOFromProfile({ profile: { characterSkills: [], wearableItemMap: {} } });
+        expect(bare.characterID).toBeUndefined();
+        expect(bare.guildId).toBeUndefined();
+    });
+
     test('a profile that does carry the map keeps its levels', () => {
         const dto = buildPlayerDTOFromProfile({
             characterID: 'char1',
