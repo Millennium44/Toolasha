@@ -10389,7 +10389,12 @@ class LabSimUI {
             this._viewRedraws.delete('combat');
             this._drawUpgradeAbilityOrder();
             // The footer still described the run that drew the table
-            this._setStatus(LAB_IDLE_STATUS);
+            if (
+                this._activeTab === 'upgrade' &&
+                !(this.isRunning || this._runStarting || this._skillingRunning || this._upgradeRunning)
+            ) {
+                this._setStatus(LAB_IDLE_STATUS);
+            }
         });
     }
 

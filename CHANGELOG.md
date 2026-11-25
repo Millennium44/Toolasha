@@ -10,17 +10,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Replacing a player with an import in the Combat Sim now clears the Upgrade rows measured for that player (or for you, when it was your slot). Rows for a different party member stay, under the "measured before the build changed" note.
 
-### Clear resets the status line
-
-After Clear empties the remembered Upgrade table in the Combat Sim or the Lab Sim, the footer goes back to its idle text instead of the old run's progress.
-
 ### Stopping a Combat Sim analysis early keeps your table
 
 Pressing Stop (or a failed run) before any upgrade was measured now puts back the table that was on screen, instead of leaving the Upgrade tab empty. Your saved results are not touched.
 
 ### Clear on remembered Upgrade results now empties the table
 
-In the Combat Sim and the Lab Sim, the Clear button beside "Showing results remembered from..." used to forget the saved run but leave the table on screen; it now removes the table too.
+In the Combat Sim and the Lab Sim, the Clear button beside "Showing results remembered from..." used to forget the saved run but leave the table on screen; it now removes the table too and puts the footer back to its idle text.
 
 ### Combat Sim Upgrade tab no longer shows another player's results
 

@@ -11794,6 +11794,8 @@ class CombatSimUI {
         // The runs it counts were the departing panel's
         this._upgradeRunStarted = false;
         this._runOwnRoster = null;
+        this._runHrid = null;
+        this._runAllPlayers = false;
         this._tableDroppedByRoster = false;
         this._restoredUpgradeAt = null;
         this._rememberedResults = null;
@@ -13307,6 +13309,8 @@ class CombatSimUI {
         const swapGen = this._rosterSwapGen || 0;
         this._runOwnRoster = this._editor?.getEditedDTOs?.() ? this._editor.getSelfHrid?.() != null : null;
         this._tableDroppedByRoster = false;
+        this._runHrid = null;
+        this._runAllPlayers = false;
         const release = () => {
             if (latchGen === this._analysisGen) this._upgradeRunning = false;
         };
@@ -13327,6 +13331,7 @@ class CombatSimUI {
         }
         const { playerDTOs, selfHrid, names, labels, skipped } = roster;
         this._runOwnRoster = selfHrid != null;
+        this._runAllPlayers = true;
         if (!playerDTOs.length) {
             release();
             this._setStatus(
@@ -13892,6 +13897,8 @@ class CombatSimUI {
         // character's own (it is built from the game), which no reset can turn into a stranger's
         this._runOwnRoster = this._editor?.getEditedDTOs?.() ? this._editor.getSelfHrid?.() != null : null;
         this._tableDroppedByRoster = false;
+        this._runHrid = null;
+        this._runAllPlayers = false;
 
         // Get player DTOs (edited or live)
         let playerDTOs;
@@ -14000,6 +14007,7 @@ class CombatSimUI {
             // now, since the editor can be handed another roster while the run is going
             const ownRoster = selfHrid != null;
             this._runOwnRoster = ownRoster;
+            this._runHrid = playerDTOs[playerIndex]?.hrid ?? null;
             // Whose build this measures, named now: the roster can change in Configure while the run is going
             const ranForName = (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null;
             // What the costs were read under: also named now, for the remembered record
@@ -14161,7 +14169,10 @@ class CombatSimUI {
             stopBtn.style.display = 'none';
             if (latchGen === this._analysisGen) this._setTuneButtonBusy(false);
             // Stopped or failed before anything was drawn: what was on screen is put back, not an empty tab
-            if (drewNothing && !swappedRun && this._stillSameCharacter(ownerId) && latchGen === this._analysisGen) {
+            // A swap counted while the run was out (read from the count, not only from the branch above: a run that
+            // throws never reaches it) means the table it found is not for the players now loaded
+            if (drewNothing && (this._rosterSwapGen || 0) !== swapGen) this._clearUpgradeResultsView();
+            else if (drewNothing && this._stillSameCharacter(ownerId) && latchGen === this._analysisGen) {
                 this._putBackUpgradeView(prevView);
             }
             // A view change during the run was held back; a run that drew its own results is already in the view
@@ -17388,7 +17399,9 @@ class CombatSimUI {
             ? (this._allPlayersRun.entries || []).some((entry) => entry.hrid === hrid)
             : this._upgradeResultsData?.ranFor?.hrid === hrid;
         if (this._upgradeRunning) {
-            if (wasSelf) this._rosterSwapGen = (this._rosterSwapGen || 0) + 1;
+            // The slot the run measures (any slot, for an All players run; unknown before the roster was read)
+            const concerns = wasSelf || this._runAllPlayers || this._runHrid == null || hrid === this._runHrid;
+            if (concerns) this._rosterSwapGen = (this._rosterSwapGen || 0) + 1;
             return;
         }
         if (wasSelf || analyzed) this._dropUpgradeResultsForNewScenario();
@@ -18502,8 +18515,9 @@ class CombatSimUI {
                 await clearUpgradeResults(UPGRADE_RESULTS_KEY);
                 if (this._upgradeRunning || this._upgradeResultsData !== shown) return;
                 this._clearUpgradeResultsView();
-                // The footer still described the run that drew the table; this is the Upgrade tab's idle text
-                this._setStatus(UPGRADE_IDLE_STATUS);
+                // The footer still described the run that drew the table; this is the Upgrade tab's idle text, set
+                // only while that tab is the one showing and nothing else owns the footer
+                if (this._activeMainTab === 'upgrade' && !this._isBusy()) this._setStatus(UPGRADE_IDLE_STATUS);
             });
         }
         this._wireUpgradeColumnMenu(container);
