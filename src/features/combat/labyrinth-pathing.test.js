@@ -106,6 +106,8 @@ describe('computeLabyrinthPath', () => {
         expect(path.chestBranch.has(1)).toBe(false); // on the way to the exit
         expect(path.chestBranch.has(2)).toBe(false); // the exit approach
         expect(path.chestBranch.has(7)).toBe(false); // the treasure tile itself is not a branch room
+        // The way out, before the branch was grafted on: neither the branch room nor the chest is in it
+        expect([...path.exitRoute].sort((a, b) => a - b)).toEqual([1, 2]);
     });
 
     test('never spends a shroud to reach a chest', () => {
@@ -397,13 +399,30 @@ describe('orderRouteFromStart', () => {
     });
 
     test('a cleared room in the middle of the route is walked through, not a dead end', () => {
+        // The cleared 2 stands apart from the entrance, so only 1 can be taken first; 2 then joins the ground
         const { tiles, cols } = grid(['E.S..']);
         expect(orderRouteFromStart(tiles, cols, new Set([4, 3, 2, 1]))).toEqual([1, 2, 3, 4]);
     });
 
-    test('counts from where you stand, so the near end can be the far side of the entrance', () => {
-        const { tiles, cols } = grid(['E.SSS.']);
-        expect(orderRouteFromStart(tiles, cols, new Set([1, 5]), 4)).toEqual([5, 1]);
+    test('every cleared room joined to the entrance is a place to go from, not just one start room', () => {
+        // Cleared 1 and 5 (below 1) are joined to the entrance: 2 and 6 both touch that ground, ties in route order
+        const { tiles, cols } = grid(['ES..', '.S..']);
+        expect(orderRouteFromStart(tiles, cols, [7, 6, 3, 2])).toEqual([6, 2, 7, 3]);
+    });
+
+    test('a cleared room standing apart is not ground until a room beside it is taken (live: the game refused 4,2)', () => {
+        // Floor 17, 30404: a shroud cleared 3,2 with 2,2 still uncleared, and the game's isRoomPathable refused
+        // the chest at 4,2 until 2,2 was queued. Here 2 is that island, 3 the chest beside it, 1 the link.
+        const { tiles, cols } = grid(['E.S.', '....']);
+        expect(orderRouteFromStart(tiles, cols, [3, 1])).toEqual([1, 3]);
+        // Two islands in a row: neither is ground from the entrance
+        const far = grid(['E....S..']);
+        expect(orderRouteFromStart(far.tiles, far.cols, [7, 6, 4, 3, 2, 1])).toEqual([1, 2, 3, 4, 6, 7]);
+    });
+
+    test('the standing room is ground too, even when it is not cleared (a queued room)', () => {
+        const { tiles, cols } = grid(['E.....']);
+        expect(orderRouteFromStart(tiles, cols, [5, 2, 1], 4)).toEqual([5, 1, 2]);
     });
 
     test('a standing room the game has not given (-1) counts from the entrance', () => {
@@ -427,6 +446,71 @@ describe('orderRouteFromStart', () => {
         expect(orderRouteFromStart(tiles, cols, new Set())).toEqual([]);
         expect(orderRouteFromStart(tiles, cols, [3])).toEqual([3]);
         expect(orderRouteFromStart(tiles, cols, null)).toEqual([]);
+    });
+
+    describe('the way to the exit before the chest detours', () => {
+        // The live case (floor 17, 8 x 8): cleared 1,1 (entrance) 1,2 1,3 and 3,2. The exit line runs 2,3 3,3 4,3
+        // to the exit at 5,3; a chest branch 2,2 -> (3,2 cleared) -> 4,2 hangs off it. Index = (y - 1) * 8 + x - 1
+        const live = () => {
+            const tiles = new Array(64).fill(null).map(() => ({ cleared: false, isEntrance: false }));
+            tiles[0] = { cleared: true, isEntrance: true };
+            for (const idx of [8, 16, 10]) tiles[idx] = { cleared: true, isEntrance: false };
+            tiles[20] = { cleared: false, isEntrance: false, isExit: true };
+            tiles[11] = { cleared: false, isEntrance: false, isTreasure: true };
+            return tiles;
+        };
+        const detour = new Set([9, 11]);
+
+        test('2,3 is queued before 2,2, which only links to the chest', () => {
+            const order = orderRouteFromStart(live(), 8, [20, 19, 18, 17, 11, 9], 0, detour);
+            expect(order.indexOf(17)).toBeLessThan(order.indexOf(9));
+            // The exit line (both of its rooms touching cleared ground tie in route order), then the detour, then the exit
+            expect(order.slice(0, 3).sort((a, b) => a - b)).toEqual([17, 18, 19]);
+            expect(order.slice(3, 5).sort((a, b) => a - b)).toEqual([9, 11]);
+            expect(order[5]).toBe(20);
+        });
+
+        test('without the detour set the old nearest-first order is still grown from every cleared room', () => {
+            const order = orderRouteFromStart(live(), 8, [20, 19, 18, 17, 11, 9], 0);
+            // 2,2 touches cleared rooms (distance 1) and 4,3 does not (distance 2): nearest first, from every cleared room
+            expect(order.indexOf(9)).toBeLessThan(order.indexOf(19));
+            expect(order.at(-1)).toBe(20);
+        });
+
+        test('a room on both the exit line and a chest branch counts as exit line', () => {
+            const { tiles, cols } = grid(['E..', '...', '...']);
+            tiles[2] = { cleared: false, isEntrance: false, isExit: true };
+            // 1 leads to the exit and to the chest branch (4); 3 is a branch room off the entrance
+            expect(orderRouteFromStart(tiles, cols, [2, 4, 3, 1], 0, new Set([3, 4]))).toEqual([1, 3, 4, 2]);
+        });
+
+        test('a detour room is queued first when the exit line cannot be taken yet: nothing unreachable is offered', () => {
+            const { tiles, cols } = grid(['E..']);
+            tiles[2] = { cleared: false, isEntrance: false, isExit: true };
+            expect(orderRouteFromStart(tiles, cols, [2, 1], 0, new Set([1]))).toEqual([1, 2]);
+        });
+
+        test('every offered room touches cleared ground or an earlier room, detours after the line', () => {
+            const tiles = live();
+            const order = orderRouteFromStart(tiles, 8, [9, 11, 17, 18, 19, 20], 0, detour);
+            const placed = new Set([0, 8, 16, 10]);
+            for (const idx of order) {
+                const around = [idx - 1, idx + 1, idx - 8, idx + 8].filter((i) => i >= 0 && i < 64);
+                expect(around.some((i) => placed.has(i))).toBe(true);
+                placed.add(idx);
+            }
+        });
+
+        test('the exit is last even when nothing else is queued and when it is the nearest room', () => {
+            const { tiles, cols } = grid(['ES.', '...']);
+            tiles[2] = { cleared: false, isEntrance: false, isExit: true };
+            expect(orderRouteFromStart(tiles, cols, [2, 4, 3], 0, new Set([3, 4]))).toEqual([4, 3, 2]);
+        });
+
+        test('an unreachable route room stays at the end, in route order, behind the detours', () => {
+            const { tiles, cols } = grid(['E..#..']);
+            expect(orderRouteFromStart(tiles, cols, [5, 4, 2, 1], 0, new Set([2]))).toEqual([1, 2, 5, 4]);
+        });
     });
 });
 

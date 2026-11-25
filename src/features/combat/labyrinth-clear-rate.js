@@ -5628,8 +5628,10 @@ class LabyrinthClearRate {
             }
 
             // The plan the Shroud step button carries out: exactly the rooms the planner counted as shrouds,
-            // nearest to where you stand first (the route set itself starts at the exit)
-            const walkOrder = orderRouteFromStart(tiles, cols, path.route, standingIn);
+            // in the order Next queues them (the route set itself starts at the exit)
+            // The way to the exit goes before the chest detours (the chest rooms and the rooms that only serve them)
+            const detour = new Set([...path.route].filter((idx) => !path.exitRoute?.has(idx)));
+            const walkOrder = orderRouteFromStart(tiles, cols, path.route, standingIn, detour);
             this.storeShroudStepPlan(
                 cols,
                 walkOrder.filter((idx) => tiles[idx]?.needsShroud && !tiles[idx].cleared && !tiles[idx].isEntrance),

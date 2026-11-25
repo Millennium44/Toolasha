@@ -133,7 +133,8 @@ const PATH_SHROUD_WEIGHT = 1e6;
  *   { cleared, isEntrance, needsShroud, isTreasure, isExit, isUnknown }
  * @param {number} cols - Grid width
  * @returns {Object|null} { route: Set<number>, chests: Set<number>,
- *   chestBranch: Set<number> (rooms entered only to reach a chest), shrouds,
+ *   exitRoute: Set<number> (the rooms on the way out, before the chest branches were added),
+ *   chestBranch: Set<number> (rooms entered only to reach a chest, the chest rooms themselves not included), shrouds,
  *   torches (rooms entered, so not the shrouded ones), rooms (every room on the route, shrouded or not),
  *   target } or null when there is no start/exit/route
  */
@@ -427,7 +428,7 @@ export function computeLabyrinthPath(tiles, cols) {
         if (!exitRoute.has(idx) && !tiles[idx]?.isTreasure) chestBranch.add(idx);
     }
 
-    return { route: routeSet, chests, chestBranch, shrouds, torches, rooms, target: targetIdx };
+    return { route: routeSet, exitRoute, chests, chestBranch, shrouds, torches, rooms, target: targetIdx };
 }
 
 /**
@@ -500,19 +501,25 @@ export function computeApproachPath(tiles, cols, route, startIdx = LABYRINTH_ENT
 }
 
 /**
- * The planned rooms in the order you would reach them, nearest first.
+ * The planned rooms in the order the game can take them: the way to the exit before the chest detours.
  *
- * The planner's route is a set filled by tracing each leg back from its far end, so its own order starts
- * at the exit. This walks out from where you are standing over cleared ground and the route itself, and
- * sorts the route by steps taken. Rooms the walk cannot reach keep their place at the end.
+ * The planner's route is a set filled by tracing each leg back from its far end, so its own order starts at the
+ * exit. In the game the entrance and any cleared room joined to it is a place to go from next, so every one of
+ * them counts as distance 0, and the order is grown one room at a time from that ground: a room is only offered when it
+ * touches ground already cleared or already offered, because the game refuses a room that does not. Among the
+ * rooms that touch it, the exit line (rooms on the way out, treasure rooms on it included) comes before the
+ * rooms a chest branch adds, each nearest first (steps over cleared and planned rooms, ties in route order), and
+ * the exit room itself comes last. A room no growth reaches keeps its place at the end, in route order.
  *
  * @param {Array<Object|null>} tiles - Flat grid, as `computeLabyrinthPath` takes
  * @param {number} cols - Grid width
  * @param {Set<number>|Iterable<number>} route - The planned rooms
- * @param {number} [startIdx] - Where you are standing; the entrance when missing or off the grid
- * @returns {number[]} Every room of `route`, nearest first
+ * @param {number} [startIdx] - Where you are standing, counted as ground too (it is in the game's path head);
+ *   the entrance when missing or off the grid
+ * @param {Set<number>|null} [detour] - Rooms that only serve a chest (the route less the exit line); none when null
+ * @returns {number[]} Every room of `route`, in the order to queue them
  */
-export function orderRouteFromStart(tiles, cols, route, startIdx = LABYRINTH_ENTRANCE) {
+export function orderRouteFromStart(tiles, cols, route, startIdx = LABYRINTH_ENTRANCE, detour = null) {
     const list = [...(route || [])];
     const n = Array.isArray(tiles) ? tiles.length : 0;
     if (list.length < 2 || !n || !cols) return list;
@@ -522,28 +529,73 @@ export function orderRouteFromStart(tiles, cols, route, startIdx = LABYRINTH_ENT
         const tile = tiles[idx];
         return !!tile && (planned.has(idx) || tile.cleared || tile.isEntrance);
     };
-    const dist = new Array(n).fill(Infinity);
-    dist[start] = 0;
-    const queue = [start];
-    for (let head = 0; head < queue.length; head++) {
-        const cur = queue[head];
+    const neighborsOf = (cur) => {
         const x = cur % cols;
         const around = [];
         if (x > 0) around.push(cur - 1);
         if (x < cols - 1) around.push(cur + 1);
         if (cur - cols >= 0) around.push(cur - cols);
         if (cur + cols < n) around.push(cur + cols);
-        for (const nb of around) {
+        return around;
+    };
+    // The ground to go from is the entrance and every cleared room joined to it through cleared rooms, all at
+    // distance 0. A cleared room standing apart (one a shroud cleared) is not ground until a room beside it is
+    // taken: the game's own isRoomPathable works from the connected cleared set and refuses a room that only
+    // touches such an island (live, floor 17: cleared 3,2 apart from the entrance, chest 4,2 refused).
+    const dist = new Array(n).fill(Infinity);
+    const reached = new Array(n).fill(false);
+    const spread = (from) => {
+        const stack = [from];
+        const joined = [];
+        reached[from] = true;
+        while (stack.length) {
+            const cur = stack.pop();
+            joined.push(cur);
+            for (const nb of neighborsOf(cur)) {
+                const tile = tiles[nb];
+                if (reached[nb] || !tile || !(tile.cleared || tile.isEntrance)) continue;
+                reached[nb] = true;
+                stack.push(nb);
+            }
+        }
+        return joined;
+    };
+    const queue = [...spread(LABYRINTH_ENTRANCE < n ? LABYRINTH_ENTRANCE : start)];
+    if (!reached[start]) queue.push(...spread(start));
+    for (const idx of queue) dist[idx] = 0;
+    for (let head = 0; head < queue.length; head++) {
+        const cur = queue[head];
+        for (const nb of neighborsOf(cur)) {
             if (dist[nb] !== Infinity || !walkable(nb)) continue;
             dist[nb] = dist[cur] + 1;
             queue.push(nb);
         }
     }
     const far = (idx) => (dist[idx] === Infinity ? Number.MAX_SAFE_INTEGER : dist[idx]);
-    return list
-        .map((idx, order) => ({ idx, order }))
-        .sort((a, b) => far(a.idx) - far(b.idx) || a.order - b.order)
-        .map((entry) => entry.idx);
+    // The exit is last whatever its distance; a detour room only when no room on the way out can be taken
+    const rank = (idx) => (tiles[idx]?.isExit ? 2 : detour?.has(idx) ? 1 : 0);
+    const left = list.map((idx, order) => ({ idx, order }));
+    const out = [];
+    while (left.length) {
+        let best = -1;
+        for (let i = 0; i < left.length; i++) {
+            const e = left[i];
+            if (!neighborsOf(e.idx).some((nb) => reached[nb])) continue;
+            if (best < 0) {
+                best = i;
+                continue;
+            }
+            const b = left[best];
+            const by = rank(e.idx) - rank(b.idx) || far(e.idx) - far(b.idx) || e.order - b.order;
+            if (by < 0) best = i;
+        }
+        if (best < 0) break;
+        const [taken] = left.splice(best, 1);
+        // A cleared island beside the room just taken joins the ground with it
+        spread(taken.idx);
+        out.push(taken.idx);
+    }
+    return out.concat(left.map((e) => e.idx));
 }
 
 /**
