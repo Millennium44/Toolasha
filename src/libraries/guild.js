@@ -21,6 +21,7 @@ import guildXPDisplay from '../features/guild/guild-xp-display.js';
 import guildCreditValue from '../features/guild/guild-credit-value.js';
 import * as guildTokenExchangeCapture from '../features/guild/guild-token-exchange-capture.js';
 import guildRosterView from '../features/guild/guild-roster-view.js';
+import guildProfileBack from '../features/guild/guild-profile-back.js';
 import guildTrials, { guildTrials as guildTrialsStore } from '../features/guild/guild-trials.js';
 import * as guildTrialExport from '../features/guild/guild-trial-recorder.js';
 import guildTrialScoreboard from '../features/guild/guild-trial-scoreboard.js';
@@ -53,6 +54,7 @@ toolashaRoot.Guild = {
     // the Guild Shop exchange rate captured/hydrated here in the guild bundle
     guildTokenExchangeCapture,
     guildRosterView,
+    guildProfileBack,
     guildTrials,
     // The trials singleton (guildName + record) and the recorder's export
     // builder, shared so the exportTrialData console helper in the ui bundle

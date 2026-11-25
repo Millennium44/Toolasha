@@ -4884,6 +4884,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays XP/hr rates, rankings, and a weekly chart on the Guild Overview, Members, and Guild Leaderboard tabs. Disable the standalone Guild XP/h userscript if using this.',
             },
+            profileGuildBackButton: {
+                id: 'profileGuildBackButton',
+                label: 'Guild window: Back button to the profile',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a Back button to a guild window you opened by clicking the guild name in a player profile. It reopens that profile, which the game otherwise replaces with no way back.',
+            },
             guildIdleDisplay: {
                 id: 'guildIdleDisplay',
                 label: 'Guild Overview: Show idle members list',

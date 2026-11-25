@@ -18,6 +18,10 @@ Guild-mates are still capped by your guild's shrine buildings. Players in other 
 
 Guild tokens spent on shrine levels are now valued like the tokens you hold, so buying a level no longer lowers your net worth by its tokens. With no exchange rate read yet, the shrine total says "at least".
 
+### Back button on guild windows opened from a profile
+
+When you click the guild name on a player's profile, the guild window now has a "◂ <name>" button at its top left that reopens that player's profile.
+
 ### Labyrinth "Buy supplies" no longer turns up above the description
 
 When the game redrew the Labyrinth page, leaving a run for instance, the "Buy supplies" button could be left behind above the description text, or sit beside a second "Supplies" heading. It is now removed whenever the game redraws and put back only in place of the Supplies heading.
