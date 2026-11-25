@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth Next button offers the next floor
+
+Once the exit is cleared and nothing is left for Next to queue, it reads "Next ▸ next floor" and opens the game's own Next Floor prompt for you to answer. Hover text says how many treasure rooms the descent forfeits.
+
 ### Importing over a player drops their old Upgrade rows
 
 Replacing a player with an import in the Combat Sim now clears the Upgrade rows measured for that player (or for you, when it was your slot). Rows for a different party member stay, under the "measured before the build changed" note.

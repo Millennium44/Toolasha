@@ -41,6 +41,10 @@ import { labyrinthGridSize } from './labyrinth-formulas.js';
 
 const ROOM_CELL_SELECTOR = 'div[class*="LabyrinthPanel_roomCell"]';
 const SUPPLY_HOLDER_SELECTOR = 'div[class*="LabyrinthPanel_supplyWithButton"]';
+const NEXT_FLOOR_TILE_SELECTOR = '[class*="LabyrinthPanel_nextFloorLabel__"]';
+const DIALOG_BUTTONS_SELECTOR = '[class*="DialogModal_buttonContainer"]';
+/** The status line shown while the game's descent dialog, opened by our press, is up */
+const DESCENT_ASKING_TEXT = 'The game is asking whether to descend: answer its dialog (Toolasha never answers it)';
 const RENDER_WAIT_MS = 1500;
 const RESULT_WAIT_MS = 4000;
 const POLL_MS = 50;
@@ -103,6 +107,16 @@ export function findSupplyButton(kind) {
         if (href.endsWith(`#${kind}`) || href.endsWith(`_${kind}`)) return holder.querySelector('button');
     }
     return null;
+}
+
+/**
+ * The game's own "Next Floor" tile, which it draws in the exit cell exactly when the exit is cleared. Found by
+ * the class prefix, never by its text: players run the game in other languages.
+ * @returns {Element|null}
+ */
+export function findNextFloorTile() {
+    if (typeof document === 'undefined') return null;
+    return document.querySelector(NEXT_FLOOR_TILE_SELECTOR);
 }
 
 /**
@@ -429,15 +443,42 @@ export function installPointerShield() {
  * @param {function('shroud'|'beacon'): Object|null} deps.getPlan
  * @param {function(): number|null} deps.getCharacterId
  * @param {function(string, boolean=): void} deps.setStatus
+ * @param {function(string): void} [deps.clearStatus] - Clears the status line when it still shows this text
  * @param {function(): void} deps.onChange - Labels should be redrawn
  * @returns {Object}
  */
-export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange }) {
+export function createPathStepper({ getPlan, getCharacterId, setStatus, clearStatus = () => {}, onChange }) {
     let busy = false;
     let disposed = false;
     let generation = 0;
     let updatedWaiters = [];
     const timers = new Set();
+    // The descent dialog our press opened, and the observer that redraws the buttons when it goes away
+    let ourDialog = null;
+    let dialogObserver = null;
+
+    const stopDialogWatch = () => {
+        dialogObserver?.disconnect();
+        dialogObserver = null;
+        // The "answer its dialog" line is only true while our dialog is up
+        if (ourDialog) clearStatus(DESCENT_ASKING_TEXT);
+        ourDialog = null;
+    };
+
+    /** Watch (only while the dialog is up) for the dialog leaving the page, however it was dismissed */
+    const watchDialog = (dialog, characterId) => {
+        stopDialogWatch();
+        if (typeof MutationObserver === 'undefined' || !document.body) return;
+        ourDialog = dialog;
+        dialogObserver = new MutationObserver(() => {
+            if (disposed) return stopDialogWatch();
+            const gone = !ourDialog?.isConnected;
+            if (!gone && getCharacterId() === characterId) return;
+            stopDialogWatch();
+            onChange();
+        });
+        dialogObserver.observe(document.body, { childList: true, subtree: true });
+    };
 
     const sleep = (ms) =>
         new Promise((resolve) => {
@@ -525,6 +566,62 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
             );
         } finally {
             updatedWaiters = [];
+            busy = false;
+            if (!disposed) onChange();
+        }
+    };
+
+    /**
+     * One Next Floor press: press the game's own tile so its confirmation dialog opens. Nothing is sent to the
+     * server and the dialog is never answered here; the player says Yes or No.
+     * @param {function(): Object} describeNow - The Next step as it reads right now
+     */
+    const pressDescent = async (describeNow) => {
+        if (disposed) return;
+        if (busy) {
+            setStatus('Still working on the last press');
+            return;
+        }
+        const step = describeNow();
+        if (step.action !== 'descend') {
+            setStatus(step.reason, true);
+            onChange();
+            return;
+        }
+        busy = true;
+        const myGeneration = ++generation;
+        const characterId = getCharacterId();
+        onChange();
+        try {
+            // After Toolasha's own click handler has returned
+            await sleep(0);
+            if (disposed || myGeneration !== generation) return;
+            const again = describeNow();
+            if (again.action !== 'descend' || again.floor !== step.floor || getCharacterId() !== characterId) {
+                setStatus('The map changed since the last step, press again', true);
+                return;
+            }
+            const tile = findNextFloorTile();
+            if (!tile) {
+                setStatus("The game's Next Floor tile was not found, press it on the map", true);
+                return;
+            }
+            const before = new Set(document.querySelectorAll(DIALOG_BUTTONS_SELECTOR));
+            if (clickThroughReact(tile, { reactFirst: true }) === 'none') {
+                setStatus('The press did not reach the game, press the Next Floor tile by hand', true);
+                return;
+            }
+            // The dialog our press opened is the container that was not on the page before it
+            const fresh = () => [...document.querySelectorAll(DIALOG_BUTTONS_SELECTOR)].find((d) => !before.has(d));
+            const opened = await waitFor(() => !!fresh(), RENDER_WAIT_MS);
+            if (disposed || myGeneration !== generation) return;
+            const dialog = opened ? fresh() : null;
+            if (dialog) watchDialog(dialog, characterId);
+            setStatus(
+                opened ? DESCENT_ASKING_TEXT : "The game's dialog did not open, press the Next Floor tile on the map",
+                !opened
+            );
+        } finally {
             busy = false;
             if (!disposed) onChange();
         }
@@ -664,15 +761,26 @@ export function createPathStepper({ getPlan, getCharacterId, setStatus, onChange
         timers.clear();
         updatedWaiters = [];
         busy = false;
+        stopDialogWatch();
     };
 
-    return { describe, press, notifyUpdated, dispose, isBusy: () => busy };
+    return {
+        isDescentDialogOpen: () => !!ourDialog?.isConnected,
+        hasDialogWatch: () => !!dialogObserver,
+        describe,
+        press,
+        pressDescent,
+        notifyUpdated,
+        dispose,
+        isBusy: () => busy,
+    };
 }
 
 export default {
     findLabyrinthPanel,
     findSupplyButton,
     findRoomCell,
+    findNextFloorTile,
     describeStep,
     describeRouteStep,
     parseGamePath,
