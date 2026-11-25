@@ -210,6 +210,9 @@ export class SimEditor {
      *   Solo checkbox is toggled by hand, so the owner can persist it
      * @param {Function} [options.onRender] - Called after every full editor render, so the owner
      *   can follow the loaded roster (e.g. offer a mode only while a party is loaded)
+     * @param {Function} [options.onScenarioReplaced] - Called when the whole loaded roster is swapped for
+     *   another (an external profile, a party load, a pasted party), so the owner can drop results that
+     *   were measured for the players that are gone. Not called by a Fetch, an Apply or an edit.
      * @param {Function} [options.onResetToParty] - Called with `{zoneHrid, tier}` when the Reset to Party
      *   button is clicked and the party has a combat zone; applies it to the owner's Zone and Tier
      *   selects and returns a short note when it could not ('' otherwise)
@@ -221,6 +224,7 @@ export class SimEditor {
         soloMode = false,
         onSoloModeChange = null,
         onRender = null,
+        onScenarioReplaced = null,
         onResetToParty = null,
     }) {
         this._editorEl = editorEl;
@@ -281,6 +285,7 @@ export class SimEditor {
         this._soloMode = Boolean(soloMode);
         this._onSoloModeChange = onSoloModeChange;
         this._onRender = onRender;
+        this._onScenarioReplaced = onScenarioReplaced;
         this._onResetToParty = onResetToParty;
         // The last Export click's outcome ("Copied Milkman's build." or, when
         // the clipboard is unavailable, a note plus the text itself so the user
@@ -1079,7 +1084,20 @@ export class SimEditor {
         this._selectedLoadoutName = '';
         this._editorInitialized = true;
         this._scenarioToken++;
+        this._notifyScenarioReplaced();
         this.renderEditor();
+    }
+
+    /**
+     * Tell the owner the whole roster was swapped for another one.
+     * @private
+     */
+    _notifyScenarioReplaced() {
+        try {
+            this._onScenarioReplaced?.();
+        } catch (error) {
+            console.error('[SimEditor] onScenarioReplaced listener failed:', error);
+        }
     }
 
     /**
@@ -1121,6 +1139,7 @@ export class SimEditor {
         this._selectedLoadoutName = '';
         this._editorInitialized = true;
         this._scenarioToken++;
+        this._notifyScenarioReplaced();
         this._recomputeLevelGapDebuffs();
         this.renderEditor();
     }
@@ -1413,6 +1432,7 @@ export class SimEditor {
         this._rosterFromPaste = true;
         this._editorInitialized = true;
         this._scenarioToken++;
+        this._notifyScenarioReplaced();
         this._recomputeLevelGapDebuffs();
 
         this.renderEditor();

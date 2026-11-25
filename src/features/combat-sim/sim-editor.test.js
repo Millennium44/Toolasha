@@ -4388,3 +4388,47 @@ describe('reordering abilities in Configure', () => {
         expect(editor._isUntouchedParty()).toBe(false);
     });
 });
+
+describe('the owner is told when the whole roster is replaced', () => {
+    const make = () => {
+        const calls = [];
+        const editor = new SimEditor({
+            editorEl: document.createElement('div'),
+            onScenarioReplaced: () => calls.push('replaced'),
+        });
+        return { editor, calls };
+    };
+
+    test('an external profile, a party load and a pasted party each say so once', () => {
+        const { editor, calls } = make();
+        editor.openWithExternalDTO(emptyDTO('player1'), 'Venaam');
+        expect(calls).toHaveLength(1);
+        editor.loadParty([emptyDTO('player1'), emptyDTO('player2')], ['Milkman', 'Partner']);
+        expect(calls).toHaveLength(2);
+        editor.replaceParty([emptyDTO('player1')], ['Bessie']);
+        expect(calls).toHaveLength(3);
+    });
+
+    test('a hand edit and a reset to self do not', () => {
+        const { editor, calls } = make();
+        editor.openWithExternalDTO(emptyDTO('player1'), 'Venaam');
+        calls.length = 0;
+        editor.getEditedDTOs().player1.attackLevel = 99;
+        editor.resetToSelf();
+        expect(calls).toHaveLength(0);
+    });
+
+    test('a listener that throws does not stop the load', () => {
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const editor = new SimEditor({
+            editorEl: document.createElement('div'),
+            onScenarioReplaced: () => {
+                throw new Error('boom');
+            },
+        });
+        editor.openWithExternalDTO(emptyDTO('player1'), 'Venaam');
+        expect(editor.getEditedDTOs().player1).toBeTruthy();
+        expect(errors).toHaveBeenCalled();
+        errors.mockRestore();
+    });
+});

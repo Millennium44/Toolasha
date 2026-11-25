@@ -4220,6 +4220,8 @@ class CombatSimUI {
             },
             // Reset to Party also moves the Zone and Tier to the party's
             onResetToParty: (target) => this._applyPartyZone(target),
+            // Another profile, a party or a pasted roster replaced the players the Upgrade rows were measured for
+            onScenarioReplaced: () => this._dropUpgradeResultsForNewScenario(),
         });
         // The same setting is on the Settings page: a change there while this
         // panel is open must reach the editor, or the next run uses the old value
@@ -17242,6 +17244,31 @@ class CombatSimUI {
      * @param {Object} results - { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
      * @private
      */
+    /**
+     * The editor's whole roster was replaced (an external profile, a party load, a pasted party): the Upgrade
+     * rows on screen were measured against the departing players' baselines, so they are taken off the panel
+     * rather than shown, with a banner, over someone else. Memory and screen only: the remembered record
+     * (keyed to the logged-in character) is neither read nor written here, so it is still the owner's when
+     * they are back. Nothing is restored in its place, since the roster now holds someone it was not saved for.
+     * A run in progress is left alone: it owns the table and has nothing on screen to drop.
+     * An in-place edit, an Apply or a Fetch never reaches this.
+     * @private
+     */
+    _dropUpgradeResultsForNewScenario() {
+        if (this._upgradeRunning) return;
+        if (!this._upgradeResultsData && !this._rememberedResults) return;
+        this._upgradeResultsData = null;
+        this._allPlayersRun = null;
+        this._upgradeAllChosenFlag = false;
+        this._restoredUpgradeAt = null;
+        this._rememberedResults = null;
+        this._restoredUpgradeMeta = null;
+        this._budgetConfirm = null;
+        const container = this.panel?.querySelector('#mwi-csim-upgrade-results');
+        if (container) container.innerHTML = '';
+        this._refreshAnalysisNote();
+    }
+
     /**
      * Restore the last Upgrade-tab results after a refresh, when the option is on
      * and a fresh run has not already drawn its own. Fire-and-forget from panel

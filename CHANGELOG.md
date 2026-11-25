@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim Upgrade tab no longer shows another player's results
+
+Opening another player, a party or a pasted roster in the Combat Sim now clears the Upgrade results on screen. Before, the previous player's rows stayed under a "measured before the build changed" note, as if they belonged to the new player. Your own saved results are kept.
+
 ### Guild shrine prices no longer pass a guess off as the price
 
 Shrine upgrade rows now value guild tokens at the game's own per-color exchange when no rate has been read. A row priced without its tokens, or on a guessed rate, shows ≥ or ≈ on its cost, hours, ROI and cost-per-percent columns with the reason on hover, and in plan totals and exports.
