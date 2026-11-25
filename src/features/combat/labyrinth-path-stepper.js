@@ -240,7 +240,7 @@ export function describeStep({ kind, plan, panel, characterId }) {
         const y = Math.floor(t.idx / cols);
         const check = targetCheck(panel, kind, x, y, lab);
         if (check.ok) {
-            target = { idx: t.idx, x, y };
+            target = { idx: t.idx, x, y, forShroud: t.forShroud };
             break;
         }
         if (!firstWhy) firstWhy = check.why;
@@ -250,14 +250,20 @@ export function describeStep({ kind, plan, panel, characterId }) {
         return none(
             'invalid',
             `${noun} ▸ blocked`,
-            'The planned shroud rooms are not revealed yet (the ? mode assumes them): clear or beacon nearer rooms first'
+            'The planned shroud rooms are not revealed yet (the ? mode assumes them): use the Beacon step to reveal ' +
+                'the next one, or clear a room beside it'
         );
     }
     if (!target) return none('invalid', `${noun} ▸ blocked`, firstWhy[0].toUpperCase() + firstWhy.slice(1));
 
-    const short = stock < remaining.length ? ` (${stock} ${kind}s for ${remaining.length} steps)` : '';
+    // A beacon brought forward because the route is waiting to shroud a room that is not revealed
+    const reveals = Number.isInteger(target.forShroud)
+        ? `: it reveals room ${where(target.forShroud % cols, Math.floor(target.forShroud / cols))}, which the route needs a shroud for`
+        : '';
+    const short = (stock < remaining.length ? ` (${stock} ${kind}s for ${remaining.length} steps)` : '') + reveals;
     const mode = panel.state?.supplyMode ?? null;
     const base = { idx: target.idx, x: target.x, y: target.y, code: 'ready' };
+    if (reveals) base.forShroud = target.forShroud;
     if (mode === kind) {
         return {
             ...base,
@@ -347,7 +353,9 @@ export function describeRouteStep({ plan, panel, characterId }) {
         return none(
             'shroud-first',
             'Route ▸ shroud',
-            `Room ${where(x, y)} needs a shroud first: use the Shroud step`,
+            isRoomRevealed(lab.roomData?.[y]?.[x])
+                ? `Room ${where(x, y)} needs a shroud first: use the Shroud step`
+                : `Room ${where(x, y)} is not revealed and is planned as a shroud: use the Beacon step to reveal it`,
             at
         );
     }
