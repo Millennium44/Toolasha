@@ -213,6 +213,8 @@ export class SimEditor {
      * @param {Function} [options.onScenarioReplaced] - Called when the whole loaded roster is swapped for
      *   another (an external profile, a party load, a pasted party), so the owner can drop results that
      *   were measured for the players that are gone. Not called by a Fetch, an Apply or an edit.
+     * @param {Function} [options.onRosterReloaded] - Called when the live character (and party) were loaded back
+     *   (Fetch, Reset to Party, Reset to Me), so the owner can drop results that were measured for a stranger.
      * @param {Function} [options.onResetToParty] - Called with `{zoneHrid, tier}` when the Reset to Party
      *   button is clicked and the party has a combat zone; applies it to the owner's Zone and Tier
      *   selects and returns a short note when it could not ('' otherwise)
@@ -225,6 +227,7 @@ export class SimEditor {
         onSoloModeChange = null,
         onRender = null,
         onScenarioReplaced = null,
+        onRosterReloaded = null,
         onResetToParty = null,
     }) {
         this._editorEl = editorEl;
@@ -286,6 +289,7 @@ export class SimEditor {
         this._onSoloModeChange = onSoloModeChange;
         this._onRender = onRender;
         this._onScenarioReplaced = onScenarioReplaced;
+        this._onRosterReloaded = onRosterReloaded;
         this._onResetToParty = onResetToParty;
         // The last Export click's outcome ("Copied Milkman's build." or, when
         // the clipboard is unavailable, a note plus the text itself so the user
@@ -1041,6 +1045,7 @@ export class SimEditor {
             this._rosterFromPaste = false;
             this._editorInitialized = true;
             this._scenarioToken++;
+            this._notifyRosterReloaded();
             // Which scenario this build made, so a caller can tell its own build from a later replacement
             this._builtToken = this._scenarioToken;
 
@@ -1097,6 +1102,18 @@ export class SimEditor {
             this._onScenarioReplaced?.();
         } catch (error) {
             console.error('[SimEditor] onScenarioReplaced listener failed:', error);
+        }
+    }
+
+    /**
+     * Tell the owner the live character was loaded back in (Fetch, Reset to Party, Reset to Me).
+     * @private
+     */
+    _notifyRosterReloaded() {
+        try {
+            this._onRosterReloaded?.();
+        } catch (error) {
+            console.error('[SimEditor] onRosterReloaded listener failed:', error);
         }
     }
 
@@ -1978,6 +1995,7 @@ export class SimEditor {
         this._rosterFromPaste = false;
         this._editorInitialized = true;
         this._scenarioToken++;
+        this._notifyRosterReloaded();
 
         this.renderEditor();
         this._saveLoadoutMemory();

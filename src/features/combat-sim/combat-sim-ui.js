@@ -4222,6 +4222,8 @@ class CombatSimUI {
             onResetToParty: (target) => this._applyPartyZone(target),
             // Another profile, a party or a pasted roster replaced the players the Upgrade rows were measured for
             onScenarioReplaced: () => this._dropUpgradeResultsForNewScenario(),
+            // The live character is loaded back: rows measured for a stranger are not theirs
+            onRosterReloaded: () => this._dropStrangersUpgradeResults(),
         });
         // The same setting is on the Settings page: a change there while this
         // panel is open must reach the editor, or the next run uses the old value
@@ -13003,13 +13005,22 @@ class CombatSimUI {
      * @param {string[]} params.upgradeModes - The checked sets
      * @param {Object} params.playerDTO - The analysed player's DTO
      * @param {Object} params.ranFor - Who, where and at what tier it was for, by name, as of now
+     * @param {boolean} [params.ownRoster=true] - Whether the roster it ran for held the live character, as the run
+     *   started (read before its first await)
      * @private
      */
-    _stampUpgradeResults(results, { buildSigs, upgradeModes, playerDTO, ranFor }) {
+    _stampUpgradeResults(results, { buildSigs, upgradeModes, playerDTO, ranFor, ownRoster = true }) {
         // Not enumerable: it is memory-only, so it is neither saved with a remembered run nor copied
         if (results && typeof results === 'object') {
             Object.defineProperty(results, '_buildSigs', {
                 value: buildSigs,
+                enumerable: false,
+                configurable: true,
+            });
+            // Whether the roster this was measured for held the live character (false: an imported profile or a
+            // pasted party). Memory-only like `_buildSigs`; a restored record carries none and counts as the owner's
+            Object.defineProperty(results, '_ownRoster', {
+                value: Boolean(ownRoster),
                 enumerable: false,
                 configurable: true,
             });
@@ -13412,6 +13423,7 @@ class CombatSimUI {
                     upgradeModes,
                     playerDTO: playerDTOs[entry.index],
                     ranFor: { hrid: entry.hrid, name: entry.name, zoneHrid, difficultyTier },
+                    ownRoster: selfHrid != null,
                 });
                 if (this._upgradeAborted) {
                     // Every candidate already simulated is a real measurement: kept, and marked stopped
@@ -13935,6 +13947,10 @@ class CombatSimUI {
             // The builds this analysis measures from, taken before its baseline: an Apply or any edit afterwards
             // makes every later Confirm and Verify measure a different build against this baseline
             const buildSigs = new Map(playerDTOs.map((dto) => [dto.hrid, buildDtoSignature(dto)]));
+            // Whether this roster holds the live character, and which roster swap this run began under: both read
+            // now, since the editor can be handed another roster while the run is going
+            const ownRoster = selfHrid != null;
+            const swapGen = this._rosterSwapGen || 0;
             // Whose build this measures, named now: the roster can change in Configure while the run is going
             const ranForName = (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null;
             const results = await runUpgradeAnalysis(
@@ -14008,13 +14024,26 @@ class CombatSimUI {
                     zoneHrid: zoneHrid || null,
                     difficultyTier: difficultyTier ?? null,
                 },
+                ownRoster,
             });
+            // The roster was swapped while this ran: the table would describe players no longer loaded, so it is
+            // not drawn. What it measured is still saved below when it was the owner's roster
+            const swapped = (this._rosterSwapGen || 0) !== swapGen;
             // A fresh run supersedes any restored set — drop the "from a previous
             // run" note before drawing, and remember the new results (opt-in).
             this._restoredUpgradeAt = null;
             this._rememberedResults = null;
             this._restoredUpgradeMeta = null;
-            if (this._upgradeAborted) {
+            if (swapped) {
+                // The table was emptied when this run began, so what the panel still holds is not on screen either
+                this._clearUpgradeResultsView();
+                if (this._upgradeAborted && completed) this._stampStoppedRun(results, completed, upgradeModes);
+                this._setStatus(
+                    this._upgradeAborted
+                        ? 'Analysis cancelled.'
+                        : 'Analysis finished, but the loaded players changed meanwhile, so the table is not shown.'
+                );
+            } else if (this._upgradeAborted) {
                 if (completed) {
                     // Stamped on the result, so the table, the budget and a remembered copy of it all say the
                     // run covers only part of what it set out to measure. Only when candidates are missing: Stop
@@ -14040,11 +14069,17 @@ class CombatSimUI {
             // A finished Ability order pass with no rows ("Nothing to reorder") is a result too: the record is
             // replaced whole, so skipping it would bring the previous analysis back on reload
             const emptyOrderRun = !completed && results?.abilityOrder?.ran && !results.abilityOrder.stopped;
-            if ((completed || emptyOrderRun) && this._stillSameCharacter(ownerId)) {
+            // Only a roster that held the live character is the owner's analysis. An imported profile's or a
+            // pasted party's run is shown but never remembered: the record is replaced whole and has no undo,
+            // so it would take the owner's own analysis (and restore under their name on the next reload)
+            if ((completed || emptyOrderRun) && ownRoster && this._stillSameCharacter(ownerId)) {
                 // Who and where, so a restored set can say whose run it was -
                 // the selector may hold a different player, or another zone,
                 // by the time these come back
                 saveUpgradeResults(UPGRADE_RESULTS_KEY, results, {
+                    // Which character's record this is, so a restore can tell it from one an older build
+                    // wrote under their key for someone else; older builds ignore the field
+                    ownerId,
                     characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
                     zoneName: getCombatZones().find((z) => z.hrid === zoneHrid)?.name || null,
                     difficultyTier,
@@ -17245,18 +17280,45 @@ class CombatSimUI {
      * @private
      */
     /**
-     * The editor's whole roster was replaced (an external profile, a party load, a pasted party): the Upgrade
-     * rows on screen were measured against the departing players' baselines, so they are taken off the panel
-     * rather than shown, with a banner, over someone else. Memory and screen only: the remembered record
-     * (keyed to the logged-in character) is neither read nor written here, so it is still the owner's when
-     * they are back. Nothing is restored in its place, since the roster now holds someone it was not saved for.
-     * A run in progress is left alone: it owns the table and has nothing on screen to drop.
-     * An in-place edit, an Apply or a Fetch never reaches this.
+     * Whether a remembered record is this character's own analysis. Records carry `ownerId` from this build on.
+     * An older record has none, and an older build saved a run for an imported profile (player1 of a roster that
+     * was not the live character) under the owner's key: that one names another character as player 1. A run for
+     * a partner in the owner's party (player2 and up) was always the owner's to keep, so it stays. A same-named
+     * stranger cannot be told from the owner by an older record, and is shown.
+     * @param {Object} payload - The stored record
+     * @param {string|null} ownerId - The character the key was resolved for
+     * @returns {boolean}
      * @private
      */
-    _dropUpgradeResultsForNewScenario() {
+    _upgradeRecordIsOwners(payload, ownerId) {
+        if (payload.ownerId != null) return String(payload.ownerId) === String(ownerId);
+        const name = payload.characterName;
+        const ranForHrid = payload.data?.ranFor?.hrid;
+        const mine = dataManager.getCurrentCharacterName?.();
+        if (!name || !mine || ranForHrid !== 'player1') return true;
+        return name === mine;
+    }
+
+    /**
+     * Rows on screen that were measured for a roster without the live character (an imported profile, a pasted
+     * party) are dropped when the live character is loaded back; the owner's own rows stay, banner and all, as
+     * for any Apply or edit. The owner's remembered record is then read again, when the option is on.
+     * @private
+     */
+    _dropStrangersUpgradeResults() {
         if (this._upgradeRunning) return;
-        if (!this._upgradeResultsData && !this._rememberedResults) return;
+        if (this._upgradeResultsData?._ownRoster !== false) return;
+        this._clearUpgradeResultsView();
+        // The latch only stops a read racing a run; no run is on, and this table was a stranger's
+        this._upgradeRunStarted = false;
+        this._restoreUpgradeResults();
+    }
+
+    /**
+     * Clear every piece of Upgrade-results state the screen is drawn from, and the table itself.
+     * @private
+     */
+    _clearUpgradeResultsView() {
         this._upgradeResultsData = null;
         this._allPlayersRun = null;
         this._upgradeAllChosenFlag = false;
@@ -17267,6 +17329,25 @@ class CombatSimUI {
         const container = this.panel?.querySelector('#mwi-csim-upgrade-results');
         if (container) container.innerHTML = '';
         this._refreshAnalysisNote();
+    }
+
+    /**
+     * The editor's whole roster was replaced (an external profile, a party load, a pasted party): the Upgrade
+     * rows on screen were measured against the departing players' baselines, so they are taken off the panel
+     * rather than shown, with a banner, over someone else. Memory and screen only: the remembered record
+     * (keyed to the logged-in character) is neither read nor written here, so it is still the owner's when
+     * they are back. Nothing is restored in its place, since the roster now holds someone it was not saved for.
+     * A run in progress is left alone: it owns the table and has nothing on screen to drop.
+     * An in-place edit, an Apply or a Fetch never reaches this.
+     * @private
+     */
+    _dropUpgradeResultsForNewScenario() {
+        // A run begun before this swap reads the count when it finishes, and does not draw its table over the
+        // new players
+        this._rosterSwapGen = (this._rosterSwapGen || 0) + 1;
+        if (this._upgradeRunning) return;
+        if (!this._upgradeResultsData && !this._rememberedResults) return;
+        this._clearUpgradeResultsView();
     }
 
     /**
@@ -17285,13 +17366,17 @@ class CombatSimUI {
         try {
             if (this._upgradeResultsData && !replace) return;
             const ownerId = dataManager.getCurrentCharacterId();
-            const payload = await loadUpgradeResults(UPGRADE_RESULTS_KEY);
+            let payload = await loadUpgradeResults(UPGRADE_RESULTS_KEY);
             // A run started while the read was out owns the table: a stopped or failed one must not
             // leave the remembered table standing as its result. Only an upgrade run: a Simulate or Seek does
             // not draw this table, and the restore never retries. A switch means the key was another character's.
             if (this._upgradeRunning || this._upgradeRunStarted) return;
             if (!this._stillSameCharacter(ownerId)) return;
             const container = this.panel?.querySelector('#mwi-csim-upgrade-results');
+            // A record that is another character's (written under this key by an older build, which saved an
+            // imported profile's run here) is not drawn as theirs. It is left in storage: their next
+            // analysis replaces it, and nothing here can tell it from a record worth keeping
+            if (payload && !this._upgradeRecordIsOwners(payload, ownerId)) payload = null;
             if (!payload) {
                 if (replace && this._upgradeResultsData && container) {
                     this._upgradeResultsData = null;

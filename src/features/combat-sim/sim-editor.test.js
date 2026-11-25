@@ -4432,3 +4432,33 @@ describe('the owner is told when the whole roster is replaced', () => {
         errors.mockRestore();
     });
 });
+
+describe('the owner is told when the live character is loaded back', () => {
+    test('Reset to Me and Fetch say so; a hand edit and an external load do not', async () => {
+        const calls = [];
+        const editor = new SimEditor({
+            editorEl: document.createElement('div'),
+            onRosterReloaded: () => calls.push('reloaded'),
+        });
+        editor.openWithExternalDTO(emptyDTO('player1'), 'Venaam');
+        editor.getEditedDTOs().player1.attackLevel = 99;
+        expect(calls).toHaveLength(0);
+        editor.resetToSelf();
+        expect(calls).toHaveLength(1);
+        await editor.initEditor();
+        expect(calls).toHaveLength(2);
+    });
+
+    test('a listener that throws does not stop the reset', () => {
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const editor = new SimEditor({
+            editorEl: document.createElement('div'),
+            onRosterReloaded: () => {
+                throw new Error('boom');
+            },
+        });
+        expect(editor.resetToSelf()).toBe(true);
+        expect(errors).toHaveBeenCalled();
+        errors.mockRestore();
+    });
+});

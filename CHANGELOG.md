@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Combat Sim Upgrade tab no longer shows another player's results
 
-Opening another player, a party or a pasted roster in the Combat Sim now clears the Upgrade results on screen. Before, the previous player's rows stayed under a "measured before the build changed" note, as if they belonged to the new player. Your own saved results are kept.
+Opening another player, a party or a pasted roster in the Combat Sim now clears the Upgrade results on screen, and Reset to Me clears a stranger's rows and brings your own saved ones back. An analysis of someone else's build is no longer remembered, so it can't replace your saved results or reappear under your name after a reload; a record an earlier version saved that way is no longer shown.
 
 ### Guild shrine prices no longer pass a guess off as the price
 

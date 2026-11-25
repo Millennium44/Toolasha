@@ -895,6 +895,7 @@ describe('Upgrade results when another player is loaded into the sim', () => {
         await settle();
         selectZone();
         mocks.editedDTOs = { player1: structuredClone(milk) };
+        mocks.editorSelfHrid = 'player1';
         mocks.upgradeResult = {
             baseline: BASELINE,
             results: [row('Main gear')],
@@ -916,6 +917,7 @@ describe('Upgrade results when another player is loaded into the sim', () => {
         vi.restoreAllMocks();
         ui.destroy();
         mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
         mocks.upgradeResult = { baseline: null, results: [], food: null };
         mocks.store.clear();
     });
@@ -1009,5 +1011,279 @@ describe('Upgrade results when another player is loaded into the sim', () => {
         await settle();
         expect(ui._upgradeResultsData).not.toBeNull();
         expect(text()).toContain('Main gear');
+    });
+});
+
+/**
+ * Whose analysis is remembered, and whose rows are drawn.
+ *
+ * The remembered record is per logged-in character and has no undo. A run for an imported profile or a pasted
+ * party used to replace it (and restored under the owner's name on the next reload), and Reset to Me left that
+ * stranger's rows on screen.
+ */
+describe('Upgrade results and the remembered record across rosters', () => {
+    const KEY = 'combatExport:combatSimUpgradeResults_char1';
+    const settle = async () => {
+        for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const rows = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const note = () => ui.panel.querySelector('#mwi-csim-analysis-note');
+    const ownRecord = (extra = {}) => ({
+        data: { baseline: BASELINE, results: [row('Owner gear')], ranFor: { hrid: 'player1', name: 'Me' } },
+        savedAt: 5,
+        characterName: 'Me',
+        ...extra,
+    });
+    const stranger = {
+        hrid: 'player1',
+        name: 'NikuDango',
+        equipment: { '/item_locations/body': { itemHrid: '/items/z' } },
+    };
+    const me = { hrid: 'player1', name: 'Me', equipment: { '/item_locations/body': { itemHrid: '/items/a' } } };
+
+    /** The seeded owner record is still the owner's: the mock store returns the live object, which a draw annotates */
+    const expectOwnerRecord = () => {
+        const record = mocks.store.get(KEY);
+        expect(record.savedAt).toBe(5);
+        expect(record.characterName).toBe('Me');
+        expect(record.data.results.map((r) => r.candidate.description)).toEqual(['Owner gear']);
+    };
+
+    async function analyze({ dtos = { player1: structuredClone(me) }, names, selfHrid, label = 'Fresh gear' }) {
+        mocks.editedDTOs = dtos;
+        mocks.playerNames = names || { player1: 'Me' };
+        mocks.editorSelfHrid = selfHrid;
+        mocks.upgradeResult = { baseline: BASELINE, results: [row(label)], food: null, context: { gameData: {} } };
+        await ui._onUpgradeAnalyze();
+        await settle();
+    }
+    async function openPanel() {
+        ui.buildPanel();
+        await settle();
+        for (const job of mocks.bgJobs.splice(0)) await job();
+        await settle();
+        selectZone();
+    }
+
+    beforeEach(async () => {
+        mocks.store.clear();
+        mocks.characterId = 'char1';
+        mocks.characterName = 'Me';
+        const { default: config } = await import('../../core/config.js');
+        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+            key === 'combatSim_rememberUpgradeResults' ? true : fallback
+        );
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = null;
+        mocks.characterName = undefined;
+        mocks.onRun = null;
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.store.clear();
+    });
+
+    test('own analysis: drawn, saved for the owner with their id', async () => {
+        await openPanel();
+        await analyze({ selfHrid: 'player1' });
+        expect(rows().textContent).toContain('Fresh gear');
+        const saved = mocks.store.get(KEY);
+        expect(saved.data.results[0].candidate.description).toBe('Fresh gear');
+        expect(saved.ownerId).toBe('char1');
+    });
+
+    test('party with the live character as player 1: a partner run is saved too', async () => {
+        await openPanel();
+        await analyze({
+            dtos: { player1: structuredClone(me), player2: { ...structuredClone(stranger), hrid: 'player2' } },
+            names: { player1: 'Me', player2: 'Partner' },
+            selfHrid: 'player1',
+        });
+        expect(mocks.store.get(KEY).ownerId).toBe('char1');
+    });
+
+    test('external analysis: drawn, never saved, the owner record is byte-identical', async () => {
+        mocks.store.set(KEY, ownRecord());
+        await openPanel();
+        await analyze({
+            dtos: { player1: structuredClone(stranger) },
+            names: { player1: 'NikuDango' },
+            selfHrid: null,
+        });
+        expect(rows().textContent).toContain('Fresh gear');
+        expectOwnerRecord();
+    });
+
+    test('pasted party (nobody is the live character): drawn, never saved', async () => {
+        await openPanel();
+        await analyze({
+            dtos: { player1: structuredClone(stranger), player2: { ...structuredClone(me), hrid: 'player2' } },
+            names: { player1: 'NikuDango', player2: 'Me' },
+            selfHrid: null,
+        });
+        expect(mocks.store.has(KEY)).toBe(false);
+    });
+
+    test('external then Reset to Me: the stranger rows go and the owner record is drawn', async () => {
+        mocks.store.set(KEY, ownRecord());
+        await openPanel();
+        await analyze({
+            dtos: { player1: structuredClone(stranger) },
+            names: { player1: 'NikuDango' },
+            selfHrid: null,
+        });
+        expect(rows().textContent).toContain('Fresh gear');
+        mocks.editorOptions.onRosterReloaded();
+        await settle();
+        expect(rows().textContent).not.toContain('Fresh gear');
+        expect(rows().textContent).toContain('Owner gear');
+        expect(note().style.display).toBe('none');
+    });
+
+    test('external then Reset to Me with nothing saved: an empty tab', async () => {
+        await openPanel();
+        await analyze({
+            dtos: { player1: structuredClone(stranger) },
+            names: { player1: 'NikuDango' },
+            selfHrid: null,
+        });
+        mocks.editorOptions.onRosterReloaded();
+        await settle();
+        expect(ui._upgradeResultsData).toBeNull();
+        expect(rows().textContent).toBe('');
+    });
+
+    test('own rows on screen: Fetch or Reset keeps rows and banner', async () => {
+        await openPanel();
+        await analyze({ selfHrid: 'player1' });
+        mocks.editedDTOs = { player1: { ...structuredClone(me), equipment: {} } };
+        mocks.editorOptions.onRosterReloaded();
+        await settle();
+        expect(rows().textContent).toContain('Fresh gear');
+        ui._refreshAnalysisNote();
+        expect(note().style.display).toBe('block');
+    });
+
+    test('external then reload: the owner record is what comes back', async () => {
+        mocks.store.set(KEY, ownRecord());
+        await openPanel();
+        await analyze({
+            dtos: { player1: structuredClone(stranger) },
+            names: { player1: 'NikuDango' },
+            selfHrid: null,
+        });
+        ui.destroy();
+        await openPanel();
+        expect(rows().textContent).toContain('Owner gear');
+        expect(rows().textContent).not.toContain('Fresh gear');
+    });
+
+    describe('a record already in storage', () => {
+        const restoreWith = async (record) => {
+            mocks.store.set(KEY, record);
+            await openPanel();
+            return rows().textContent;
+        };
+
+        test('overwritten before this fix (another character as player 1): not drawn, left in storage', async () => {
+            const record = ownRecord({
+                characterName: 'NikuDango',
+                data: {
+                    baseline: BASELINE,
+                    results: [row('Stranger gear')],
+                    ranFor: { hrid: 'player1', name: 'NikuDango' },
+                },
+            });
+            expect(await restoreWith(record)).not.toContain('Stranger gear');
+            expect(mocks.store.get(KEY)).toEqual(record);
+        });
+
+        test('a partner run from an older build (player 2) still restores for the owner', async () => {
+            const record = ownRecord({
+                characterName: 'Partner',
+                data: {
+                    baseline: BASELINE,
+                    results: [row('Partner gear')],
+                    ranFor: { hrid: 'player2', name: 'Partner' },
+                },
+            });
+            expect(await restoreWith(record)).toContain('Partner gear');
+        });
+
+        test('an older record with no name or ranFor still restores', async () => {
+            const record = { data: { baseline: BASELINE, results: [row('Plain gear')] }, savedAt: 1 };
+            expect(await restoreWith(record)).toContain('Plain gear');
+        });
+
+        test('a same-named other character cannot be told apart: the record is shown', async () => {
+            expect(await restoreWith(ownRecord())).toContain('Owner gear');
+        });
+
+        test('a record stamped for another character id is not drawn', async () => {
+            expect(await restoreWith(ownRecord({ ownerId: 'char2' }))).not.toContain('Owner gear');
+        });
+    });
+
+    describe('a run in progress while the roster is swapped', () => {
+        test('owner roster, swapped to a stranger meanwhile: not drawn, still saved for the owner', async () => {
+            mocks.store.set(KEY, ownRecord());
+            await openPanel();
+            mocks.onRun = () => mocks.editorOptions.onScenarioReplaced();
+            await analyze({ selfHrid: 'player1', label: 'Mid-run gear' });
+            expect(rows().textContent).not.toContain('Mid-run gear');
+            expect(ui._upgradeResultsData).toBeNull();
+            expect(mocks.store.get(KEY).data.results[0].candidate.description).toBe('Mid-run gear');
+            expect(mocks.store.get(KEY).ownerId).toBe('char1');
+        });
+
+        test('stranger roster, swapped back to the owner meanwhile: not drawn, not saved', async () => {
+            mocks.store.set(KEY, ownRecord());
+            await openPanel();
+            mocks.onRun = () => mocks.editorOptions.onScenarioReplaced();
+            await analyze({
+                dtos: { player1: structuredClone(stranger) },
+                names: { player1: 'NikuDango' },
+                selfHrid: null,
+                label: 'Mid-run gear',
+            });
+            expect(rows().textContent).not.toContain('Mid-run gear');
+            expectOwnerRecord();
+        });
+
+        test('a run with no swap still draws', async () => {
+            await openPanel();
+            await analyze({ selfHrid: 'player1' });
+            expect(rows().textContent).toContain('Fresh gear');
+        });
+
+        test('a character switch mid-run saves nothing under the arriving character', async () => {
+            await openPanel();
+            mocks.onRun = () => {
+                mocks.characterId = 'char2';
+            };
+            await analyze({ selfHrid: 'player1' });
+            expect(mocks.store.has(KEY)).toBe(false);
+            expect(mocks.store.has('combatExport:combatSimUpgradeResults_char2')).toBe(false);
+        });
+    });
+
+    test('All players rows are stamped by their roster, and a stranger roster is dropped on Reset', async () => {
+        await openPanel();
+        const results = { baseline: BASELINE, results: [row('Everyone gear')], food: null };
+        ui._stampUpgradeResults(results, {
+            buildSigs: new Map(),
+            upgradeModes: ['equipment'],
+            playerDTO: stranger,
+            ranFor: { hrid: 'player1', name: 'NikuDango' },
+            ownRoster: false,
+        });
+        ui._renderUpgradeResults(results);
+        expect(rows().textContent).toContain('Everyone gear');
+        mocks.editorOptions.onRosterReloaded();
+        await settle();
+        expect(rows().textContent).not.toContain('Everyone gear');
     });
 });
