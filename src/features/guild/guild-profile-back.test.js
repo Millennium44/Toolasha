@@ -147,7 +147,8 @@ describe('guild profile back button', () => {
         expect(guildWindow.querySelector(BUTTON)).toBeNull();
     });
 
-    test('one press calls handleViewProfile once, on the next task, with the character id', () => {
+    // The game's handler takes the name (live: handleViewProfile(31519) did nothing, ('NikuDango') reopened it)
+    test('one press calls handleViewProfile once, on the next task, with the character name', () => {
         const handleViewProfile = vi.fn();
         installGameComponent(handleViewProfile);
         shareProfile(77, 'Alice');
@@ -157,7 +158,7 @@ describe('guild profile back button', () => {
         expect(handleViewProfile).not.toHaveBeenCalled();
         vi.advanceTimersByTime(0);
         expect(handleViewProfile).toHaveBeenCalledTimes(1);
-        expect(handleViewProfile).toHaveBeenCalledWith(77);
+        expect(handleViewProfile).toHaveBeenCalledWith('Alice');
     });
 
     test('a missing handler shows a toast and does nothing', () => {

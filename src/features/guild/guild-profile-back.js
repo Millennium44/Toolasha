@@ -77,9 +77,12 @@ let active = false;
  * Press the game's own handler for opening a profile. Runs on the next task, after our click handler has
  * returned: the game ignores a message sent within 100 ms of an untrusted click, and this one follows the
  * player's own (trusted) press.
- * @param {*} characterId
+ *
+ * The game's handler takes the character's **name**, not its id (live, test server 2026-11-24:
+ * `handleViewProfile('NikuDango')` reopened the profile, `handleViewProfile(31519)` did nothing).
+ * @param {string} characterName
  */
-function openProfile(characterId) {
+function openProfile(characterName) {
     setTimeout(() => {
         try {
             const component = findGameComponent();
@@ -87,7 +90,7 @@ function openProfile(characterId) {
                 showToast(FAILED_MESSAGE);
                 return;
             }
-            component.handleViewProfile(characterId);
+            component.handleViewProfile(characterName);
         } catch (error) {
             console.error('[GuildProfileBack] Reopening the profile failed:', error);
             showToast(FAILED_MESSAGE);
@@ -109,7 +112,7 @@ function createButton(profile) {
         // One press is one game action
         if (button.disabled) return;
         button.disabled = true;
-        openProfile(profile.characterId);
+        openProfile(profile.characterName);
     });
     return button;
 }
