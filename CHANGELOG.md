@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Clear on remembered Upgrade results now empties the table
 
-The Clear button beside "Showing results remembered from..." used to forget the saved run but leave the table on screen; it now removes the table too.
+In the Combat Sim and the Lab Sim, the Clear button beside "Showing results remembered from..." used to forget the saved run but leave the table on screen; it now removes the table too.
 
 ### Combat Sim Upgrade tab no longer shows another player's results
 

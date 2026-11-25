@@ -2296,9 +2296,21 @@ describe('the upgrade table reads like the combat sim’s', () => {
         expect(ui._restoredUpgradeMeta).toBeNull();
         expect(container.querySelector('[data-clear-remembered-upgrade]')).toBeNull();
         expect(container.textContent).not.toContain('Showing results remembered from');
-        // The table itself is untouched — Clear forgets the saved copy, not
-        // what is already on screen
+        // The table goes with the saved copy: it was only ever the remembered one
+        expect(container.textContent).not.toContain('Fireball');
+        expect(container.innerHTML).toBe('');
+    });
+
+    test('Clear leaves a run that took the panel while the write was out alone', async () => {
+        ui._restoredUpgradeAt = Date.now();
+        ui._restoredUpgradeMeta = { characterName: 'Millennium44' };
+        ui._renderUpgradeResults(analysis(), container);
+        container.querySelector('[data-clear-remembered-upgrade]').click();
+        ui._upgradeRunStarted = true;
+        await Promise.resolve();
+        await Promise.resolve();
         expect(container.textContent).toContain('Fireball');
+        ui._upgradeRunStarted = false;
     });
 });
 

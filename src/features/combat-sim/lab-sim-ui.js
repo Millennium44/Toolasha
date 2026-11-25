@@ -10359,8 +10359,9 @@ class LabSimUI {
     }
 
     /**
-     * Wire the remembered-run banner's Clear button. It forgets the saved run only: the table on screen came
-     * from the render call that drew it and stays right there.
+     * Wire the remembered-run banner's Clear button. It forgets the saved run (a dated empty record, so a sync still
+     * carries the clear) and takes the remembered table, banner and Ability order section off the screen. An
+     * analysis that took the panel while the write was out is left as it is, and so is its save.
      * @param {HTMLElement} container - The results container the banner was drawn into
      * @private
      */
@@ -10370,9 +10371,16 @@ class LabSimUI {
         clearBtn.addEventListener('click', async () => {
             clearBtn.disabled = true;
             await clearUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
+            if (this._upgradeRunning || this._upgradeRunStarted) return;
             this._restoredUpgradeAt = null;
             this._restoredUpgradeMeta = null;
-            clearBtn.closest('div')?.remove();
+            this._rememberedLabResults = null;
+            this._rememberedOrderSection = null;
+            this._upgradeOrderSection = null;
+            container.innerHTML = '';
+            this._viewRedraws.delete('single');
+            this._viewRedraws.delete('combat');
+            this._drawUpgradeAbilityOrder();
         });
     }
 
