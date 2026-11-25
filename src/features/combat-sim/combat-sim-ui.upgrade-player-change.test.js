@@ -1564,6 +1564,14 @@ describe('the Clear button on a remembered Upgrade table', () => {
         expect(stored.data).toBeUndefined();
     });
 
+    test('the footer goes back to the idle text, not the old run progress', async () => {
+        ui._switchTab('upgrade');
+        ui._setStatus('MillenniumIC3 (3/3): 20 / 20');
+        clearBtn().click();
+        await settle();
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe('Select a player and click Analyze.');
+    });
+
     test('Analyze still works afterwards', async () => {
         clearBtn().click();
         await settle();
@@ -1654,7 +1662,9 @@ describe('Upgrade results, pre-PR round', () => {
         vi.spyOn(console, 'error').mockImplementation(() => {});
         await ui._onUpgradeAnalyze();
         await settle();
-        ui._upgradeResultsData = null;
+        // What was on screen before the run is put back; the view is then emptied some other way
+        expect(rows().textContent).toContain('Owner gear');
+        ui._clearUpgradeResultsView();
         expect(rows().textContent).toBe('');
         mocks.editorOptions.onRosterReloaded();
         await settle();
@@ -1846,5 +1856,416 @@ describe('Upgrade results: back on your own roster after a profile', () => {
         ui.buildPanel();
         expect(ui._tableDroppedByRoster).toBe(false);
         mocks.characterId = 'char1';
+    });
+});
+
+describe('Stop or failure before anything is drawn', () => {
+    const KEY = 'combatExport:combatSimUpgradeResults_char1';
+    const settle = async () => {
+        for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const rows = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const note = () => ui.panel.querySelector('#mwi-csim-analysis-note');
+    const me = { hrid: 'player1', equipment: {} };
+    const stranger = { hrid: 'player1', equipment: { '/item_locations/body': { itemHrid: '/items/z' } } };
+    const holdSelf = () => {
+        mocks.editedDTOs = { player1: structuredClone(me) };
+        mocks.editorSelfHrid = 'player1';
+        mocks.playerNames = { player1: 'Me' };
+    };
+    const holdStranger = () => {
+        mocks.editedDTOs = { player1: structuredClone(stranger) };
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = { player1: 'NikuDango' };
+    };
+    const result = (label) => ({ baseline: BASELINE, results: label ? [row(label)] : [], food: null, context: {} });
+    const analyze = async (label) => {
+        mocks.upgradeResult = result(label);
+        await ui._onUpgradeAnalyze();
+        await settle();
+    };
+    const record = () => ({
+        data: { baseline: BASELINE, results: [row('Older gear')], ranFor: { hrid: 'player1', name: 'Me' } },
+        savedAt: 5,
+        characterName: 'Me',
+        ownerId: 'char1',
+    });
+    const status = () => ui.panel.querySelector('#mwi-csim-status').textContent;
+
+    beforeEach(async () => {
+        mocks.store.clear();
+        mocks.characterId = 'char1';
+        mocks.characterName = 'Me';
+        const { default: config } = await import('../../core/config.js');
+        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+            key === 'combatSim_rememberUpgradeResults' ? true : fallback
+        );
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = null;
+        mocks.characterName = undefined;
+        mocks.onRun = null;
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.store.clear();
+    });
+    const open = async () => {
+        ui.buildPanel();
+        await settle();
+        for (const job of mocks.bgJobs.splice(0)) await job();
+        await settle();
+        selectZone();
+    };
+    const stopImmediately = () => {
+        mocks.onRun = () => {
+            ui._upgradeAborted = true;
+        };
+    };
+
+    test('stopped before anything was measured: the live table that was on screen comes back', async () => {
+        holdSelf();
+        await open();
+        await analyze('Live gear');
+        expect(rows().textContent).toContain('Live gear');
+        stopImmediately();
+        await analyze(null);
+        expect(status()).toContain('Analysis cancelled.');
+        expect(rows().textContent).toContain('Live gear');
+    });
+
+    test('stopped: the remembered record on screen comes back with its note, storage untouched', async () => {
+        mocks.store.set(KEY, record());
+        holdSelf();
+        await open();
+        expect(rows().textContent).toContain('Showing results remembered');
+        stopImmediately();
+        await analyze(null);
+        expect(rows().textContent).toContain('Older gear');
+        expect(rows().textContent).toContain('Showing results remembered');
+        expect(mocks.store.get(KEY).savedAt).toBe(5);
+        expect(mocks.store.get(KEY).data.results[0].candidate.description).toBe('Older gear');
+    });
+
+    test('a run that fails puts the table back too', async () => {
+        holdSelf();
+        await open();
+        await analyze('Live gear');
+        mocks.onRun = () => {
+            throw new Error('sim blew up');
+        };
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await analyze('Never');
+        expect(status()).toContain('Analysis failed');
+        expect(rows().textContent).toContain('Live gear');
+    });
+
+    test('the build changed meanwhile: the table comes back under the stale banner', async () => {
+        holdSelf();
+        await open();
+        await analyze('Live gear');
+        mocks.onRun = () => {
+            ui._upgradeAborted = true;
+            mocks.editedDTOs = { player1: { ...structuredClone(me), equipment: { '/item_locations/body': {} } } };
+        };
+        await analyze(null);
+        expect(rows().textContent).toContain('Live gear');
+        expect(note().style.display).toBe('block');
+    });
+
+    test('stopped with partial rows: the partial table is shown and saved stamped, not the old one', async () => {
+        mocks.store.set(KEY, record());
+        holdSelf();
+        await open();
+        mocks.onRun = () => {
+            ui._upgradeAborted = true;
+        };
+        mocks.upgradeResult = { ...result('Partial gear'), candidateCount: 5 };
+        await ui._onUpgradeAnalyze();
+        await settle();
+        expect(rows().textContent).toContain('Partial gear');
+        expect(rows().textContent).not.toContain('Older gear');
+        expect(mocks.store.get(KEY).data.stopped).toEqual({ completed: 1, total: 5 });
+    });
+
+    test('stopped after the roster was swapped meanwhile: nothing is put back over the new players', async () => {
+        holdSelf();
+        await open();
+        await analyze('Live gear');
+        mocks.onRun = () => {
+            ui._upgradeAborted = true;
+            holdStranger();
+            mocks.editorOptions.onScenarioReplaced();
+        };
+        await analyze(null);
+        expect(rows().textContent).not.toContain('Live gear');
+    });
+
+    test("stopped with a stranger loaded: the stranger's earlier table returns, nothing is saved", async () => {
+        mocks.store.set(KEY, record());
+        holdStranger();
+        await open();
+        await analyze('Stranger gear');
+        stopImmediately();
+        await analyze(null);
+        expect(rows().textContent).toContain('Stranger gear');
+        expect(mocks.store.get(KEY).savedAt).toBe(5);
+    });
+
+    test('nothing was on screen (cleared): a stopped run leaves the tab empty', async () => {
+        mocks.store.set(KEY, record());
+        holdSelf();
+        await open();
+        ui.panel.querySelector('[data-clear-remembered-upgrade]').click();
+        await settle();
+        stopImmediately();
+        await analyze(null);
+        expect(rows().textContent).toBe('');
+    });
+});
+
+describe('Upgrade rows when one slot is replaced by an import', () => {
+    const settle = async () => {
+        for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const rows = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const note = () => ui.panel.querySelector('#mwi-csim-analysis-note');
+    const party = () => ({
+        player1: { hrid: 'player1', equipment: {} },
+        player2: { hrid: 'player2', equipment: {} },
+    });
+    const replaced = (hrid, wasSelf) => mocks.editorOptions.onPlayerReplaced(hrid, wasSelf);
+
+    beforeEach(async () => {
+        mocks.store.clear();
+        mocks.characterId = 'char1';
+        mocks.characterName = 'Me';
+        mocks.editedDTOs = party();
+        mocks.editorSelfHrid = 'player1';
+        mocks.playerNames = { player1: 'Me', player2: 'Partner' };
+        ui.buildPanel();
+        await settle();
+        selectZone();
+        ui._populateUpgradePlayerSelector();
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = null;
+        mocks.characterName = undefined;
+        mocks.onRun = null;
+        mocks.upgradeResultFor = null;
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.store.clear();
+    });
+    const analyzeIndex = async (index, label) => {
+        ui.panel.querySelector('#mwi-csim-upgrade-player').value = String(index);
+        mocks.upgradeResult = {
+            baseline: BASELINE,
+            results: [row(label)],
+            food: null,
+            context: { gameData: {} },
+        };
+        await ui._onUpgradeAnalyze();
+        await settle();
+    };
+
+    test('the live character slot replaced: the rows of their analysis go', async () => {
+        await analyzeIndex(0, 'My gear');
+        expect(rows().textContent).toContain('My gear');
+        replaced('player1', true);
+        expect(rows().textContent).not.toContain('My gear');
+        expect(ui._upgradeResultsData).toBeNull();
+    });
+
+    test('the live character slot replaced: a partner analysis goes too, the owner roster is gone', async () => {
+        await analyzeIndex(1, 'Partner gear');
+        replaced('player1', true);
+        expect(rows().textContent).not.toContain('Partner gear');
+    });
+
+    test('the analyzed partner slot replaced: the rows belong to someone gone, and go', async () => {
+        await analyzeIndex(1, 'Partner gear');
+        replaced('player2', false);
+        expect(rows().textContent).not.toContain('Partner gear');
+    });
+
+    test('an All players view with the replaced slot among its sections goes whole', async () => {
+        await analyzeIndex(0, 'My gear');
+        ui._allPlayersRun = {
+            entries: [
+                { hrid: 'player1', results: ui._upgradeResultsData },
+                { hrid: 'player2', results: null },
+            ],
+            active: 'player1',
+        };
+        replaced('player2', false);
+        expect(ui._allPlayersRun).toBeNull();
+        expect(rows().textContent).not.toContain('My gear');
+    });
+
+    test('another partner replaced: rows stay under the stale banner', async () => {
+        await analyzeIndex(0, 'My gear');
+        mocks.editedDTOs = { ...party(), player2: { hrid: 'player2', equipment: { '/item_locations/body': {} } } };
+        replaced('player2', false);
+        ui._refreshAnalysisNote();
+        expect(rows().textContent).toContain('My gear');
+        expect(note().style.display).toBe('block');
+    });
+
+    test('a run in progress is only told when the live character slot went', async () => {
+        await analyzeIndex(0, 'My gear');
+        ui._upgradeRunning = true;
+        const gen = ui._rosterSwapGen || 0;
+        replaced('player2', false);
+        expect(ui._rosterSwapGen || 0).toBe(gen);
+        replaced('player1', true);
+        expect(ui._rosterSwapGen).toBe(gen + 1);
+        ui._upgradeRunning = false;
+    });
+});
+
+describe('Stop or failure after the roster changed, and a slot replaced under a running run', () => {
+    const KEY = 'combatExport:combatSimUpgradeResults_char1';
+    const settle = async () => {
+        for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const rows = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const party = () => ({
+        player1: { hrid: 'player1', equipment: {} },
+        player2: { hrid: 'player2', equipment: {} },
+    });
+    const result = (label) => ({ baseline: BASELINE, results: label ? [row(label)] : [], food: null, context: {} });
+    const run = async (index, label) => {
+        ui.panel.querySelector('#mwi-csim-upgrade-player').value = String(index);
+        mocks.upgradeResult = result(label);
+        await ui._onUpgradeAnalyze();
+        await settle();
+    };
+
+    beforeEach(async () => {
+        mocks.store.clear();
+        mocks.characterId = 'char1';
+        mocks.characterName = 'Me';
+        const { default: config } = await import('../../core/config.js');
+        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+            key === 'combatSim_rememberUpgradeResults' ? true : fallback
+        );
+        mocks.editedDTOs = party();
+        mocks.editorSelfHrid = 'player1';
+        mocks.playerNames = { player1: 'Me', player2: 'Partner' };
+        ui.buildPanel();
+        await settle();
+        selectZone();
+        ui._populateUpgradePlayerSelector();
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = null;
+        mocks.characterName = undefined;
+        mocks.onRun = null;
+        mocks.upgradeResultFor = null;
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.store.clear();
+    });
+
+    test('a run that throws after a profile was opened does not bring the old table back', async () => {
+        await run(0, 'Live gear');
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        mocks.onRun = () => {
+            mocks.editedDTOs = { player1: { hrid: 'player1', equipment: { '/item_locations/body': {} } } };
+            mocks.editorSelfHrid = null;
+            mocks.editorOptions.onScenarioReplaced();
+            throw new Error('sim blew up');
+        };
+        await run(0, 'Never');
+        expect(rows().textContent).not.toContain('Live gear');
+        expect(ui._upgradeResultsData).toBeNull();
+    });
+
+    test('a run that throws after the own slot was replaced does not bring the old table back', async () => {
+        await run(0, 'Live gear');
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        mocks.onRun = () => {
+            mocks.editorOptions.onPlayerReplaced('player1', true);
+            throw new Error('sim blew up');
+        };
+        await run(0, 'Never');
+        expect(rows().textContent).not.toContain('Live gear');
+    });
+
+    test('a Stop after the own slot was replaced does not bring the old table back', async () => {
+        await run(0, 'Live gear');
+        mocks.onRun = () => {
+            ui._upgradeAborted = true;
+            // The editor no longer holds the live character
+            mocks.editorSelfHrid = null;
+            mocks.editorOptions.onPlayerReplaced('player1', true);
+        };
+        await run(0, null);
+        expect(rows().textContent).not.toContain('Live gear');
+    });
+
+    test('the partner slot a running run measures is replaced: its table is not drawn, the saved record names who it was', async () => {
+        mocks.onRun = () => mocks.editorOptions.onPlayerReplaced('player2', false);
+        await run(1, 'Partner gear');
+        // Not drawn live: the owner's roster is back in place, so the saved record is read back, labeled as remembered
+        expect(ui._restoredUpgradeAt).not.toBeNull();
+        expect(ui._restoredUpgradeMeta.characterName).toBe('Partner');
+        const saved = mocks.store.get(KEY);
+        expect(saved.characterName).toBe('Partner');
+        expect(saved.data.ranFor.hrid).toBe('player2');
+    });
+
+    test('another partner slot replaced under a running run leaves its table alone', async () => {
+        mocks.onRun = () => mocks.editorOptions.onPlayerReplaced('player2', false);
+        await run(0, 'My gear');
+        expect(rows().textContent).toContain('My gear');
+    });
+
+    test('any slot replaced under a running All players run keeps its tables off the screen', async () => {
+        mocks.upgradeResultFor = ({ playerDTOs, playerIndex }) => ({
+            baseline: BASELINE,
+            results: [row(`${playerDTOs[playerIndex].hrid} gear`)],
+            candidateCount: 1,
+            food: null,
+            context: { playerHrid: playerDTOs[playerIndex].hrid, playerIndex, playerDTOs },
+        });
+        const select = ui.panel.querySelector('#mwi-csim-upgrade-player');
+        select.value = 'all';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        mocks.onRun = () => mocks.editorOptions.onPlayerReplaced('player2', false);
+        await ui._onUpgradeAnalyze();
+        await settle();
+        expect(rows().textContent).not.toContain('player1 gear');
+        expect(ui._allPlayersRun).toBeNull();
+    });
+
+    test('Clear leaves the footer alone when another tab is showing or something else is running', async () => {
+        mocks.store.set(KEY, {
+            data: { baseline: BASELINE, results: [row('Older gear')], ranFor: { hrid: 'player1', name: 'Me' } },
+            savedAt: 5,
+            characterName: 'Me',
+            ownerId: 'char1',
+        });
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        for (const job of mocks.bgJobs.splice(0)) await job();
+        await settle();
+        const btn = () => ui.panel.querySelector('[data-clear-remembered-upgrade]');
+        expect(btn()).not.toBeNull();
+        ui._switchTab('configure');
+        ui._setStatus('Simulating the zone');
+        btn().click();
+        await settle();
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe('Simulating the zone');
     });
 });

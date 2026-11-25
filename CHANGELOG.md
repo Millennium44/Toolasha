@@ -10,9 +10,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Once the exit is cleared and nothing is left for Next to queue, it reads "Next ▸ next floor" and opens the game's own Next Floor prompt for you to answer. Hover text says how many treasure rooms the descent forfeits.
 
+### Importing over a player drops their old Upgrade rows
+
+Replacing a player with an import in the Combat Sim now clears the Upgrade rows measured for that player (or for you, when it was your slot). Rows for a different party member stay, under the "measured before the build changed" note.
+
+### Stopping a Combat Sim analysis early keeps your table
+
+Pressing Stop (or a failed run) before any upgrade was measured now puts back the table that was on screen, instead of leaving the Upgrade tab empty. Your saved results are not touched.
+
 ### Clear on remembered Upgrade results now empties the table
 
-In the Combat Sim and the Lab Sim, the Clear button beside "Showing results remembered from..." used to forget the saved run but leave the table on screen; it now removes the table too.
+In the Combat Sim and the Lab Sim, the Clear button beside "Showing results remembered from..." used to forget the saved run but leave the table on screen; it now removes the table too and puts the footer back to its idle text.
 
 ### Combat Sim Upgrade tab no longer shows another player's results
 

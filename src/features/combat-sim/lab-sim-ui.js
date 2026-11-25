@@ -259,6 +259,8 @@ const RESULTS_VIEW_KEY = 'labSimResultsView';
  * tier-0 subset monster must not be re-shown beside full-kit runs.
  */
 const LAB_UPGRADE_RESULTS_KEY = 'labSimUpgradeResults-fullkit';
+/** The status line before anything has run, which Clear returns it to */
+const LAB_IDLE_STATUS = 'Select a monster in Configure, then use Single Sim or Upgrade to simulate.';
 
 /** Floor sizes the resize grips will not take the panel below. */
 const MIN_PANEL_WIDTH = 400;
@@ -2094,7 +2096,7 @@ class LabSimUI {
             'padding:6px 14px; color:' +
             GAME_COLORS.textDim +
             '; font-size:11px; border-top:1px solid #1a1a1a; flex-shrink:0; text-align:center;';
-        status.textContent = 'Select a monster in Configure, then use Single Sim or Upgrade to simulate.';
+        status.textContent = LAB_IDLE_STATUS;
 
         // Assemble
         this.panel.appendChild(header);
@@ -10386,6 +10388,13 @@ class LabSimUI {
             this._viewRedraws.delete('single');
             this._viewRedraws.delete('combat');
             this._drawUpgradeAbilityOrder();
+            // The footer still described the run that drew the table
+            if (
+                this._activeTab === 'upgrade' &&
+                !(this.isRunning || this._runStarting || this._skillingRunning || this._upgradeRunning)
+            ) {
+                this._setStatus(LAB_IDLE_STATUS);
+            }
         });
     }
 

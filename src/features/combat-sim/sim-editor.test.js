@@ -4540,3 +4540,40 @@ describe('the real reset paths tell the owner the live character is back', () =>
         expect(calls).toHaveLength(0);
     });
 });
+
+describe('the owner is told when one slot is replaced by an import', () => {
+    const open = async () => {
+        const calls = [];
+        const el = document.createElement('div');
+        const editor = new SimEditor({
+            editorEl: el,
+            onPlayerReplaced: (hrid, wasSelf) => calls.push([hrid, wasSelf]),
+        });
+        await editor.initEditor({ restoreLoadout: false });
+        return { el, editor, calls };
+    };
+    const importInto = (el, mode) => {
+        game.parseImport = () => ({ players: [emptyDTO('player1')], names: ['Pasted'], skipped: [] });
+        el.querySelector('#mwi-csim-import-text').value = 'whatever';
+        el.querySelector(mode).click();
+    };
+
+    test('the live character slot: wasSelf', async () => {
+        const { el, calls } = await open();
+        importInto(el, '#mwi-csim-import-replace');
+        expect(calls).toEqual([['player1', true]]);
+    });
+
+    test("a party partner's slot: not self", async () => {
+        const { el, calls } = await open();
+        el.querySelector('[data-edit-tab="player2"]').click();
+        importInto(el, '#mwi-csim-import-replace');
+        expect(calls).toEqual([['player2', false]]);
+    });
+
+    test('adding a player tells nobody: nobody is gone', async () => {
+        const { el, calls } = await open();
+        importInto(el, '#mwi-csim-import-go');
+        expect(calls).toEqual([]);
+    });
+});
