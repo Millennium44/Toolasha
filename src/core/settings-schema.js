@@ -3310,7 +3310,7 @@ export const settingsGroups = {
                 label: 'Labyrinth: Show Next and Beacon step buttons',
                 type: 'checkbox',
                 default: true,
-                help: 'The Next button beside Path carries out the route one game action per press: queue the next room, arm and place a shroud, or place the beacon that reveals a hidden shroud room. The Beacon step places planned beacons. Checks the live map first. Never presses on its own.',
+                help: 'The Next button beside Path carries out the route one game action per press: first the beacons that light the way to the exit, then Path re-runs, then queue rooms and place shrouds. The Beacon step places planned beacons. Checks the live map first. Never presses on its own.',
                 requires: 'labyrinthClearRate',
             },
             labyrinthGridScaleControl: {

@@ -209,7 +209,13 @@ const BEACON_COUNT_TITLE =
 /** Width of the step buttons, so a changing label never moves the controls beside them */
 const STEP_BUTTON_WIDTH_PX = 126;
 /** The Next button's background by the step it will press */
-const NEXT_STEP_COLORS = { route: '#2e8b57', shroud: '#c0392b', beacon: '#16806a', none: '#2e8b57' };
+const NEXT_STEP_COLORS = {
+    route: '#2e8b57',
+    shroud: '#c0392b',
+    beacon: '#16806a',
+    'plan-beacons': '#16806a',
+    none: '#2e8b57',
+};
 /** How long after a labyrinth_updated the step buttons re-read the game panel, by then re-rendered */
 const STEP_REFRESH_AFTER_UPDATE_MS = 200;
 /** How often an armed step button re-reads whether the game still has the supply armed */
@@ -1029,6 +1035,8 @@ class LabyrinthClearRate {
             if (previousFloor !== this.currentFloor) {
                 this.clearPathOverlays();
                 this.clearBeaconOverlays();
+                this._exitBeaconsTried = null;
+                this._exitStage = null;
                 this._stagedBeaconPlan = null;
                 this.cancelAutoPath();
                 // A beacon count was chosen for the floor that just ended; the
@@ -3815,7 +3823,8 @@ class LabyrinthClearRate {
         stepButtonsButton.style.cssText = autoButton.style.cssText;
         stepButtonsButton.title =
             'The Next ▸ and Beacon ▸ buttons beside Path and Beacons, which carry out the plan one game action ' +
-            'per press. Never presses on its own';
+            'per press: Next places the beacons that light the way to the exit first, then re-runs Path, then queues ' +
+            'rooms and shrouds. Never presses on its own';
         stepButtonsButton.addEventListener('click', () => {
             config.setSetting('labyrinthPathStepper', !config.getSetting('labyrinthPathStepper'));
             this.syncStepButtons();
@@ -3970,6 +3979,8 @@ class LabyrinthClearRate {
             // The exit goes last whatever its distance: the game enters queued rooms in order, and entering
             // the exit leaves the floor with any chest branch queued after it still uncollected.
             route: [...route].filter((idx) => idx !== exit).concat([...route].includes(exit) ? [exit] : []),
+            // The game sends no room data for the exit until it is reached; it is still a known room
+            exit: Number.isInteger(exit) ? exit : null,
             floor: this.currentFloor,
             characterId: dataManager.getCurrentCharacterId() ?? null,
             cols,
@@ -4011,6 +4022,8 @@ class LabyrinthClearRate {
         this._shroudStepPlan = null;
         this._beaconStepPlan = null;
         this._revealBeaconPlan = null;
+        this._exitBeaconsTried = null;
+        this._exitStage = null;
         this.clearStepTarget();
         document
             .querySelectorAll(
@@ -4235,6 +4248,146 @@ class LabyrinthClearRate {
     }
 
     /**
+     * Whether the drawn route still crosses a room that is neither revealed nor cleared, read from the live panel.
+     * @returns {boolean}
+     */
+    routeCrossesHiddenRooms() {
+        const plan = this._shroudStepPlan;
+        if (!plan || !Array.isArray(plan.route) || !plan.route.length) return false;
+        const lab = findLabyrinthPanel()?.props?.characterLabyrinth;
+        if (!lab?.roomData || plan.floor !== lab.currentFloor) return false;
+        if (plan.characterId !== (dataManager.getCurrentCharacterId() ?? null)) return false;
+        const cols = plan.cols;
+        return plan.route.some((idx) => {
+            // The exit's place is known though the game holds no room data for it: not a room to light up
+            if (idx === 0 || idx === plan.exit) return false;
+            const room = lab.roomData?.[Math.floor(idx / cols)]?.[idx % cols];
+            return !room?.isCleared && !isRoomRevealed(room);
+        });
+    }
+
+    /**
+     * The step Next takes before it queues rooms while the route still crosses hidden rooms: place the drawn
+     * Beacons plan's "now" beacons (the fewest that cover a path to the exit), or, with no plan drawn on this
+     * floor, work the plan out once. Pure: it never plans or writes; the press does. Null when there is nothing
+     * pressable, so Next falls through to its queue / shroud logic.
+     * @returns {Object|null}
+     */
+    exitBeaconStep() {
+        if (!this.routeCrossesHiddenRooms()) return null;
+        // A supply already armed is the armed-pick branch's; a second arm would fight it
+        if (findLabyrinthPanel()?.state?.supplyMode) return null;
+        const stepper = this.getStepper();
+        const b = stepper.describe('beacon');
+        if (b.action === 'use' || b.action === 'room') {
+            const label = `Next ▸ beacon ${b.x + 1},${b.y + 1}`;
+            return {
+                ...b,
+                kind: 'beacon',
+                stage: 'exit-beacons',
+                label,
+                reason: `${b.reason}. Beacons come first: they light the way to the exit before rooms are queued.`,
+            };
+        }
+        if (b.code !== 'no-plan') return null;
+        const characterId = dataManager.getCurrentCharacterId() ?? null;
+        const tried = this._exitBeaconsTried;
+        // A new run can start on the same floor number, so the run's start time is part of what was tried
+        const run = findLabyrinthPanel()?.props?.characterLabyrinth?.startedAt ?? null;
+        if (
+            tried &&
+            tried.floor === this.currentFloor &&
+            tried.characterId === characterId &&
+            (tried.run ?? null) === run
+        ) {
+            return null;
+        }
+        const supplies = this.getSupplyCounts();
+        if (supplies.known && !(supplies.beacon > 0)) return null;
+        return {
+            action: 'plan',
+            code: 'plan-beacons',
+            kind: 'plan-beacons',
+            stage: 'exit-beacons',
+            label: 'Next ▸ beacons',
+            reason:
+                'The route crosses rooms that are not revealed. Press to work out the beacons that light the way to ' +
+                'the exit and arm the first one; Path then re-runs on the revealed rooms.',
+        };
+    }
+
+    /**
+     * The Next press on the beacon stage with no plan drawn: work the Beacons plan out once for this floor (the
+     * same planner and drawing as the Beacons button), then arm its first beacon in the same press.
+     */
+    planExitBeacons() {
+        this._exitBeaconsTried = {
+            floor: this.currentFloor,
+            characterId: dataManager.getCurrentCharacterId() ?? null,
+            run: findLabyrinthPanel()?.props?.characterLabyrinth?.startedAt ?? null,
+        };
+        this.runBeaconCalculation();
+        const step = this.exitBeaconStep();
+        if (step?.kind === 'beacon') void this.pressNextStep();
+        else this.refreshStepButtons();
+    }
+
+    /** One Next press: carry out `describeNextStep()` and, on the beacon stage, re-run Path once the beacons are in */
+    async pressNextStep() {
+        const stepper = this.getStepper();
+        const d = this.describeNextStep();
+        if (d.kind === 'plan-beacons') {
+            this.planExitBeacons();
+            return;
+        }
+        if (!d.kind) {
+            this.setTileStatus(d.reason, !['done', 'queued', 'nothing-needed'].includes(d.code));
+            return;
+        }
+        const floor = this.currentFloor;
+        const characterId = dataManager.getCurrentCharacterId() ?? null;
+        if (d.kind === 'beacon' && d.stage === 'exit-beacons' && d.action === 'use') {
+            this._exitStage = { floor, characterId, pathRun: this._pathRunId || 0 };
+        }
+        const plan = d.kind === 'beacon' ? this.currentBeaconStepPlan() : null;
+        await stepper.press(d.kind);
+        if (d.kind === 'beacon' && d.action === 'room')
+            this.repathAfterExitBeacon({ stepper, floor, characterId, plan, idx: d.idx });
+    }
+
+    /**
+     * After a beacon picked on Next's exit stage landed and no "now" beacon is left to place, run Path once on
+     * the newly revealed rooms. Hooked on the Next press itself (it resolves once the game has answered), so a
+     * beacon placed with the Beacon button never triggers it. Skipped while a supply is armed, a path or room
+     * calculation is running or waiting, or a path has started since the stage armed (Auto-path got there first).
+     */
+    repathAfterExitBeacon({ stepper, floor, characterId, plan, idx }) {
+        const stage = this._exitStage;
+        if (!stage) return;
+        const now = dataManager.getCurrentCharacterId() ?? null;
+        if (this.currentFloor !== floor || now !== characterId || stage.floor !== floor || stage.characterId !== now) {
+            this._exitStage = null;
+            return;
+        }
+        if (this._stepper !== stepper || !config.getSetting('labyrinthPathStepper')) return;
+        if (!plan?.placed?.has(idx)) return;
+        if (findLabyrinthPanel()?.state?.supplyMode) return;
+        if (this.exitBeaconStep()?.kind === 'beacon') return;
+        this._exitStage = null;
+        if (
+            this.pathCalcRunning ||
+            this.tileCalcRunning ||
+            this.autoTileTimer ||
+            this.autoPathTimer ||
+            this._pathQueued
+        ) {
+            return;
+        }
+        if ((this._pathRunId || 0) !== stage.pathRun) return;
+        void this.runPathCalculation();
+    }
+
+    /**
      * The one step the Next button carries out: the underlying step plus the `kind` to press ('route', 'shroud'
      * or 'beacon'; null when nothing can be pressed) and its own `label`. A supply already armed finishes first.
      * @returns {Object}
@@ -4247,6 +4400,9 @@ class LabyrinthClearRate {
             const armed = stepper.describe(mode);
             if (armed.action === 'room') return { ...armed, kind: mode, label: `Next ▸ pick ${at(armed)}` };
         }
+        // Light the way to the exit before rooms are queued: place the Beacons plan's "now" beacons first
+        const exit = this.exitBeaconStep();
+        if (exit) return exit;
         const r = stepper.describe('route');
         if (r.action === 'path') return { ...r, kind: 'route', label: `Next ▸ queue ${at(r)}` };
         if (r.code === 'shroud-first') {
@@ -4293,9 +4449,7 @@ class LabyrinthClearRate {
                     void this.getStepper().press('beacon');
                     return;
                 }
-                const d = this.describeNextStep();
-                if (d.kind) void this.getStepper().press(d.kind);
-                else this.setTileStatus(d.reason, !['done', 'queued', 'nothing-needed'].includes(d.code));
+                void this.pressNextStep();
             });
             // Pointing at (or tabbing to) the button lights the room its next press acts on
             const point = () => {
@@ -4320,6 +4474,8 @@ class LabyrinthClearRate {
             this._shroudStepPlan = null;
             this._beaconStepPlan = null;
             this._revealBeaconPlan = null;
+            this._exitBeaconsTried = null;
+            this._exitStage = null;
             this.clearStepTarget();
         } else if (!this._stepShieldOff) {
             this._stepShieldOff = installPointerShield();
@@ -6268,6 +6424,8 @@ class LabyrinthClearRate {
     clearRecommendations() {
         this.clearPathOverlays();
         this.clearBeaconOverlays();
+        this._exitBeaconsTried = null;
+        this._exitStage = null;
         // A calculation in flight owns the bar
         if (!this.tileCalcRunning) this.setTileProgress(0);
         this.setTileStatus('Path and beacons cleared');
