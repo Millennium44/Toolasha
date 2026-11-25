@@ -816,6 +816,43 @@ describe('guild shrines and the net worth pricing mode setting', () => {
         expect(askResult.fixedAssets.guildShrines.totalCost).toBe(bidResult.fixedAssets.guildShrines.totalCost);
         expect(askResult.fixedAssets.guildShrines.totalCost).toBe(7500); // pinned to the 'ask' conversion rate
     });
+
+    test('excluding one shrine keeps the "at least" flag while a counted shrine still spent unpriced tokens', async () => {
+        mocks.initData.guildBuffDetailMap['/guild_buffs/scholar_skilling'] = {
+            shrineHrid: '/guild_shrines/scholar',
+            isCombat: false,
+            levelCosts: { 1: { guildTokenCost: 5, creditCosts: [{ itemHrid: CREDIT, count: 4 }] } },
+        };
+        mocks.characterGuildBuffMap['/guild_buffs/scholar_skilling'] = {
+            guildBuffHrid: '/guild_buffs/scholar_skilling',
+            level: 1,
+        };
+        // No token rate: both shrines' tokens are unpriced
+        mocks.excluded.add('guildShrine:/guild_buffs/force_combat');
+
+        const result = await calculateNetworth();
+        const shrines = result.fixedAssets.guildShrines;
+        expect(shrines.breakdown.map((s) => s.hrid)).toEqual(['/guild_buffs/scholar_skilling']);
+        expect(shrines.tokens).toBe(5);
+        expect(shrines.tokensUnpriced).toBe(true);
+    });
+
+    test('excluding the only shrine that spent tokens drops the flag', async () => {
+        mocks.initData.guildBuffDetailMap['/guild_buffs/scholar_skilling'] = {
+            shrineHrid: '/guild_shrines/scholar',
+            isCombat: false,
+            levelCosts: { 1: { guildTokenCost: 0, creditCosts: [{ itemHrid: CREDIT, count: 4 }] } },
+        };
+        mocks.characterGuildBuffMap['/guild_buffs/scholar_skilling'] = {
+            guildBuffHrid: '/guild_buffs/scholar_skilling',
+            level: 1,
+        };
+        mocks.excluded.add('guildShrine:/guild_buffs/force_combat');
+
+        const result = await calculateNetworth();
+        expect(result.fixedAssets.guildShrines.tokens).toBe(0);
+        expect(result.fixedAssets.guildShrines.tokensUnpriced).toBe(false);
+    });
 });
 
 describe('isUnpricedCurrency', () => {

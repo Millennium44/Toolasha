@@ -1631,6 +1631,10 @@ export async function calculateNetworth() {
                 known: guildShrinesData.known,
                 // Only the credits of the shrines still counted can leave the total short
                 unpriced: [...new Set(remainingShrines.flatMap((shrine) => shrine.unpriced || []))],
+                // One token rate serves every shrine: with none, the total is still a floor while any
+                // shrine left in it spent tokens
+                tokensUnpriced:
+                    !!guildShrinesData.tokensUnpriced && remainingShrines.some((shrine) => shrine.tokens > 0),
             };
         }
     }
