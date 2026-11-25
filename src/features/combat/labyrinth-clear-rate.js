@@ -4109,12 +4109,18 @@ class LabyrinthClearRate {
         const cols = this._shroudStepPlan.cols;
         if (drawn && !drawn.exhausted) {
             const covers = (c) => c.idx === need || (c.watch || []).includes(need);
-            // A beacon already due now reveals it: the drawn plan needs no help
-            if (drawn.targets.some(covers)) return drawn;
+            const open = (c) => covers(c) && !drawn.placed?.has(c.idx);
+            // The beacon that reveals it goes first and says what it is for, so the Next button can press it
+            // and no unrelated beacon has to be placed ahead of it. A beacon already due now needs no more.
+            const due = drawn.targets.find(open);
+            if (due) {
+                drawn.targets = [{ ...due, forShroud: need }, ...drawn.targets.filter((c) => c !== due)];
+                return drawn;
+            }
             // A beacon drawn for later reveals it: that one is due now
-            const promoted = drawn.later.find((c) => covers(c) && !drawn.placed?.has(c.idx));
+            const promoted = drawn.later.find(open);
             if (promoted) {
-                drawn.targets = [...drawn.targets, { ...promoted, later: false, forShroud: need }];
+                drawn.targets = [{ ...promoted, later: false, forShroud: need }, ...drawn.targets];
                 drawn.later = drawn.later.filter((c) => c !== promoted);
                 return drawn;
             }

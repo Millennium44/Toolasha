@@ -4,7 +4,7 @@
  * Tests for Labyrinth Clear Rate live-estimate math
  */
 
-import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
 
 import { buildLabyrinthUpdated, buildLabyrinthRoomProgress } from '../../__fixtures__/wire/labyrinth.js';
 import { SUPPLY_HRIDS } from './labyrinth-supplies.js';
@@ -8433,26 +8433,55 @@ describe('labyrinth toolbar layout', () => {
                     ],
                 };
                 const drawn = plan();
-                expect(drawn.targets.map((c) => c.label)).toEqual(['B1', 'B2']);
-                expect(drawn.targets[1]).toMatchObject({ idx: 6, forShroud: 2, later: false });
+                // Ahead of the unrelated B1: the step takes the first target, and the route is waiting on this one
+                expect(drawn.targets.map((c) => c.label)).toEqual(['B2', 'B1']);
+                expect(drawn.targets[0]).toMatchObject({ idx: 6, forShroud: 2, later: false });
                 expect(drawn.later.map((c) => c.label)).toEqual(['B3']);
                 // Asked again, it is not added twice
-                expect(plan().targets.map((c) => c.label)).toEqual(['B1', 'B2']);
+                expect(plan().targets.map((c) => c.label)).toEqual(['B2', 'B1']);
                 expect(labyrinthClearRate._revealBeaconPlan).toBeNull();
             });
 
-            test('a beacon already due now that reveals the room leaves the drawn plan as it is', () => {
+            test('a beacon already due now that reveals the room goes first and says what it is for', () => {
                 labyrinthClearRate._beaconPlanCells = {
                     fills: [],
                     centers: [
-                        { idx: 6, label: 'B1', watch: [2, 3] },
-                        { idx: 15, label: 'B2', later: true, watch: [2] },
+                        { idx: 12, label: 'B1', watch: [13] },
+                        { idx: 6, label: 'B2', watch: [2, 3] },
+                        { idx: 15, label: 'B3', later: true, watch: [2] },
                     ],
                 };
                 const drawn = plan();
-                expect(drawn.targets.map((c) => c.label)).toEqual(['B1']);
-                expect(drawn.targets[0].forShroud).toBeUndefined();
-                expect(drawn.later.map((c) => c.label)).toEqual(['B2']);
+                expect(drawn.targets.map((c) => c.label)).toEqual(['B2', 'B1']);
+                expect(drawn.targets[0]).toMatchObject({ idx: 6, forShroud: 2 });
+                expect(drawn.targets[1].forShroud).toBeUndefined();
+                // The later one that also covers it stays later: one beacon is enough
+                expect(drawn.later.map((c) => c.label)).toEqual(['B3']);
+                // The need gone, the drawn order and the plain beacons are back
+                lab.roomData[0][2] = shown();
+                const back = plan();
+                expect(back.targets.map((c) => c.label)).toEqual(['B1', 'B2']);
+                expect(back.targets.some((c) => Number.isInteger(c.forShroud))).toBe(false);
+            });
+
+            test('the Next step is the drawn beacon that reveals the room, not "blocked"', () => {
+                // The planner's own copy of the grid gives the drawn plan its width, as on a live floor
+                const before = labyrinthClearRate.roomData;
+                labyrinthClearRate.roomData = lab.roomData;
+                onTestFinished(() => {
+                    labyrinthClearRate.roomData = before;
+                });
+                labyrinthClearRate._beaconPlanCells = {
+                    fills: [],
+                    centers: [
+                        { idx: 12, label: 'B1', watch: [13] },
+                        { idx: 6, label: 'B2', watch: [2, 3] },
+                    ],
+                };
+                const next = labyrinthClearRate.describeNextStep();
+                expect(next).toMatchObject({ kind: 'beacon', action: 'use', idx: 6, forShroud: 2 });
+                expect(next.label).toBe('Next ▸ beacon 3,2');
+                expect(next.reason).toContain('it reveals room 3,1');
             });
 
             test('a later beacon already pressed is not brought forward again: the room gets its own', () => {
