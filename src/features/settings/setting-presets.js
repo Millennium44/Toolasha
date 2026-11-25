@@ -56,6 +56,7 @@ const ESSENTIALS = [
     'chatCommands',
     'chat_mentionTracker',
     'chat_profileLink',
+    'profileGuildBackButton',
     'chatHistoryExtender',
     'altClickNavigation',
     'collectionNavigation',

@@ -2839,6 +2839,16 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'profileGuildBackButton',
+            name: 'Guild Profile Back Button',
+            category: 'Guild',
+            module: Guild.guildProfileBack,
+            async: false,
+            setting: 'profileGuildBackButton',
+            // disable() removes the button, both listeners and the observer
+            liveStop: true,
+        },
+        {
             key: 'guildTrialLedger',
             name: 'Guild Trial Ledger',
             category: 'Guild',
