@@ -383,6 +383,24 @@ describe('Next places the exit beacons before it queues rooms', () => {
         expect(labyrinthClearRate._exitBeaconsTried).toEqual({ floor: 1, characterId: 'me', run: null });
     });
 
+    test('a hidden shroud room next on the route does not stand in for the exit plan', () => {
+        // Room 2 is hidden and planned as a shroud: the beacon step alone would offer a one-beacon plan for it
+        labyrinthClearRate.storeShroudStepPlan(SIDE, [2], [1, 2, 3, 7]);
+        expect(labyrinthClearRate.getStepper().describe('beacon').forShroud).toBe(2);
+        // No plan drawn: Next still works the exit plan out first
+        expect(labyrinthClearRate.describeNextStep()).toMatchObject({ kind: 'plan-beacons', stage: 'exit-beacons' });
+        // A drawn plan that does not cover the room: the made-up beacon is the shroud branch's, never this
+        // stage's, because its plan is dropped once the room is revealed and no re-run could follow it
+        labyrinthClearRate._beaconPlanCells = { fills: [], centers: [{ idx: 4, label: 'B1', watch: [7] }] };
+        expect(labyrinthClearRate.exitBeaconStep()).toBeNull();
+        const next = labyrinthClearRate.describeNextStep();
+        expect(next).toMatchObject({ kind: 'beacon', forShroud: 2 });
+        expect(next.stage).toBeUndefined();
+        // A drawn beacon that does cover it is the drawn plan's own, and stays in the stage
+        drawPlan();
+        expect(labyrinthClearRate.describeNextStep()).toMatchObject({ kind: 'beacon', stage: 'exit-beacons', idx: 6 });
+    });
+
     test("no plan drawn and none held (supplies known): exactly today's behavior", () => {
         labyrinthClearRate.getSupplyCounts.mockReturnValue({ known: true, beacon: 0 });
         expect(labyrinthClearRate.exitBeaconStep()).toBeNull();

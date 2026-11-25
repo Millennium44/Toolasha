@@ -4278,7 +4278,12 @@ class LabyrinthClearRate {
         // A supply already armed is the armed-pick branch's; a second arm would fight it
         if (findLabyrinthPanel()?.state?.supplyMode) return null;
         const stepper = this.getStepper();
-        const b = stepper.describe('beacon');
+        // Only the drawn Beacons plan belongs to this stage. The one-beacon plan made up for a hidden shroud room
+        // (`_revealBeaconPlan`) is thrown away the moment its room is revealed, so its placement is never recorded
+        // and no re-run would follow; that beacon stays with the shroud branch below, after the exit beacons.
+        const drawn = this.drawnBeaconStepPlan();
+        if (drawn && this.currentBeaconStepPlan() !== drawn) return null;
+        const b = drawn ? stepper.describe('beacon') : { action: 'none', code: 'no-plan' };
         if (b.action === 'use' || b.action === 'room') {
             const label = `Next ▸ beacon ${b.x + 1},${b.y + 1}`;
             return {

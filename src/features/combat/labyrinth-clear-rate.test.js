@@ -8531,8 +8531,19 @@ describe('labyrinth toolbar layout', () => {
                 const beacon = () => document.querySelector('.mwi-labyrinth-step-beacon');
                 expect(beacon().textContent).toBe('Use beacon ▸ 3,1');
                 expect(beacon().title).toContain('it reveals room 3,1, which the route needs a shroud for');
+                // Next lights the way to the exit first: with no Beacons plan drawn it offers to work one out
+                expect(document.querySelector('.mwi-labyrinth-step-next').textContent).toBe('Next ▸ beacons');
+                expect(document.querySelector('.mwi-labyrinth-step-next').dataset.stepKind).toBe('plan-beacons');
+                // Once that was tried on this floor, Next offers the beacon for the hidden shroud room
+                labyrinthClearRate._exitBeaconsTried = {
+                    floor: labyrinthClearRate.currentFloor,
+                    characterId: labyrinthClearRate._shroudStepPlan.characterId,
+                    run: lab.startedAt ?? null,
+                };
+                labyrinthClearRate.refreshStepButtons();
                 expect(document.querySelector('.mwi-labyrinth-step-next').textContent).toBe('Next ▸ beacon 3,1');
                 expect(document.querySelector('.mwi-labyrinth-step-next').dataset.stepKind).toBe('beacon');
+                labyrinthClearRate._exitBeaconsTried = null;
                 lab.roomData[0][2] = shown();
                 labyrinthClearRate.refreshStepButtons();
                 expect(beacon().title).toContain('Press Beacons first');
