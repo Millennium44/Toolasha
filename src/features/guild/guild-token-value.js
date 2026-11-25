@@ -65,7 +65,10 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { capturedTokenExchanges as bundledCapturedTokenExchanges } from './guild-token-exchange-capture.js';
+import {
+    capturedTokenExchanges as bundledCapturedTokenExchanges,
+    hydrateCapturedTokenExchanges as bundledHydrateCapturedTokenExchanges,
+} from './guild-token-exchange-capture.js';
 import { guildTokenExchangeCapture } from '../../utils/bundle-bridge.js';
 
 /**
@@ -75,6 +78,25 @@ import { guildTokenExchangeCapture } from '../../utils/bundle-bridge.js';
  */
 function capturedTokenExchanges() {
     return guildTokenExchangeCapture()?.capturedTokenExchanges?.() ?? bundledCapturedTokenExchanges();
+}
+
+/**
+ * Load the stored Guild Shop readings into the capture module this valuation reads.
+ *
+ * The capture table is read from storage once, and only the Guild Credit Value
+ * feature used to ask for it, so a valuation run with that setting off never saw
+ * a stored reading. Anything that values tokens on its own (the upgrade advisor)
+ * awaits this first. It goes through the bridge for the same reason the reads do:
+ * the live copy is the shared library's, not this bundle's own.
+ *
+ * @returns {Promise<void>} Resolves when the stored readings are in memory (never rejects)
+ */
+export async function hydrateTokenExchangeCaptures() {
+    try {
+        await (guildTokenExchangeCapture()?.hydrateCapturedTokenExchanges ?? bundledHydrateCapturedTokenExchanges)();
+    } catch (error) {
+        console.error('[GuildTokenValue] Could not load the stored exchange readings:', error);
+    }
 }
 import { buildGoldPerCredit } from '../../utils/guild-credit-pricing.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
@@ -102,6 +124,58 @@ export const TOKEN_CREDIT_RATE_SETTING = 'guildTokenCreditRate';
 
 /** Credits per token assumed when neither the client nor the player says otherwise */
 export const DEFAULT_TOKEN_CREDIT_RATE = 1;
+
+/**
+ * The Guild Shop's token to credit exchange, as the game states it.
+ *
+ * Eight colors, four rates, confirmed against the in-game exchange dialog. The
+ * gold credit's is the one it is hardest to believe and easiest to check: the
+ * modal says 60 tokens for 1. Keyed by the color word rather than the whole hrid
+ * so the table survives an hrid being spelled differently, and so a color the
+ * game adds later is left unpriced instead of quietly inheriting a neighbor's rate.
+ *
+ * These are constants, not readings, and they are exact: nothing derived from one
+ * carries the approximation mark a captured reading does. A capture still beats
+ * them for its own color, because the game can rebalance and an observation of
+ * today's shop is worth more than yesterday's constant. The one place both the
+ * shrine planner (`guild-credit-value.js`) and the upgrade advisor read them from.
+ */
+export const DEFAULT_TOKEN_RATES = {
+    green: { tokensPerExchange: 1, creditsPerExchange: 10 },
+    brown: { tokensPerExchange: 1, creditsPerExchange: 10 },
+    white: { tokensPerExchange: 1, creditsPerExchange: 10 },
+    blue: { tokensPerExchange: 1, creditsPerExchange: 10 },
+    purple: { tokensPerExchange: 1, creditsPerExchange: 1 },
+    red: { tokensPerExchange: 1, creditsPerExchange: 1 },
+    silver: { tokensPerExchange: 10, creditsPerExchange: 1 },
+    gold: { tokensPerExchange: 60, creditsPerExchange: 1 },
+};
+
+/** The color word in a credit hrid: `/items/gold_guild_credit` gives `gold` */
+const CREDIT_COLOR = /(?:^|[/_])([a-z]+)_guild_credit(?:$|[/_])/;
+
+/**
+ * The standard exchange for one credit color, from {@link DEFAULT_TOKEN_RATES}.
+ *
+ * Shaped exactly like a captured reading so a caller cannot tell the two apart
+ * except by `source`, which is the one thing the captions care about.
+ *
+ * @param {string} creditItemHrid - Credit hrid
+ * @returns {Object|null} The rate, or null for an hrid no color in the table names
+ */
+export function defaultTokenRate(creditItemHrid) {
+    const color = CREDIT_COLOR.exec(String(creditItemHrid || '').toLowerCase())?.[1];
+    const rate = color ? DEFAULT_TOKEN_RATES[color] : null;
+    if (!rate) return null;
+    return {
+        creditItemHrid,
+        creditsPerToken: rate.creditsPerExchange / rate.tokensPerExchange,
+        tokensPerExchange: rate.tokensPerExchange,
+        creditsPerExchange: rate.creditsPerExchange,
+        via: 'default',
+        source: 'default',
+    };
+}
 
 /** The phrase every derived figure is labelled with */
 export const VIA_EXCHANGE = 'via credit exchange';
@@ -275,10 +349,14 @@ export function exchangesFromClientData(clientData) {
  * @param {Object} [options.clientData] - Init client data; read from the data manager when omitted
  * @param {Array<Object>} [options.capturedExchanges] - Readings taken off the Guild Shop dialog
  * @param {Function} [options.getSetting] - Settings reader
+ * @param {boolean} [options.defaultRates=false] - Fall back to the game's per-color table
+ *   ({@link DEFAULT_TOKEN_RATES}) before the setting, filling every color a capture does not name. Only for
+ *   a caller that prices a purchase (the upgrade advisor); net worth and the loot log leave it off and keep
+ *   refusing anything the game or the dialog did not say
  * @returns {{exchanges: Array<Object>, source: string}} Exchanges and where they came from
- *   (`'client'`, `'captured'`, `'setting'`, or `'unknown'` when nothing is priceable)
+ *   (`'client'`, `'captured'`, `'default'`, `'setting'`, or `'unknown'` when nothing is priceable)
  */
-export function readTokenCreditExchange({ clientData, capturedExchanges, getSetting } = {}) {
+export function readTokenCreditExchange({ clientData, capturedExchanges, getSetting, defaultRates = false } = {}) {
     const read = getSetting || ((key, fallback) => config.getSettingValue?.(key, fallback) ?? fallback);
     const rate = Number(read(TOKEN_CREDIT_RATE_SETTING, DEFAULT_TOKEN_CREDIT_RATE));
     // Zero is the explicit off switch, even when a live or captured rate exists.
@@ -291,8 +369,22 @@ export function readTokenCreditExchange({ clientData, capturedExchanges, getSett
     const fromDialog = (capturedExchanges || capturedTokenExchanges()).filter(
         (exchange) => isGuildCreditHrid(exchange?.creditItemHrid) && Number(exchange?.creditsPerToken) > 0
     );
-    if (fromDialog.length > 0) {
-        return { exchanges: fromDialog.map((exchange) => ({ ...exchange, via: 'captured' })), source: 'captured' };
+    const captured = fromDialog.map((exchange) => ({ ...exchange, via: 'captured' }));
+
+    if (defaultRates) {
+        // The game's own per-color table fills every color the shop has not been
+        // opened for; a capture shadows only its own color. Returning the captures
+        // alone would value a token on the one color the dialog happened to show
+        const seen = new Set(captured.map((exchange) => exchange.creditItemHrid));
+        const fromTable = Object.keys(data.itemDetailMap || {})
+            .filter((hrid) => isGuildCreditHrid(hrid) && !seen.has(hrid))
+            .map((hrid) => defaultTokenRate(hrid))
+            .filter(Boolean);
+        if (captured.length + fromTable.length > 0) {
+            return { exchanges: [...captured, ...fromTable], source: captured.length > 0 ? 'captured' : 'default' };
+        }
+    } else if (captured.length > 0) {
+        return { exchanges: captured, source: 'captured' };
     }
 
     // Invalid or negative settings are not rates either.
@@ -461,7 +553,9 @@ export function describeGuildTokenGold(tokenCount, pricingMode = 'ask', options 
                   'check the Guild Shop and correct it there.'
                 : valuation.source === 'captured'
                   ? 'The rate was read off the Guild Shop exchange dialog itself.'
-                  : "The rate is the game's own guild shop exchange."),
+                  : valuation.source === 'default'
+                    ? "The rate is the guild shop's standard per-color exchange, not yet read off the game."
+                    : "The rate is the game's own guild shop exchange."),
         valuation,
     };
 }
@@ -477,6 +571,8 @@ function describeSource(source) {
             return "the game's own client data";
         case 'captured':
             return 'the Guild Shop dialog, read off the screen';
+        case 'default':
+            return "the Guild Shop's standard per-color rates";
         case 'setting':
             return 'the guildTokenCreditRate setting — an assumption, not a reading';
         default:

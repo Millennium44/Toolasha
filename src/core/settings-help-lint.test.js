@@ -83,7 +83,6 @@ const LONG_HELP_ALLOWED = {
     loadoutTalismanCheck: BULK,
     tabVersionSync: BULK,
     guildTrialsInfo: BULK,
-    guildTokenCreditRate: BULK,
     guildTrialLedger: BULK,
     notifications_savingsGoalReached: BULK,
     notifications_priceTargetReached: BULK,

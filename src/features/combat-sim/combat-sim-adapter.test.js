@@ -732,6 +732,42 @@ describe('buildPlayerDTOFromProfile — a shared profile has no resolved achieve
         expect(dto.achievementBuffsOff).toHaveLength(3);
     });
 
+    test('a profile with no guildBuffLevelMap leaves no level map, so no invented Lv0 shrine rows', () => {
+        const dto = buildPlayerDTOFromProfile({
+            characterID: 'char1',
+            profile: { characterSkills: [], wearableItemMap: {} },
+        });
+
+        expect(dto.guildShrineLevels).toBeUndefined();
+        expect(dto.guildCombatBuffs).toEqual([]);
+    });
+
+    test("the profile's character and guild ids ride on the DTO, so a guild-mate can be told from a stranger", () => {
+        const dto = buildPlayerDTOFromProfile({
+            characterID: 900201,
+            profile: { characterSkills: [], wearableItemMap: {}, guildId: 899 },
+        });
+
+        expect(dto.characterID).toBe(900201);
+        expect(dto.guildId).toBe(899);
+        const bare = buildPlayerDTOFromProfile({ profile: { characterSkills: [], wearableItemMap: {} } });
+        expect(bare.characterID).toBeUndefined();
+        expect(bare.guildId).toBeUndefined();
+    });
+
+    test('a profile that does carry the map keeps its levels', () => {
+        const dto = buildPlayerDTOFromProfile({
+            characterID: 'char1',
+            profile: {
+                characterSkills: [],
+                wearableItemMap: {},
+                guildBuffLevelMap: { '/guild_buffs/force_combat': 2 },
+            },
+        });
+
+        expect(dto.guildShrineLevels).toEqual({ '/guild_buffs/force_combat': 2 });
+    });
+
     test('missing profile data or client data yields null, not a throw', () => {
         expect(buildPlayerDTOFromProfile(null)).toBeNull();
         expect(buildPlayerDTOFromProfile({})).toBeNull();

@@ -306,6 +306,17 @@ describe('hydrating what an earlier session read', () => {
         expect(capturedTokenExchange(GREEN).creditsPerToken).toBe(10);
     });
 
+    test("a second caller waits for the first one's read instead of getting the empty table", async () => {
+        store.data[CAPTURE_KEY] = { exchanges: { [GREEN]: { creditsPerToken: 10, capturedAt: 1 } } };
+
+        // Both start before the storage read lands: the feature start-up and an analysis that awaits it
+        const first = hydrateCapturedTokenExchanges();
+        const second = hydrateCapturedTokenExchanges();
+
+        expect(await second).toMatchObject({ [GREEN]: { creditsPerToken: 10 } });
+        expect(await first).toMatchObject({ [GREEN]: { creditsPerToken: 10 } });
+    });
+
     test('a stored rate read in after start-up tells net worth to re-price', async () => {
         store.data[CAPTURE_KEY] = { exchanges: { [GREEN]: { creditsPerToken: 10, capturedAt: 1 } } };
         const heard = [];

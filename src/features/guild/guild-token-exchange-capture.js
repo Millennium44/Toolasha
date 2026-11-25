@@ -84,8 +84,12 @@ const MAX_PLAUSIBLE_RATE = 10_000;
 /** creditItemHrid → captured reading. Read synchronously by the valuation. */
 let captured = {};
 
-/** Whether storage has been consulted yet this session */
-let hydrated = false;
+/**
+ * The read of the stored table, kept so a second caller waits for the first one's
+ * read instead of returning the still-empty table while it is out.
+ * @type {Promise<Object>|null}
+ */
+let hydrating = null;
 
 /**
  * Whether an hrid names a guild token.
@@ -316,9 +320,17 @@ function announceExchangeChange(detail) {
  * @returns {Promise<Object>} The table, keyed by credit hrid
  */
 export async function hydrateCapturedTokenExchanges() {
-    if (hydrated) return { ...captured };
-    hydrated = true;
+    // One shared read: a second caller awaits the same promise instead of getting the empty table
+    if (!hydrating) hydrating = readStoredTokenExchanges();
+    await hydrating;
+    return { ...captured };
+}
 
+/**
+ * The storage read behind {@link hydrateCapturedTokenExchanges}.
+ * @returns {Promise<void>}
+ */
+async function readStoredTokenExchanges() {
     try {
         const stored = await storage.get(CAPTURE_KEY, STORE_NAME, null);
         let changed = false;
@@ -332,8 +344,6 @@ export async function hydrateCapturedTokenExchanges() {
     } catch (error) {
         console.error('[GuildTokenExchange] Could not read the stored exchange:', error);
     }
-
-    return { ...captured };
 }
 
 /**
@@ -385,5 +395,5 @@ export async function captureTokenExchangeFromModal(modalEl, context) {
  */
 export function _resetCapturedTokenExchanges() {
     captured = {};
-    hydrated = false;
+    hydrating = null;
 }

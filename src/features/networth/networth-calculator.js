@@ -331,14 +331,9 @@ export function explainTokenValue(itemHrid) {
             };
         }
         case 'guild': {
-            const valuation = explainGuildTokenValue(guildCreditPricingMode());
-            // An exchange rate nobody read off the Guild Shop is the setting's
-            // guess (1 credit/token by default; the real one has been 10), so it
-            // must not move the total. Unpriced until the dialog is captured.
+            const { valuation, rate } = guildTokenRate(guildCreditPricingMode());
             if (valuation?.assumed) return { ...none, note: GUILD_RATE_UNKNOWN_NOTE };
-            return valuation?.gold > 0
-                ? { rate: valuation.gold, bestItemHrid: valuation.creditItemHrid || null, note: valuation.note }
-                : none;
+            return rate > 0 ? { rate, bestItemHrid: valuation.creditItemHrid || null, note: valuation.note } : none;
         }
         case 'credit': {
             // Never listed: the cheapest tradeable item that converts into one, read at the
@@ -747,14 +742,29 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
 }
 
 /**
+ * What a guild token is worth in net worth: the best guild shop exchange at this side, and nothing at all at a
+ * rate nobody read (the `guildTokenCreditRate` setting's guess must not move the total). Held tokens and the
+ * tokens spent on shrine levels both go through here, so the two always follow one rule.
+ * @param {string} pricingMode - Pricing side
+ * @returns {{valuation: Object, rate: number|null}} The valuation, and the gold per token or null when unpriced
+ */
+function guildTokenRate(pricingMode) {
+    const valuation = explainGuildTokenValue(pricingMode);
+    if (valuation?.assumed) return { valuation, rate: null };
+    return { valuation, rate: valuation?.gold > 0 ? valuation.gold : null };
+}
+
+/**
  * Cumulative cost of every guild shrine level the character has bought.
  *
  * A shrine level is paid for in guild credits and guild tokens. Credits have a
  * gold value — the cheapest tradeable items that convert into them, the rate the
  * guild exchange table quotes — so levels 1..current can be priced the way
  * houses and abilities are, at the same pricing mode as the rest of net worth.
- * Tokens cannot: nothing converts into them, so they are returned as a count for
- * the row's tooltip and never added to a gold figure.
+ * The tokens spent are valued by the rule held tokens use (the best guild shop
+ * exchange at this same side, and no value at all at a rate nobody read), so
+ * buying a level does not take its tokens out of the total. With no usable rate
+ * they are returned as a count and `tokensUnpriced` says the total is a floor.
  *
  * The levels ride on guild traffic that may not have arrived this session, in
  * which case data-manager hands back the reading it persisted, or nothing at
@@ -763,13 +773,17 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
  *
  * @param {Object} characterGuildBuffMap - buffHrid → `{guildBuffHrid, level}`
  * @param {string} [pricingMode='ask'] - Pricing side, as the net worth setting selects it
- * @returns {{totalCost: number, tokens: number, breakdown: Array<Object>, known: boolean, unpriced?: Array<string>}}
+ * @returns {{totalCost: number, tokens: number, breakdown: Array<Object>, known: boolean, unpriced?: Array<string>,
+ *   tokensUnpriced?: boolean}}
  */
 export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = 'ask') {
     const detailMap = dataManager.getInitClientData()?.guildBuffDetailMap;
     if (!detailMap || !characterGuildBuffMap || Object.keys(characterGuildBuffMap).length === 0) {
         return { totalCost: 0, tokens: 0, breakdown: [], known: false };
     }
+
+    // The rule held tokens use, at the same side: the best exchange, and nothing at a rate nobody read
+    const { rate: tokenRate } = guildTokenRate(pricingMode);
 
     // Built once and shared: every level of every shrine prices the same credits
     const goldPerCredit = buildGoldPerCredit(pricingMode);
@@ -779,6 +793,8 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
     const breakdown = [];
     // Credits no conversion prices: counted at 0 in the total, so the total is a floor and has to say so
     const unpriced = new Set();
+    // Tokens spent with no rate to value them at: counted at 0 too, so the total is a floor for this reason also
+    let tokensUnpriced = false;
 
     for (const [buffHrid, entry] of Object.entries(characterGuildBuffMap)) {
         const level = Math.max(0, Math.floor(Number(entry?.level) || 0));
@@ -806,6 +822,12 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
             }
         }
 
+        // Tokens at the held-token rate, so a bought level is not worth less than the tokens it took. Added
+        // after the credits, to the row and to the total alike, so exclusions and the breakdown agree
+        const tokenGold = tokens > 0 && tokenRate > 0 ? tokens * tokenRate : 0;
+        if (tokens > 0 && !(tokenRate > 0)) tokensUnpriced = true;
+        cost += tokenGold;
+
         totalCost += cost;
         totalTokens += tokens;
 
@@ -823,13 +845,14 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
             level,
             cost,
             tokens,
+            tokenGold,
             unpriced: [...shrineUnpriced],
         });
     }
 
     breakdown.sort((a, b) => b.cost - a.cost);
 
-    return { totalCost, tokens: totalTokens, breakdown, known: true, unpriced: [...unpriced] };
+    return { totalCost, tokens: totalTokens, breakdown, known: true, unpriced: [...unpriced], tokensUnpriced };
 }
 
 /**
@@ -1608,6 +1631,10 @@ export async function calculateNetworth() {
                 known: guildShrinesData.known,
                 // Only the credits of the shrines still counted can leave the total short
                 unpriced: [...new Set(remainingShrines.flatMap((shrine) => shrine.unpriced || []))],
+                // One token rate serves every shrine: with none, the total is still a floor while any
+                // shrine left in it spent tokens
+                tokensUnpriced:
+                    !!guildShrinesData.tokensUnpriced && remainingShrines.some((shrine) => shrine.tokens > 0),
             };
         }
     }

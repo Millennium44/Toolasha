@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild shrine prices no longer pass a guess off as the price
+
+Shrine upgrade rows now value guild tokens at the game's own per-color exchange when no rate has been read. A row priced without its tokens, or on a guessed rate, shows ≥ or ≈ on its cost, hours, ROI and cost-per-percent columns with the reason on hover, and in plan totals and exports.
+
+### Shrine upgrades for other players use the right guild
+
+Guild-mates are still capped by your guild's shrine buildings. Players in other guilds, whose buildings the game does not send, are no longer capped by yours, and an imported profile with no shrine data no longer gets invented Lv0 to Lv1 rows. The Lab skilling shrine rows now follow the "Guild-allowed only" box.
+
+### Net worth keeps the tokens spent on shrine levels
+
+Guild tokens spent on shrine levels are now valued like the tokens you hold, so buying a level no longer lowers your net worth by its tokens. With no exchange rate read yet, the shrine total says "at least".
+
 ### Back button on guild windows opened from a profile
 
 When you click the guild name on a player's profile, the guild window now has a "◂ <name>" button at its top left that reopens that player's profile.

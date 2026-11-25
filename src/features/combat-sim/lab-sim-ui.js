@@ -168,7 +168,13 @@ import { generateSkillingCommunityBuffCandidates, MAX_COMMUNITY_BUFF_LEVEL } fro
 // by a bundle that does not own the combat sim panel, and a cross-bundle named
 // import compiles to a property read off a global that carries only the default.
 import combatSimUI from './combat-sim-ui.js';
-import { compactCostLines, sharedRouteText } from './cost-basis-text.js';
+import {
+    budgetPartialCostText,
+    compactCostLines,
+    partialCostMarkHtml,
+    partialCostOf,
+    sharedRouteText,
+} from './cost-basis-text.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import {
@@ -602,6 +608,26 @@ function goldPerPctCell(cost, deltaPct) {
     const value = goldPerPercent(cost, deltaPct);
     if (!Number.isFinite(value)) return '—';
     return value <= 0 ? 'pays for itself' : shortFigure(value);
+}
+
+/**
+ * The CSV cell saying a row's cost columns are not the whole, exact price.
+ * @param {Object} row - A result row
+ * @returns {string} "floor: reason" or "assumed: reason", empty for a whole price
+ */
+function csvPartialCost(row) {
+    const partial = partialCostOf(row);
+    return partial ? `${partial.kind}: ${partial.reason}` : '';
+}
+
+/**
+ * A figure built on a shrine's partial or guessed price, marked; a dash is no figure and stays bare.
+ * @param {Object} row - A result row
+ * @param {string} html - The cell as it would be drawn
+ * @returns {string} HTML
+ */
+function markUnlessDash(row, html) {
+    return html === '—' ? html : partialCostMarkHtml(row, html);
 }
 
 /**
@@ -6647,8 +6673,8 @@ class LabSimUI {
             '<span style="color:' +
             GAME_COLORS.textDim +
             '; font-size:11px; flex-basis:100%;"><b>Guild Shrine</b> target levels (blank ' +
-            'or ≤ current level evaluates one level up; <b>0 skips the shrine</b>; used instead of the Lv ' +
-            'box while open):</span>' +
+            'evaluates one level up; <b>0 skips the shrine</b>, as does a level at or below the current one; ' +
+            'used instead of the Lv box while open):</span>' +
             shrines
                 .map(
                     (shrine) => `
@@ -7543,7 +7569,7 @@ class LabSimUI {
                                 <span style="color:#e0e0e0;">${simCandidateLabelHtml(pick.candidate)}
                                     <span style="color:${GAME_COLORS.textDim};">· ${rooms} room${rooms === 1 ? '' : 's'}</span>
                                     ${combatSimUI.upgradeRowActionsHtml(pick)}</span>
-                                <span style="white-space:nowrap; color:#aaa;">${goldCostCell(pick.cost)}
+                                <span style="white-space:nowrap; color:#aaa;">${partialCostMarkHtml(pick, goldCostCell(pick.cost))}
                                     <span style="color:#4caf50;">−${(pick.marginalAttemptsSaved ?? -pick.attemptsDelta).toFixed(1)} attempts</span></span>
                             </div>`;
                     })
@@ -7562,11 +7588,11 @@ class LabSimUI {
                                 : `${money(plan.totalCost)} of ${money(budget)}`
                         }${
                             // A pick priced on part of its bill (shrine credits with no token rate) makes
-                            // the total a floor, so it says what it leaves out
+                            // the total a floor, and one on a guessed rate makes it approximate: it says which
                             plan.partialCostPicks?.length
                                 ? ` <span data-budget-partial-cost style="color:#ff9800;" title="${plan.partialCostPicks
                                       .join(', ')
-                                      .replace(/"/g, '&quot;')}">+ guild tokens not priced</span>`
+                                      .replace(/"/g, '&quot;')}">${budgetPartialCostText(plan)}</span>`
                                 : ''
                         } ·
                         <span style="color:#4caf50; font-weight:600;">−${plan.attemptsSaved.toFixed(1)} attempts</span>
@@ -10477,14 +10503,15 @@ class LabSimUI {
                 // table, which is where `r.cost || 0` put a combat level
                 cost: Number.isFinite(r.cost) ? r.cost : Infinity,
                 costKnown: Number.isFinite(r.cost),
-                costStr: goldCostCell(r.cost),
+                // A shrine row priced on part of its bill (tokens with no rate) or a guess at it says so
+                costStr: partialCostMarkHtml(r, goldCostCell(r.cost)),
                 winRate,
                 winRateStr: winRate.toFixed(2) + '%',
                 deltaVal: delta,
                 deltaStr: (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%',
                 deltaColor,
                 goldPerPct,
-                goldPerPctStr: goldPerPctCell(r.cost, delta),
+                goldPerPctStr: markUnlessDash(r, goldPerPctCell(r.cost, delta)),
                 // The cells print the short form; sorting above reads `cost` and `goldPerPct`, never these
                 exactHtml: goldExactHtml(r.cost, goldPerPct),
             };
@@ -10978,6 +11005,7 @@ class LabSimUI {
                 { key: 'paidIn', label: 'Paid in' },
                 { key: 'cost', label: 'Gold cost' },
                 { key: 'tokenCost', label: 'Token cost' },
+                { key: 'costPartial', label: 'Price left out or guessed' },
                 { key: 'rate', label: 'Win rate' },
                 { key: 'rateDelta', label: 'Win rate change' },
                 { key: 'perPercent', label: 'Cost per +1%' },
@@ -10994,6 +11022,7 @@ class LabSimUI {
                     // Shrine rows are paid in gold *and* guild tokens; the token
                     // half rides on the candidate rather than the result row
                     tokenCost: r.costType === 'token' ? (r.tokenCost ?? null) : (r.candidate?.guildTokenCost ?? null),
+                    costPartial: csvPartialCost(r),
                     rate,
                     rateDelta: delta,
                     perPercent: gain > 0 && paid ? Math.round(paid / gain) : null,
@@ -11260,7 +11289,10 @@ class LabSimUI {
                 );
             } else if (!guild.shrineLevelKnown) {
                 parts.push(
-                    line('No guild shrine levels reached the client, so any cap on this level is unknown.', '#888')
+                    line(
+                        "This guild's shrine buildings are not known (no guild data reached the client, or this player is in another guild, whose shrine levels the game does not send), so any cap on this level is unknown.",
+                        '#888'
+                    )
                 );
             }
             return parts.join('');
@@ -11978,6 +12010,8 @@ class LabSimUI {
                     skillEquipmentMap,
                     targetSkill,
                     isSelf: Boolean(selfHrid) && dto.hrid === selfHrid,
+                    // The Upgrade tab's "Guild-allowed only" box (default on), as the combat run reads it
+                    guildShrineCapToGuild: this.panel.querySelector('#mwi-labsim-shrine-cap-guild')?.checked ?? true,
                 },
                 ({ current, total, description }) => {
                     if (isAborted()) return;
@@ -12395,11 +12429,15 @@ class LabSimUI {
                 desc: r.candidate?.description || '',
                 candidate: r.candidate,
                 cost,
-                costStr: r.cost == null ? '\u2014' : shortFigure(cost),
+                costStr: r.cost == null ? '\u2014' : partialCostMarkHtml(r, shortFigure(cost)),
                 tokenCost: r.tokenCost || 0,
                 tokenCostStr: shortFigure(r.tokenCost || 0),
                 exactHtml: exactFiguresHtml([
-                    { label: 'Cost', value: r.cost == null ? null : cost, unit: 'coins' },
+                    {
+                        label: partialCostOf(r) ? 'Cost (partial)' : 'Cost',
+                        value: r.cost == null ? null : cost,
+                        unit: 'coins',
+                    },
                     { label: 'Tokens', value: r.tokenCost || 0, unit: 'guild tokens' },
                     { label: 'Gold/1%', value: goldPerPct > 0 ? goldPerPct : null, unit: 'coins' },
                 ]),
@@ -12409,7 +12447,7 @@ class LabSimUI {
                 deltaStr: (deltaVal >= 0 ? '+' : '') + deltaVal.toFixed(2) + '%',
                 deltaColor,
                 goldPerPct,
-                goldPerPctStr: goldPerPctCell(r.cost, deltaVal),
+                goldPerPctStr: markUnlessDash(r, goldPerPctCell(r.cost, deltaVal)),
                 xpDelta,
                 xpDeltaStr: Math.abs(xpDelta) > 1e-9 ? (xpDelta >= 0 ? '+' : '') + xpDelta.toFixed(1) : '\u2014',
                 xpDeltaColor: xpDelta > 0 ? '#4caf50' : '#888',
@@ -13055,6 +13093,7 @@ class LabSimUI {
                     { key: 'paidIn', label: 'Paid in' },
                     { key: 'cost', label: 'Gold cost' },
                     { key: 'tokenCost', label: 'Token cost' },
+                    { key: 'costPartial', label: 'Price left out or guessed' },
                     { key: 'clearRate', label: 'Avg clear rate' },
                     { key: 'clearRateDelta', label: 'Clear rate change' },
                     { key: 'perPercent', label: 'Cost per +1%' },
@@ -13075,6 +13114,7 @@ class LabSimUI {
                         paidIn: CSV_PAID_IN[r.costType] || 'gold',
                         cost: r.costType === 'token' ? null : wholeCoins(r.cost),
                         tokenCost: r.costType === 'gold' || r.costType === 'community' ? null : (r.tokenCost ?? null),
+                        costPartial: csvPartialCost(r),
                         clearRate: r.clearRate ?? null,
                         clearRateDelta: r.clearRateDelta ?? null,
                         perPercent: gain > 0 && paid ? Math.round(paid / gain) : null,

@@ -46,7 +46,12 @@ import { walkForQuantity, walkForBudget } from '../../utils/order-book.js';
 import { estimatedListingAge } from '../../utils/bundle-bridge.js';
 import { renderTierBadge, TIER_BADGE_CLASS } from './guild-trial-tier-badge.js';
 import { maxGuildShrineLevel } from '../../utils/game-maximums.js';
-import { describeGuildTokenGold, explainGuildTokenValue } from './guild-token-value.js';
+import {
+    DEFAULT_TOKEN_RATES,
+    defaultTokenRate,
+    describeGuildTokenGold,
+    explainGuildTokenValue,
+} from './guild-token-value.js';
 import {
     capturedTokenExchange,
     capturedTokenExchanges,
@@ -56,6 +61,9 @@ import {
 import { GAME_COLORS } from '../../utils/game-look.js';
 
 const CSS_CLASS = 'mwi-guild-credit-value';
+
+// The table lives with the token valuation, so the planner and the upgrade advisor read one copy
+export { DEFAULT_TOKEN_RATES, defaultTokenRate };
 
 /**
  * One side of an item's order book, from the listing tracker's persisted cache.
@@ -394,32 +402,6 @@ export function shortCreditName(name) {
 }
 
 /**
- * The Guild Shop's token→credit exchange, as the game states it.
- *
- * Eight colors, four rates, confirmed against the in-game exchange dialog — the
- * gold credit's is the one it is hardest to believe and easiest to check: the
- * modal says 60 tokens → 1. Keyed by the color word rather than the whole hrid
- * so the table survives an hrid being spelled differently, and so a color the
- * game adds later falls through to {@link NO_RATE_NOTE} instead of quietly
- * inheriting a neighbour's rate.
- *
- * These are constants, not readings, and they are exact: nothing derived from
- * one carries the `≈` a captured reading does. A capture still beats them —
- * see {@link tokenRateFor} — because the game can rebalance and an observation
- * of today's shop is worth more than yesterday's constant.
- */
-export const DEFAULT_TOKEN_RATES = {
-    green: { tokensPerExchange: 1, creditsPerExchange: 10 },
-    brown: { tokensPerExchange: 1, creditsPerExchange: 10 },
-    white: { tokensPerExchange: 1, creditsPerExchange: 10 },
-    blue: { tokensPerExchange: 1, creditsPerExchange: 10 },
-    purple: { tokensPerExchange: 1, creditsPerExchange: 1 },
-    red: { tokensPerExchange: 1, creditsPerExchange: 1 },
-    silver: { tokensPerExchange: 10, creditsPerExchange: 1 },
-    gold: { tokensPerExchange: 60, creditsPerExchange: 1 },
-};
-
-/**
  * How close the two paths may be and still count as level.
  *
  * `0.1 × 1500` is `150.00000000000003`, and the color a token is worth the most
@@ -427,33 +409,6 @@ export const DEFAULT_TOKEN_RATES = {
  * tolerance the recommendation would turn on the last bit of a double.
  */
 const PATH_TIE_TOLERANCE = 1e-9;
-
-/** The color word in a credit hrid — `/items/gold_guild_credit` → `gold` */
-const CREDIT_COLOR = /(?:^|[/_])([a-z]+)_guild_credit(?:$|[/_])/;
-
-/**
- * The standard exchange for one credit color, from {@link DEFAULT_TOKEN_RATES}.
- *
- * Shaped exactly like a captured reading so the rest of this file cannot tell
- * the two apart except by `source`, which is the one thing the captions care
- * about.
- *
- * @param {string} creditItemHrid - Credit hrid
- * @returns {Object|null} The rate, or null for an hrid no color in the table names
- */
-export function defaultTokenRate(creditItemHrid) {
-    const color = CREDIT_COLOR.exec(String(creditItemHrid || '').toLowerCase())?.[1];
-    const rate = color ? DEFAULT_TOKEN_RATES[color] : null;
-    if (!rate) return null;
-    return {
-        creditItemHrid,
-        creditsPerToken: rate.creditsPerExchange / rate.tokensPerExchange,
-        tokensPerExchange: rate.tokensPerExchange,
-        creditsPerExchange: rate.creditsPerExchange,
-        via: 'default',
-        source: 'default',
-    };
-}
 
 /**
  * The Guild Shop's token→credit rate for one color: what was seen, else what is

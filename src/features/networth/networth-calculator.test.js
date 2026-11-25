@@ -661,11 +661,45 @@ describe('calculateGuildShrinesCost', () => {
         expect(result.totalCost).toBe(22_500 + 3000);
     });
 
-    test('tokens are counted but never priced into the gold total', () => {
+    test('with no exchange rate the tokens are counted, not valued, and the total says it is a floor', () => {
         const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/scholar_skilling': 1 }));
 
         expect(result.tokens).toBe(5);
         expect(result.totalCost).toBe(3000); // 4 credits at 750, and nothing for the 5 tokens
+        expect(result.tokensUnpriced).toBe(true);
+    });
+
+    test('tokens spent are valued at the rule held tokens use, so buying a level does not lower net worth', () => {
+        mocks.guildTokenValuation = { gold: 4000, creditItemHrid: CREDIT, note: null };
+
+        const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/force_combat': 3 }), 'bid');
+
+        // 70 credits at the bid rate of 500, plus 60 tokens at 4,000
+        expect(result.totalCost).toBe(35_000 + 240_000);
+        expect(result.tokensUnpriced).toBe(false);
+        expect(result.breakdown[0]).toMatchObject({ tokens: 60, tokenGold: 240_000, cost: 275_000 });
+        // The side is the one held tokens are read at
+        expect(mocks.guildTokenModes).toContain('bid');
+    });
+
+    test('an assumed rate is refused for spent tokens exactly as for held ones', () => {
+        mocks.guildTokenValuation = { gold: 4000, creditItemHrid: CREDIT, assumed: true, note: null };
+
+        const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/scholar_skilling': 1 }));
+
+        expect(result.totalCost).toBe(3000);
+        expect(result.tokensUnpriced).toBe(true);
+        expect(result.breakdown[0].tokenGold).toBe(0);
+    });
+
+    test('a priced rate that leaves one shrine with no tokens does not flag it', () => {
+        mocks.guildTokenValuation = { gold: 4000, creditItemHrid: CREDIT, note: null };
+        mocks.initData.guildBuffDetailMap['/guild_buffs/force_combat'].levelCosts[1].guildTokenCost = 0;
+
+        const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/force_combat': 1 }));
+
+        expect(result.tokensUnpriced).toBe(false);
+        expect(result.totalCost).toBe(7500);
     });
 
     test('a shrine at level 0 contributes no row', () => {
@@ -781,6 +815,43 @@ describe('guild shrines and the net worth pricing mode setting', () => {
 
         expect(askResult.fixedAssets.guildShrines.totalCost).toBe(bidResult.fixedAssets.guildShrines.totalCost);
         expect(askResult.fixedAssets.guildShrines.totalCost).toBe(7500); // pinned to the 'ask' conversion rate
+    });
+
+    test('excluding one shrine keeps the "at least" flag while a counted shrine still spent unpriced tokens', async () => {
+        mocks.initData.guildBuffDetailMap['/guild_buffs/scholar_skilling'] = {
+            shrineHrid: '/guild_shrines/scholar',
+            isCombat: false,
+            levelCosts: { 1: { guildTokenCost: 5, creditCosts: [{ itemHrid: CREDIT, count: 4 }] } },
+        };
+        mocks.characterGuildBuffMap['/guild_buffs/scholar_skilling'] = {
+            guildBuffHrid: '/guild_buffs/scholar_skilling',
+            level: 1,
+        };
+        // No token rate: both shrines' tokens are unpriced
+        mocks.excluded.add('guildShrine:/guild_buffs/force_combat');
+
+        const result = await calculateNetworth();
+        const shrines = result.fixedAssets.guildShrines;
+        expect(shrines.breakdown.map((s) => s.hrid)).toEqual(['/guild_buffs/scholar_skilling']);
+        expect(shrines.tokens).toBe(5);
+        expect(shrines.tokensUnpriced).toBe(true);
+    });
+
+    test('excluding the only shrine that spent tokens drops the flag', async () => {
+        mocks.initData.guildBuffDetailMap['/guild_buffs/scholar_skilling'] = {
+            shrineHrid: '/guild_shrines/scholar',
+            isCombat: false,
+            levelCosts: { 1: { guildTokenCost: 0, creditCosts: [{ itemHrid: CREDIT, count: 4 }] } },
+        };
+        mocks.characterGuildBuffMap['/guild_buffs/scholar_skilling'] = {
+            guildBuffHrid: '/guild_buffs/scholar_skilling',
+            level: 1,
+        };
+        mocks.excluded.add('guildShrine:/guild_buffs/force_combat');
+
+        const result = await calculateNetworth();
+        expect(result.fixedAssets.guildShrines.tokens).toBe(0);
+        expect(result.fixedAssets.guildShrines.tokensUnpriced).toBe(false);
     });
 });
 

@@ -9,6 +9,7 @@
 import { CHAT_MAX_BYTES, utf8Length, truncateToUtf8Bytes, trimToFit } from '../../utils/chat-fill.js';
 import { describeRow } from './trigger-tuning.js';
 import { describeTriggerRows } from './lab-condition-search.js';
+import { partialCostOf } from './cost-basis-text.js';
 
 /** Between two items of one message */
 const ITEM_SEPARATOR = '; ';
@@ -121,6 +122,9 @@ export function topUpgradeTexts(results, max = TOP_UPGRADES) {
         const dps = r.deltas?.dps;
         if (Number.isFinite(dps) && Math.abs(dps) >= 0.05)
             figures.push(`${dps > 0 ? '+' : '−'}${Math.abs(dps).toFixed(1)}% DPS`);
+        // A shrine row ranked on part of its price, or on a guessed token rate, says so rather than posing as whole
+        const partialCost = partialCostOf(r);
+        if (partialCost) figures.push(partialCost.kind === 'assumed' ? 'price assumed' : 'price incomplete');
         return `${i === 0 ? (partial ? 'Top upgrade (partial run)' : 'Top upgrade') : 'Also'}: ${r.candidate.description} (${figures.join(', ')})`;
     });
 }

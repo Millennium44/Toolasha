@@ -3384,7 +3384,7 @@ describe('guild shrine targets are asked for one shrine at a time', () => {
     test('and it states the combat sim grid’s contract: blank steps once, 0 skips', () => {
         openGrid();
 
-        expect(grid().textContent).toContain('blank or ≤ current level evaluates one level up');
+        expect(grid().textContent).toContain('blank evaluates one level up');
         expect(grid().textContent).toContain('0 skips the shrine');
         expect(grid().textContent).toContain('used instead of the Lv box while open');
     });
@@ -7541,6 +7541,58 @@ describe('large token, credit and cowbell figures in the lab tables', () => {
             `[data-skilling-gold-detail="${unpriced.dataset.skillingGoldRow}"]`
         );
         expect(unpricedDetail.querySelector('[data-exact-figures]')).toBeNull();
+    });
+});
+
+describe('Lab skilling shrine rows priced on part of their bill', () => {
+    test('a floor and a guess are marked in the cells, the exact detail and the CSV, a whole price is not', () => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const shrine = (description, costDetail) => ({
+            candidate: { type: 'guild_shrine', description, guildTokenCost: 3_000 },
+            costType: 'guild',
+            cost: 715_000_000,
+            tokenCost: 3_000,
+            clearRate: 0.65,
+            clearRateDelta: 0.05,
+            costDetail,
+        });
+        try {
+            ui._renderSkillingUpgradeResults(
+                {
+                    baseline: { clearRate: 0.6, xpPerRoom: 100 },
+                    results: [
+                        shrine('Floor Shrine Lv9', {
+                            partialCost: 'guild tokens not priced',
+                            partialCostKind: 'floor',
+                        }),
+                        shrine('Guess Shrine Lv9', {
+                            partialCost: 'guild tokens valued at an assumed exchange rate',
+                            partialCostKind: 'assumed',
+                        }),
+                        shrine('Whole Shrine Lv9', undefined),
+                    ],
+                },
+                container
+            );
+
+            const rows = [...container.querySelectorAll('tr[data-skilling-exact-row^="guild"]')];
+            const byName = (name) => rows.find((tr) => tr.textContent.includes(name));
+            const floor = byName('Floor Shrine');
+            const guess = byName('Guess Shrine');
+            const whole = byName('Whole Shrine');
+
+            // Cost and Gold/1% both carry the mark, with the reason on hover
+            expect(floor.querySelectorAll('[data-cost-partial]')).toHaveLength(2);
+            expect(floor.querySelector('[data-cost-partial]').textContent).toContain('≥');
+            expect(floor.querySelector('[data-cost-partial]').title).toContain('guild tokens not priced');
+            expect(guess.querySelector('[data-cost-partial]').textContent).toContain('≈');
+            expect(whole.querySelector('[data-cost-partial]')).toBeNull();
+            expect(container.textContent).toContain('Cost (partial)');
+            expect(container.textContent).not.toContain('could not be drawn');
+        } finally {
+            container.remove();
+        }
     });
 });
 

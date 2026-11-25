@@ -107,6 +107,7 @@ vi.mock('../guild/guild-token-value.js', () => {
     });
     return {
         explainGuildTokenValue: vi.fn(valuation),
+        hydrateTokenExchangeCaptures: vi.fn(async () => {}),
         describeGuildTokenGold: vi.fn((tokens, _mode, options = {}) => {
             const rate = (options.valuation || valuation()).gold;
             if (!(tokens > 0) || !(rate > 0)) return null;
@@ -7002,7 +7003,9 @@ describe('guild shrine candidates', () => {
             const takesCap = sourceLines.filter((line) => /^\s*guildShrineCapToGuild = false,$/.test(line));
 
             expect(takesTargets.length).toBeGreaterThanOrEqual(3);
-            expect(takesCap.length).toBe(takesTargets.length);
+            // The skilling analysis takes the cap alone (its targets are the combat grid's), so the cap is
+            // never on fewer entry points than the targets
+            expect(takesCap.length).toBeGreaterThanOrEqual(takesTargets.length);
         });
 
         test('every options bag that forwards targets also forwards the cap', () => {
@@ -7299,7 +7302,7 @@ describe('guild shrine candidates', () => {
         explainUpgradeCost(candidate, buildGameData());
 
         expect(priceGuildCreditCosts.mock.calls[0][1]).toEqual({ side: 'buy', context: 'profit' });
-        expect(explainGuildTokenValue.mock.calls[0][1]).toEqual({ context: 'profit' });
+        expect(explainGuildTokenValue.mock.calls[0][1]).toEqual({ context: 'profit', defaultRates: true });
     });
 
     test('a priced token is folded into the cost, with both halves still reported', () => {

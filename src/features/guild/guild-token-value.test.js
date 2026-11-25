@@ -10,7 +10,14 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ clientData: {}, prices: {}, settings: {}, captured: [] }));
+const game = vi.hoisted(() => ({
+    clientData: {},
+    prices: {},
+    settings: {},
+    captured: [],
+    hydrated: 0,
+    hydrateFails: false,
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -31,6 +38,10 @@ vi.mock('../../utils/market-data.js', () => ({
 vi.mock('./guild-token-exchange-capture.js', () => ({
     GUILD_TOKEN_EXCHANGE_EVENT: 'toolasha:guild-token-exchange-changed',
     capturedTokenExchanges: () => game.captured,
+    hydrateCapturedTokenExchanges: vi.fn(async () => {
+        if (game.hydrateFails) throw new Error('storage closed');
+        game.hydrated += 1;
+    }),
 }));
 
 const {
@@ -40,6 +51,7 @@ const {
     exchangesFromClientData,
     explainGuildTokenValue,
     formatTokenExchangeReport,
+    hydrateTokenExchangeCaptures,
     goldPerGuildToken,
     readTokenCreditExchange,
     tokenExchangeOptions,
@@ -60,6 +72,8 @@ beforeEach(() => {
     game.clientData = {};
     game.settings = {};
     game.captured = [];
+    game.hydrated = 0;
+    game.hydrateFails = false;
     game.prices = { '/items/bronze_bar': { ask: 100, bid: 90 } };
 });
 
@@ -615,5 +629,133 @@ describe('the dump command', () => {
         game.settings = { guildTokenCreditRate: 0 };
 
         expect(tokenExchangeSummaryLine()).toContain('unpriced');
+    });
+});
+
+describe('the per-color table fallback (defaultRates)', () => {
+    /** The items for each color: a cheap conversion at its own price, so every color is priceable */
+    function colorItems(prices) {
+        const items = {};
+        for (const [color, price] of Object.entries(prices)) {
+            items[`/items/${color}_bar`] = {
+                name: `${color} bar`,
+                guildCreditConversions: [
+                    { creditItemHrid: `/items/${color}_guild_credit`, itemCount: 1, creditCount: 1 },
+                ],
+            };
+            items[`/items/${color}_guild_credit`] = { name: `${color} credit` };
+            game.prices[`/items/${color}_bar`] = { ask: price, bid: price };
+        }
+        return items;
+    }
+    // The live test-server prices: 1 token is 1 purple, 10 blue, 1/60 gold, 10 white, 10 brown, 1/10 silver
+    const LIVE = { purple: 10_680, blue: 800, gold: 494_000, white: 500, brown: 400, silver: 55_125, red: 900 };
+
+    test('with no client rate and no capture the table prices the token off the best color, not assumed', () => {
+        game.clientData = { itemDetailMap: colorItems(LIVE) };
+
+        const valuation = explainGuildTokenValue('ask', { defaultRates: true });
+
+        expect(valuation.source).toBe('default');
+        expect(valuation.assumed).toBe(false);
+        // purple 1 x 10,680 beats gold 494,000/60 = 8,233 and silver 5,512
+        expect(valuation.creditItemHrid).toBe('/items/purple_guild_credit');
+        expect(valuation.gold).toBeCloseTo(10_680, 6);
+    });
+
+    test("without the option the same data is still the setting's assumed guess (net worth, loot log)", () => {
+        game.clientData = { itemDetailMap: colorItems(LIVE) };
+
+        const valuation = explainGuildTokenValue('ask');
+
+        expect(valuation.source).toBe('setting');
+        expect(valuation.assumed).toBe(true);
+    });
+
+    test('a client rate wins over the table', () => {
+        game.clientData = {
+            itemDetailMap: {
+                ...colorItems(LIVE),
+                '/items/guild_token': {
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/blue_guild_credit', itemCount: 1, creditCount: 10 },
+                    ],
+                },
+            },
+        };
+
+        const valuation = explainGuildTokenValue('ask', { defaultRates: true });
+
+        expect(valuation.source).toBe('client');
+        expect(valuation.creditItemHrid).toBe('/items/blue_guild_credit');
+    });
+
+    test('one captured color shadows only its own color, the table fills the rest', () => {
+        game.clientData = { itemDetailMap: colorItems(LIVE) };
+        game.captured = [
+            {
+                creditItemHrid: '/items/blue_guild_credit',
+                creditsPerToken: 5,
+                tokensPerExchange: 1,
+                creditsPerExchange: 5,
+            },
+        ];
+
+        const { options, source } = tokenExchangeOptions('ask', { defaultRates: true });
+
+        expect(source).toBe('captured');
+        const byHrid = Object.fromEntries(options.map((option) => [option.creditItemHrid, option]));
+        expect(byHrid['/items/blue_guild_credit'].creditsPerToken).toBe(5);
+        expect(byHrid['/items/blue_guild_credit'].via).toBe('captured');
+        expect(byHrid['/items/gold_guild_credit'].via).toBe('default');
+        // Not the one capture alone: purple is still the best
+        expect(explainGuildTokenValue('ask', { defaultRates: true }).creditItemHrid).toBe('/items/purple_guild_credit');
+    });
+
+    test('a color with no priced conversion stays unpriced rather than dropping the others', () => {
+        game.clientData = { itemDetailMap: colorItems({ ...LIVE, purple: 0 }) };
+
+        const { options, best } = tokenExchangeOptions('ask', { defaultRates: true });
+
+        expect(options.find((option) => option.creditItemHrid === '/items/purple_guild_credit').gold).toBeNull();
+        expect(best.creditItemHrid).toBe('/items/gold_guild_credit');
+    });
+
+    test('with no color in the client data there is no table to read, so only the setting is left', () => {
+        // creditsFromBronze names /items/guild_credit_1, which is no color in the table
+        game.clientData = { itemDetailMap: creditsFromBronze() };
+
+        const valuation = explainGuildTokenValue('ask', { defaultRates: true });
+
+        expect(valuation.source).toBe('setting');
+        expect(valuation.assumed).toBe(true);
+    });
+
+    test('the explicit zero still switches everything off, table included', () => {
+        game.clientData = { itemDetailMap: colorItems(LIVE) };
+        game.settings.guildTokenCreditRate = 0;
+
+        const valuation = explainGuildTokenValue('ask', { defaultRates: true });
+
+        expect(valuation.source).toBe('unknown');
+        expect(valuation.gold).toBeNull();
+    });
+});
+
+describe('loading the stored readings', () => {
+    test('asks the capture module to hydrate', async () => {
+        await hydrateTokenExchangeCaptures();
+
+        expect(game.hydrated).toBe(1);
+    });
+
+    test('a storage failure is logged, never thrown into the analysis', async () => {
+        game.hydrateFails = true;
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await expect(hydrateTokenExchangeCaptures()).resolves.toBeUndefined();
+
+        expect(error).toHaveBeenCalled();
+        error.mockRestore();
     });
 });

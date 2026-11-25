@@ -398,3 +398,78 @@ export function sharedRouteText(detail, { showKept = false } = {}) {
     const route = name && Number.isFinite(stamp.real) ? ` (${name} ${money(stamp.real)} not used)` : '';
     return `Advisor's own quote${route}: ${stamp.reason}`;
 }
+
+/**
+ * What a row's price leaves out or guesses at, when it does.
+ *
+ * Today only a guild shrine row carries it: its guild tokens either have no exchange rate (the price is the
+ * credits alone, a floor) or are valued at the `guildTokenCreditRate` setting's guess (neither a floor nor a
+ * ceiling). The advisor stamps it on the row (`partialCost`, `partialCostKind`) or, for a row built with a
+ * cost breakdown, on that breakdown; every reader of the price goes through this one lookup.
+ * @param {Object|null} row - An upgrade result row
+ * @returns {{reason: string, kind: 'floor'|'assumed'}|null} Null for a whole, exact price
+ */
+export function partialCostOf(row) {
+    const reason = row?.partialCost || row?.costDetail?.partialCost;
+    if (!reason) return null;
+    const kind = (row.partialCostKind || row.costDetail?.partialCostKind) === 'assumed' ? 'assumed' : 'floor';
+    return { reason, kind };
+}
+
+/**
+ * Escape text for a double-quoted attribute.
+ * @param {string} text - Any text
+ * @returns {string}
+ */
+function attr(text) {
+    return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Mark a figure built on a partial or guessed price, so it is not read as the whole price.
+ *
+ * A price with a half left out is a floor: the real cost, hours to afford it and cost per percent are higher
+ * (`≥`); the return on it is lower (`≤`, with `inverse`). A guessed half could land on either side (`≈`).
+ * A row with a whole price comes back unchanged.
+ * @param {Object|null} row - An upgrade result row
+ * @param {string} html - The figure as it would be drawn
+ * @param {Object} [options]
+ * @param {boolean} [options.inverse=false] - The figure falls as the price rises (a return on it)
+ * @returns {string} HTML
+ */
+export function partialCostMarkHtml(row, html, { inverse = false } = {}) {
+    const partial = partialCostOf(row);
+    if (!partial) return html;
+    if (partial.kind === 'assumed') {
+        const title = `Built on a guessed price: ${partial.reason}. The real figure could be either side of this.`;
+        return `<span data-cost-partial title="${attr(title)}" style="color:#ff9800;">≈ ${html}</span>`;
+    }
+    const title =
+        `Built on part of the price: ${partial.reason}, so it is left out. ` +
+        `The real figure is ${inverse ? 'lower' : 'higher'} than this.`;
+    return `<span data-cost-partial title="${attr(title)}" style="color:#ff9800;">${inverse ? '≤' : '≥'} ${html}</span>`;
+}
+
+/**
+ * A short flag for a figure that is derived from the price but is not itself a price (a score).
+ * @param {Object|null} row - An upgrade result row
+ * @returns {string} HTML, empty for a whole, exact price
+ */
+export function partialCostFlagHtml(row) {
+    const partial = partialCostOf(row);
+    if (!partial) return '';
+    const title = `Built on ${partial.kind === 'assumed' ? 'a guessed' : 'a partial'} price: ${partial.reason}.`;
+    return `<span data-cost-partial title="${attr(title)}" style="color:#ff9800;">*</span>`;
+}
+
+/**
+ * What a budget plan's footer says about a total built on partial or guessed prices.
+ * @param {Object} plan - From `planWithinBudget`
+ * @returns {string} Plain text: "+ guild tokens not priced" for a floor, "(...)" for a guess
+ */
+export function budgetPartialCostText(plan) {
+    const notes = plan?.partialCostNotes?.length
+        ? plan.partialCostNotes
+        : [{ reason: 'guild tokens not priced', kind: 'floor' }];
+    return notes.map((note) => (note.kind === 'assumed' ? `(${note.reason})` : `+ ${note.reason}`)).join(' ');
+}

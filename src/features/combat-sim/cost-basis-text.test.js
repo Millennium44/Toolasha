@@ -1,5 +1,12 @@
 import { describe, test, expect } from 'vitest';
-import { ladderSentence, compactCostLines } from './cost-basis-text.js';
+import {
+    budgetPartialCostText,
+    compactCostLines,
+    ladderSentence,
+    partialCostFlagHtml,
+    partialCostMarkHtml,
+    partialCostOf,
+} from './cost-basis-text.js';
 
 const mirror = { mirrorPrice: 1_000_000_000, heldLevels: [10], mirrorCount: 1 };
 const ladder = { fromLevel: 11, toLevel: 12, fresh: false, alreadyHeld: false, mirror };
@@ -133,5 +140,76 @@ describe('refine and enhance rows name the resale credit that lands the Cost', (
         expect(ladderSentence(refine.ladder, 100, refine)).toBe(
             'Refine your spare +10 (all levels transfer): x = 100.'
         );
+    });
+});
+
+describe('a price that leaves something out or guesses at it', () => {
+    const floor = { partialCost: 'guild tokens not priced', partialCostKind: 'floor' };
+    const assumed = {
+        costDetail: { partialCost: 'guild tokens valued at an assumed exchange rate', partialCostKind: 'assumed' },
+    };
+
+    test('is read off the row, or off its cost breakdown, one lookup for every reader', () => {
+        expect(partialCostOf(floor)).toEqual({ reason: 'guild tokens not priced', kind: 'floor' });
+        expect(partialCostOf(assumed)).toEqual({
+            reason: 'guild tokens valued at an assumed exchange rate',
+            kind: 'assumed',
+        });
+        expect(partialCostOf({ cost: 100 })).toBeNull();
+        expect(partialCostOf(null)).toBeNull();
+    });
+
+    test('a whole price is left exactly as drawn', () => {
+        expect(partialCostMarkHtml({ cost: 100 }, '1.2M')).toBe('1.2M');
+        expect(partialCostFlagHtml({ cost: 100 })).toBe('');
+    });
+
+    test('a floor reads as "at least" for a cost and "at most" for a return, with the reason on hover', () => {
+        const cost = partialCostMarkHtml(floor, '1.2M');
+        const roi = partialCostMarkHtml(floor, '40%', { inverse: true });
+
+        expect(cost).toContain('≥ 1.2M');
+        expect(cost).toContain('data-cost-partial');
+        expect(cost).toContain('guild tokens not priced');
+        expect(cost).toContain('higher');
+        expect(roi).toContain('≤ 40%');
+        expect(roi).toContain('lower');
+    });
+
+    test('a guess reads as approximate on either side, and is not a floor', () => {
+        const html = partialCostMarkHtml(assumed, '1.2M');
+        const roi = partialCostMarkHtml(assumed, '40%', { inverse: true });
+
+        expect(html).toContain('≈ 1.2M');
+        expect(html).toContain('guessed');
+        expect(roi).toContain('≈ 40%');
+        expect(html).not.toContain('≥');
+    });
+
+    test('the reason is escaped in the hover', () => {
+        const html = partialCostMarkHtml({ partialCost: 'a "b" <c>', partialCostKind: 'floor' }, '1');
+
+        expect(html).toContain('a &quot;b&quot; &lt;c&gt;');
+    });
+
+    test('a derived figure like the Score carries a flag, worded for what it is built on', () => {
+        expect(partialCostFlagHtml(floor)).toContain('partial price');
+        expect(partialCostFlagHtml(assumed)).toContain('guessed price');
+    });
+
+    test('the plan footer names each reason, a floor with a plus and a guess in brackets', () => {
+        expect(
+            budgetPartialCostText({ partialCostNotes: [{ reason: 'guild tokens not priced', kind: 'floor' }] })
+        ).toBe('+ guild tokens not priced');
+        expect(
+            budgetPartialCostText({
+                partialCostNotes: [
+                    { reason: 'guild tokens not priced', kind: 'floor' },
+                    { reason: 'tokens at a guess', kind: 'assumed' },
+                ],
+            })
+        ).toBe('+ guild tokens not priced (tokens at a guess)');
+        // A plan saved before the notes existed was only ever a floor
+        expect(budgetPartialCostText({ partialCostPicks: ['x'] })).toBe('+ guild tokens not priced');
     });
 });

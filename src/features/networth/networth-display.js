@@ -582,8 +582,8 @@ class NetworthInventoryDisplay {
                         showGuildShrines
                             ? `
                         <!-- Guild Shrines -->
-                        <div style="cursor: pointer; margin-top: 4px;" id="mwi-guild-shrines-toggle" title="Guild credits spent on every shrine level bought. ${formatKMB(guildShrines.tokens || 0)} guild tokens were also spent; tokens spent on shrines are not counted here (guild tokens you still hold are valued under Tokens).${guildShrines.unpriced?.length ? ` No item converts into ${guildShrines.unpriced.join(', ')} yet, so those credits count as 0 and the total is a floor.` : ''}">
-                            + Guild Shrines: ${guildShrines.unpriced?.length ? 'at least ' : ''}${networthFormatter(Math.round(guildShrines.totalCost))}
+                        <div style="cursor: pointer; margin-top: 4px;" id="mwi-guild-shrines-toggle" title="Guild credits spent on every shrine level bought. ${formatKMB(guildShrines.tokens || 0)} guild tokens were also spent; they are valued like the guild tokens you hold (the best guild shop exchange).${guildShrines.tokensUnpriced ? ' No exchange rate has been read yet, so the spent tokens count as 0 and the total is a floor.' : ''}${guildShrines.unpriced?.length ? ` No item converts into ${guildShrines.unpriced.join(', ')} yet, so those credits count as 0 and the total is a floor.` : ''}">
+                            + Guild Shrines: ${guildShrines.unpriced?.length || guildShrines.tokensUnpriced ? 'at least ' : ''}${networthFormatter(Math.round(guildShrines.totalCost))}
                         </div>
                         <div id="mwi-guild-shrines-breakdown" style="display: none; margin-left: 20px; font-size: 0.8rem; color: #bbb; white-space: pre-line;">${this.renderGuildShrinesBreakdown(guildShrines.breakdown)}</div>
                     `
@@ -719,7 +719,13 @@ class NetworthInventoryDisplay {
 
         return breakdown
             .map((shrine) => {
-                const tokens = shrine.tokens > 0 ? ` (+${formatKMB(shrine.tokens)} tokens)` : '';
+                // Tokens valued at the guild shop exchange are inside the figure; unvalued ones are only the count beside it
+                const tokens =
+                    shrine.tokens > 0
+                        ? shrine.tokenGold > 0
+                            ? ` (incl. ${formatKMB(shrine.tokens)} tokens)`
+                            : ` (+${formatKMB(shrine.tokens)} tokens, not valued)`
+                        : '';
                 // A credit no item converts into is left out of the cost, so the figure is a floor
                 const floor = shrine.unpriced?.length ? ` (at least; ${shrine.unpriced.join(', ')} unpriced)` : '';
                 return `${shrine.name}: ${networthFormatter(Math.round(shrine.cost))}${floor}${tokens}`;
@@ -1055,7 +1061,7 @@ class NetworthInventoryDisplay {
             this.setupToggle(
                 'mwi-guild-shrines-toggle',
                 'mwi-guild-shrines-breakdown',
-                `Guild Shrines: ${fa.guildShrines.unpriced?.length ? 'at least ' : ''}${networthFormatter(Math.round(fa.guildShrines.totalCost))}`
+                `Guild Shrines: ${fa.guildShrines.unpriced?.length || fa.guildShrines.tokensUnpriced ? 'at least ' : ''}${networthFormatter(Math.round(fa.guildShrines.totalCost))}`
             );
         }
 
