@@ -6,7 +6,13 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
-import { createPathStepper, findLabyrinthPanel, findRoomCell, installPointerShield } from './labyrinth-path-stepper.js';
+import {
+    createPathStepper,
+    findLabyrinthPanel,
+    findRoomCell,
+    installPointerShield,
+    parseGamePath,
+} from './labyrinth-path-stepper.js';
 import webSocketHook from '../../core/websocket.js';
 import marketAPI from '../../api/marketplace.js';
 import {
@@ -4002,6 +4008,7 @@ class LabyrinthClearRate {
         this._stepShieldOff = null;
         this._shroudStepPlan = null;
         this._beaconStepPlan = null;
+        this._revealBeaconPlan = null;
         this.clearStepTarget();
         document
             .querySelectorAll('.mwi-labyrinth-step-shroud, .mwi-labyrinth-step-beacon, .mwi-labyrinth-step-route')
@@ -4087,6 +4094,100 @@ class LabyrinthClearRate {
      * @returns {Object|null}
      */
     currentBeaconStepPlan() {
+        const drawn = this.drawnBeaconStepPlan();
+        const need = this.shroudRevealNeed();
+        if (need === null) {
+            this._revealBeaconPlan = null;
+            return drawn;
+        }
+        const cols = this._shroudStepPlan.cols;
+        if (drawn && !drawn.exhausted) {
+            const covers = (c) => c.idx === need || (c.watch || []).includes(need);
+            // A beacon already due now reveals it: the drawn plan needs no help
+            if (drawn.targets.some(covers)) return drawn;
+            // A beacon drawn for later reveals it: that one is due now
+            const promoted = drawn.later.find((c) => covers(c) && !drawn.placed?.has(c.idx));
+            if (promoted) {
+                drawn.targets = [...drawn.targets, { ...promoted, later: false, forShroud: need }];
+                drawn.later = drawn.later.filter((c) => c !== promoted);
+                return drawn;
+            }
+        }
+        // No drawn beacon reveals it: place one for it. Among the rooms within reach of the hidden room, take the
+        // one whose beacon reveals the most hidden rooms, the route's other hidden shroud rooms counting double,
+        // and the nearest to the hidden room on a tie. One object per waiting room, so the stepper sees the same
+        // plan between its two presses.
+        let plan = this._revealBeaconPlan;
+        const characterId = dataManager.getCurrentCharacterId() ?? null;
+        if (!plan || plan.need !== need || plan.floor !== this.currentFloor || plan.characterId !== characterId) {
+            plan = this._revealBeaconPlan = {
+                need,
+                source: null,
+                floor: this.currentFloor,
+                characterId,
+                cols,
+                targets: [],
+                later: [],
+                planned: 1,
+                placed: new Set(),
+            };
+        }
+        const lab = findLabyrinthPanel()?.props?.characterLabyrinth;
+        const size = labyrinthGridSize(this.currentFloor);
+        const far = (a, b) => Math.abs((a % cols) - (b % cols)) + Math.abs(Math.floor(a / cols) - Math.floor(b / cols));
+        const hidden = [];
+        for (let y = 0; y < size; y++) {
+            for (let x = 0; x < size; x++) {
+                if (!isRoomRevealed(lab?.roomData?.[y]?.[x])) hidden.push(y * cols + x);
+            }
+        }
+        const shroudRooms = new Set(this._shroudStepPlan.targets.map((t) => t.idx));
+        let best = null;
+        for (let y = 0; y < size; y++) {
+            for (let x = 0; x < size; x++) {
+                const center = y * cols + x;
+                if (far(center, need) > BEACON_RADIUS) continue;
+                const watch = hidden.filter((idx) => far(idx, center) <= BEACON_RADIUS);
+                const score = watch.reduce((sum, idx) => sum + (shroudRooms.has(idx) ? 2 : 1), 0);
+                const near = far(center, need);
+                if (!best || score > best.score || (score === best.score && near < best.near)) {
+                    best = { center, watch, score, near };
+                }
+            }
+        }
+        plan.targets = [{ idx: best.center, label: 'reveal', later: false, watch: best.watch, forShroud: need }];
+        return plan;
+    }
+
+    /**
+     * The unrevealed room the route is waiting on a shroud for, or null. That is the route's next room (the
+     * first that is neither cleared nor in the game's path) when the planner counted it as a shroud and the
+     * game has not revealed it: a shroud cannot be used on a room that is not revealed, so the Shroud step is
+     * blocked there and only a beacon, or entering a room beside it, moves the plan on. A hidden shroud room
+     * further down the route is not a need yet: walking toward it may reveal it for free.
+     * @returns {number|null} The room's flat index
+     */
+    shroudRevealNeed() {
+        const plan = this._shroudStepPlan;
+        if (!plan || !Array.isArray(plan.route)) return null;
+        const lab = findLabyrinthPanel()?.props?.characterLabyrinth;
+        if (!lab?.roomData || plan.floor !== lab.currentFloor) return null;
+        if (plan.characterId !== (dataManager.getCurrentCharacterId() ?? null)) return null;
+        const cols = plan.cols;
+        const roomAt = (idx) => lab.roomData?.[Math.floor(idx / cols)]?.[idx % cols];
+        const path = parseGamePath(lab.pathData);
+        if (!path) return null;
+        const queued = new Set(path.map((r) => r.y * cols + r.x));
+        const next = plan.route.find((idx) => idx !== 0 && !roomAt(idx)?.isCleared && !queued.has(idx));
+        if (next === undefined || !plan.targets.some((t) => t.idx === next)) return null;
+        return isRoomRevealed(roomAt(next)) ? null : next;
+    }
+
+    /**
+     * The drawn beacon plan as the stepper reads it, before any beacon is brought forward for a shroud.
+     * @returns {Object|null}
+     */
+    drawnBeaconStepPlan() {
         const source = this._beaconPlanCells;
         let plan = this._beaconStepPlan;
         if (!source) {
@@ -4173,6 +4274,7 @@ class LabyrinthClearRate {
             this._stepShieldOff = null;
             this._shroudStepPlan = null;
             this._beaconStepPlan = null;
+            this._revealBeaconPlan = null;
             this.clearStepTarget();
         } else if (!this._stepShieldOff) {
             this._stepShieldOff = installPointerShield();

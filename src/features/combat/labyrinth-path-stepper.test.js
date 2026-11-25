@@ -504,7 +504,8 @@ describe('sparse roomData against a bigger grid on screen', () => {
         expect(step.code).toBe('invalid');
         expect(step.reason).not.toContain('not on the map');
         expect(step.reason).toBe(
-            'The planned shroud rooms are not revealed yet (the ? mode assumes them): clear or beacon nearer rooms first'
+            'The planned shroud rooms are not revealed yet (the ? mode assumes them): use the Beacon step to reveal ' +
+                'the next one, or clear a room beside it'
         );
     });
 
@@ -901,5 +902,71 @@ describe('the Route step', () => {
             await first;
             expect(panel.props.updateLabyrinthPathHandler).toHaveBeenCalledTimes(1);
         });
+    });
+});
+
+describe('a beacon brought forward for a shroud room that is not revealed', () => {
+    it('says which room it reveals, in both the arm and the pick step, and carries it on the step', () => {
+        const panel = makePanel();
+        const plan = {
+            floor: 1,
+            characterId: 7,
+            cols: COLS,
+            targets: [{ idx: 4, label: 'B2', watch: [5], forShroud: 5 }],
+            later: [],
+            planned: 2,
+            placed: new Set(),
+        };
+        const arm = describeStep({ kind: 'beacon', plan, panel, characterId: 7 });
+        expect(arm).toMatchObject({ action: 'use', idx: 4, forShroud: 5, label: 'Use beacon ▸ 2,2' });
+        expect(arm.reason).toContain('it reveals room 3,2, which the route needs a shroud for');
+        panel.state.supplyMode = 'beacon';
+        const pick = describeStep({ kind: 'beacon', plan, panel, characterId: 7 });
+        expect(pick).toMatchObject({ action: 'room', idx: 4, forShroud: 5 });
+        expect(pick.reason).toContain('it reveals room 3,2');
+    });
+
+    it('an ordinary beacon says nothing of the kind', () => {
+        const plan = {
+            floor: 1,
+            characterId: 7,
+            cols: COLS,
+            targets: [{ idx: 4, label: 'B1', watch: [5] }],
+            later: [],
+            planned: 1,
+            placed: new Set(),
+        };
+        const step = describeStep({ kind: 'beacon', plan, panel: makePanel(), characterId: 7 });
+        expect(step.reason).not.toContain('reveals');
+        expect(step.forShroud).toBeUndefined();
+    });
+
+    it('the Route step waiting on a hidden shroud room points at the Beacon step, a revealed one at Shroud', () => {
+        const hidden = makePanel({
+            rooms: [
+                [room({ isCleared: true }), room({ isCleared: true }), null],
+                [room(), room(), room()],
+                [room(), room(), room()],
+            ],
+        });
+        hidden.props.characterLabyrinth.pathData = '[]';
+        const plan = { floor: 1, characterId: 7, cols: COLS, route: [1, 2, 5], targets: [{ idx: 2 }] };
+        const waiting = describeRouteStep({ plan, panel: hidden, characterId: 7 });
+        expect(waiting).toMatchObject({ code: 'shroud-first', idx: 2 });
+        expect(waiting.reason).toBe(
+            'Room 3,1 is not revealed and is planned as a shroud: use the Beacon step to reveal it'
+        );
+
+        const shown = makePanel({
+            rooms: [
+                [room({ isCleared: true }), room({ isCleared: true }), room()],
+                [room(), room(), room()],
+                [room(), room(), room()],
+            ],
+        });
+        shown.props.characterLabyrinth.pathData = '[]';
+        expect(describeRouteStep({ plan, panel: shown, characterId: 7 }).reason).toBe(
+            'Room 3,1 needs a shroud first: use the Shroud step'
+        );
     });
 });

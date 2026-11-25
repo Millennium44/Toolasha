@@ -8340,6 +8340,178 @@ describe('labyrinth toolbar layout', () => {
             expect(labyrinthClearRate._shroudStepPlan.route).toEqual([3, 2]);
         });
 
+        describe('a beacon is offered for the shroud room the route is waiting on', () => {
+            const SIDE = 4; // floor 1
+            const shown = (over = {}) => ({ roomType: '/labyrinth_room_types/combat', ...over });
+            let lab;
+            /** The game's panel, reachable the way the stepper reaches it: a class instance in the fiber tree */
+            const mountPanel = () => {
+                let rootEl = document.getElementById('root');
+                if (!rootEl) {
+                    rootEl = document.createElement('div');
+                    rootEl.id = 'root';
+                    document.body.appendChild(rootEl);
+                }
+                const panel = { handleRoomClick() {}, state: { supplyMode: null }, props: { characterLabyrinth: lab } };
+                rootEl._reactRootContainer = {
+                    current: {
+                        stateNode: null,
+                        sibling: null,
+                        child: { stateNode: panel, child: null, sibling: null },
+                    },
+                };
+            };
+            const plan = () => labyrinthClearRate.currentBeaconStepPlan();
+
+            beforeEach(async () => {
+                (await import('./labyrinth-path-stepper.js')).resetPanelCache();
+                flip(true);
+                // Entrance, a cleared room, then a hidden room the planner counted as a shroud, then the rest
+                lab = {
+                    currentFloor: 1,
+                    beaconCount: 3,
+                    shroudCount: 2,
+                    pathData: '[]',
+                    roomData: [
+                        [shown({ isCleared: true }), shown({ isCleared: true }), null, null],
+                        [shown(), shown(), null, null],
+                        [shown(), shown(), shown(), shown()],
+                        [shown(), shown(), shown(), shown()],
+                    ],
+                };
+                mountPanel();
+                labyrinthClearRate.currentFloor = 1;
+                labyrinthClearRate._beaconPlanCells = null;
+                labyrinthClearRate._beaconStepPlan = null;
+                labyrinthClearRate._revealBeaconPlan = null;
+                // Route 1 → 2 → 3; room 2 costs a shroud
+                labyrinthClearRate.storeShroudStepPlan(SIDE, [2], [1, 2, 3]);
+            });
+            afterEach(() => {
+                document.getElementById('root')?.remove();
+                labyrinthClearRate._beaconPlanCells = null;
+                labyrinthClearRate._revealBeaconPlan = null;
+            });
+
+            test('the beacon goes where it reveals the most, the route’s other hidden shroud rooms counting double', () => {
+                // A hidden row of shroud rooms, like a fresh floor: 2 and 3 are both planned shrouds, and the
+                // row below is hidden too. A beacon on 3 or 7 reveals as many rooms as one on 2, but the tie
+                // goes to the nearest; make room 6's side richer and the beacon moves there.
+                lab.roomData[2] = [shown(), shown(), null, null];
+                lab.roomData[3] = [shown(), shown(), null, shown()];
+                labyrinthClearRate.storeShroudStepPlan(SIDE, [2, 3], [1, 2, 3]);
+                const target = plan().targets[0];
+                // Hidden: 2, 3, 6, 7, 10, 11, 14. From 6: 2, 6, 7, 10, 3(2), 11(2), 14(2) = all seven
+                expect(target.idx).toBe(6);
+                expect(target.forShroud).toBe(2);
+                expect(target.watch.sort((a, b) => a - b)).toEqual([2, 3, 6, 7, 10, 11, 14]);
+            });
+
+            test('with no drawn beacon plan, one beacon on the hidden room itself, the same plan every time', () => {
+                expect(labyrinthClearRate.shroudRevealNeed()).toBe(2);
+                const first = plan();
+                expect(first.targets).toHaveLength(1);
+                expect(first.targets[0]).toMatchObject({ idx: 2, forShroud: 2, later: false });
+                // What it will reveal: the hidden rooms within two steps of room 2, itself included
+                expect(first.targets[0].watch.sort((a, b) => a - b)).toEqual([2, 3, 6, 7]);
+                // The stepper compares plans by identity between its two presses
+                expect(plan()).toBe(first);
+            });
+
+            test('a beacon drawn for later that reveals the room is brought forward, once', () => {
+                labyrinthClearRate._beaconPlanCells = {
+                    fills: [],
+                    centers: [
+                        { idx: 12, label: 'B1', watch: [13] },
+                        { idx: 6, label: 'B2', later: true, watch: [2, 3, 7] },
+                        { idx: 15, label: 'B3', later: true, watch: [11] },
+                    ],
+                };
+                const drawn = plan();
+                expect(drawn.targets.map((c) => c.label)).toEqual(['B1', 'B2']);
+                expect(drawn.targets[1]).toMatchObject({ idx: 6, forShroud: 2, later: false });
+                expect(drawn.later.map((c) => c.label)).toEqual(['B3']);
+                // Asked again, it is not added twice
+                expect(plan().targets.map((c) => c.label)).toEqual(['B1', 'B2']);
+                expect(labyrinthClearRate._revealBeaconPlan).toBeNull();
+            });
+
+            test('a beacon already due now that reveals the room leaves the drawn plan as it is', () => {
+                labyrinthClearRate._beaconPlanCells = {
+                    fills: [],
+                    centers: [
+                        { idx: 6, label: 'B1', watch: [2, 3] },
+                        { idx: 15, label: 'B2', later: true, watch: [2] },
+                    ],
+                };
+                const drawn = plan();
+                expect(drawn.targets.map((c) => c.label)).toEqual(['B1']);
+                expect(drawn.targets[0].forShroud).toBeUndefined();
+                expect(drawn.later.map((c) => c.label)).toEqual(['B2']);
+            });
+
+            test('a later beacon already pressed is not brought forward again: the room gets its own', () => {
+                labyrinthClearRate._beaconPlanCells = {
+                    fills: [],
+                    centers: [{ idx: 6, label: 'B1', later: true, watch: [2] }],
+                };
+                labyrinthClearRate.drawnBeaconStepPlan().placed.add(6);
+                const p = plan();
+                expect(p.targets).toHaveLength(1);
+                expect(p.targets[0]).toMatchObject({ idx: 2, forShroud: 2 });
+            });
+
+            test('nothing is offered when the route is not waiting on a hidden shroud room', () => {
+                // The room is revealed: the Shroud step can act on it
+                lab.roomData[0][2] = shown();
+                expect(labyrinthClearRate.shroudRevealNeed()).toBeNull();
+                expect(plan()).toBeNull();
+                // Hidden again but an ordinary room comes first
+                lab.roomData[0][2] = null;
+                lab.roomData[0][1] = shown();
+                expect(labyrinthClearRate.shroudRevealNeed()).toBeNull();
+                // The hidden room is already in the game's path
+                lab.roomData[0][1] = shown({ isCleared: true });
+                lab.pathData = '[{"x":2,"y":0}]';
+                expect(labyrinthClearRate.shroudRevealNeed()).toBeNull();
+                // Shrouded (cleared) since
+                lab.pathData = '[]';
+                lab.roomData[0][2] = shown({ isCleared: true });
+                expect(labyrinthClearRate.shroudRevealNeed()).toBeNull();
+            });
+
+            test('another floor, an unreadable path, or no route gives nothing', () => {
+                lab.pathData = '{broken';
+                expect(labyrinthClearRate.shroudRevealNeed()).toBeNull();
+                lab.pathData = '[]';
+                lab.currentFloor = 2;
+                expect(labyrinthClearRate.shroudRevealNeed()).toBeNull();
+                lab.currentFloor = 1;
+                labyrinthClearRate._shroudStepPlan = null;
+                expect(labyrinthClearRate.shroudRevealNeed()).toBeNull();
+            });
+
+            test('the Beacon button names the room and says what it reveals; the need gone, it goes back', () => {
+                labyrinthClearRate.injectTileControls();
+                labyrinthClearRate.storeShroudStepPlan(SIDE, [2], [1, 2, 3]);
+                const beacon = () => document.querySelector('.mwi-labyrinth-step-beacon');
+                expect(beacon().textContent).toBe('Use beacon ▸ 3,1');
+                expect(beacon().title).toContain('it reveals room 3,1, which the route needs a shroud for');
+                expect(document.querySelector('.mwi-labyrinth-step-route').title).toContain('use the Beacon step');
+                lab.roomData[0][2] = shown();
+                labyrinthClearRate.refreshStepButtons();
+                expect(beacon().title).toContain('Press Beacons first');
+                expect(labyrinthClearRate._revealBeaconPlan).toBeNull();
+            });
+
+            test('turning the setting off drops the reveal plan', () => {
+                plan();
+                expect(labyrinthClearRate._revealBeaconPlan).not.toBeNull();
+                flip(false);
+                expect(labyrinthClearRate._revealBeaconPlan).toBeNull();
+            });
+        });
+
         describe('the room the next step acts on is lit', () => {
             const lights = () => [...document.querySelectorAll('.mwi-labyrinth-step-target')];
             const cellAt = (x, y) => {
