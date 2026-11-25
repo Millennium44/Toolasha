@@ -135,11 +135,14 @@ export function onGuildWindow(windowEl) {
     const from = pending;
     pending = null;
     if (!from || Date.now() - from.at > LINK_WINDOW_MS) return;
-    if (getComputedStyle(windowEl).position === 'static') {
-        windowEl.style.position = 'relative';
-        windowEl.setAttribute(POSITIONED_ATTR, '');
+    // The container is the full-screen overlay (live: a background and the window as its two children); the
+    // button belongs in the window itself, beside its title
+    const host = [...windowEl.children].find((child) => hasGameClass(child, 'SharableGuildProfile_modal')) || windowEl;
+    if (getComputedStyle(host).position === 'static') {
+        host.style.position = 'relative';
+        host.setAttribute(POSITIONED_ATTR, '');
     }
-    windowEl.insertBefore(createButton(from), windowEl.firstChild);
+    host.insertBefore(createButton(from), host.firstChild);
 }
 
 /** Capture listener: the profile window's guild link was clicked */
@@ -160,8 +163,13 @@ export function initialize() {
     if (!config.getSetting(SETTING_KEY)) return;
     active = true;
     profileHandler = (message) => {
+        // The raw message is `{type, profile}` (live, 2026-11-24): the game sends no character id beside the
+        // profile, and `sharableCharacter` carries the name but no id. The id is read the way websocket.js reads
+        // it for the shared-profile store, from the character's own skill rows.
         const profile = message?.profile;
-        const characterId = message?.characterID ?? profile?.sharableCharacter?.id;
+        const characterId =
+            message?.characterID ??
+            (profile?.sharableCharacter?.id || profile?.characterSkills?.[0]?.characterID || profile?.character?.id);
         const characterName = message?.characterName ?? profile?.sharableCharacter?.name;
         lastProfile =
             characterId !== undefined && characterId !== null && characterName && characterName !== 'Unknown'

@@ -36,8 +36,20 @@ import feature from './guild-profile-back.js';
 
 const BUTTON = '.mwi-guild-profile-back-button';
 
+/**
+ * A profile_shared as the game sends it (live, test server 2026-11-24): only `{type, profile}`. The name is on
+ * `profile.sharableCharacter` (which has no id); the id is on the character's own skill rows.
+ */
 function shareProfile(characterID, characterName) {
-    game.wsHandlers.profile_shared?.({ type: 'profile_shared', characterID, characterName, profile: {} });
+    game.wsHandlers.profile_shared?.({
+        type: 'profile_shared',
+        profile: {
+            sharableCharacter: { name: characterName, gameMode: 'standard' },
+            characterSkills: [{ characterID, skillHrid: '/skills/total_level', level: 2652 }],
+            guildId: 899,
+            guildName: 'SuperMoo',
+        },
+    });
 }
 
 /** The profile window with its guild link (live structure, test server 2026-11-24) */
@@ -59,9 +71,13 @@ function clickGuildLinkAndOpenGuild(profileModal) {
     return openGuildWindow();
 }
 
+/** The guild window as the game draws it (live): a full-screen container holding a background and the window */
 function openGuildWindow() {
     const guildWindow = document.createElement('div');
     guildWindow.className = 'SharableGuildProfile_modalContainer__s3t4u';
+    guildWindow.innerHTML =
+        '<div class="SharableGuildProfile_background__b1"></div>' +
+        '<div class="SharableGuildProfile_modal__m1"><div class="SharableGuildProfile_title__t1">SuperMoo</div></div>';
     document.body.appendChild(guildWindow);
     game.windowCallback(guildWindow);
     return guildWindow;
@@ -106,6 +122,8 @@ describe('guild profile back button', () => {
         const button = guildWindow.querySelector(BUTTON);
         expect(button).not.toBeNull();
         expect(button.textContent).toContain('Alice');
+        // Inside the window itself, not on the full-screen overlay
+        expect(button.parentElement.className).toMatch(/^SharableGuildProfile_modal__/);
     });
 
     test('does not appear on a guild window opened any other way', () => {
