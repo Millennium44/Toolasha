@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Clear on remembered Upgrade results now empties the table
+
+The Clear button beside "Showing results remembered from..." used to forget the saved run but leave the table on screen; it now removes the table too.
+
 ### Combat Sim Upgrade tab no longer shows another player's results
 
 Opening another player, a party or a pasted roster in the Combat Sim now clears the Upgrade results on screen, and Reset to Me clears a stranger's rows and brings your own saved ones back. An analysis of someone else's build is no longer remembered, so it can't replace your saved results or reappear under your name after a reload; a record an earlier version saved that way is no longer shown.

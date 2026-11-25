@@ -3362,9 +3362,9 @@ describe('the panel', () => {
         expect(ui._restoredUpgradeMeta).toBeNull();
         expect(container.querySelector('[data-clear-remembered-upgrade]')).toBeNull();
         expect(container.textContent).not.toContain('Showing results remembered from');
-        // The table itself is untouched — Clear forgets the saved copy, not
-        // what is already on screen
-        expect(container.textContent).toContain('Cheap ring');
+        // The table goes with the saved copy: it was only ever the remembered one
+        expect(container.textContent).not.toContain('Cheap ring');
+        expect(ui._upgradeResultsData).toBeNull();
     });
 
     test('the seek table exports the zone and tier as their own columns', () => {
@@ -19854,20 +19854,14 @@ describe('upgrade results as cards', () => {
             expect(mocks.verifyCalls).toHaveLength(0);
         });
 
-        test('Clear on the banner hides it but the remembered results stay unverifiable', async () => {
-            const results = drawRemembered();
+        test('Clear on the banner empties the table, so there is nothing left to verify', async () => {
+            drawRemembered();
             showCards();
             container().querySelector('[data-clear-remembered-upgrade]').click();
             await settle();
             expect(container().querySelector('[data-clear-remembered-upgrade]')).toBeNull();
-            ui._renderUpgradeResults(results);
-            const card = cardsOf()[0];
-            expect(stateOf(card)).toBe('Remembered estimate');
-            expect(card.querySelector('[data-card-verify]').disabled).toBe(true);
-            expect(container().querySelector('#mwi-csim-gold-verify').disabled).toBe(true);
-            card.querySelector('[data-card-verify]').dispatchEvent(new Event('click'));
-            container().querySelector('#mwi-csim-gold-verify').click();
-            await settle();
+            expect(container().querySelector('#mwi-csim-gold-verify')).toBeNull();
+            expect(cardsOf()).toHaveLength(0);
             expect(mocks.verifyCalls).toHaveLength(0);
         });
 

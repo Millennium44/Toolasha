@@ -1506,3 +1506,85 @@ describe('Upgrade results, review round', () => {
         });
     });
 });
+
+describe('the Clear button on a remembered Upgrade table', () => {
+    const KEY = 'combatExport:combatSimUpgradeResults_char1';
+    const settle = async () => {
+        for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const rows = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const clearBtn = () => ui.panel.querySelector('[data-clear-remembered-upgrade]');
+    const record = () => ({
+        data: { baseline: BASELINE, results: [row('Owner gear')], ranFor: { hrid: 'player1', name: 'Me' } },
+        savedAt: 5,
+        characterName: 'Me',
+        ownerId: 'char1',
+    });
+
+    beforeEach(async () => {
+        mocks.store.clear();
+        mocks.characterId = 'char1';
+        mocks.characterName = 'Me';
+        const { default: config } = await import('../../core/config.js');
+        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+            key === 'combatSim_rememberUpgradeResults' ? true : fallback
+        );
+        mocks.store.set(KEY, record());
+        ui.buildPanel();
+        await settle();
+        for (const job of mocks.bgJobs.splice(0)) await job();
+        await settle();
+        selectZone();
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = null;
+        mocks.characterName = undefined;
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.store.clear();
+    });
+
+    test('empties the table and the markers, writes the dated empty record, leaves the Player box choice', async () => {
+        expect(rows().textContent).toContain('Owner gear');
+        ui._upgradeAllChosenFlag = true;
+        clearBtn().click();
+        await settle();
+        expect(rows().textContent).toBe('');
+        expect(ui._upgradeResultsData).toBeNull();
+        expect(ui._restoredUpgradeAt).toBeNull();
+        expect(ui._rememberedResults).toBeNull();
+        expect(ui._upgradeAllChosenFlag).toBe(true);
+        const stored = mocks.store.get(KEY);
+        expect(stored.cleared).toBe(true);
+        expect(typeof stored.savedAt).toBe('number');
+        expect(stored.savedAt).toBeGreaterThan(5);
+        expect(stored.data).toBeUndefined();
+    });
+
+    test('Analyze still works afterwards', async () => {
+        clearBtn().click();
+        await settle();
+        mocks.editedDTOs = { player1: { hrid: 'player1', equipment: {} } };
+        mocks.editorSelfHrid = 'player1';
+        mocks.upgradeResult = { baseline: BASELINE, results: [row('New gear')], food: null, context: { gameData: {} } };
+        await ui._onUpgradeAnalyze();
+        await settle();
+        expect(rows().textContent).toContain('New gear');
+    });
+
+    test('a run that took the panel while the write was out keeps its table and its save', async () => {
+        const shown = ui._upgradeResultsData;
+        clearBtn().click();
+        ui._upgradeRunning = true;
+        const fresh = { baseline: BASELINE, results: [row('Fresh gear')], food: null };
+        ui._upgradeResultsData = fresh;
+        await settle();
+        expect(ui._upgradeResultsData).toBe(fresh);
+        expect(ui._upgradeResultsData).not.toBe(shown);
+        ui._upgradeRunning = false;
+        expect(mocks.store.get(KEY).cleared).toBe(true);
+    });
+});

@@ -18406,17 +18406,17 @@ class CombatSimUI {
             await this._copyChatMessages(buildChatMessages(players, { includeUpgrades: true }), 'top upgrades');
         });
 
-        // Forgets the saved run only — the table on screen came from this
-        // render call and stays right there; there is simply nothing left to
-        // restore on the next reload.
+        // Forgets the saved run and takes the table it was drawn as off the screen. The stored record becomes a
+        // dated empty one (see `clearUpgradeResults`), so the clear still reaches other devices. A run, or another
+        // table, that took the panel while the write was out is left as it is: it is not this record's table.
         const clearBtn = container.querySelector('[data-clear-remembered-upgrade]');
         if (clearBtn) {
             clearBtn.addEventListener('click', async () => {
                 clearBtn.disabled = true;
+                const shown = this._upgradeResultsData;
                 await clearUpgradeResults(UPGRADE_RESULTS_KEY);
-                this._restoredUpgradeAt = null;
-                this._restoredUpgradeMeta = null;
-                clearBtn.closest('div')?.remove();
+                if (this._upgradeRunning || this._upgradeResultsData !== shown) return;
+                this._clearUpgradeResultsView();
             });
         }
         this._wireUpgradeColumnMenu(container);
