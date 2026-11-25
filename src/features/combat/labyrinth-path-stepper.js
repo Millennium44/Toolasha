@@ -399,7 +399,7 @@ export function describeRouteStep({ plan, panel, characterId }) {
     };
 }
 
-const STEP_BUTTON_SELECTOR = '.mwi-labyrinth-step-shroud, .mwi-labyrinth-step-beacon, .mwi-labyrinth-step-route';
+const STEP_BUTTON_SELECTOR = '.mwi-labyrinth-step-next, .mwi-labyrinth-step-beacon';
 const SHIELDED_EVENTS = ['pointerdown', 'pointerup', 'pointercancel', 'mousedown', 'mouseup', 'touchstart', 'touchend'];
 
 /**
