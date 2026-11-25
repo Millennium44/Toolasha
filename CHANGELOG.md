@@ -8153,6 +8153,127 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.93.0](https://github.com/Millennium44/Toolasha/compare/v3.92.0...v3.93.0) (2026-11-25)
+
+
+### Features
+
+* guild window gets a back button to the profile it was opened from ([cebeda1](https://github.com/Millennium44/Toolasha/commit/cebeda16381b2f050346497746c2c882b8e143c8))
+* labyrinth beacon step offers a beacon for a hidden shroud room ([b108ebc](https://github.com/Millennium44/Toolasha/commit/b108ebc912908e2f8a370cbac18f3a8bd704dc7a))
+* labyrinth beacon step offers a beacon for a hidden shroud room ([62a8cfc](https://github.com/Millennium44/Toolasha/commit/62a8cfcfe87ff6b5d03d253de73d8501ef798cf2))
+* labyrinth beacons count field shows the automatic count ([ec69789](https://github.com/Millennium44/Toolasha/commit/ec697897e386885735f2f7558d68b3f54ede3c56))
+* labyrinth next button offers the descent once the exit is cleared ([39c3e64](https://github.com/Millennium44/Toolasha/commit/39c3e64f0bf54d44c3122166624bb678f6fbf2c0))
+* labyrinth next button places the exit beacons first ([2721c08](https://github.com/Millennium44/Toolasha/commit/2721c0814bff43c7b5a0a866950690f136baec71))
+* labyrinth route step adds the next route room to the game's path ([b92ef3e](https://github.com/Millennium44/Toolasha/commit/b92ef3e957d90905177721c9c2e89c261d864890))
+* labyrinth step buttons light their target room and start at the nearest shroud ([9c72399](https://github.com/Millennium44/Toolasha/commit/9c72399be1d4ee47857883a2603a576ba5f831ea))
+* labyrinth toolbar gets one Next button in place of the route and shroud steps ([a628a01](https://github.com/Millennium44/Toolasha/commit/a628a019f4349d815fd06382f0b4cade57d8e8eb))
+
+
+### Bug Fixes
+
+* alchemy crate cowbells follow the saved treasure choice and need a book bag price ([ad0f939](https://github.com/Millennium44/Toolasha/commit/ad0f93904753897e6b86706b4f444565451549e9))
+* alchemy essence and crate bonus drops pay the market tax like every other sold output ([80be870](https://github.com/Millennium44/Toolasha/commit/80be8707c8a97dc3d518fda601578ed27e5a5e2d))
+* alchemy history trackers keep recording until a reload instead of restarting live ([7f7960a](https://github.com/Millennium44/Toolasha/commit/7f7960a155f181cbf2d57ad97c8e8475b2443ff1))
+* alchemy instead-of lines value crate coins and cowbells and name unpriced outputs ([aee3172](https://github.com/Millennium44/Toolasha/commit/aee3172dfc716c1e1c295fb90d6395a088bceee8))
+* alchemy rankings and profit panel follow price updates; icon-less input selection ([53954ed](https://github.com/Millennium44/Toolasha/commit/53954edd11067e8c4b67d0a16016c08cfd75ab30))
+* alchemy success bonus comes from the same drinks the calculator prices ([8b37327](https://github.com/Millennium44/Toolasha/commit/8b3732778d6ba7e24a91a0a577331657be22ed8c))
+* an excluded abilities or listings section worth 0 does not mark the net worth total ([fb54a44](https://github.com/Millennium44/Toolasha/commit/fb54a443dcd2354ae0b0b944788538c216623ab5))
+* bulk sell rechecks holds and the sale kind at press time and drops a late vendor menu ([b06998c](https://github.com/Millennium44/Toolasha/commit/b06998cb1dfdb03c185ffb8e8a4669a84840bb72))
+* clear puts the upgrade footer back to its idle text ([866b0ba](https://github.com/Millennium44/Toolasha/commit/866b0ba560ab7a7909d1af6c100500a38c0e57fe))
+* combat sim clear button empties the remembered upgrade table ([1d93e42](https://github.com/Millennium44/Toolasha/commit/1d93e42490770695600a71248fc83675a5ee77c1))
+* combat sim drops upgrade rows when another player is loaded ([12a5023](https://github.com/Millennium44/Toolasha/commit/12a5023e6ae486c35d4647b325c8c9ff5acdb9bd))
+* combat sim import reads talismans and refuses or cleans malformed pastes ([10349a9](https://github.com/Millennium44/Toolasha/commit/10349a925b3f6059698f3a739410599d92b7989c))
+* combat sim remembers and restores only the owner's upgrade analysis ([13c4ebf](https://github.com/Millennium44/Toolasha/commit/13c4ebfbdee2fb39524d4b3a9ea14e71e71cb850))
+* combat sim stop or failure before any row puts the previous table back ([9d597e6](https://github.com/Millennium44/Toolasha/commit/9d597e621d0495f3f4258b5d4a8657b6acc2bf91))
+* combat sim upgrade results follow the roster a run started with ([a968306](https://github.com/Millennium44/Toolasha/commit/a96830623e7b7b982bfc7239ea145f82221ba047))
+* combat sim upgrade rows gray out deltas inside the error bar ([699b54b](https://github.com/Millennium44/Toolasha/commit/699b54b46ab1b8a65f16e614a513283fd02170be))
+* craft & enhance ranking follows the patient-tick settings ([a84b3ef](https://github.com/Millennium44/Toolasha/commit/a84b3efc26fdbb7b86a996d812e7ed0e2d1e35b0))
+* eleven features whose teardown leaves something behind say a refresh is needed ([4386005](https://github.com/Millennium44/Toolasha/commit/4386005798fd22e67be15dd7eaef301208dd88b7))
+* enhancement milestone costs read as a floor when an input has no price ([67bda2b](https://github.com/Millennium44/Toolasha/commit/67bda2b6f796d84892023353b890ed92b52d01d2))
+* guild back button fills the header row and stops before the guild name ([648e1f5](https://github.com/Millennium44/Toolasha/commit/648e1f5013540b72f04b9be380f3167f89000e50))
+* guild back button opens the profile by name, as the game handler expects ([f26edcc](https://github.com/Millennium44/Toolasha/commit/f26edcc4ece843f4950855426e2072a5f6933864))
+* guild back button reads the profile id the game sends and sits in the window ([301eaa9](https://github.com/Millennium44/Toolasha/commit/301eaa99c517f1a3331e3eb41fbdb42765dbb1d3))
+* importing over one player drops the upgrade rows measured for them ([e46cbfe](https://github.com/Millennium44/Toolasha/commit/e46cbfecc356a8a06607f80261ceeb46e87581e0))
+* inventory category totals switch off without a reload ([67c0799](https://github.com/Millennium44/Toolasha/commit/67c0799756230d75d61bff9a6fcd31da57491443))
+* lab sim clear button empties the remembered table ([4fd1282](https://github.com/Millennium44/Toolasha/commit/4fd12822bf30f543a6f4b0c1379d814a498415c3))
+* labyrinth buy supplies button is removed when the game redraws the page ([25409c7](https://github.com/Millennium44/Toolasha/commit/25409c75bd0fa2fb27d7e7f7e1ca41fea6502fcd))
+* labyrinth next button redraws when the descent dialog closes ([1fd43ed](https://github.com/Millennium44/Toolasha/commit/1fd43edbfdd2245d788cd6f05c88aa0ef7356349))
+* labyrinth next clears its dialog status line and punctuates hover notes ([a86bc61](https://github.com/Millennium44/Toolasha/commit/a86bc61f699b3ba11d8842faa7c0d44f8d5b1760))
+* labyrinth next keeps chests first when no plan was drawn ([4247fe1](https://github.com/Millennium44/Toolasha/commit/4247fe123c5374e29011cc467a6a27e5c4a7e52f))
+* labyrinth next plans the exit beacons even when a hidden shroud room is next ([12ee456](https://github.com/Millennium44/Toolasha/commit/12ee45690e19a407433c713a5d8bc265eee0d4a6))
+* labyrinth next queues the way to the exit before chest detours ([e4a137a](https://github.com/Millennium44/Toolasha/commit/e4a137ab4959c64e89d2b56e1c5d152c7ea96433))
+* labyrinth next step presses the drawn beacon that reveals a hidden shroud room ([9bf3850](https://github.com/Millennium44/Toolasha/commit/9bf38508b17098561a4a8c729136093e08cd2c14))
+* labyrinth next still re-runs path after its beacons with auto-path off ([88ef649](https://github.com/Millennium44/Toolasha/commit/88ef649db1c67de480c0b373dfad5e74545d776c))
+* labyrinth route step queues the floor exit last ([e7efa07](https://github.com/Millennium44/Toolasha/commit/e7efa07a727e6984fd1d3dc5edc0b7f4795208ed))
+* labyrinth step button notices the game disarming a supply ([830dc94](https://github.com/Millennium44/Toolasha/commit/830dc942081497eb440f3b8d0bbaadd5111525f2))
+* labyrinth toolbar controls stay put between step presses ([0dd64d7](https://github.com/Millennium44/Toolasha/commit/0dd64d75503daec226ff7850c549ca8171ca3c2b))
+* net worth flags enhanced pieces valued at +0, unpriced abilities and currencies as a floor ([e1eb695](https://github.com/Millennium44/Toolasha/commit/e1eb6955816385a52ec48d1a1df1ad9a1b8c548d))
+* net worth keeps the shrine token floor flag when one shrine is excluded ([2ba0eb8](https://github.com/Millennium44/Toolasha/commit/2ba0eb884424bb35e3ef8a1b457d7310a055442b))
+* optimizer gold per hour counts Gourmet and Processing scrolls and Prosperity like the action tile ([b7625b1](https://github.com/Millennium44/Toolasha/commit/b7625b181dd889cec3a31667c20ca572a7b163e3))
+* philo table takes the tax off a bonus drop once ([ef8c1d3](https://github.com/Millennium44/Toolasha/commit/ef8c1d3acc42e346273501c89c33eaab663ad42b))
+* production arbitrage ranking follows the patient-tick settings ([0fee520](https://github.com/Millennium44/Toolasha/commit/0fee520520353d21a8dbf9371d23caef4162788a))
+* reroll advisor says a met target is met even when it is too big to solve ([f68f0ff](https://github.com/Millennium44/Toolasha/commit/f68f0ff3c7461d2377a5bbb807651015ae81d862))
+* reroll walk refuses spends it cannot check, and cap protection no longer reads an unstated price as free ([06d4a0c](https://github.com/Millennium44/Toolasha/commit/06d4a0cdc2562613e9d83895055261046337ec58))
+* reset restores the saved analysis after a profile was opened without analyzing it ([fdb984a](https://github.com/Millennium44/Toolasha/commit/fdb984a371571ba19ac8b4f47737fdb9a382d4b2))
+* reset to party and fetch drop a stranger's upgrade rows too ([3824915](https://github.com/Millennium44/Toolasha/commit/3824915c4e48b25cf197c0e3c89f0e24dc5848c1))
+* running action's header and enhancing figures use worn gear when its loadout is gone ([0c2b39f](https://github.com/Millennium44/Toolasha/commit/0c2b39fa6ff23f1a7ed752d840d6e6b2f45ce9c1))
+* settings switched off stop their feature live, or say a refresh is needed ([ac38885](https://github.com/Millennium44/Toolasha/commit/ac3888526bd7beb7628821ddd0c8d51f1979ef89))
+* shopping list sizes crafted intermediates inputs with the no-proc bonus under worst-case rounding ([0869531](https://github.com/Millennium44/Toolasha/commit/0869531536aa33a034e32bfc99da291e15a1484f))
+* shrine planner redraws when guild shrine and buff levels arrive after it opens ([db97694](https://github.com/Millennium44/Toolasha/commit/db976940a1b0ee335671d1d888293cee1b0e4265))
+* shrine rows keep the guild cap for guild-mates, not strangers ([390176d](https://github.com/Millennium44/Toolasha/commit/390176d4dd02f07f63d731b63eb52ed0d41eb4ce))
+* shrine rows price tokens off the game's rates and flag a partial price ([58512f7](https://github.com/Millennium44/Toolasha/commit/58512f7f4e0498121dd4a4ded2be50e78e212ef0))
+* sim all zones does not file a pasted build's sweep as the character's forecast ([e79d020](https://github.com/Millennium44/Toolasha/commit/e79d0203f7556daad0c7f0bd42bcb96537549395))
+* stop put-back, replaced-slot runs and clear footer follow the swap count ([a2cc74f](https://github.com/Millennium44/Toolasha/commit/a2cc74f6eda11661bc836db206fe74dcebbdb437))
+* talisman bonuses ignore a second record in one belt slot ([3fc24ac](https://github.com/Millennium44/Toolasha/commit/3fc24ac92efdd4244625e76c53a141d094f5b31f))
+* tester shop Buy next re-checks the line before pressing Buy ([05317e7](https://github.com/Millennium44/Toolasha/commit/05317e7eeb455005ba69633c200841bca8d53773))
+* treasure tracker disable clears its loaded-settings marker for the cowbell worth ([94c5221](https://github.com/Millennium44/Toolasha/commit/94c5221ed1c2035610b6834823fb602f7131b95e))
+
+
+### Code Refactoring
+
+* guild token capture hydrate awaits the shared read instead of chaining it ([9463517](https://github.com/Millennium44/Toolasha/commit/9463517db386e4a2d7bc9c9c5bd2cd71332af298))
+
+
+### Documentation
+
+* agent briefs for bundle-wiring changes run the build and the smoke check ([2dc98a7](https://github.com/Millennium44/Toolasha/commit/2dc98a7db6f95e8a0b043c476fcdc6827701581f))
+* agents brief rule to call a game handler live before briefing it ([b186b64](https://github.com/Millennium44/Toolasha/commit/b186b644b9bbb10379bfacd52c4ff57618031b3d))
+* changelog and gear-panel text for the labyrinth Next button ([0ba651f](https://github.com/Millennium44/Toolasha/commit/0ba651f6723a3de86ee37c7298ec56c9dd12a8c8))
+* changelog for shrine pricing, guild caps and net worth tokens ([b694bee](https://github.com/Millennium44/Toolasha/commit/b694bee9434e395734e9c1e226db09835dd6577d))
+* changelog for the alchemy, task reroll and belt slot audit fixes ([f469474](https://github.com/Millennium44/Toolasha/commit/f469474c9dd02f93275e53b27d5293b46814e9a6))
+* changelog for the bulk sell, optimizer and crafting plan audit fixes ([c5d9402](https://github.com/Millennium44/Toolasha/commit/c5d940269a7d357b378b27473b27dca168dbb08c))
+* changelog for the combat sim import and all-zones audit fixes ([dcf3934](https://github.com/Millennium44/Toolasha/commit/dcf39343311e55a63a1bcdabbe80c67159ae81cc))
+* changelog for the labyrinth next button beacon stage and queue order ([b375cca](https://github.com/Millennium44/Toolasha/commit/b375cca6da31a15134ab4a51b864d8e88d644d81))
+* changelog for the live-stop sweep ([94f8641](https://github.com/Millennium44/Toolasha/commit/94f86418c7dd1b9cbae9e2b6ca9b10b2856a9824))
+* changelog for the net worth floor marks and milestone cost floor ([2934663](https://github.com/Millennium44/Toolasha/commit/2934663c72e4dc2fe35d7b01c4111dca34dc8be8))
+* changelog says the patient-tick re-rank happens on the next redraw ([bfa0bb0](https://github.com/Millennium44/Toolasha/commit/bfa0bb06c68287954ec2e6b8e705bcebeaf967e8))
+
+
+### Styles
+
+* prettier on the combat sim adapter and its test ([f3c0acb](https://github.com/Millennium44/Toolasha/commit/f3c0acbb940134d02ab302ca8469711caf05dcdd))
+* prettier on the reroll advisor need test ([014823f](https://github.com/Millennium44/Toolasha/commit/014823f846764bfd2bd2aa03e648891ba6138096))
+* prettier on the reroll walk ([35665c2](https://github.com/Millennium44/Toolasha/commit/35665c26efd684ef3cc640202dba085af9d8ef64))
+
+
+### Tests
+
+* crate currency test spreads the real bundle bridge ([406600f](https://github.com/Millennium44/Toolasha/commit/406600f58d85cb68dc891ffb9342a7481f2947e2))
+* startup-mode test stubs the guild library ([b6dff72](https://github.com/Millennium44/Toolasha/commit/b6dff72feb49f2ea95cc52c9ae1d50672e284d6f))
+
+
+### Build System
+
+* calibration panel reads alchemy sessions through the tracker records ([d9f9911](https://github.com/Millennium44/Toolasha/commit/d9f9911dd5d2b66a644f0d7726fa3fab07607872))
+* move the alchemy history group from the ui library to the actions library ([5739ebf](https://github.com/Millennium44/Toolasha/commit/5739ebf249358f269b322b88edca76eace6be429))
+* split the guild features into their own toolasha-guild library ([0c7ed66](https://github.com/Millennium44/Toolasha/commit/0c7ed6692e7feaec5b0acd8a4dccd2557511d53d))
+
+
+### Miscellaneous Chores
+
+* keep prettier off the untracked discord drafts in the repo root ([2611b09](https://github.com/Millennium44/Toolasha/commit/2611b093f7218517774648c627feac20834fc2bd))
+* merge main into the labyrinth next-step branch ([cb3e7de](https://github.com/Millennium44/Toolasha/commit/cb3e7de15d9a6ac169809f826b4d98389e2c911b))
+
 ## [3.92.0](https://github.com/Millennium44/Toolasha/compare/v3.91.0...v3.92.0) (2026-11-23)
 
 ### Features
