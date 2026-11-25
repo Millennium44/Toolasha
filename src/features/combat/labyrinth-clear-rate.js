@@ -3952,12 +3952,16 @@ class LabyrinthClearRate {
      * auto) draws it, and a reveal that re-judges a guessed room amends it through here too.
      * @param {number} cols - Grid width the indexes are in
      * @param {number[]} indexes - Route rooms that cost a shroud
+     * @param {number[]} [route] - Every room of the route, in walking order
+     * @param {number|null} [exit] - The floor exit's index, when it is on the route
      */
-    storeShroudStepPlan(cols, indexes, route = indexes) {
+    storeShroudStepPlan(cols, indexes, route = indexes, exit = null) {
         this._shroudStepPlan = {
             order: new Map([...route].map((idx, n) => [idx, n])),
-            // Every room of the route in walking order: what the Route step queues, one room per press
-            route: [...route],
+            // Every room of the route in walking order: what the Route step queues, one room per press.
+            // The exit goes last whatever its distance: the game enters queued rooms in order, and entering
+            // the exit leaves the floor with any chest branch queued after it still uncollected.
+            route: [...route].filter((idx) => idx !== exit).concat([...route].includes(exit) ? [exit] : []),
             floor: this.currentFloor,
             characterId: dataManager.getCurrentCharacterId() ?? null,
             cols,
@@ -5316,7 +5320,8 @@ class LabyrinthClearRate {
             this.storeShroudStepPlan(
                 cols,
                 walkOrder.filter((idx) => tiles[idx]?.needsShroud && !tiles[idx].cleared && !tiles[idx].isEntrance),
-                walkOrder
+                walkOrder,
+                path.target
             );
 
             const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;

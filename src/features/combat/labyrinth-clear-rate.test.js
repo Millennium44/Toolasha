@@ -3773,6 +3773,8 @@ describe('a skilling tile badge and the Path quote one clear chance', () => {
         await labyrinthClearRate.runPathCalculation();
 
         expect(labyrinthClearRate._shroudStepPlan.targets.map((t) => t.idx)).toEqual([1, 2, 3]);
+        // The route the Route step queues ends at the exit
+        expect(labyrinthClearRate._shroudStepPlan.route.at(-1)).toBe(4);
         // A room re-judged later joins in the same walking order
         labyrinthClearRate.amendShroudStepPlan(2, false);
         labyrinthClearRate.amendShroudStepPlan(2, true);
@@ -8324,6 +8326,18 @@ describe('labyrinth toolbar layout', () => {
             expect(labyrinthClearRate._shroudStepPlan.targets.map((x) => x.idx)).toEqual([10, 20, 30, 40]);
             // The Route step reads the whole route, in the same walking order
             expect(labyrinthClearRate._shroudStepPlan.route).toEqual([10, 20, 30, 40]);
+        });
+
+        test('the exit is the last room the Route step queues, however near it is', () => {
+            labyrinthClearRate.currentFloor = 4;
+            // Standing beside the exit (15) with a chest branch (3, 2) farther away: walking order has the exit first
+            labyrinthClearRate.storeShroudStepPlan(4, [], [15, 3, 2], 15);
+            expect(labyrinthClearRate._shroudStepPlan.route).toEqual([3, 2, 15]);
+            // The shroud order map is the walking order, untouched
+            expect([...labyrinthClearRate._shroudStepPlan.order.keys()]).toEqual([15, 3, 2]);
+            // An exit that is not on the route is not added to it
+            labyrinthClearRate.storeShroudStepPlan(4, [], [3, 2], 15);
+            expect(labyrinthClearRate._shroudStepPlan.route).toEqual([3, 2]);
         });
 
         describe('the room the next step acts on is lit', () => {
