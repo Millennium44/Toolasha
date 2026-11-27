@@ -248,6 +248,9 @@ Every brief to a sub-agent carries these lines:
 - **Hard fixtures by default**: duplicates, same-named items or loadouts, stacks of three or more,
   nonzero tiers and levels, unpriced items, an empty or zero input. A fixture that only has the easy
   shape passes code that breaks on the real one.
+- **Test a callback through its real caller.** A test of an `onChange`, `onReset` or similar callback presses
+  the real button or calls the real method that fires it, never the callback by hand. In #1123 hand-fired
+  callbacks passed while Reset to Party never fired the callback at all (a P1).
 - Adding an export to a shared module means updating every `vi.mock` factory of it
   (`grep -rn "vi.mock.*<module>" src/`). Run every suite the change can reach — `<module>*.test.js`, not
   only `<module>.test.js`.
