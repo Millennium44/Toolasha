@@ -28,6 +28,7 @@ const game = vi.hoisted(() => ({
     editedDTOs: null,
     characterId: 'me',
     remember: false,
+    loadoutAbilities: [],
 }));
 const sim = vi.hoisted(() => ({ cancelled: 0 }));
 const storage = vi.hoisted(() => ({ written: {}, values: {} }));
@@ -174,7 +175,12 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
         getCombatSkipRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
         getRecommendedCombatRoomLevel: () => 0,
         getLabyrinthLoadoutId: () => null,
-        buildLabyrinthPlayerDTO: () => ({ equipment: {}, abilities: [], houseRooms: {}, guildShrineLevels: {} }),
+        buildLabyrinthPlayerDTO: () => ({
+            equipment: {},
+            abilities: game.loadoutAbilities.map((a) => ({ ...a })),
+            houseRooms: {},
+            guildShrineLevels: {},
+        }),
         getPlayerEffectiveCombatLevel: () => 100,
         estimateCombatXpPerHour: () => 0,
         getTargetRoomLevel: () => 0,
@@ -514,48 +520,101 @@ describe('an Upgrade run stopped or failed before any row puts the previous view
         expect(results().textContent).not.toContain('Fancy Boots');
     });
 
-    describe('the remembered single-fight record', () => {
-        const KEY_WRITES = () => Object.values(storage.written);
+    describe.each([
+        ['all-fights', 'all'],
+        ['single-fight', 'single'],
+        ['Ability order', 'order'],
+    ])('the remembered record after a %s run', (_label, view) => {
+        const stored = () =>
+            JSON.stringify(Object.entries(storage.written).filter(([key]) => key.startsWith('labSimUpgradeResults')));
+        /** The run that draws a different table and then has Stop pressed in the pass named */
+        const stoppedRun = async (pass) => {
+            const stopped = async (params) => {
+                pressStop();
+                return params?.modes?.length === 0 ? { baseline: null, results: [] } : nothing();
+            };
+            if (pass === 'table') {
+                onSingle = async () => {
+                    pressStop();
+                    return singleTable('Partial → Boots');
+                };
+                onAll = async (params) => {
+                    pressStop();
+                    return params?.modes?.length ? allFightsTable('Partial → Helm') : nothing();
+                };
+                await run(view);
+                return;
+            }
+            // Stop lands in the Ability order pass, after the table pass finished
+            onSingle = async () => singleTable('Finished → Boots');
+            onAll = async (params) => (params?.modes?.length ? allFightsTable('Finished → Helm') : stopped(params));
+            setScope(view === 'all' ? 'all' : 'single');
+            tick('equipment', 'ability_order');
+            await pressAnalyze();
+        };
         beforeEach(() => {
             storage.written = {};
             game.remember = true;
+            game.loadoutAbilities = [SPECIAL, A, B, C].map((hrid) => ({ hrid, level: 10 }));
         });
         afterEach(() => {
             game.remember = false;
-        });
-
-        test('a Stop after some rows leaves the stored record as it was', async () => {
-            await run('single');
-            await settle();
-            const before = KEY_WRITES();
-            expect(before.length).toBeGreaterThan(0);
-            storage.written = {};
-            onSingle = async () => {
-                pressStop();
-                return singleTable('Partial → Boots');
-            };
-            await run('single');
-            await settle();
-            expect(results().textContent).toContain('Partial → Boots');
-            expect(KEY_WRITES()).toEqual([]);
+            game.loadoutAbilities = [];
         });
 
         test('a full run is saved', async () => {
-            await run('single');
+            if (view === 'order') await run('order');
+            else {
+                setScope(view === 'all' ? 'all' : 'single');
+                tick('equipment');
+                await pressAnalyze();
+            }
             await settle();
-            expect(JSON.stringify(KEY_WRITES())).toContain('Fancy Boots');
+            expect(JSON.parse(stored()).length).toBe(1);
+            expect(stored()).toContain(view === 'all' ? 'Fancy Helm' : view === 'single' ? 'Fancy Boots' : 'groups');
         });
 
-        test('a table that finished before Stop landed in the order pass is still saved', async () => {
-            onAll = async () => {
-                pressStop();
-                return { baseline: null, results: [] };
-            };
-            setScope('single');
+        test('a full run with the order pass saves its table and section together', async () => {
+            if (view === 'order') return;
+            setScope(view === 'all' ? 'all' : 'single');
             tick('equipment', 'ability_order');
             await pressAnalyze();
             await settle();
-            expect(JSON.stringify(KEY_WRITES())).toContain('Fancy Boots');
+            expect(stored()).toContain(view === 'all' ? 'Fancy Helm' : 'Fancy Boots');
+            expect(stored()).toContain('orderSection');
+        });
+
+        test('Stop in the table pass leaves the stored record byte for byte', async () => {
+            await run(view);
+            await settle();
+            const before = stored();
+            expect(before).not.toBe('[]');
+            await stoppedRun('table');
+            await settle();
+            expect(stored()).toBe(before);
+        });
+
+        test('Stop in the Ability order pass after a finished table leaves the stored record byte for byte', async () => {
+            await run(view);
+            await settle();
+            const before = stored();
+            await stoppedRun('order');
+            await settle();
+            expect(stored()).toBe(before);
+        });
+
+        test('a run that never finishes (the page closes) has written nothing over the old record', async () => {
+            await run(view);
+            await settle();
+            const before = stored();
+            onSingle = () => new Promise(() => {});
+            onAll = () => new Promise(() => {});
+            setScope(view === 'all' ? 'all' : 'single');
+            tick(view === 'order' ? 'ability_order' : 'equipment');
+            ui.panel.querySelector('#mwi-labsim-upgrade-run').click();
+            await settle();
+            expect(ui._upgradeRunning).toBe(true);
+            expect(stored()).toBe(before);
         });
     });
 
