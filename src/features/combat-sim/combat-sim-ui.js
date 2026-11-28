@@ -13348,6 +13348,17 @@ class CombatSimUI {
         const runBtn = this.panel.querySelector('#mwi-csim-upgrade-run');
         const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
         progressEl.style.display = 'block';
+        // What is on screen now (single or All players), so a run that ends with no player's rows drawn can put it
+        // back, as the single-player run does
+        const prevView = {
+            data: this._upgradeResultsData,
+            restoredAt: this._restoredUpgradeAt,
+            meta: this._restoredUpgradeMeta,
+            remembered: this._rememberedResults,
+            allPlayers: this._allPlayersRun,
+            verdicts: this._upgradeResultsData?.verifyVerdicts,
+            budgetConfirm: this._budgetConfirm,
+        };
         resultsEl.innerHTML = '';
         this._setTuneButtonBusy(true);
         this._setUpgradeColumnMenuOpen(false);
@@ -13492,6 +13503,28 @@ class CombatSimUI {
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
             if (latchGen === this._analysisGen) this._setTuneButtonBusy(false);
+            // Every player not run or failed: nothing of this run is worth showing, so the table that was there comes
+            // back. Read from the entries, not the DOM: a Stop can leave a drawn summary with no rows behind it. A
+            // roster swap counted while the run was out means that table is not for the players now loaded
+            const drewNothing = entries.every((e) => ['pending', 'running', 'notrun', 'failed'].includes(e.state));
+            if (
+                drewNothing &&
+                prevView.data &&
+                // A panel torn down mid-run (the setting turned off) has nothing to draw into, and the state set
+                // below would block the remembered record from coming back when it is built again
+                this.panel &&
+                resultsEl.isConnected &&
+                !superseded &&
+                current() &&
+                (this._rosterSwapGen || 0) === swapGen &&
+                !this._upgradeResultsData
+            ) {
+                // The empty All players view this run drew gives way to the one it found, and the single-player
+                // render below reads `_allPlayersRun` to decide where to draw
+                this._allPlayersRun = null;
+                this._upgradeResultsData = prevView.data;
+                this._putBackUpgradeView(prevView);
+            }
             if (!superseded && current()) {
                 this._refreshAllPlayersNote();
                 this._afterRun();
@@ -13951,6 +13984,8 @@ class CombatSimUI {
             meta: this._restoredUpgradeMeta,
             remembered: this._rememberedResults,
             allPlayers: this._allPlayersRun,
+            verdicts: this._upgradeResultsData?.verifyVerdicts,
+            budgetConfirm: this._budgetConfirm,
         };
         resultsEl.innerHTML = '';
         // A single-player run replaces an All players view
@@ -14138,7 +14173,15 @@ class CombatSimUI {
             // Only a roster that held the live character is the owner's analysis. An imported profile's or a
             // pasted party's run is shown but never remembered: the record is replaced whole and has no undo,
             // so it would take the owner's own analysis (and restore under their name on the next reload)
-            if ((completed || emptyOrderRun) && ownRoster && this._stillSameCharacter(ownerId)) {
+            // A run stopped in any phase (candidates, close-call re-sims, food search, Ability order) is shown for this
+            // session but never remembered: even with every upgrade measured it lacks what the Stop cut (the food
+            // block, the order pass), and the record is replaced whole, so the previous full run is kept
+            if (
+                (completed || emptyOrderRun) &&
+                ownRoster &&
+                !this._upgradeAborted &&
+                this._stillSameCharacter(ownerId)
+            ) {
                 // Who and where, so a restored set can say whose run it was -
                 // the selector may hold a different player, or another zone,
                 // by the time these come back
@@ -17455,7 +17498,8 @@ class CombatSimUI {
      * is exactly what it was. A table a roster replacement or Clear has taken meanwhile is not put back, and the
      * stale-build banner is worked out afresh against the build now loaded.
      * (This is not the delayed read `_restoreUpgradeResults` guards against drawing over a run.)
-     * @param {Object} prev - `{data, restoredAt, meta, remembered, allPlayers}` as the run found them
+     * @param {Object} prev - `{data, restoredAt, meta, remembered, allPlayers, verdicts, budgetConfirm}` as the run
+     *   found them
      * @private
      */
     _putBackUpgradeView(prev) {
@@ -17465,6 +17509,11 @@ class CombatSimUI {
         this._restoredUpgradeAt = prev.restoredAt;
         this._restoredUpgradeMeta = prev.meta;
         this._rememberedResults = prev.remembered;
+        // A run start takes the table's verify verdicts and the basket confirmation; both describe this same
+        // analysis object, which is what comes back. A confirmation still running cannot have been taken (a run
+        // does not start under one), and the Confirm button re-checks the build when pressed
+        if (prev.verdicts && !prev.data.verifyVerdicts) prev.data.verifyVerdicts = prev.verdicts;
+        if (prev.budgetConfirm && prev.budgetConfirm.status !== 'running') this._budgetConfirm = prev.budgetConfirm;
         if (prev.allPlayers) {
             this._allPlayersRun = prev.allPlayers;
             this._renderUpgradeAllPlayers();

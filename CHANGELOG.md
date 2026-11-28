@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A stopped Upgrade analysis no longer replaces your saved one
+
+Stopping a Combat Sim or Lab Sim Upgrade analysis could save the stopped run over the full analysis you had remembered. The table from the stopped run still shows, but the saved one is kept, whichever step Stop was pressed in. Only a run that finishes is remembered.
+
+### Stop puts your table back in the Lab Sim and for All players
+
+Pressing Stop (or a failed run) before any upgrade was measured now puts back what was on screen in the Lab Sim's Upgrade tab and in a Combat Sim "All players" run, as it already did for a single player. A table put back this way keeps its Verify verdicts.
+
 ### Shorter setting descriptions
 
 59 setting descriptions that ran past 300 characters are trimmed to say what the setting does and what you need to know to choose. No setting changed its behavior.

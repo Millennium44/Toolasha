@@ -5906,6 +5906,7 @@ class LabSimUI {
         // A remembered result a sync pull brings is no longer drawn over this panel's own runs. Set once the
         // run is really starting: a press that ran nothing (no sets ticked, a failed profile read) must not stop
         // a pull from repainting the table. While the profile loads, `_upgradeRunning` already holds it off
+        const runStartedBefore = this._upgradeRunStarted;
         this._upgradeRunStarted = true;
 
         const communityBuffs = getCommunityBuffs();
@@ -5920,6 +5921,12 @@ class LabSimUI {
         const runBtn = this.panel.querySelector('#mwi-labsim-upgrade-run');
         const stopBtn = this.panel.querySelector('#mwi-labsim-upgrade-stop');
         progressEl.style.display = 'block';
+        // What is on screen now, so a run that is stopped or fails before drawing a row can put it back
+        const prevView = this._captureUpgradeView(resultsEl, runStartedBefore);
+        // The view goes back only for the run that still owns the panel, and never over rows this run drew
+        const putBack = (keepStatus) => {
+            if (prevView && isCurrent()) this._putBackUpgradeView(prevView, resultsEl, { keepStatus });
+        };
         resultsEl.innerHTML = '';
         this._upgradeOrderSection = null;
         this._clearVerify(['all', 'order']);
@@ -6005,10 +6012,24 @@ class LabSimUI {
                 progressEl.style.display = 'none';
                 runBtn.style.display = '';
                 stopBtn.style.display = 'none';
+                // A stop restores the footer too; "No room level resolves" is why nothing ran, so it stays
+                putBack(!this._upgradeAborted);
                 release();
                 return;
             }
         }
+
+        // How the run ended without a row: 'stopped' (a cancel with no Stop press), 'refused' or 'failed' (each
+        // leaves its own footer line). A Stop press shows as `_upgradeAborted`
+        let ending = null;
+        // Whether this run drew a row of its own: those stay, a stopped run's partial table included
+        let drewRows = false;
+        // The record this run remembers, written once at the very end and never for a run Stop was pressed in
+        let pendingSave = null;
+        // Whether the table pass ran to its end (an empty result is then a result, whatever stops a later pass)
+        let tableDone = false;
+        const endedWithoutRows = () =>
+            !drewRows && !tableDone && !this._upgradeOrderSection && (ending || this._upgradeAborted);
 
         if (isAllFights) {
             try {
@@ -6018,6 +6039,7 @@ class LabSimUI {
                     this._setStatus(
                         'No labyrinth fights found — set combat skip levels in the game (or enter the labyrinth) so fights have room levels.'
                     );
+                    ending = 'refused';
                     return;
                 }
                 // Nothing is refused for being large any more, so the size is
@@ -6145,21 +6167,16 @@ class LabSimUI {
                     this._restoredUpgradeMeta = null;
                     this._registerVerifyLive('all', analysisResult, ownerId);
                     this._renderAllFightsResults(analysisResult, resultsEl);
+                    drewRows = Boolean(analysisResult?.baseline && analysisResult.results?.length);
+                    tableDone = !this._upgradeAborted;
                     // Marked, so a reload draws it with the all-fights renderer rather than the single-fight one
                     if (analysisResult?.results?.length) allFightsAnalysis = { ...analysisResult, allFights: true };
-                    // Remembered here unless the order pass follows, which saves this table with its section.
-                    // Unsaved, a reload brought back whichever older run was remembered instead of this one
-                    // Not a stopped run's partial rows: they would replace a complete remembered run
-                    if (allFightsAnalysis && !plan.includeAbilityOrder && !this._upgradeAborted) {
-                        const playerIndex =
-                            parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
-                        this._saveLabUpgradeResults(allFightsAnalysis, {
-                            characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
-                        });
-                    }
+                    // Remembered when the run ends, unless the order pass follows, which hands back this table with
+                    // its section. Unsaved, a reload brought back whichever older run was remembered instead
+                    if (allFightsAnalysis && !plan.includeAbilityOrder) pendingSave = { analysis: allFightsAnalysis };
                 }
                 if (plan.includeAbilityOrder && startToken === this._runStartToken && !this._upgradeAborted) {
-                    await this._runUpgradeAbilityOrder({
+                    pendingSave = await this._runUpgradeAbilityOrder({
                         fights,
                         isSelf: true,
                         claimLoadouts: this._collectOwnedLoadouts(allFights),
@@ -6176,15 +6193,22 @@ class LabSimUI {
                     });
                 }
                 await this._autoVerifyCloseCalls({ startToken, ownerId });
+                if (isCurrent()) this._commitUpgradeSave(pendingSave, ownerId);
             } catch (error) {
-                if (isCurrent() && error.message !== 'Cancelled' && error.message !== 'Aborted') {
-                    console.error('[LabSimUI] All-fights analysis failed:', error);
-                    this._setStatus('All-fights analysis failed: ' + error.message);
+                if (error.message === 'Cancelled' || error.message === 'Aborted') {
+                    ending = 'stopped';
+                } else {
+                    ending = 'failed';
+                    if (isCurrent()) {
+                        console.error('[LabSimUI] All-fights analysis failed:', error);
+                        this._setStatus('All-fights analysis failed: ' + error.message);
+                    }
                 }
             } finally {
                 progressEl.style.display = 'none';
                 runBtn.style.display = '';
                 stopBtn.style.display = 'none';
+                if (endedWithoutRows()) putBack(ending === 'failed' || ending === 'refused');
                 release();
             }
             return;
@@ -6297,6 +6321,8 @@ class LabSimUI {
                 // restored set was measured against whatever floor was set then
                 if (analysisResult?.roomLevels) analysisResult.roomLevels.targetFloor = this._getTargetFloor();
                 this._renderUpgradeResults(analysisResult, resultsEl);
+                drewRows = Boolean(analysisResult?.results?.length);
+                tableDone = !this._upgradeAborted;
                 singleAnalysis = analysisResult;
                 if (queued && !analysisResult?.results?.length) {
                     const note = this._describeQueuedRun(queued, analysisResult, gameData);
@@ -6324,11 +6350,11 @@ class LabSimUI {
                 // The remembered set is per character and has no undo: writing this
                 // run under the character who arrived mid-analysis would delete the
                 // analysis they were keeping
-                if (analysisResult?.results?.length && this._stillSameCharacter(ownerId)) {
-                    const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
-                    this._saveLabUpgradeResults(analysisResult, {
-                        characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
-                    });
+                // Not a stopped run's partial rows: they would replace a complete remembered run
+                // Written when the run ends, and only if Stop was not pressed in any pass (an order pass that follows
+                // hands this table back with its section)
+                if (analysisResult?.results?.length && !plan.includeAbilityOrder) {
+                    pendingSave = { analysis: analysisResult };
                 }
             }
             if (plan.includeAbilityOrder && startToken === this._runStartToken && !this._upgradeAborted) {
@@ -6346,7 +6372,7 @@ class LabSimUI {
                         loadoutName: 'Configure fight',
                     },
                 ];
-                await this._runUpgradeAbilityOrder({
+                pendingSave = await this._runUpgradeAbilityOrder({
                     fights: orderFights,
                     isSelf,
                     claimLoadouts: isSelf ? this._collectOwnedLoadouts(orderFights) : undefined,
@@ -6363,17 +6389,96 @@ class LabSimUI {
                 });
             }
             await this._autoVerifyCloseCalls({ startToken, ownerId });
+            if (isCurrent()) this._commitUpgradeSave(pendingSave, ownerId);
         } catch (error) {
-            if (isCurrent() && error.message !== 'Cancelled' && error.message !== 'Aborted') {
-                console.error('[LabSimUI] Upgrade analysis failed:', error);
-                this._setStatus('Upgrade analysis failed: ' + error.message);
+            if (error.message === 'Cancelled' || error.message === 'Aborted') {
+                ending = 'stopped';
+            } else {
+                ending = 'failed';
+                if (isCurrent()) {
+                    console.error('[LabSimUI] Upgrade analysis failed:', error);
+                    this._setStatus('Upgrade analysis failed: ' + error.message);
+                }
             }
         } finally {
             progressEl.style.display = 'none';
             runBtn.style.display = '';
             stopBtn.style.display = 'none';
+            if (endedWithoutRows()) putBack(ending === 'failed' || ending === 'refused');
             release();
         }
+    }
+
+    /**
+     * What the Upgrade tab shows right now, kept by reference so a run that is stopped or fails before it draws
+     * a row can put it back: the table's own redraw (all-fights or single-fight), the Ability order section, the
+     * remembered-run markers, the verify verdicts and the footer line. Nothing is read from or written to storage.
+     * @param {HTMLElement} resultsEl - The Upgrade results container
+     * @param {boolean} runStarted - `_upgradeRunStarted` as the run found it
+     * @returns {Object|null} The view, or null when there is nothing on screen to put back
+     * @private
+     */
+    _captureUpgradeView(resultsEl, runStarted) {
+        let area = null;
+        for (const [key, entry] of this._viewRedraws) {
+            if ((key === 'combat' || key === 'single') && entry.container === resultsEl && this._isAreaLive(entry)) {
+                area = { key, redraw: entry.redraw, allFights: key === 'combat' ? this._allFightsResult : null };
+            }
+        }
+        const section = this._upgradeOrderSection;
+        if (!area && !section) return null;
+        return {
+            area,
+            section,
+            restoredAt: this._restoredUpgradeAt,
+            restoredMeta: this._restoredUpgradeMeta,
+            houseScanNote: this._houseScanNote,
+            runStarted,
+            verify: { all: this._verify.all, order: this._verify.order, notes: { ...this._verify.notes } },
+            verifyLive: { all: this._verifyLive.all, order: this._verifyLive.order },
+            status: this.panel?.querySelector('#mwi-labsim-status')?.textContent ?? '',
+        };
+    }
+
+    /**
+     * Put back the view a run found, when the run drew nothing: stopped, failed or refused before its first row.
+     * The same objects, redrawn from memory, so the remembered record on disk is exactly what it was. Not put
+     * back when something has drawn since (rows in the container, an Ability order section) or the all-fights
+     * result is no longer the one captured. The stale-build banner is worked out afresh by the redraw.
+     * @param {Object} prev - From `_captureUpgradeView`
+     * @param {HTMLElement} resultsEl - The Upgrade results container
+     * @param {{keepStatus?: boolean}} [options] - `keepStatus`: leave the footer line the run set (a failure or a
+     *   refusal says why nothing ran); a Stop restores the footer it found and says the run was cancelled
+     * @returns {boolean} Whether the view was put back
+     * @private
+     */
+    _putBackUpgradeView(prev, resultsEl, { keepStatus = false } = {}) {
+        if (!this.panel || !resultsEl?.isConnected) return false;
+        if (this._upgradeOrderSection || this._hasDrawnResults(resultsEl)) return false;
+        if (prev.area?.key === 'combat' && this._allFightsResult !== prev.area.allFights) return false;
+        this._restoredUpgradeAt = prev.restoredAt;
+        this._restoredUpgradeMeta = prev.restoredMeta;
+        this._houseScanNote = prev.houseScanNote;
+        // The panel is back to what it showed before this run, so a pull or a Clear treats it as it did then: a
+        // remembered table's Clear works again, and a pull may still replace a table that is itself remembered
+        this._upgradeRunStarted = prev.runStarted;
+        // The run's own clearing dropped the verdicts and their live analysis; they belong to what is back, and
+        // the redraws below read them while drawing
+        this._verify.all = prev.verify.all;
+        this._verify.order = prev.verify.order;
+        this._verify.notes = { ...prev.verify.notes };
+        this._verifyLive.all = prev.verifyLive.all;
+        this._verifyLive.order = prev.verifyLive.order;
+        if (prev.area) prev.area.redraw();
+        else resultsEl.innerHTML = '';
+        this._upgradeOrderSection = prev.section;
+        this._drawUpgradeAbilityOrder();
+        // The restored footer, plus the word that the run was stopped
+        // Once however many Stops in a row: a footer put back by an earlier Stop already ends with it
+        const cancelled = 'Upgrade analysis cancelled.';
+        if (!keepStatus)
+            this._setStatus(prev.status.endsWith(cancelled) ? prev.status : `${prev.status} ${cancelled}`.trim());
+        return true;
     }
 
     /**
@@ -8787,8 +8892,8 @@ class LabSimUI {
      * @param {number} params.startToken - `_runStartToken` of the run
      * @param {string} params.ownerId - Character the run began for
      * @param {boolean} params.orderOnly - Nothing else was checked, so the status line is this pass's alone
-     * @param {Object|null} [params.savedAnalysis] - The run's own table result, saved again with the section
-     * @returns {Promise<void>}
+     * @param {Object|null} [params.savedAnalysis] - The run's own table result, handed back with the section
+     * @returns {Promise<{analysis: Object, orderSection: Object}|undefined>} What the run remembers, or nothing when it stopped
      * @private
      */
     async _runUpgradeAbilityOrder({
@@ -8871,13 +8976,25 @@ class LabSimUI {
         // it is saved as an empty result set beside the section
         // A completed run saves whatever it found, an empty section included ("Nothing to reorder"): the
         // record is replaced whole, so skipping it would bring an older run's section back on reload
-        if (this._stillSameCharacter(ownerId)) {
-            const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
-            this._saveLabUpgradeResults(savedAnalysis || { results: [] }, {
-                characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
-                orderSection: section,
-            });
-        }
+        // Handed back, not written: the run writes it once it has ended without a Stop
+        return { analysis: savedAnalysis || { results: [] }, orderSection: section };
+    }
+
+    /**
+     * Remember what a run found. Called once, after every pass, and never for a run Stop was pressed in at any
+     * point: the remembered record stays what it was, and a run that never finishes (the page closes) has written
+     * nothing, so the older record cannot be lost.
+     * @param {{analysis: Object, orderSection?: Object}|null} pending - From the run's passes
+     * @param {string|null} ownerId - Character the run began for
+     * @private
+     */
+    _commitUpgradeSave(pending, ownerId) {
+        if (!pending || this._upgradeAborted || !this._stillSameCharacter(ownerId)) return;
+        const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
+        this._saveLabUpgradeResults(pending.analysis, {
+            characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
+            ...(pending.orderSection ? { orderSection: pending.orderSection } : {}),
+        });
     }
 
     /**

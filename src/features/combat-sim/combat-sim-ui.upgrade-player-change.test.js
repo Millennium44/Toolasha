@@ -1949,6 +1949,25 @@ describe('Stop or failure before anything is drawn', () => {
         expect(mocks.store.get(KEY).data.results[0].candidate.description).toBe('Older gear');
     });
 
+    test('stopped before any row: the table comes back with its verify verdicts and basket confirmation', async () => {
+        holdSelf();
+        await open();
+        await analyze('Live gear');
+        const verdicts = { profit: { someRow: { verdict: 'confirmed', mean: 1, se: 0, seeds: 3 } } };
+        const confirm = { key: 'basket', status: 'done', result: { ok: true }, error: null };
+        ui._upgradeResultsData.verifyVerdicts = verdicts;
+        ui._budgetConfirm = confirm;
+        const table = ui._upgradeResultsData;
+        // A different object from the table on screen, as a real run returns
+        mocks.upgradeResult = result(null);
+        mocks.onRun = () => ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+        ui.panel.querySelector('#mwi-csim-upgrade-run').click();
+        await settle();
+        expect(ui._upgradeResultsData).toBe(table);
+        expect(table.verifyVerdicts).toBe(verdicts);
+        expect(ui._budgetConfirm).toBe(confirm);
+    });
+
     test('a run that fails puts the table back too', async () => {
         holdSelf();
         await open();
@@ -1975,19 +1994,116 @@ describe('Stop or failure before anything is drawn', () => {
         expect(note().style.display).toBe('block');
     });
 
-    test('stopped with partial rows: the partial table is shown and saved stamped, not the old one', async () => {
+    // Presses the real buttons: Analyze starts the run, and Stop is pressed from inside it
+    const pressAnalyze = async () => {
+        ui.panel.querySelector('#mwi-csim-upgrade-run').click();
+        await settle();
+    };
+    const pressStopDuringRun = () => {
+        mocks.onRun = () => ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+    };
+
+    test('stopped with partial rows: the partial table is shown, the saved full record is not replaced', async () => {
+        mocks.store.set(KEY, record());
+        holdSelf();
+        await open();
+        pressStopDuringRun();
+        mocks.upgradeResult = { ...result('Partial gear'), candidateCount: 5 };
+        await pressAnalyze();
+        expect(rows().textContent).toContain('Partial gear');
+        expect(rows().textContent).not.toContain('Older gear');
+        // Untouched: same stamp, same rows, no stopped marker
+        const stored = mocks.store.get(KEY);
+        expect(stored.savedAt).toBe(5);
+        expect(stored.data.stopped).toBeUndefined();
+        expect(stored.data.results[0].candidate.description).toBe('Older gear');
+    });
+
+    test('stopped with partial rows and a reload: the older full record is what comes back', async () => {
+        mocks.store.set(KEY, record());
+        holdSelf();
+        await open();
+        pressStopDuringRun();
+        mocks.upgradeResult = { ...result('Partial gear'), candidateCount: 5 };
+        await pressAnalyze();
+        // A reload: the panel is built again for the same character
+        ui.destroy();
+        mocks.onRun = null;
+        await open();
+        expect(rows().textContent).toContain('Older gear');
+        expect(rows().textContent).not.toContain('Partial gear');
+        expect(rows().textContent).toContain('Showing results remembered');
+    });
+
+    test('stopped with partial rows and no saved record: nothing is saved', async () => {
+        holdSelf();
+        await open();
+        pressStopDuringRun();
+        mocks.upgradeResult = { ...result('Partial gear'), candidateCount: 5 };
+        await pressAnalyze();
+        expect(rows().textContent).toContain('Partial gear');
+        expect(mocks.store.has(KEY)).toBe(false);
+    });
+
+    test('stopped after the roster was swapped meanwhile: a saved record is still not replaced', async () => {
         mocks.store.set(KEY, record());
         holdSelf();
         await open();
         mocks.onRun = () => {
-            ui._upgradeAborted = true;
+            ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+            mocks.editorOptions.onScenarioReplaced();
         };
         mocks.upgradeResult = { ...result('Partial gear'), candidateCount: 5 };
-        await ui._onUpgradeAnalyze();
-        await settle();
-        expect(rows().textContent).toContain('Partial gear');
-        expect(rows().textContent).not.toContain('Older gear');
-        expect(mocks.store.get(KEY).data.stopped).toEqual({ completed: 1, total: 5 });
+        await pressAnalyze();
+        expect(mocks.store.get(KEY).savedAt).toBe(5);
+        expect(mocks.store.get(KEY).data.results[0].candidate.description).toBe('Older gear');
+    });
+
+    test('stopped in the food search with every candidate measured: shown, not saved, record untouched', async () => {
+        const full = record();
+        full.data.food = { best: { description: 'Cheapest viable food' } };
+        mocks.store.set(KEY, full);
+        holdSelf();
+        await open();
+        // Read after the panel drew the record: drawing adds its own score fields to the stored object
+        const before = JSON.stringify(mocks.store.get(KEY));
+        ui.panel.querySelector('[data-upgrade-mode="food"]').checked = true;
+        pressStopDuringRun();
+        mocks.upgradeResult = { ...result('Whole gear'), candidateCount: 1 };
+        await pressAnalyze();
+        expect(rows().textContent).toContain('Whole gear');
+        expect(status()).toContain('Analysis cancelled — showing 1 completed candidate.');
+        expect(rows().textContent).not.toContain('Showing results remembered');
+        expect(JSON.stringify(mocks.store.get(KEY))).toBe(before);
+    });
+
+    test('stopped in the Ability order pass with every candidate measured: shown, not saved', async () => {
+        mocks.store.set(KEY, record());
+        holdSelf();
+        await open();
+        // Read after the panel drew the record: drawing adds its own score fields to the stored object
+        const before = JSON.stringify(mocks.store.get(KEY));
+        ui.panel.querySelector('[data-upgrade-mode="ability_order"]').checked = true;
+        pressStopDuringRun();
+        mocks.upgradeResult = { ...result('Whole gear'), candidateCount: 1 };
+        await pressAnalyze();
+        expect(rows().textContent).toContain('Whole gear');
+        expect(rows().textContent).not.toContain('Showing results remembered');
+        expect(JSON.stringify(mocks.store.get(KEY))).toBe(before);
+    });
+
+    test('a run that finishes is saved as before', async () => {
+        mocks.store.set(KEY, record());
+        holdSelf();
+        await open();
+        mocks.upgradeResult = { ...result('Full gear'), candidateCount: 1 };
+        await pressAnalyze();
+        expect(rows().textContent).toContain('Full gear');
+        const stored = mocks.store.get(KEY);
+        expect(stored.savedAt).not.toBe(5);
+        expect(stored.ownerId).toBe('char1');
+        expect(stored.data.results[0].candidate.description).toBe('Full gear');
+        expect(stored.data.stopped).toBeUndefined();
     });
 
     test('stopped after the roster was swapped meanwhile: nothing is put back over the new players', async () => {
@@ -2023,6 +2139,183 @@ describe('Stop or failure before anything is drawn', () => {
         stopImmediately();
         await analyze(null);
         expect(rows().textContent).toBe('');
+    });
+
+    describe('All players', () => {
+        const roster = () => ({
+            player1: { hrid: 'player1', equipment: {} },
+            player2: { hrid: 'player2', equipment: {} },
+        });
+        const choose = (value) => {
+            ui._populateUpgradePlayerSelector();
+            const select = ui.panel.querySelector('#mwi-csim-upgrade-player');
+            select.value = value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        const perPlayer = ({ playerDTOs, playerIndex }) => ({
+            baseline: BASELINE,
+            results: [row(`${playerDTOs[playerIndex].hrid} gear`)],
+            candidateCount: 1,
+            food: null,
+            context: { playerHrid: playerDTOs[playerIndex].hrid, playerIndex, playerDTOs },
+        });
+        const empty = ({ playerDTOs, playerIndex }) => ({
+            baseline: BASELINE,
+            results: [],
+            candidateCount: 1,
+            food: null,
+            context: { playerHrid: playerDTOs[playerIndex].hrid, playerIndex, playerDTOs },
+        });
+        const press = async () => {
+            ui.panel.querySelector('#mwi-csim-upgrade-run').click();
+            await settle();
+        };
+        const stop = () => ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+
+        beforeEach(async () => {
+            mocks.editedDTOs = roster();
+            mocks.editorSelfHrid = 'player1';
+            mocks.playerNames = { player1: 'Ann', player2: 'Bob' };
+            await open();
+        });
+        afterEach(() => {
+            mocks.upgradeResultFor = null;
+        });
+
+        test('stopped before any row: the previous All players table comes back', async () => {
+            choose('all');
+            mocks.upgradeResultFor = perPlayer;
+            await press();
+            expect(rows().textContent).toContain('player1 gear');
+            const prev = ui._allPlayersRun;
+            mocks.onRun = stop;
+            mocks.upgradeResultFor = empty;
+            await press();
+            expect(status()).toContain('Analysis cancelled');
+            expect(ui._allPlayersRun).toBe(prev);
+            expect(rows().textContent).toContain('player1 gear');
+            expect(rows().querySelectorAll('[data-allp-head]').length).toBe(2);
+        });
+
+        test('stopped before any row: the previous table keeps its verify verdicts and basket confirmation', async () => {
+            mocks.upgradeResultFor = perPlayer;
+            await press();
+            const verdicts = { profit: { someRow: { verdict: 'confirmed', mean: 1, se: 0, seeds: 3 } } };
+            const confirm = { key: 'basket', status: 'done', result: { ok: true }, error: null };
+            const table = ui._upgradeResultsData;
+            table.verifyVerdicts = verdicts;
+            ui._budgetConfirm = confirm;
+            choose('all');
+            mocks.onRun = stop;
+            mocks.upgradeResultFor = empty;
+            await press();
+            expect(ui._upgradeResultsData).toBe(table);
+            expect(table.verifyVerdicts).toBe(verdicts);
+            expect(ui._budgetConfirm).toBe(confirm);
+        });
+
+        test('stopped before any row: the previous single-player table comes back', async () => {
+            mocks.upgradeResultFor = perPlayer;
+            await press();
+            expect(rows().textContent).toContain('player1 gear');
+            const prev = ui._upgradeResultsData;
+            choose('all');
+            mocks.onRun = stop;
+            mocks.upgradeResultFor = empty;
+            await press();
+            expect(ui._allPlayersRun).toBeNull();
+            expect(ui._upgradeResultsData).toBe(prev);
+            expect(rows().textContent).toContain('player1 gear');
+            expect(rows().querySelector('[data-allp-head]')).toBeNull();
+        });
+
+        test('the remembered table and its note come back when it was the one on screen', async () => {
+            ui.destroy();
+            mocks.store.set(KEY, record());
+            await open();
+            expect(rows().textContent).toContain('Showing results remembered');
+            choose('all');
+            mocks.onRun = stop;
+            mocks.upgradeResultFor = empty;
+            await press();
+            expect(rows().textContent).toContain('Older gear');
+            expect(rows().textContent).toContain('Showing results remembered');
+            expect(mocks.store.get(KEY).savedAt).toBe(5);
+        });
+
+        test('every player failed: the previous table comes back', async () => {
+            choose('all');
+            mocks.upgradeResultFor = perPlayer;
+            await press();
+            const prev = ui._allPlayersRun;
+            mocks.upgradeResultFor = null;
+            mocks.onRun = () => {
+                throw new Error('sim blew up');
+            };
+            vi.spyOn(console, 'error').mockImplementation(() => {});
+            await press();
+            expect(ui._allPlayersRun).toBe(prev);
+            expect(rows().textContent).toContain('player2 gear');
+        });
+
+        test('stopped after one player drew rows: that player is shown, not the previous table', async () => {
+            choose('all');
+            mocks.upgradeResultFor = (args) => ({ ...perPlayer(args), results: [row(`${args.playerIndex} old`)] });
+            await press();
+            expect(rows().textContent).toContain('0 old');
+            let calls = 0;
+            mocks.onRun = () => {
+                calls++;
+                if (calls === 2) stop();
+            };
+            mocks.upgradeResultFor = (args) => (args.playerIndex === 0 ? perPlayer(args) : empty(args));
+            await press();
+            expect(rows().textContent).toContain('player1 gear');
+            expect(rows().textContent).not.toContain('0 old');
+            const states = ui._allPlayersRun.entries.map((e) => e.state);
+            expect(states).toEqual(['done', 'notrun']);
+        });
+
+        test('no previous table: the empty All players view is shown as before', async () => {
+            choose('all');
+            mocks.onRun = stop;
+            mocks.upgradeResultFor = empty;
+            await press();
+            expect(ui._upgradeResultsData).toBeNull();
+            expect(ui._allPlayersRun.entries.map((e) => e.state)).toEqual(['notrun', 'notrun']);
+            expect(rows().querySelectorAll('[data-allp-head]').length).toBe(2);
+        });
+
+        test('the panel is destroyed during the run: nothing is put back, the remembered record returns on reopen', async () => {
+            ui.destroy();
+            mocks.store.set(KEY, record());
+            await open();
+            expect(rows().textContent).toContain('Older gear');
+            choose('all');
+            mocks.onRun = () => ui.destroy();
+            mocks.upgradeResultFor = empty;
+            await press();
+            expect(ui.panel).toBeNull();
+            expect(ui._upgradeResultsData).toBeNull();
+            mocks.onRun = null;
+            await open();
+            expect(rows().textContent).toContain('Older gear');
+            expect(rows().textContent).toContain('Showing results remembered');
+        });
+
+        test('the roster was swapped during the stopped run: the old table is not put back', async () => {
+            choose('all');
+            mocks.upgradeResultFor = perPlayer;
+            await press();
+            mocks.onRun = () => {
+                stop();
+                mocks.editorOptions.onScenarioReplaced();
+            };
+            mocks.upgradeResultFor = empty;
+            await press();
+            expect(rows().textContent).not.toContain('player1 gear');
+            expect(ui._upgradeResultsData).toBeNull();
+        });
     });
 });
 
