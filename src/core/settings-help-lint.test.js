@@ -27,8 +27,6 @@ const LONG_HELP_ALLOWED = {
     // Documented guarantees: the margin and quiet conditions are pinned against the code in
     // alchemy-catalyst-check.test.js, so shortening them would drop real behavior.
     alchemyCatalystCheck: 'states the exact 10K / 5% margin and every quiet condition, pinned against the code',
-
-    // Bulk: over the limit when this lint was added.
 };
 
 /**
