@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chat name links survive turning the setting off and on
+
+Turning the clickable chat names setting off and back on could leave names unstyled and unclickable until a reload. They now come back at once.
+
+### Craft & Enhance sorts by craft cost
+
+The "Craft cost" column header now sorts the board like the other columns. Rows with no craft cost stay at the bottom either way.
+
+### Held materials line is exact with Invigoration
+
+The tooltip line comparing crafting from held materials against selling them now works out each Invigoration outcome before averaging. For Cooking and Brewing with Invigoration the figure moves by about 0.4%.
+
+### Cowbells set to zero are not briefly counted
+
+With "Cowbells at zero" chosen in the treasure tracker, figures drawn before your character finished loading could count cowbells at the default value. They now show no cowbell worth until your choice is read.
+
 ### Holding a labyrinth tile on a phone shows its info window
 
 A long press on a labyrinth tile used to open the Lab Sim, while a tap showed the tile's info window. A hold now shows the info window too; its "Open in sim" button still opens the sim. Right-click on a desktop is unchanged.
