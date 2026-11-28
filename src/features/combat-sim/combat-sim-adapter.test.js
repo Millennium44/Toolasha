@@ -1887,6 +1887,47 @@ describe('Shykai import and export: slotted talismans and hand-edited pastes', (
         ]);
     });
 
+    describe('Export then Import keeps the talismans', () => {
+        const roundTrip = (talismans) => {
+            const dto = { attackLevel: 80, intelligenceLevel: 70, equipment: {}, talismans };
+            const exported = buildShykaiExportPlayer(dto, 'Milkman');
+            return { exported, back: parseShykaiImport(JSON.stringify(exported)).players[0] };
+        };
+
+        test.each([
+            ['one talisman', [{ slotIndex: 1, modifiers: [line('armor', 6)] }]],
+            [
+                'several, two of the same type, nonzero grades',
+                [
+                    { slotIndex: 1, modifiers: [line('armor', 6), line('haste', 2)] },
+                    { slotIndex: 2, modifiers: [line('armor', 3)] },
+                    { slotIndex: 3, modifiers: [line('armor', 6), line('haste', 5)] },
+                ],
+            ],
+        ])('%s come back equal', (_label, talismans) => {
+            const { back } = roundTrip(talismans);
+            expect(back.talismans).toEqual(talismans);
+            expect(back.intelligenceLevel).toBe(70);
+        });
+
+        test('a skilling line is not written under the combat type', () => {
+            const { exported, back } = roundTrip([
+                { slotIndex: 1, modifiers: [line('armor', 6), line('gather', 4)] },
+                { slotIndex: 2, modifiers: [line('gather', 6)] },
+            ]);
+            expect(exported.player.slottedTalismans).toEqual([
+                { talismanTypeHrid: COMBAT, slotIndex: 1, modifiers: [line('armor', 6)] },
+            ]);
+            expect(back.talismans).toEqual([{ slotIndex: 1, modifiers: [line('armor', 6)] }]);
+        });
+
+        test.each([[undefined], [[]]])('a player with no talismans (%j) exports no field, as before', (talismans) => {
+            const { exported, back } = roundTrip(talismans);
+            expect('slottedTalismans' in exported.player).toBe(false);
+            expect(back.talismans).toBeUndefined();
+        });
+    });
+
     test('an export with no talismans, or junk in the field, leaves the player with none', () => {
         expect(parseShykaiImport(paste({})).players[0].talismans).toBeUndefined();
         expect(parseShykaiImport(paste({ slottedTalismans: 'x' })).players[0].talismans).toBeUndefined();
