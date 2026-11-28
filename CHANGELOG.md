@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A stopped Upgrade analysis no longer replaces your saved one
+
+Stopping a Combat Sim or single-fight Lab Sim analysis before every upgrade was measured used to save the partial table over the full analysis you had remembered. The partial table still shows, but the saved one is kept. A Stop during the later food or ability-order step, with every upgrade measured, still saves.
+
+### Stop puts your table back in the Lab Sim and for All players
+
+Pressing Stop (or a failed run) before any upgrade was measured now puts back what was on screen in the Lab Sim's Upgrade tab and in a Combat Sim "All players" run, as it already did for a single player. A table put back this way keeps its Verify verdicts.
+
 ### Holding a labyrinth tile on a phone shows its info window
 
 A long press on a labyrinth tile used to open the Lab Sim, while a tap showed the tile's info window. A hold now shows the info window too; its "Open in sim" button still opens the sim. Right-click on a desktop is unchanged.
