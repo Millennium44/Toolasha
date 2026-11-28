@@ -466,6 +466,32 @@ describe('the controls', () => {
         expect(order()).toEqual(['low', 'high']);
     });
 
+    test('the Craft cost header sorts, and a row with no craft cost stays last in both directions', async () => {
+        state.rows = [
+            row('mid', { target: level({ craftCostPerUnit: 500 }) }),
+            row('none', { target: level({ craftCostPerUnit: null }) }),
+            row('dear', { target: level({ craftCostPerUnit: 9000 }) }),
+            row('unpriced', { target: unpricedLevel(['sale'], { craftCostPerUnit: 100 }) }),
+            row('cheap', { target: level({ craftCostPerUnit: 20 }) }),
+        ];
+        openBoard();
+        await flush();
+        const order = () =>
+            [...state.panel.panel.querySelectorAll('[data-ce-row]')].map((r) =>
+                r.getAttribute('data-ce-row').split('/').pop()
+            );
+        const header = () => state.panel.panel.querySelector('[data-ce-sort="craft"]');
+        expect(header().textContent).toContain('Craft cost');
+        header().click();
+        await flush();
+        expect(order()).toEqual(['dear', 'mid', 'cheap', 'none', 'unpriced']);
+        expect(header().textContent).toContain('▼');
+        header().click();
+        await flush();
+        expect(order()).toEqual(['cheap', 'mid', 'dear', 'none', 'unpriced']);
+        expect(header().textContent).toContain('▲');
+    });
+
     test('Recompute clears the cache and costs again', async () => {
         openBoard();
         await flush();
