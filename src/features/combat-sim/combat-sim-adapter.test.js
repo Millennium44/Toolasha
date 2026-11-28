@@ -1910,15 +1910,31 @@ describe('Shykai import and export: slotted talismans and hand-edited pastes', (
             expect(back.intelligenceLevel).toBe(70);
         });
 
-        test('a skilling line is not written under the combat type', () => {
+        test('a skilling talisman is not written, a combat one beside it is (one type per talisman)', () => {
             const { exported, back } = roundTrip([
-                { slotIndex: 1, modifiers: [line('armor', 6), line('gather', 4)] },
+                { slotIndex: 1, modifiers: [line('armor', 6), line('haste', 2)] },
                 { slotIndex: 2, modifiers: [line('gather', 6)] },
+                { slotIndex: 3, modifiers: [line('gather', 1), line('gather', 4)] },
             ]);
             expect(exported.player.slottedTalismans).toEqual([
-                { talismanTypeHrid: COMBAT, slotIndex: 1, modifiers: [line('armor', 6)] },
+                { talismanTypeHrid: COMBAT, slotIndex: 1, modifiers: [line('armor', 6), line('haste', 2)] },
             ]);
-            expect(back.talismans).toEqual([{ slotIndex: 1, modifiers: [line('armor', 6)] }]);
+            expect(back.talismans).toEqual([{ slotIndex: 1, modifiers: [line('armor', 6), line('haste', 2)] }]);
+        });
+
+        test('only skilling talismans: no field at all', () => {
+            const { exported } = roundTrip([{ slotIndex: 2, modifiers: [line('gather', 6)] }]);
+            expect('slottedTalismans' in exported.player).toBe(false);
+        });
+
+        test('without the modifier table combat cannot be told from skilling, so nothing is written', () => {
+            delete mocks.clientData.talismanModifierDetailMap;
+            const { exported, back } = roundTrip([
+                { slotIndex: 1, modifiers: [line('armor', 6)] },
+                { slotIndex: 2, modifiers: [line('gather', 6)] },
+            ]);
+            expect('slottedTalismans' in exported.player).toBe(false);
+            expect(back.talismans).toBeUndefined();
         });
 
         test.each([[undefined], [[]]])('a player with no talismans (%j) exports no field, as before', (talismans) => {

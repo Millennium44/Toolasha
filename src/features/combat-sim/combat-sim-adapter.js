@@ -1061,17 +1061,22 @@ export function buildShykaiExportPlayer(dto, name) {
     // The talismans in the shape `importedSimTalismans` reads (`player.slottedTalismans`, the field the Shykai
     // simulator uses), so Export then Import keeps them. Left out when the player has none, as before.
     if (Array.isArray(dto.talismans) && dto.talismans.length > 0) {
-        // The local player's DTO also carries their skilling lines; only combat ones are written under the combat type.
+        // The local player's DTO also carries their skilling talismans, and the DTO drops each talisman's own
+        // type (toSimTalismans), so the type is read from its lines: the game sets it per talisman, so a talisman
+        // is combat when every line is. With no detail map combat cannot be told from skilling, and a skilling
+        // line written under the combat type would mislead other tools, so nothing is written.
         const detailMap = dataManager.getInitClientData?.()?.talismanModifierDetailMap;
-        player.slottedTalismans = dto.talismans
-            .map((t) => ({
-                talismanTypeHrid: COMBAT_TALISMAN_TYPE,
-                slotIndex: t.slotIndex,
-                modifiers: (t.modifiers || [])
-                    .filter((m) => !detailMap || detailMap[m.hrid]?.talismanTypeHrid === COMBAT_TALISMAN_TYPE)
-                    .map((m) => ({ hrid: m.hrid, grade: m.grade })),
-            }))
-            .filter((t) => t.modifiers.length > 0);
+        const isCombat = (t) =>
+            Array.isArray(t.modifiers) &&
+            t.modifiers.length > 0 &&
+            t.modifiers.every((m) => detailMap?.[m.hrid]?.talismanTypeHrid === COMBAT_TALISMAN_TYPE);
+        player.slottedTalismans = detailMap
+            ? dto.talismans.filter(isCombat).map((t) => ({
+                  talismanTypeHrid: COMBAT_TALISMAN_TYPE,
+                  slotIndex: t.slotIndex,
+                  modifiers: t.modifiers.map((m) => ({ hrid: m.hrid, grade: m.grade })),
+              }))
+            : [];
         if (player.slottedTalismans.length === 0) delete player.slottedTalismans;
     }
     for (const [slotType, item] of Object.entries(dto.equipment || {})) {
