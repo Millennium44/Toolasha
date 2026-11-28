@@ -2374,6 +2374,25 @@ describe('cowbellWorth, for the alchemy "Instead of" lines', () => {
         await vi.waitFor(() => expect(treasureTracker.cowbellWorth()).toBe(0));
     });
 
+    test('with no character known yet, nothing is read or cached; the saved choice is read once the id arrives', async () => {
+        const { writeScoped } = await import('../../utils/character-key.js');
+        await writeScoped('treasureSettings', { valueCowbells: false }, 'settings');
+        const known = dm.characterId;
+        dm.characterId = null;
+        try {
+            expect(treasureTracker.cowbellWorth()).toBeNull();
+            await Promise.resolve();
+            expect(treasureTracker.cowbellPreference).toBeNull();
+            expect(treasureTracker.cowbellPreferenceLoading).toBeUndefined();
+            // Still unknown, not the default of counted, however long it stays null
+            expect(treasureTracker.cowbellWorth()).toBeNull();
+        } finally {
+            dm.characterId = known;
+        }
+        expect(treasureTracker.cowbellWorth()).toBeNull();
+        await vi.waitFor(() => expect(treasureTracker.cowbellWorth()).toBe(0));
+    });
+
     test("once the tracker has loaded this character's settings, its own toggle is followed", () => {
         treasureTracker.settingsLoadedFor = dm.characterId ?? null;
         treasureTracker.settings.valueCowbells = false;
