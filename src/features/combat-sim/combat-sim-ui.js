@@ -13348,6 +13348,15 @@ class CombatSimUI {
         const runBtn = this.panel.querySelector('#mwi-csim-upgrade-run');
         const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
         progressEl.style.display = 'block';
+        // What is on screen now (single or All players), so a run that ends with no player's rows drawn can put it
+        // back, as the single-player run does
+        const prevView = {
+            data: this._upgradeResultsData,
+            restoredAt: this._restoredUpgradeAt,
+            meta: this._restoredUpgradeMeta,
+            remembered: this._rememberedResults,
+            allPlayers: this._allPlayersRun,
+        };
         resultsEl.innerHTML = '';
         this._setTuneButtonBusy(true);
         this._setUpgradeColumnMenuOpen(false);
@@ -13492,6 +13501,24 @@ class CombatSimUI {
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
             if (latchGen === this._analysisGen) this._setTuneButtonBusy(false);
+            // Every player not run or failed: nothing of this run is worth showing, so the table that was there comes
+            // back. Read from the entries, not the DOM: a Stop can leave a drawn summary with no rows behind it. A
+            // roster swap counted while the run was out means that table is not for the players now loaded
+            const drewNothing = entries.every((e) => ['pending', 'running', 'notrun', 'failed'].includes(e.state));
+            if (
+                drewNothing &&
+                prevView.data &&
+                !superseded &&
+                current() &&
+                (this._rosterSwapGen || 0) === swapGen &&
+                !this._upgradeResultsData
+            ) {
+                // The empty All players view this run drew gives way to the one it found, and the single-player
+                // render below reads `_allPlayersRun` to decide where to draw
+                this._allPlayersRun = null;
+                this._upgradeResultsData = prevView.data;
+                this._putBackUpgradeView(prevView);
+            }
             if (!superseded && current()) {
                 this._refreshAllPlayersNote();
                 this._afterRun();
