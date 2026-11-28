@@ -41,9 +41,25 @@ const calculator = vi.hoisted(() => ({
 
 const market = vi.hoisted(() => ({ loaded: true }));
 
+/** Settings a test turns off (every other setting reads on) */
+const off = vi.hoisted(() => new Set());
+
+/** What the retransmute figure answers, and the calls it got */
+const retransmute = vi.hoisted(() => ({ result: { status: 'noFigure' }, outputs: false, calls: [] }));
+
+vi.mock('../../utils/retransmute-value.js', () => ({
+    RETRANSMUTE_SETTING: 'alchemy_retransmute',
+    retransmuteValue: (...args) => {
+        retransmute.calls.push(args);
+        return retransmute.result;
+    },
+    hasRetransmutableOutput: () => retransmute.outputs,
+    describeRetransmutePolicy: () => 'Retransmuted: revive\nSold: insanity',
+}));
+
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: () => true,
+        getSetting: (key) => !off.has(key),
         getSettingValue: (key, def) => (key === 'profitCalc_pricingMode' ? 'optimistic' : def),
         getPricingModeDisplayLabel: (mode) => `label:${mode}`,
         onSettingChange: () => () => {},
@@ -116,6 +132,10 @@ beforeEach(() => {
     calculator.unrefine.mockReset().mockReturnValue(someProfit());
     calculator.inputPrice.mockReset().mockReturnValue(100);
     market.loaded = true;
+    off.clear();
+    retransmute.result = { status: 'noFigure' };
+    retransmute.outputs = false;
+    retransmute.calls = [];
 });
 
 afterEach(() => {
@@ -915,5 +935,97 @@ describe('a second trip away from the Alchemy panel and back', () => {
         expect(remove).toHaveBeenCalledTimes(4);
         expect(display.profitSummaryInputListeners).toBeNull();
         expect(display.speedTimeInputListeners).toBeNull();
+    });
+});
+
+describe('the retransmute line under Net Profit', () => {
+    const transmuteData = (overrides = {}) => ({
+        itemHrid: '/items/invincible',
+        profitPerHour: 5000,
+        profitPerDay: 120000,
+        revenuePerHour: 0,
+        materialCostPerHour: 0,
+        catalystCostPerHour: 0,
+        totalTeaCostPerHour: 0,
+        actionsPerHour: 1000,
+        actionTime: 3.6,
+        efficiency: 0,
+        successRate: 0.5,
+        dropRevenues: [],
+        requirementCosts: [],
+        catalystCost: { itemHrid: null, price: 0, costPerAttempt: 0, costPerHour: 0 },
+        consumableCosts: [],
+        pricingMode: 'hybrid',
+        ...overrides,
+    });
+    const draw = (data = transmuteData(), actionType = 'transmute', whatIf = null) => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        display.createDisplay(container, data, actionType, '/items/invincible', 0, whatIf);
+        return container;
+    };
+    const line = (container) => container.querySelector('[data-mwi-retransmute]');
+
+    test('draws the figure under the plain one, with the policy on hover, when it differs', () => {
+        retransmute.result = { status: 'ok', adjustedPerHour: 37708, differs: true, partial: false };
+
+        const container = draw();
+
+        expect(line(container).textContent).toBe('Retransmuting what beats your gold rate: 37.71K/hr');
+        expect(line(container).title).toContain('Retransmuted: revive');
+        expect(line(container).title).toContain('Sold: insanity');
+        // The plain figure is untouched, and the extra line sits right after it
+        const net = Array.from(container.querySelectorAll('div')).find((el) => el.textContent.startsWith('Net Profit'));
+        expect(net.textContent).toContain('5.00K/hr');
+        expect(net.nextElementSibling).toBe(line(container));
+        // Asked for under the live setup the panel reads
+        expect(retransmute.calls[0][1]).toEqual({ useLiveSetup: true, catalystChoice: null });
+    });
+
+    test('a partial figure leads with ≥', () => {
+        retransmute.result = { status: 'ok', adjustedPerHour: 37708, differs: true, partial: true };
+
+        expect(line(draw()).textContent).toContain('≥37.71K/hr');
+    });
+
+    test('nothing is drawn when it does not differ from the plain figure', () => {
+        retransmute.result = { status: 'ok', adjustedPerHour: 5000, differs: false, partial: false };
+
+        expect(line(draw())).toBeNull();
+    });
+
+    test('with no gold rate a note says to set it, only where outputs can be retransmuted', () => {
+        retransmute.result = { status: 'noGoldRate' };
+        retransmute.outputs = true;
+        expect(line(draw()).textContent).toBe('Retransmute figure: set your gold rate in Settings to see it.');
+
+        retransmute.outputs = false;
+        expect(line(draw())).toBeNull();
+    });
+
+    test('no figure, an other tab, or the setting off draws nothing and asks for nothing', () => {
+        expect(line(draw())).toBeNull();
+
+        retransmute.result = { status: 'ok', adjustedPerHour: 37708, differs: true, partial: false };
+        expect(line(draw(transmuteData(), 'coinify'))).toBeNull();
+
+        retransmute.calls = [];
+        off.add('alchemy_retransmute');
+        expect(line(draw())).toBeNull();
+        expect(retransmute.calls).toHaveLength(0);
+    });
+
+    test('a shown what-if catalyst is the setup the figure is worked under', () => {
+        retransmute.result = { status: 'ok', adjustedPerHour: 37708, differs: true, partial: false };
+        const whatIf = {
+            choice: 'prime',
+            catalystHrid: '/items/prime_catalyst',
+            data: transmuteData(),
+            sameAsEquipped: false,
+        };
+
+        draw(transmuteData(), 'transmute', whatIf);
+
+        expect(retransmute.calls[0][1]).toEqual({ useLiveSetup: true, catalystChoice: 'prime' });
     });
 });

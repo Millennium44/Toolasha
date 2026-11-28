@@ -418,9 +418,9 @@ class AlchemyProfitCalculator {
     constructor() {
         // Cache for item detail map
         this._itemDetailMap = null;
-        // Set only for the duration of one synchronous calculateCandidateResults() call: narrows
-        // _bestCatalystCombo to a single candidate. Null everywhere else, so every other
-        // caller gets the full search.
+        // Set only for the duration of one synchronous calculateCandidateResults() or
+        // calculateTransmuteAttemptTerms() call: narrows _bestCatalystCombo to a single candidate.
+        // Null everywhere else, so every other caller gets the full search.
         this._comboFilter = null;
     }
 
@@ -2220,6 +2220,47 @@ class AlchemyProfitCalculator {
             console.error('[AlchemyProfitCalculator] Failed to calculate transmute profit:', error);
             return null;
         }
+    }
+
+    /**
+     * The per-attempt terms of one transmute, for a caller that values a book it does not hold (the retransmute
+     * figure): the success rate, attempt rate, catalyst and coin cost of running the action on `itemHrid` with a
+     * given setup. It needs no price for the item itself. Nothing here changes `calculateTransmuteProfit`; it asks
+     * it for one call, with the input priced at a placeholder that the terms never read.
+     * @param {string} itemHrid - A base item (enhancement level 0)
+     * @param {Object} [setup] - How the catalyst and tea are chosen, as the plain figure it is compared with did:
+     *   `useLiveSetup` reads the action panel's catalyst, `catalystChoice` forces one on top of that, and otherwise
+     *   `catalystHrid` (null for none) with `usesTea` picks one candidate of the best-combo search
+     * @param {boolean} [setup.useLiveSetup]
+     * @param {'none'|'typeSpecific'|'prime'|null} [setup.catalystChoice]
+     * @param {string|null} [setup.catalystHrid]
+     * @param {boolean} [setup.usesTea]
+     * @returns {{successRate: number, actionsPerHour: number, catalystCostPerAttempt: number, coinCost: number,
+     *   bulkMultiplier: number}|null} Null when the action cannot run on the item or its setup cannot be priced
+     */
+    calculateTransmuteAttemptTerms(itemHrid, setup = {}) {
+        const { useLiveSetup = false, catalystChoice = null, catalystHrid = null, usesTea = true } = setup;
+        const pickOne = !useLiveSetup && !catalystChoice;
+        let result = null;
+        if (pickOne) {
+            this._comboFilter = (combo) => combo.catalystHrid === catalystHrid && combo.usesTea === usesTea;
+        }
+        try {
+            result = this.calculateTransmuteProfit(itemHrid, useLiveSetup, null, catalystChoice, null, 0, () => 0);
+        } finally {
+            if (pickOne) this._comboFilter = null;
+        }
+        if (!result || !(result.actionsPerHour > 0)) return null;
+        const coin = result.requirementCosts?.find((cost) => cost.itemHrid === '/items/coin');
+        return {
+            successRate: result.successRate,
+            actionsPerHour: result.actionsPerHour,
+            catalystCostPerAttempt: result.catalystCost?.costPerAttempt || 0,
+            coinCost: coin?.costPerAction || 0,
+            // Drinks run on every attempt, and buy the success bonus the terms already carry
+            teaCostPerAttempt: (result.totalTeaCostPerHour || 0) / result.actionsPerHour,
+            bulkMultiplier: result.requirementCosts?.[0]?.count || 1,
+        };
     }
 
     /**

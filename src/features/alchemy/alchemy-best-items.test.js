@@ -48,6 +48,8 @@ const market = vi.hoisted(() => ({
     candidates: {},
     /** hrid -> the sell-side resolver's {value, needsTax}, for crate contents (absent = null) */
     sellResolved: {},
+    /** itemHrid -> the calculator's per-attempt transmute terms, for the retransmute sort (absent = null) */
+    attemptTerms: {},
 }));
 
 const shop = vi.hoisted(() => ({
@@ -145,6 +147,7 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
         calculateDecomposeProfit: (...args) => calculator.decompose(...args),
         calculateTransmuteProfit: (...args) => calculator.transmute(...args),
         calculateCandidateResults: (action, itemHrid) => market.candidates[itemHrid] ?? [],
+        calculateTransmuteAttemptTerms: (itemHrid) => market.attemptTerms[itemHrid] ?? null,
     },
 }));
 
@@ -396,6 +399,9 @@ beforeEach(() => {
     market.asks = {};
     market.estimated = new Set();
     market.candidates = {};
+    market.attemptTerms = {};
+    delete settings.values.alchemy_retransmute;
+    delete settings.values.actionPanel_craftingPlanGoldPerHour;
     shop.offers = {};
     delete settings.values.alchemy_bestItems_shopPrices;
     delete settings.values.alchemy_bestItems_gearOnly;
@@ -1632,7 +1638,7 @@ describe('the Decompose chain/hr sort', () => {
     test('the mode is offered as a button', () => {
         bestItems.createModal();
         const labels = Array.from(bestItems.modal.querySelectorAll('[data-mwi-sort-btn]')).map((b) => b.textContent);
-        expect(labels).toEqual(['Profit/hr', 'XP/hr', 'Decompose chain/hr', 'Chain/hr (own stock)']);
+        expect(labels).toEqual(['Profit/hr', 'XP/hr', 'Decompose chain/hr', 'Chain/hr (own stock)', 'Retransmute/hr']);
     });
 
     test('ranks by the same chain value the marketplace sort computes, whatever the profit column says', () => {
@@ -3049,5 +3055,207 @@ describe('remembering the place and hiding rows', () => {
             pickType('coinify');
             expect(bestItems.pendingScroll).toBeNull();
         });
+    });
+});
+
+describe('the Retransmute/hr sort', () => {
+    // The real ability-book family: every book drops all eight at 0.125, success 0.5. After the mock's 4% tax a
+    // sell value is 0.96 x the bid, so the bids below are the after-tax figures of the hand calculation
+    // (revive 10, insanity 1000, the rest 20) divided by 0.96. With 10,000 gold/hr over 1000 attempts/hr an extra
+    // attempt costs 10: the seven cheap books retransmute at x = 52.5 / 0.5625 = 93.33, insanity is sold, and the
+    // first attempt gains 0.5 x 0.125 x ((x - 10) + 6 x (x - 20)) x 1000 = 32,708 an hour over the plain 5,000.
+    const BOOKS = ['revive', 'insanity', 'invincible', 'speed_aura', 'guardian_aura', 'fierce_aura', 'critical_aura']
+        .concat('mystic_aura')
+        .map((name) => `/items/${name}`);
+    const GOLD_RATE = 'actionPanel_craftingPlanGoldPerHour';
+    const ADJUSTED = 5000 + 0.5 * 0.125 * (93.3333333333 - 10 + 6 * (93.3333333333 - 20)) * 1000;
+
+    const plain = (hrid, profitPerHour) => ({
+        actionType: 'transmute',
+        itemHrid: hrid,
+        enhancementLevel: 0,
+        requirementCosts: [{ itemHrid: hrid, count: 1, price: 20 }],
+        successRate: 0.5,
+        actionsPerHour: 1000,
+        netProfitPerAttempt: 5,
+        profitPerHour,
+        winningCatalystHrid: null,
+        winningTeaUsed: false,
+    });
+    const row = (hrid, profitPerHour) => ({
+        itemHrid: hrid,
+        name: hrid.split('/').pop(),
+        itemLevel: 10,
+        itemPrice: 20,
+        profitPerHour,
+        xpPerHour: 0,
+        catalyst: null,
+        profitData: plain(hrid, profitPerHour),
+    });
+    const names = () =>
+        Array.from(bestItems.modal.querySelectorAll('tbody tr')).map((tr) => tr.children[1]?.textContent);
+    const cells = () => Array.from(bestItems.modal.querySelectorAll('[data-mwi-retransmute]'));
+    const sortButton = () => bestItems.modal.querySelector('[data-mwi-sort-btn="retransmutePerHour"]');
+
+    function fixture() {
+        bestItems.invalidateCache();
+        game.items = {};
+        market.bids = {};
+        for (const hrid of BOOKS) {
+            game.items[hrid] = {
+                alchemyDetail: {
+                    transmuteSuccessRate: 0.5,
+                    transmuteDropTable: BOOKS.map((book) => ({
+                        itemHrid: book,
+                        dropRate: 0.125,
+                        minCount: 1,
+                        maxCount: 1,
+                    })),
+                },
+            };
+            market.attemptTerms[hrid] = {
+                successRate: 0.5,
+                actionsPerHour: 1000,
+                catalystCostPerAttempt: 0,
+                coinCost: 0,
+                bulkMultiplier: 1,
+            };
+            market.bids[hrid] = 20 / 0.96;
+        }
+        market.bids['/items/revive'] = 10 / 0.96;
+        market.bids['/items/insanity'] = 1000 / 0.96;
+        // A transmute whose outputs have no table of their own: nothing to retransmute
+        game.items['/items/dud'] = {
+            alchemyDetail: {
+                transmuteSuccessRate: 0.5,
+                transmuteDropTable: [{ itemHrid: '/items/dust', dropRate: 1, minCount: 1, maxCount: 1 }],
+            },
+        };
+        game.items['/items/dust'] = { alchemyDetail: null };
+        market.bids['/items/dust'] = 1;
+        settings.values[GOLD_RATE] = 10_000;
+        bestItems.createModal();
+        // Open, as the live handlers require
+        bestItems.modal.style.display = 'flex';
+        bestItems.currentType = 'transmute';
+        // Profit/hr order puts the plain winner first
+        bestItems.cachedRankings.transmute = [row('/items/dud', 9000), row('/items/invincible', 5000)];
+        bestItems.renderTable();
+    }
+
+    test('pressing the button ranks by the retransmute figure and shows its column', () => {
+        fixture();
+        expect(names()).toEqual(['dud', 'invincible']);
+        expect(cells()).toHaveLength(0);
+
+        sortButton().click();
+
+        expect(names()).toEqual(['invincible', 'dud']);
+        expect(cells().map((td) => td.textContent)).toEqual([formatKMB(Math.round(ADJUSTED)), formatKMB(9000)]);
+        // The hover says which books are retransmuted and which sold
+        expect(cells()[0].title).toContain('Sold: insanity');
+        expect(cells()[0].title).toContain('Retransmuted: revive');
+        expect(settings.values.alchemy_bestItems_sortMode).toBe('retransmutePerHour');
+    });
+
+    test('with no gold rate there is no figure, a dash and the plain order', () => {
+        fixture();
+        settings.values[GOLD_RATE] = 0;
+        bestItems.clearChainCaches();
+        sortButton().click();
+
+        expect(cells().map((td) => td.textContent)).toEqual(['—', '—']);
+        expect(cells()[0].title).toContain('gold rate');
+        expect(names()).toEqual(['dud', 'invincible']);
+    });
+
+    test('an unpriced book makes the figure a lower bound with a leading ≥', () => {
+        fixture();
+        delete market.bids['/items/mystic_aura'];
+        bestItems.clearChainCaches();
+        sortButton().click();
+
+        expect(cells()[0].textContent.startsWith('≥')).toBe(true);
+        expect(cells()[0].title).toContain('Left out, no real sell order: mystic_aura');
+    });
+
+    test('an estimate-only output the plain figure counts is marked estimated, never a lower bound', () => {
+        fixture();
+        market.estimated.add('/items/mystic_aura');
+        bestItems.cachedRankings.transmute.find((r) => r.itemHrid === '/items/invincible').profitData.estimatedOutputs =
+            ['/items/mystic_aura'];
+        bestItems.clearChainCaches();
+        sortButton().click();
+
+        expect(cells()[0].textContent.startsWith('≥')).toBe(false);
+        expect(cells()[0].title).toContain('estimated price for mystic_aura');
+        expect(cells()[0].title).not.toContain('lower bound');
+    });
+
+    test('the button and the sort are gone with the setting off, and on the other tabs', () => {
+        fixture();
+        bestItems.sortMode = 'retransmutePerHour';
+        bestItems.renderTable();
+        expect(sortButton().style.display).toBe('');
+        expect(bestItems.effectiveSortMode()).toBe('retransmutePerHour');
+
+        settings.values.alchemy_retransmute = false;
+        bestItems.renderTable();
+        expect(sortButton().style.display).toBe('none');
+        expect(bestItems.effectiveSortMode()).toBe('profit');
+        expect(cells()).toHaveLength(0);
+
+        settings.values.alchemy_retransmute = true;
+        bestItems.currentType = 'decompose';
+        bestItems.cachedRankings.decompose = [];
+        bestItems.renderTable();
+        expect(sortButton().style.display).toBe('none');
+        expect(bestItems.effectiveSortMode()).toBe('profit');
+    });
+
+    test('a market update re-ranks the open table, so the plain figures under it are not stale', () => {
+        fixture();
+        sortButton().click();
+        const reload = vi.spyOn(bestItems, 'loadRankings').mockImplementation(() => Promise.resolve());
+
+        // The market listener the module registered, called as the market API calls it
+        bestItems._onMarketUpdate();
+
+        expect(reload).toHaveBeenCalledWith('transmute');
+        reload.mockRestore();
+    });
+
+    test('a market update leaves a table in a plain sort to the cheap redraw', () => {
+        fixture();
+        const reload = vi.spyOn(bestItems, 'loadRankings').mockImplementation(() => Promise.resolve());
+
+        bestItems._onMarketUpdate();
+
+        expect(reload).not.toHaveBeenCalled();
+        reload.mockRestore();
+    });
+
+    test('changing the gold rate or the setting redraws the open table through the setting listeners', () => {
+        fixture();
+        bestItems.subscribePricingChanges();
+        try {
+            sortButton().click();
+            const before = cells().map((td) => td.textContent);
+
+            // A change made in Settings: time costs more, so the retransmuted books are worth less
+            settings.values[GOLD_RATE] = 40_000;
+            for (const cb of settings.changeListeners[GOLD_RATE] || []) cb(40_000);
+            const after = cells().map((td) => td.textContent);
+            expect(after[0]).not.toBe(before[0]);
+
+            // Turned off while sorted by it: back to Profit/hr, the column gone
+            settings.values.alchemy_retransmute = false;
+            for (const cb of settings.changeListeners.alchemy_retransmute || []) cb(false);
+            expect(cells()).toHaveLength(0);
+            expect(names()).toEqual(['dud', 'invincible']);
+            expect(bestItems.effectiveSortMode()).toBe('profit');
+        } finally {
+            bestItems.unsubscribePricingChanges();
+        }
     });
 });

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Retransmute figure for Transmute
+
+A Transmute now also shows what it earns if you transmute again the outputs worth more that way than sold, and sell the rest, with the extra time charged at your gold rate. Ability books gain the most. Best Items has a matching Retransmute/hr sort, and there is no figure until you set a gold rate.
+
 ### Toolasha follows a guild change without a reload
 
 After you left, joined or created a guild, Toolasha kept using the guild you logged in with until a reload. That affected the Upgrade analysis's shrine cap, which party members count as guild-mates, and the guild trial panels. It now follows the change as it happens.
