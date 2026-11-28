@@ -42,8 +42,15 @@ vi.mock('../../core/data-manager.js', () => ({
     default: { getCurrentCharacterId: () => state.charId },
 }));
 
-const { initExclusions, getExclusions, isExcluded, addExclusion, removeExclusion, clearExclusions } =
-    await import('./networth-exclusions.js');
+const {
+    initExclusions,
+    getExclusions,
+    isExcluded,
+    addExclusion,
+    removeExclusion,
+    clearExclusions,
+    areExclusionsLoaded,
+} = await import('./networth-exclusions.js');
 
 beforeEach(() => {
     state.charId = 'main';
@@ -126,5 +133,41 @@ describe('a character switch landing inside the load', () => {
 
         expect(state.stored.networth_exclusions_iron1).toEqual([]);
         expect(state.stored.networth_exclusions_main).toEqual([{ type: 'assetType', value: 'houses' }]);
+    });
+});
+
+describe('empty versus not loaded', () => {
+    test('not loaded before the first read, loaded after it, even when the list is empty', async () => {
+        state.charId = 'fresh';
+        expect(getExclusions()).toEqual([]);
+        expect(areExclusionsLoaded()).toBe(false);
+
+        state.stored.networth_exclusions_fresh = [];
+        await initExclusions();
+        expect(getExclusions()).toEqual([]);
+        expect(areExclusionsLoaded()).toBe(true);
+    });
+
+    test('a character with nothing saved is loaded and empty', async () => {
+        state.charId = 'nothing-saved';
+        await initExclusions();
+        expect(areExclusionsLoaded()).toBe(true);
+    });
+
+    test('an unreadable list stays not loaded', async () => {
+        state.charId = 'broken';
+        state.stored.networth_exclusions_broken = 'not a list';
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        await initExclusions();
+        expect(areExclusionsLoaded()).toBe(false);
+    });
+
+    test('a switch makes the new character not loaded until its own read lands', async () => {
+        await initExclusions();
+        expect(areExclusionsLoaded()).toBe(true);
+        state.charId = 'iron1';
+        expect(areExclusionsLoaded()).toBe(false);
+        await initExclusions();
+        expect(areExclusionsLoaded()).toBe(true);
     });
 });

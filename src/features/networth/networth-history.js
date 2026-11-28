@@ -506,6 +506,9 @@ class NetworthHistory {
         // here would draw a cliff on the chart and a day's loss of everything
         // on the calendar, and the next reading would book it all back as gain
         if (data.unavailable) return;
+        // Priced while the exclusion list was still unread: excluded items are counted, so the point would be
+        // inflated. The next reading (hourly, or after a recalculation) records once the list is loaded.
+        if (data.exclusionsLoaded === false) return;
 
         const snapshot = {
             t: Date.now(),

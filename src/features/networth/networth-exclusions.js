@@ -100,11 +100,21 @@ export async function initExclusions() {
 }
 
 /**
- * Get all current exclusions synchronously (may be empty before initExclusions completes).
+ * Get all current exclusions synchronously (empty before initExclusions completes; see
+ * `areExclusionsLoaded` to tell that from an empty list).
  * @returns {Array<{type: string, value: string}>}
  */
 export function getExclusions() {
     return currentState().list ?? [];
+}
+
+/**
+ * Whether the current character's list has been read. `getExclusions()` is `[]` both for a list that is empty
+ * and for one not read yet (or unreadable), so a figure that must not count excluded items asks this first.
+ * @returns {boolean}
+ */
+export function areExclusionsLoaded() {
+    return currentState().list !== null;
 }
 
 /**

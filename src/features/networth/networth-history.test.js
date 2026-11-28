@@ -378,6 +378,26 @@ describe('the compact series is stored one record per month', () => {
     });
 });
 
+describe('a reading priced before the exclusion list loaded', () => {
+    test('is not recorded, and the next reading with the list loaded is', async () => {
+        const data = fakeNetworthData();
+        networthHistory.networthFeature = { currentData: { ...data, exclusionsLoaded: false } };
+        await networthHistory.takeSnapshot();
+        expect(networthHistory.history).toHaveLength(0);
+        expect(storageMock.set).not.toHaveBeenCalled();
+
+        networthHistory.networthFeature = { currentData: { ...data, exclusionsLoaded: true } };
+        await networthHistory.takeSnapshot();
+        expect(networthHistory.history).toHaveLength(1);
+    });
+
+    test('data from a calculator that does not say is recorded as before', async () => {
+        networthHistory.networthFeature = { currentData: fakeNetworthData() };
+        await networthHistory.takeSnapshot();
+        expect(networthHistory.history).toHaveLength(1);
+    });
+});
+
 describe('the guild shrine total', () => {
     test('is recorded when the calculator costed the shrines', async () => {
         const data = fakeNetworthData();
