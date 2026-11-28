@@ -54,20 +54,42 @@ const DEPTH_KEY = 'mooketDepth';
 const DEPTH_HISTORY_KEY = 'mooketDepthHistory';
 const SAVE_INTERVAL_MS = 60 * 1000;
 
+/** How far ahead of now an entry's `at` may be before it is read as a skewed clock rather than a real reading */
+const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
+
+/**
+ * An entry whose `at` is past now plus the tolerance, stamped now instead. A device with a fast clock wrote
+ * such a stamp; left as it is, it wins every later newer-wins comparison until real time catches up. A copy,
+ * so the held entry is not changed under its readers. An entry with no numeric `at` is returned as is.
+ * @param {Object} entry - A stored or held price entry
+ * @param {number} now - Current time (ms)
+ * @returns {Object} The entry, or a copy stamped `now`
+ */
+function clampFuture(entry, now) {
+    if (!entry || typeof entry.at !== 'number' || !(entry.at > now + FUTURE_TOLERANCE_MS)) return entry;
+    return { ...entry, at: now };
+}
+
 /**
  * Fold a stored cache under the one in memory: per item, the reading taken
- * later wins, and anything past its age goes.
+ * later wins, and anything past its age goes. A stamp beyond now plus five
+ * minutes counts as, and is stored as, now, on both sides.
  * @param {Object} stored - key → entry, as read back
  * @param {Object} memory - key → entry, as held
+ * @param {number} [now] - Current time (ms); injectable for tests
  * @returns {Object} The merged cache
  */
-function mergePrices(stored, memory) {
-    const merged = { ...(stored && typeof stored === 'object' ? stored : {}) };
-    for (const [key, entry] of Object.entries(memory && typeof memory === 'object' ? memory : {})) {
+export function mergePrices(stored, memory, now = Date.now()) {
+    const merged = {};
+    for (const [key, entry] of Object.entries(stored && typeof stored === 'object' ? stored : {})) {
+        merged[key] = clampFuture(entry, now);
+    }
+    for (const [key, held] of Object.entries(memory && typeof memory === 'object' ? memory : {})) {
+        const entry = clampFuture(held, now);
         const theirs = merged[key];
         if (!theirs || !(theirs.at > (entry?.at ?? -Infinity))) merged[key] = entry;
     }
-    return pruneStale(merged, Date.now() - PRICE_MAX_AGE_MS);
+    return pruneStale(merged, now - PRICE_MAX_AGE_MS);
 }
 
 /**

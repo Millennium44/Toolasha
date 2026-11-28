@@ -51,7 +51,7 @@ vi.mock('../../../utils/adoption-consent.js', () => ({
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
 
-const { default: marketPriceStore } = await import('./market-price-store.js');
+const { default: marketPriceStore, mergePrices } = await import('./market-price-store.js');
 
 beforeEach(async () => {
     vi.useFakeTimers();
@@ -567,5 +567,75 @@ describe('depthHistoryFor', () => {
         for (let i = 1; i < saved.length; i++) {
             expect(saved[i].depthAt - (saved[i - 1].bucketAt ?? saved[i - 1].depthAt)).toBeGreaterThanOrEqual(10 * MIN);
         }
+    });
+});
+
+describe('mergePrices and a skewed clock', () => {
+    const NOW = 1_700_000_000_000;
+    const MIN = 60_000;
+    const price = (ask, at) => ({ ask, bid: ask - 1, askQty: 0, bidQty: 0, at });
+
+    test('a stored entry stamped far in the future does not beat a real reading', () => {
+        const merged = mergePrices({ k: price(999, NOW + 3 * 3_600_000) }, { k: price(5, NOW - MIN) }, NOW);
+        // The stored one counts as stamped now, so it is the newer of the two here; what matters is that its
+        // stamp is stored as now, so the next real reading beats it
+        expect(merged.k.at).toBeLessThanOrEqual(NOW);
+        const next = mergePrices(merged, { k: price(6, NOW + MIN) }, NOW + MIN);
+        expect(next.k.ask).toBe(6);
+    });
+
+    test('a future-dated entry is stored with at clamped to now, on either side', () => {
+        const fromStored = mergePrices({ k: price(7, NOW + 3_600_000) }, {}, NOW);
+        expect(fromStored.k.at).toBe(NOW);
+        expect(fromStored.k.ask).toBe(7);
+        const fromMemory = mergePrices({}, { k: price(8, NOW + 3_600_000) }, NOW);
+        expect(fromMemory.k.at).toBe(NOW);
+        // Held and stored both skewed: tie at now, the held one wins
+        const both = mergePrices({ k: price(1, NOW + 2 * 3_600_000) }, { k: price(2, NOW + 3_600_000) }, NOW);
+        expect(both.k.ask).toBe(2);
+        expect(both.k.at).toBe(NOW);
+    });
+
+    test('a stamp inside the tolerance, and one exactly at it, are left alone', () => {
+        const merged = mergePrices(
+            { near: price(1, NOW + 4 * MIN), edge: price(2, NOW + 5 * MIN) },
+            { near: price(3, NOW + 3 * MIN) },
+            NOW
+        );
+        expect(merged.near.ask).toBe(1);
+        expect(merged.near.at).toBe(NOW + 4 * MIN);
+        expect(merged.edge.at).toBe(NOW + 5 * MIN);
+    });
+
+    test('ordinary newer-wins, entries without a stamp, and old entries still behave', () => {
+        const merged = mergePrices(
+            { a: price(1, NOW - 2 * MIN), b: price(2, NOW - MIN), old: price(3, NOW - 40 * 24 * 3_600_000) },
+            { a: price(10, NOW - MIN), b: price(20, NOW - 2 * MIN) },
+            NOW
+        );
+        expect(merged.a.ask).toBe(10);
+        expect(merged.b.ask).toBe(2);
+        expect(merged.old).toBeUndefined();
+        expect(mergePrices(null, undefined, NOW)).toEqual({});
+    });
+
+    test('the held entry is not changed when its copy is clamped', () => {
+        const held = { k: price(8, NOW + 3_600_000) };
+        mergePrices({}, held, NOW);
+        expect(held.k.at).toBe(NOW + 3_600_000);
+    });
+
+    test('through the real flush: a stored future-dated entry no longer blocks a new reading', async () => {
+        await marketPriceStore.initialize();
+        const skewed = Date.now() + 3 * 3_600_000;
+        storageMock.saved.mooketPrices = { '/items/cheese:0': { ask: 999, bid: 998, at: skewed } };
+        dataManagerMock.handlers['market_item_order_books_updated']({
+            marketItemOrderBooks: {
+                itemHrid: '/items/cheese',
+                orderBooks: [{ asks: [{ price: 100, quantity: 1 }], bids: [] }],
+            },
+        });
+        await marketPriceStore.flush();
+        expect(storageMock.saved.mooketPrices['/items/cheese:0'].ask).toBe(100);
     });
 });
