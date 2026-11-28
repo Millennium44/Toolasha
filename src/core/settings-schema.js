@@ -889,9 +889,9 @@ export const settingsGroups = {
                 default: 0,
                 min: 0,
                 help:
-                    'What an hour of your time earns elsewhere, in gold. The crafting plan and "Instead of buying" ' +
-                    'alchemy routes charge time at it. At 0 time is free and there is no Transmute retransmute ' +
-                    'figure. Use your typical hourly profit (3m, 500k, 1.5b).',
+                    'Your time value: what an hour of your time earns elsewhere, in gold. The crafting plan, "Instead ' +
+                    'of buying" alchemy routes and the retransmute figure charge time at it. Use your typical hourly ' +
+                    'profit (3m, 500k, 1.5b). At 0 time is free, and there is no retransmute figure.',
             },
             actionPanel_craftingPlanThinMarket: {
                 id: 'actionPanel_craftingPlanThinMarket',

@@ -29,7 +29,8 @@ vi.mock('../core/data-manager.js', () => ({
         getSkills: () => [{ skillHrid: '/skills/alchemy', level: engine.settings.alchemyLevel ?? 100 }],
     },
 }));
-vi.mock('./bundle-bridge.js', () => ({
+vi.mock('./bundle-bridge.js', async (importOriginal) => ({
+    ...(await importOriginal()),
     alchemyProfitCalculator: () => ({
         calculateTransmuteAttemptTerms: (hrid, setup) => {
             engine.termsCalls.push([hrid, setup]);
