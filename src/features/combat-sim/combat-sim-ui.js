@@ -14138,7 +14138,14 @@ class CombatSimUI {
             // Only a roster that held the live character is the owner's analysis. An imported profile's or a
             // pasted party's run is shown but never remembered: the record is replaced whole and has no undo,
             // so it would take the owner's own analysis (and restore under their name on the next reload)
-            if ((completed || emptyOrderRun) && ownRoster && this._stillSameCharacter(ownerId)) {
+            // A stopped run is partial: it is shown for this session but never remembered, so the record is replaced
+            // only by an analysis that finished and the previous full one survives a Stop and a reload
+            if (
+                (completed || emptyOrderRun) &&
+                ownRoster &&
+                !this._upgradeAborted &&
+                this._stillSameCharacter(ownerId)
+            ) {
                 // Who and where, so a restored set can say whose run it was -
                 // the selector may hold a different player, or another zone,
                 // by the time these come back

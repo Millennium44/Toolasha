@@ -1975,19 +1975,83 @@ describe('Stop or failure before anything is drawn', () => {
         expect(note().style.display).toBe('block');
     });
 
-    test('stopped with partial rows: the partial table is shown and saved stamped, not the old one', async () => {
+    // Presses the real buttons: Analyze starts the run, and Stop is pressed from inside it
+    const pressAnalyze = async () => {
+        ui.panel.querySelector('#mwi-csim-upgrade-run').click();
+        await settle();
+    };
+    const pressStopDuringRun = () => {
+        mocks.onRun = () => ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+    };
+
+    test('stopped with partial rows: the partial table is shown, the saved full record is not replaced', async () => {
+        mocks.store.set(KEY, record());
+        holdSelf();
+        await open();
+        pressStopDuringRun();
+        mocks.upgradeResult = { ...result('Partial gear'), candidateCount: 5 };
+        await pressAnalyze();
+        expect(rows().textContent).toContain('Partial gear');
+        expect(rows().textContent).not.toContain('Older gear');
+        // Untouched: same stamp, same rows, no stopped marker
+        const stored = mocks.store.get(KEY);
+        expect(stored.savedAt).toBe(5);
+        expect(stored.data.stopped).toBeUndefined();
+        expect(stored.data.results[0].candidate.description).toBe('Older gear');
+    });
+
+    test('stopped with partial rows and a reload: the older full record is what comes back', async () => {
+        mocks.store.set(KEY, record());
+        holdSelf();
+        await open();
+        pressStopDuringRun();
+        mocks.upgradeResult = { ...result('Partial gear'), candidateCount: 5 };
+        await pressAnalyze();
+        // A reload: the panel is built again for the same character
+        ui.destroy();
+        mocks.onRun = null;
+        await open();
+        expect(rows().textContent).toContain('Older gear');
+        expect(rows().textContent).not.toContain('Partial gear');
+        expect(rows().textContent).toContain('Showing results remembered');
+    });
+
+    test('stopped with partial rows and no saved record: nothing is saved', async () => {
+        holdSelf();
+        await open();
+        pressStopDuringRun();
+        mocks.upgradeResult = { ...result('Partial gear'), candidateCount: 5 };
+        await pressAnalyze();
+        expect(rows().textContent).toContain('Partial gear');
+        expect(mocks.store.has(KEY)).toBe(false);
+    });
+
+    test('stopped after the roster was swapped meanwhile: a saved record is still not replaced', async () => {
         mocks.store.set(KEY, record());
         holdSelf();
         await open();
         mocks.onRun = () => {
-            ui._upgradeAborted = true;
+            ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+            mocks.editorOptions.onScenarioReplaced();
         };
         mocks.upgradeResult = { ...result('Partial gear'), candidateCount: 5 };
-        await ui._onUpgradeAnalyze();
-        await settle();
-        expect(rows().textContent).toContain('Partial gear');
-        expect(rows().textContent).not.toContain('Older gear');
-        expect(mocks.store.get(KEY).data.stopped).toEqual({ completed: 1, total: 5 });
+        await pressAnalyze();
+        expect(mocks.store.get(KEY).savedAt).toBe(5);
+        expect(mocks.store.get(KEY).data.results[0].candidate.description).toBe('Older gear');
+    });
+
+    test('a run that finishes is saved as before', async () => {
+        mocks.store.set(KEY, record());
+        holdSelf();
+        await open();
+        mocks.upgradeResult = { ...result('Full gear'), candidateCount: 1 };
+        await pressAnalyze();
+        expect(rows().textContent).toContain('Full gear');
+        const stored = mocks.store.get(KEY);
+        expect(stored.savedAt).not.toBe(5);
+        expect(stored.ownerId).toBe('char1');
+        expect(stored.data.results[0].candidate.description).toBe('Full gear');
+        expect(stored.data.stopped).toBeUndefined();
     });
 
     test('stopped after the roster was swapped meanwhile: nothing is put back over the new players', async () => {
