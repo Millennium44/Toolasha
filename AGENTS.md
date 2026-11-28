@@ -176,7 +176,7 @@ push to `main` or merge.
   the PR's own entries (`node scripts/changelog-pr-entries.mjs --pr <ref> [--base origin/main] [--write]`, which also
   fixes a conflicted changelog by hand: a union merge has attached a body to the wrong heading), checks the merge changed nothing outside `CHANGELOG.md` beyond the PR's own diff against main, and pushes
   only `main`; the PR head is then contained in `main`, so GitHub marks it merged. Such a PR cannot be stacked on
-  another PR.
+  another PR. A PR with no CI because it conflicts with main on `CHANGELOG.md` alone is synced first: with `--push` the script merges main into its branch (fast-forward push, never forced) and stops with exit 3 so CI runs; rerun once green. Any other conflicting file refuses.
 - **`CHANGELOG.md` merges** use the `changelog` merge driver (`scripts/changelog-merge-driver.mjs`): a union merge that
   keeps both sides' entries, then Prettier, so merging `main` into a PR branch no longer needs a "restore the blank
   line" commit. `npm install` registers it in the clone's git config; without it git falls back to a text merge

@@ -15,6 +15,14 @@
 # Its tree outside CHANGELOG.md is checked to be the stack plus exactly the PR's own changes (see
 # check_patch_identity). A merge PR cannot be stacked on another PR, nor another PR on it.
 #
+# A PR with no CI because it conflicts with main (GitHub runs no checks on a conflicting PR), not stacked, whose
+# conflict is CHANGELOG.md alone, is synced first: main is merged into its branch in the integration worktree
+# (changelog merge driver, CHANGELOG.md rebuilt with changelog-pr-entries.mjs, Prettier), and with --push that merge
+# commit is pushed to the PR branch (fast-forward only, never forced); the run then stops with exit 3 so CI can run
+# on it. Rerun once green. Such a PR contains a merge commit, so on that rerun it lands through the merge path above
+# (its only conflict resolution is CHANGELOG.md, which that path rebuilds and excludes from its patch check).
+# Any other conflicting file refuses, naming the files. Without --push it only reports what it would push.
+#
 # Works in the integration worktree ../Toolasha-integ (next to the main checkout), so the main
 # checkout and its dev build stay untouched. Without --push it stops after the full gates and prints
 # the plan. With --push it re-checks that nothing moved, then pushes the PR branches in one atomic push and then main:
@@ -187,6 +195,82 @@ check_pr_state() { # <pr>
 }
 
 # --- b. CI ------------------------------------------------------------------------------------------
+# Number of "### " entries in the Unreleased section of a CHANGELOG.md file.
+count_file_entries() { # <file>
+    awk '/^## Unreleased/{u=1;next} u&&/^## /{u=0} u&&/^### /{c++} END{print c+0}' "$1"
+}
+
+# Undo a half-done sync in the integration worktree: drop the merge state and go back to where it was.
+sync_restore() { # <orig sha>
+    git -C "$INTEG" merge --abort >/dev/null 2>&1 || true
+    git -C "$INTEG" checkout -q --detach "$1"
+}
+
+# A PR with no checks because it conflicts with main: when the conflict is CHANGELOG.md alone, merge main into its
+# branch here (see the header). Returns when the PR is not in that state (the caller then fails as before); exits 3
+# after a sync (pushed, or only described without --push).
+sync_changelog_conflict() { # <pr>
+    local n="$1" mstate orig files before added expected after sha rb
+    mstate="$(gh pr view "$n" --json mergeable,mergeStateStatus --jq '"\(.mergeable) \(.mergeStateStatus)"')" || return 0
+    case "$mstate" in
+        "CONFLICTING "*) ;;
+        "UNKNOWN "*) die "PR #$n: no CI, and GitHub has not computed whether it conflicts yet; retry in a minute" ;;
+        *) return 0 ;; # mergeable: the missing CI is something else
+    esac
+    # check_pr_state refused forks and fetched refs/pr/$n; the remote branch must still be the PR head
+    [ "$(git -C "$INTEG" rev-parse "refs/pr/$n")" = "${HEAD_SHA[$n]}" ] || die "PR #$n head moved; retry"
+    rb="$(git -C "$INTEG" ls-remote origin "refs/heads/${BRANCH[$n]}" | cut -f1)"
+    [ "$rb" = "${HEAD_SHA[$n]}" ] || die "PR #$n: branch ${BRANCH[$n]} is at ${rb:-<missing>}, not the PR head; retry"
+    note "PR #$n: no CI and it conflicts with main; checking whether CHANGELOG.md is the only conflict"
+    orig="$(git -C "$INTEG" rev-parse HEAD)"
+    git -C "$INTEG" config --get merge.changelog.driver >/dev/null ||
+        (cd "$INTEG" && node "$SCRIPT_DIR/setup-merge-driver.mjs") || die "could not register the changelog merge driver"
+    git -C "$INTEG" checkout -q --detach "refs/pr/$n"
+    if git -C "$INTEG" merge --no-ff --no-commit origin/main >/dev/null 2>&1; then
+        files=""
+    else
+        files="$(git -C "$INTEG" diff --name-only --diff-filter=U)"
+        [ -n "$files" ] || files="<unknown>"
+    fi
+    if [ -n "$files" ] && [ "$files" != "CHANGELOG.md" ]; then
+        sync_restore "$orig"
+        die "PR #$n: conflicts with main in more than CHANGELOG.md (merge by hand): $(tr '\n' ' ' <<<"$files")"
+    fi
+    if ! git -C "$INTEG" rev-parse -q --verify MERGE_HEAD >/dev/null; then
+        sync_restore "$orig"
+        die "PR #$n: GitHub reports a conflict but merging main changes nothing; inspect by hand"
+    fi
+    # CHANGELOG.md = main's file plus the PR's own entries (the same rebuild the merge path uses), then Prettier
+    if ! added="$(cd "$INTEG" && node "$SCRIPT_DIR/changelog-pr-entries.mjs" --pr "refs/pr/$n" --base origin/main --write)"; then
+        sync_restore "$orig"
+        die "PR #$n: could not rebuild CHANGELOG.md: $added"
+    fi
+    (cd "$INTEG" && npx --no-install prettier --write CHANGELOG.md >/dev/null)
+    expected="$(grep -c '^added: ' <<<"$added" || true)"
+    before="$(git -C "$INTEG" show origin/main:CHANGELOG.md | awk '/^## Unreleased/{u=1;next} u&&/^## /{u=0} u&&/^### /{c++} END{print c+0}')"
+    after="$(count_file_entries "$INTEG/CHANGELOG.md")"
+    if grep -qE '^(<<<<<<<|>>>>>>>) ' "$INTEG/CHANGELOG.md" || [ "$after" -ne $((before + expected)) ]; then
+        sync_restore "$orig"
+        die "PR #$n: rebuilt CHANGELOG.md has $after entries; expected $before on main + $expected from the PR (or conflict markers)"
+    fi
+    git -C "$INTEG" add CHANGELOG.md
+    if [ "$PUSH" -eq 1 ]; then
+        HUSKY=0 git -C "$INTEG" -c core.editor=true commit -q --no-verify -m "Merge branch 'main' into ${BRANCH[$n]}" ||
+            { sync_restore "$orig"; die "merge commit failed for PR #$n"; }
+        sha="$(git -C "$INTEG" rev-parse HEAD)"
+        # Fast-forward only: the push fails rather than overwrite a branch that moved
+        git -C "$INTEG" push origin "$sha:refs/heads/${BRANCH[$n]}" ||
+            { sync_restore "$orig"; die "PR #$n: push of the sync commit was refused (branch moved?); nothing forced"; }
+        sync_restore "$orig"
+        echo "PR #$n: merged main to clear a CHANGELOG.md conflict and pushed; CI will run on $sha; rerun once green"
+    else
+        sync_restore "$orig"
+        echo "PR #$n: CHANGELOG.md is the only conflict with main ($before on main + $expected from the PR)."
+        echo "PR #$n: with --push this merges main into ${BRANCH[$n]} and pushes it so CI runs; nothing pushed now. Rerun with --push, then again once green."
+    fi
+    exit 3
+}
+
 check_ci() { # <pr>
     local n="$1" rc=0 out
     out="$(gh pr checks "$n" 2>&1)" || rc=$? # 0 all pass or skipped, 8 pending, 1 failing or none
@@ -194,6 +278,10 @@ check_ci() { # <pr>
     if [ "$rc" -ne 0 ] && [ -n "${PARENT[$n]:-}" ] && grep -q '^no checks reported' <<<"$out"; then
         echo "PR #$n: no CI (stacked on #${PARENT[$n]}; CI runs only for PRs into main), covered by the full gates"
         return
+    fi
+    # Not stacked, no checks, and GitHub says it conflicts: a conflict is why no CI ran. Sync it if CHANGELOG.md is alone.
+    if [ "$rc" -ne 0 ] && [ -z "${PARENT[$n]:-}" ] && grep -q '^no checks reported' <<<"$out"; then
+        sync_changelog_conflict "$n"
     fi
     case "$rc" in
         0) echo "PR #$n: CI green" ;;
@@ -333,8 +421,11 @@ merge_pr() { # <pr>
     if ! git merge --no-ff --no-commit "refs/pr/$n" >/dev/null 2>&1; then
         local files
         files="$(git diff --name-only --diff-filter=U)"
-        git merge --abort 2>/dev/null || true
-        die "merging PR #$n onto the stack conflicts in: ${files:-<unknown>}"
+        # CHANGELOG.md alone is rebuilt below; any other file is a real conflict
+        if [ "$files" != "CHANGELOG.md" ]; then
+            git merge --abort 2>/dev/null || true
+            die "merging PR #$n onto the stack conflicts in: ${files:-<unknown>}"
+        fi
     fi
     git rev-parse -q --verify MERGE_HEAD >/dev/null || die "PR #$n is already contained in the stack; nothing to merge"
     # The base is the stack so far (HEAD is unchanged until the commit), so earlier PRs' entries are kept
