@@ -13508,6 +13508,10 @@ class CombatSimUI {
             if (
                 drewNothing &&
                 prevView.data &&
+                // A panel torn down mid-run (the setting turned off) has nothing to draw into, and the state set
+                // below would block the remembered record from coming back when it is built again
+                this.panel &&
+                resultsEl.isConnected &&
                 !superseded &&
                 current() &&
                 (this._rosterSwapGen || 0) === swapGen &&

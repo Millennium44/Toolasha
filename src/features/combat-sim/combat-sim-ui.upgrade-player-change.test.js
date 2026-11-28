@@ -2248,6 +2248,23 @@ describe('Stop or failure before anything is drawn', () => {
             expect(rows().querySelectorAll('[data-allp-head]').length).toBe(2);
         });
 
+        test('the panel is destroyed during the run: nothing is put back, the remembered record returns on reopen', async () => {
+            ui.destroy();
+            mocks.store.set(KEY, record());
+            await open();
+            expect(rows().textContent).toContain('Older gear');
+            choose('all');
+            mocks.onRun = () => ui.destroy();
+            mocks.upgradeResultFor = empty;
+            await press();
+            expect(ui.panel).toBeNull();
+            expect(ui._upgradeResultsData).toBeNull();
+            mocks.onRun = null;
+            await open();
+            expect(rows().textContent).toContain('Older gear');
+            expect(rows().textContent).toContain('Showing results remembered');
+        });
+
         test('the roster was swapped during the stopped run: the old table is not put back', async () => {
             choose('all');
             mocks.upgradeResultFor = perPlayer;
