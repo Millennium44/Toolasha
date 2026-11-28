@@ -639,6 +639,9 @@ function getSpriteBaseUrl() {
     return null;
 }
 
+/** Press events kept inside the portaled Add to Tab panel so the game's click-away closer never sees them. */
+const PANEL_PRESS_EVENTS = ['touchstart', 'touchend', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'];
+
 // Color presets for tab accents
 const COLOR_PRESETS = ['#e06060', '#e0a030', '#40c060', '#40a0e0', '#a060e0', '#e060c0'];
 
@@ -4964,6 +4967,10 @@ ${unpricedTitle(unpriced)}`;
         });
 
         wrapper.appendChild(toggle);
+        // The panel lives outside the game's item menu, which closes on a touchend that reaches
+        // document from outside it. Keep presses inside the panel from bubbling out, or a phone tap
+        // removes the menu (and this panel) before the click lands. `click` is left alone.
+        for (const type of PANEL_PRESS_EVENTS) panel.addEventListener(type, (e) => e.stopPropagation());
         markToolashaSurface(panel, 'popover');
         document.body.appendChild(panel);
         actionMenu.appendChild(wrapper);

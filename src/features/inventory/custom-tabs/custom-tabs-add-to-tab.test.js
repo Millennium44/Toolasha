@@ -110,6 +110,19 @@ describe('"Add to Tab" dropdown portal', () => {
         expect(panel().style.display).toBe('none');
     });
 
+    test("press events on a panel button stay out of the game's click-away listener", () => {
+        toggle().click();
+        const seen = [];
+        const types = ['touchstart', 'touchend', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'];
+        for (const type of types) document.addEventListener(type, () => seen.push(type));
+        const row = panel().querySelector('button');
+        for (const type of types) row.dispatchEvent(new Event(type, { bubbles: true }));
+        expect(seen).toEqual([]);
+        expect(panel().isConnected).toBe(true);
+        document.body.dispatchEvent(new Event('touchend', { bubbles: true }));
+        expect(seen).toEqual(['touchend']);
+    });
+
     test('removing the native menu while open takes the portaled panel with it', async () => {
         toggle().click();
         menu.remove();

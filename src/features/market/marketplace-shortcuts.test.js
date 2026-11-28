@@ -90,6 +90,23 @@ describe('Marketplace Action dropdown portal', () => {
         expect(panel.style.display).toBe('flex');
     });
 
+    test("press events on a panel button stay out of the game's click-away listener", () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        dropdown.querySelector('.mwi-marketplace-dropdown-toggle').click();
+        const panel = document.querySelector('.mwi-marketplace-dropdown-panel');
+        const seen = [];
+        const types = ['touchstart', 'touchend', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'];
+        for (const type of types) document.addEventListener(type, () => seen.push(type));
+        const option = panel.querySelector('button');
+        for (const type of types) option.dispatchEvent(new Event(type, { bubbles: true }));
+        expect(seen).toEqual([]);
+        expect(panel.isConnected).toBe(true);
+        document.body.dispatchEvent(new Event('touchend', { bubbles: true }));
+        expect(seen).toEqual(['touchend']);
+    });
+
     test('disable removes the portaled panel as well as its native-menu toggle', () => {
         const menu = actionMenu();
         const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);

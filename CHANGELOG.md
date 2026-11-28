@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Marketplace Action and Add to Tab work on a phone
+
+In an item's menu, the Marketplace Action options (Sell Now, Buy Now, New Sell Listing, New Buy Listing) and the Add to Tab list did nothing when pressed with a finger: the game closed the menu before the press landed. They now work on touch screens.
+
 <!-- shipped in 3.93.0 -->
 
 ### Labyrinth Next button offers the next floor

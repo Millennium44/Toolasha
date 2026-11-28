@@ -19,6 +19,9 @@ import { isMobileMode } from '../../utils/mobile.js';
 import { itemHridFromIcon } from '../../utils/item-icon.js';
 import { GAME } from '../../utils/selectors.js';
 
+/** Press events kept inside the portaled panel so the game's click-away closer never sees them. */
+const PANEL_PRESS_EVENTS = ['touchstart', 'touchend', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'];
+
 /** Native input value setter for triggering React state updates */
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
 
@@ -295,6 +298,11 @@ class MarketplaceShortcuts {
             gap: 3px;
             box-sizing: border-box;
         `;
+
+        // The panel lives outside the game's item menu, which closes on a touchend that reaches
+        // document from outside it. Keep presses inside the panel from bubbling out, or a phone tap
+        // removes the menu (and this panel) before the click lands. `click` is left alone.
+        for (const type of PANEL_PRESS_EVENTS) panel.addEventListener(type, (e) => e.stopPropagation());
 
         // Action buttons
         const actions = [
