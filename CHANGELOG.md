@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.93.1 -->
+
 ### Toolasha follows a guild change without a reload
 
 After you left, joined or created a guild, Toolasha kept using the guild you logged in with until a reload. That affected the Upgrade analysis's shrine cap, which party members count as guild-mates, and the guild trial panels. It now follows the change as it happens.
@@ -8218,6 +8220,71 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.93.1](https://github.com/Millennium44/Toolasha/compare/v3.93.0...v3.93.1) (2026-11-28)
+
+### Bug Fixes
+
+- artisan help says only hybrid averages in craft & enhance ([3276f6c](https://github.com/Millennium44/Toolasha/commit/3276f6c01db25caf6905e8de27f76ce1bb3d5793))
+- chat profile link help says a click opens the profile ([7ed1d66](https://github.com/Millennium44/Toolasha/commit/7ed1d66cc8ee7671792078503c3c2f5d2a63c3da))
+- chat profile link styling and click now come back after the setting is toggled off and on ([21a82c5](https://github.com/Millennium44/Toolasha/commit/21a82c51552993af27766c450a1f3cc2be47a788))
+- combat sim all players put-back skips a panel destroyed mid-run ([9e04ca6](https://github.com/Millennium44/Toolasha/commit/9e04ca668b91423e55ce5dac383dae75f7aad259))
+- combat sim all players run puts the previous table back when nothing is drawn ([833d4a8](https://github.com/Millennium44/Toolasha/commit/833d4a85937f7b1273c03f945b2e35af9def95a4))
+- combat sim export keeps slotted talismans ([23148ef](https://github.com/Millennium44/Toolasha/commit/23148ef2d6bd78a59b115794d5262071bde363a9))
+- combat sim export writes no talismans when combat cannot be told apart ([2e76d98](https://github.com/Millennium44/Toolasha/commit/2e76d98a80b568eb112738520de5f2b64dc34e24))
+- combat sim never remembers a run that was stopped in any phase ([53feeb9](https://github.com/Millennium44/Toolasha/commit/53feeb93675d467302da043963d9411b48f5852e))
+- combat sim put-back keeps the previous table's verify verdicts and basket confirmation ([f395c04](https://github.com/Millennium44/Toolasha/commit/f395c0469556e33d768a735c04a89f8f634bac69))
+- combat sim remembers a table whose candidates were all measured when stop landed later ([c7c05dd](https://github.com/Millennium44/Toolasha/commit/c7c05dd21406fd12fb564e7962deff9bcdede44c))
+- combat sim stopped upgrade run no longer replaces the saved full analysis ([60d8fb5](https://github.com/Millennium44/Toolasha/commit/60d8fb55da9ae7d3c143f36dcd2b8f7132abca13))
+- craft & enhance board sorts by craft cost ([4417007](https://github.com/Millennium44/Toolasha/commit/4417007e43aefb2d5d2d2c8f524f0ee95767990e))
+- dungeon roi runs cap matches the blank box and handles runs over a day ([4e36815](https://github.com/Millennium44/Toolasha/commit/4e3681594fd0cd39b924be5b5010421f20c0a10c))
+- dungeon roi what-if caps typed runs per day at what fits in 24 h ([705c610](https://github.com/Millennium44/Toolasha/commit/705c6101dbd5b77b8ea818eb6d9fb9a10a9ac305))
+- guild messages wait for the incoming character to be installed ([27fd709](https://github.com/Millennium44/Toolasha/commit/27fd70922d6c4a950c55abfe5fea30b11eeaffb5))
+- held-materials tooltip line compares each Invigoration outcome before mixing them ([37bfa52](https://github.com/Millennium44/Toolasha/commit/37bfa52abe2536cd733dc4db5ca468d9cd3cad1f))
+- holding a labyrinth tile on a phone shows its info window instead of opening the sim ([dccb16d](https://github.com/Millennium44/Toolasha/commit/dccb16dbcf54fd29617af16754ab67a888d9191b))
+- keep the guild and its roster current after leaving, creating or joining a guild ([431e5fb](https://github.com/Millennium44/Toolasha/commit/431e5fbce2f8cf6f03c4b54fe42131cb8d0fce43))
+- key pricing help names the craft and synced options instead of "the last option" ([17b2ae9](https://github.com/Millennium44/Toolasha/commit/17b2ae93507c6b55ef7d75d4ae60db84a169c52a))
+- lab sim put-back adds the cancelled note once across repeated stops ([dfb6f73](https://github.com/Millennium44/Toolasha/commit/dfb6f73bc333462d530d044e94fdbaf7bc47c8ad))
+- lab sim put-back restores verify state before it redraws ([2fad7f3](https://github.com/Millennium44/Toolasha/commit/2fad7f3ce85ae86cca187c14a88cd95e485aa31d))
+- lab sim remembers an upgrade run only when no pass was stopped ([dfacbe0](https://github.com/Millennium44/Toolasha/commit/dfacbe0700d8cef17ca3e497f02f27050e536c30))
+- lab sim stop or failure before any row puts the previous view back ([bfb0869](https://github.com/Millennium44/Toolasha/commit/bfb0869ee638c9cdbc59f8bd8529a9fe832d5ce4))
+- lab sim stopped single-fight run no longer replaces the remembered record ([3c92c80](https://github.com/Millennium44/Toolasha/commit/3c92c801dbc36ab7153ae2c317f00b62710c29d6))
+- marketplace action and add to tab options work on a touch press ([6268619](https://github.com/Millennium44/Toolasha/commit/62686195abc7dee48bb4eb06238e2ff2e0dd8c5c))
+- net worth history retries after exclusions load, never skips on a failed read ([891312a](https://github.com/Millennium44/Toolasha/commit/891312a896ca5ff22c74b138746d25c24e822019))
+- net worth history skips readings priced before exclusions loaded ([200d18f](https://github.com/Millennium44/Toolasha/commit/200d18f3f6c1f6c7a5ad5e4bc606adabb3b3a202))
+- price merge lets a skewed entry lose to any real reading ([d39768d](https://github.com/Millennium44/Toolasha/commit/d39768daf56c2653370d48218aedc17f1cc323ae))
+- price merge treats a future-dated entry as stamped now ([791aa4a](https://github.com/Millennium44/Toolasha/commit/791aa4a86f34717dc9379f1736c694137fdba1a5))
+- price target alert description says again that it is quiet without pooled data ([fc52d55](https://github.com/Millennium44/Toolasha/commit/fc52d551f0998c21416a1ec1fc3f4628cbc468a1))
+- restore possessives and dropped meaning in trimmed setting descriptions ([45dbf6a](https://github.com/Millennium44/Toolasha/commit/45dbf6acdc4ad3ff99b98bd4f941f029a115e063))
+- setting descriptions match what the code does ([1f1b419](https://github.com/Millennium44/Toolasha/commit/1f1b4197dde6f16de56ef5892d88f7910c961a15))
+- setting descriptions trimmed to 300 characters ([aa8fa40](https://github.com/Millennium44/Toolasha/commit/aa8fa40f8f51987e7b5aedd91ae41bf339833080))
+- seven trimmed setting descriptions get back the scope or condition they lost ([fa268d1](https://github.com/Millennium44/Toolasha/commit/fa268d1c64bba98ae702ddd90ac50d4f5293ffa6))
+- shopping lists and craft bills credit the buy orders they were netted by, per order ([4dbf147](https://github.com/Millennium44/Toolasha/commit/4dbf147673fe7ac2e3850c1d20da93f21785741f))
+- treasure tracker no longer caches the cowbell default before a character is known ([ec48409](https://github.com/Millennium44/Toolasha/commit/ec484098eda2dc6c6d7cd7a11ed3393014c782c5))
+
+### Code Refactoring
+
+- remove the dead labSimUI accessor from the bundle bridge ([efe2511](https://github.com/Millennium44/Toolasha/commit/efe2511ffb4539ce4a2a5ac6d48d23a00f752bd0))
+- token valuation reuses the shared scroll token cost ([c774cc1](https://github.com/Millennium44/Toolasha/commit/c774cc1f01277fdb5e5fbc0fa2e1438b6d00b89d))
+
+### Documentation
+
+- agent briefs test a callback through its real caller ([e5c095b](https://github.com/Millennium44/Toolasha/commit/e5c095bfbca3a6e09077d705dbe0393d40ff2874))
+- changelog entries for the figure fixes ([c2b8826](https://github.com/Millennium44/Toolasha/commit/c2b8826cb6081c75dc7cb83cb55e6280fe821e34))
+- changelog entries for the sim stop fixes ([3a22ca5](https://github.com/Millennium44/Toolasha/commit/3a22ca5955c66039751bde558d01d38cc53a111a))
+- changelog entries for the small leftover fixes ([6c23e4a](https://github.com/Millennium44/Toolasha/commit/6c23e4af15c2d5ece75a6fa08fc32157a4fbbf47))
+- changelog entry for the trimmed setting descriptions ([c18f56d](https://github.com/Millennium44/Toolasha/commit/c18f56d84237b91f843666c7cefcfdd40a4fd5dc))
+- changelog says any stop keeps the saved analysis ([d4d4fa9](https://github.com/Millennium44/Toolasha/commit/d4d4fa90e86d985016b695018b96ee8713b22574))
+- probe a data-shape leftover live first; run every .help test on a help edit ([9874e06](https://github.com/Millennium44/Toolasha/commit/9874e06c76e3b590f2ae4c1235ebf5cd0c56c497))
+
+### Tests
+
+- date the live-prices snapshot a second back so a same-second patch cannot tie ([6bd3064](https://github.com/Millennium44/Toolasha/commit/6bd306454e3827001718d982d14c41c122cfbb5c))
+- held-materials line reads real calculateProfit output through the tooltip path ([b9dec6c](https://github.com/Millennium44/Toolasha/commit/b9dec6cb4916a59c8a75eccd654e1467e9ab731c))
+
+### Miscellaneous Chores
+
+- land-stack syncs a CHANGELOG.md-only conflict so CI runs on the sibling PR ([60c1872](https://github.com/Millennium44/Toolasha/commit/60c18729954ee554a4aef50abd899cc050b5e70d))
 
 ## [3.93.0](https://github.com/Millennium44/Toolasha/compare/v3.92.0...v3.93.0) (2026-11-25)
 
