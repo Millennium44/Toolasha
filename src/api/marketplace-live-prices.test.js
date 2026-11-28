@@ -12,7 +12,9 @@ describe('MarketAPI live-server prices on the test server', () => {
 
     const payload = (ask) => ({
         marketData: { '/items/cheese': { 0: { a: ask, b: ask - 1 } } },
-        timestamp: Math.floor(Date.now() / 1000),
+        // A second in the past: a patch taken "now" must be strictly newer than the snapshot, and a
+        // snapshot dated the current second ties with it whenever Date.now() lands on a whole second
+        timestamp: Math.floor(Date.now() / 1000) - 1,
     });
 
     const load = async (origin) => {
