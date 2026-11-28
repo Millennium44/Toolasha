@@ -222,6 +222,10 @@ Every brief to a sub-agent carries these lines:
   the brief, and logs one real message for any field it names. Reading the minified source is not enough: on
   2026-11-25 a brief said `handleViewProfile(characterId)` and `profile_shared.characterID`, while the handler
   takes the name and the raw message is only `{type, profile}`, which cost two live rounds.
+- **A leftover whose premise is a data shape gets one live probe before any builder is spawned.** If the
+  bug only exists when the game sends a certain shape (a missing row, a field at zero, a status), read it
+  in a test tab first. If Chrome is down, wait or ask; never build on the reading of the code. #1057 was
+  built and reviewed, then dropped once a probe showed the shape never occurs.
 - **Consumer sweep**: list every reader and writer of the state you change, check each, and put the list
   in the report. Most bugs reviewers caught were in a reader, not the changed function.
 - **Report the enumeration, not just the findings**, so nobody pays to re-derive it.
@@ -288,7 +292,9 @@ Every brief to a sub-agent carries these lines:
     - A panel with an Overlay tile is already in Ctrl+K; a panel without one registers a command, and a
       command for a tiled panel carries `row: '<tile key>'` so the palette lists it once.
     - `help` stays at 300 characters or fewer, in American spelling, or goes in `LONG_HELP_ALLOWED`
-      with a reason.
+      with a reason. An edit to any `help` string runs every test file that reads `.help`
+      (`grep -rlE "\.help" --include=*.test.js src scripts`): a test pinning a phrase in
+      `price-target-alerts.test.js` failed only in CI (2026-11-28).
     - Guards: `setting-presets.test.js`, `settings-schema.test.js`, `feature-registry-gates.test.js`,
       `panel-command-coverage.test.js`, `iron-cow-mode.priced.test.js`, `settings-help-lint.test.js`.
 - **Pull with `git pull --rebase`**, never a merge.
