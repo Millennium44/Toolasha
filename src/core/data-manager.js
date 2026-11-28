@@ -1968,6 +1968,39 @@ class DataManager {
             this.emit('buffs_updated', data);
         });
 
+        // Handle guild_updated / guild_characters_updated: the login copy of the guild must follow a
+        // leave, a create or a join, or every reader keeps judging the player by the guild they left.
+        // `guild: null` and `{}` are real data (a guildless character), not "not loaded". Each message
+        // replaces its whole map. The shrine building levels are not written here: the shape-matched
+        // wildcard handler (captureGuildShrineData) owns them and their persistence.
+        // isFromInitializedCharacter, not just the active socket: between a new login binding its socket
+        // and init swapping characterData, a guild message must not land in the previous character.
+        // These handlers must register before the feature listeners that compare a frame's guild with
+        // characterData.guild (guild-trials.js, guild-trial-damage.js); data-manager sets up first.
+        this.webSocketHook.on('guild_updated', (data, context) => {
+            if (!this.isFromInitializedCharacter(context) || !this.characterData || !data) return;
+            if (data.guild !== undefined) this.characterData.guild = data.guild;
+            if (data.guildWeeklyTrialSet !== undefined) {
+                this.characterData.guildWeeklyTrialSet = data.guildWeeklyTrialSet;
+            }
+            if (data.guildTrialScheduleHourOffset !== undefined) {
+                this.characterData.guildTrialScheduleHourOffset = data.guildTrialScheduleHourOffset;
+            }
+        });
+
+        this.webSocketHook.on('guild_characters_updated', (data, context) => {
+            if (!this.isFromInitializedCharacter(context) || !this.characterData || !data) return;
+            const isMap = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
+            if (isMap(data.guildCharacterMap)) this.characterData.guildCharacterMap = data.guildCharacterMap;
+            if (isMap(data.guildSharableCharacterMap)) {
+                this.characterData.guildSharableCharacterMap = data.guildSharableCharacterMap;
+            }
+            // The game replaces its sign-up levels from this message, an absent map meaning none
+            this.characterData.guildTrialSignupLevelMap = isMap(data.guildTrialSignupLevelMap)
+                ? data.guildTrialSignupLevelMap
+                : {};
+        });
+
         // Handle skills_updated (when user gains skill levels)
         this.webSocketHook.on('skills_updated', (data, context) => {
             if (!this._isFromActiveSocket(context)) return;

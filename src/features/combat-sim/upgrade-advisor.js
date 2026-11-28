@@ -2127,8 +2127,8 @@ function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
  * unloaded map, an unknown own guild or a member of another guild is not the same guild, so no cap is applied and
  * the building level is unknown (the game never sends another guild's shrine levels).
  *
- * The fallback map is the login snapshot: it is not refreshed by `guild_characters_updated`, so a member who
- * joined or left, or a guild change, after login is judged on the roster as it was then.
+ * Both the own guild id and the fallback roster are read from `characterData` at call time, and the data manager
+ * replaces them on `guild_updated` / `guild_characters_updated`, so a guild change after login is followed.
  * @param {Object} playerDTO - Player DTO
  * @param {boolean} isSelf - Whether the DTO is the live character
  * @returns {boolean}

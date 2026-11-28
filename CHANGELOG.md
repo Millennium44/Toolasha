@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Toolasha follows a guild change without a reload
+
+After you left, joined or created a guild, Toolasha kept using the guild you logged in with until a reload. That affected the Upgrade analysis's shrine cap, which party members count as guild-mates, and the guild trial panels. It now follows the change as it happens.
+
 ### Setting descriptions checked against the code
 
 23 of the shortened setting descriptions said something the setting does not do, or dropped a caveat you need, such as when the auto-reload waits, how long plan reservations last, and when an enhancing run resumes. Each one was checked against what the code does and corrected.
