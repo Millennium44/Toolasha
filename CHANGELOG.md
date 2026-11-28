@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### A stopped Upgrade analysis no longer replaces your saved one
 
-Stopping a Combat Sim or single-fight Lab Sim analysis before every upgrade was measured used to save the partial table over the full analysis you had remembered. The partial table still shows, but the saved one is kept. A Stop during the later food or ability-order step, with every upgrade measured, still saves.
+Stopping a Combat Sim or Lab Sim Upgrade analysis could save the stopped run over the full analysis you had remembered. The table from the stopped run still shows, but the saved one is kept, whichever step Stop was pressed in. Only a run that finishes is remembered.
 
 ### Stop puts your table back in the Lab Sim and for All players
 
