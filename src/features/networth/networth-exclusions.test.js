@@ -42,7 +42,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: { getCurrentCharacterId: () => state.charId },
 }));
 
-const { initExclusions, getExclusions, isExcluded, addExclusion, removeExclusion, clearExclusions } =
+const { initExclusions, getExclusions, isExcluded, addExclusion, removeExclusion, clearExclusions, exclusionsStatus } =
     await import('./networth-exclusions.js');
 
 beforeEach(() => {
@@ -126,5 +126,45 @@ describe('a character switch landing inside the load', () => {
 
         expect(state.stored.networth_exclusions_iron1).toEqual([]);
         expect(state.stored.networth_exclusions_main).toEqual([{ type: 'assetType', value: 'houses' }]);
+    });
+});
+
+describe('empty versus not read yet versus unreadable', () => {
+    test('pending before the first read, loaded after it, even when the list is empty', async () => {
+        state.charId = 'fresh';
+        expect(getExclusions()).toEqual([]);
+        expect(exclusionsStatus()).toBe('pending');
+
+        state.stored.networth_exclusions_fresh = [];
+        await initExclusions();
+        expect(getExclusions()).toEqual([]);
+        expect(exclusionsStatus()).toBe('loaded');
+    });
+
+    test('a character with nothing saved is loaded and empty', async () => {
+        state.charId = 'nothing-saved';
+        await initExclusions();
+        expect(exclusionsStatus()).toBe('loaded');
+    });
+
+    test('an unreadable list is failed, not pending, and a later retry that can read it loads', async () => {
+        state.charId = 'broken';
+        state.stored.networth_exclusions_broken = 'not a list';
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        await initExclusions();
+        expect(exclusionsStatus()).toBe('failed');
+
+        state.stored.networth_exclusions_broken = [{ type: 'item', value: '/items/cheese' }];
+        await initExclusions();
+        expect(exclusionsStatus()).toBe('loaded');
+    });
+
+    test('a switch makes the new character pending until its own read lands', async () => {
+        await initExclusions();
+        expect(exclusionsStatus()).toBe('loaded');
+        state.charId = 'iron1';
+        expect(exclusionsStatus()).toBe('pending');
+        await initExclusions();
+        expect(exclusionsStatus()).toBe('loaded');
     });
 });

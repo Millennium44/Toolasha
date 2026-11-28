@@ -49,12 +49,12 @@ function storageKey(charId) {
 
 /**
  * The current character's cache and any read already filling it.
- * @returns {{charId: string, list: Array|null, loading: Promise|null}}
+ * @returns {{charId: string, list: Array|null, loading: Promise|null, failed: boolean}}
  */
 function currentState() {
     const charId = currentCharId();
     if (!state || state.charId !== charId) {
-        state = { charId, list: null, loading: null };
+        state = { charId, list: null, loading: null, failed: false };
     }
     return state;
 }
@@ -79,8 +79,10 @@ async function loadExclusions(owner = currentState()) {
                 const list = probe ? (probe.found ? storage.parseJSON(probe.value, key, null) : []) : null;
                 if (!Array.isArray(list)) {
                     console.warn('[NetworthExclusions] Exclusions could not be read; edits were not saved');
+                    owner.failed = true;
                     return null;
                 }
+                owner.failed = false;
                 owner.list = list;
                 return list;
             } finally {
@@ -100,11 +102,25 @@ export async function initExclusions() {
 }
 
 /**
- * Get all current exclusions synchronously (may be empty before initExclusions completes).
+ * Get all current exclusions synchronously (empty before initExclusions completes; see
+ * `exclusionsStatus` to tell that from an empty list).
  * @returns {Array<{type: string, value: string}>}
  */
 export function getExclusions() {
     return currentState().list ?? [];
+}
+
+/**
+ * Where the current character's list stands: 'loaded', 'pending' (not read yet, or a read is under way) or
+ * 'failed' (a read was attempted and the stored list is unreadable or corrupt). `getExclusions()` is `[]` for
+ * all three, so a figure that must not count excluded items asks this. 'pending' is the only state that
+ * resolves by waiting; call `initExclusions()` to retry a 'failed' one.
+ * @returns {'loaded'|'pending'|'failed'}
+ */
+export function exclusionsStatus() {
+    const owner = currentState();
+    if (owner.list !== null) return 'loaded';
+    return owner.failed && !owner.loading ? 'failed' : 'pending';
 }
 
 /**
@@ -167,6 +183,6 @@ export async function removeExclusion(type, value) {
  */
 export async function clearExclusions() {
     const owner = currentState();
-    state = { charId: owner.charId, list: [], loading: null };
+    state = { charId: owner.charId, list: [], loading: null, failed: false };
     storage.setJSON(storageKey(owner.charId), state.list, 'settings');
 }

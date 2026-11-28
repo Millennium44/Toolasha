@@ -1081,6 +1081,7 @@ export function bestLevelByVolume(sweep, candidateLevels, volumeOf) {
 export const SORT_LEVELS = Object.freeze({
     hour: 'target',
     unit: 'target',
+    craft: 'target',
     craftXp: 'target',
     enhanceXp: 'target',
     base: 'base',
@@ -1089,6 +1090,7 @@ export const SORT_LEVELS = Object.freeze({
 export const SORT_KEYS = Object.freeze({
     hour: (row) => row.target.profitPerHour,
     unit: (row) => row.target.profitPerUnit,
+    craft: (row) => row.target.craftCostPerUnit,
     craftXp: (row) => row.target.craftXpPerHour,
     enhanceXp: (row) => row.target.enhanceXpPerHour,
     base: (row) => row.base.profitPerHour,

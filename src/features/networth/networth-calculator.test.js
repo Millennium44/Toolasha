@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
     combinedData: null, // what calculateNetworth sweeps: characterItems, itemDetailMap, ...
     batchPrices: {}, // "hrid:level" -> {ask, bid}, for getPricesBatch
     excluded: new Set(), // "type:value" pairs isExcluded() answers true for
+    exclusionsStatus: 'loaded', // what exclusionsStatus() answers
     characterGuildBuffMap: null,
     loadoutSnapshots: [],
     artisan: 0.1, // the player's Artisan bonus for any action type
@@ -161,6 +162,7 @@ vi.mock('../../utils/game-lookups.js', () => ({
     getShopCoinCost: (hrid) => mocks.shopCosts[hrid] ?? 0,
 }));
 vi.mock('./networth-exclusions.js', () => ({
+    exclusionsStatus: () => mocks.exclusionsStatus,
     isExcluded: (type, value) => mocks.excluded.has(`${type}:${value}`),
     getExclusions: () =>
         [...mocks.excluded].map((entry) => {
@@ -240,6 +242,7 @@ beforeEach(() => {
     mocks.combinedData = null;
     mocks.batchPrices = {};
     mocks.excluded = new Set();
+    mocks.exclusionsStatus = 'loaded';
     mocks.characterGuildBuffMap = null;
     mocks.loadoutSnapshots = [];
     mocks.artisan = 0.1;
@@ -802,6 +805,14 @@ describe('guild shrines and the net worth pricing mode setting', () => {
         expect(askResult.fixedAssets.guildShrines.totalCost).toBe(7500);
         expect(bidResult.fixedAssets.guildShrines.totalCost).toBe(5000);
         expect(askResult.fixedAssets.guildShrines.totalCost).not.toBe(bidResult.fixedAssets.guildShrines.totalCost);
+    });
+
+    test('the result says whether the exclusion list was loaded when it was priced', async () => {
+        expect((await calculateNetworth()).exclusionsStatus).toBe('loaded');
+        mocks.exclusionsStatus = 'pending';
+        expect((await calculateNetworth()).exclusionsStatus).toBe('pending');
+        mocks.exclusionsStatus = 'failed';
+        expect((await calculateNetworth()).exclusionsStatus).toBe('failed');
     });
 
     test("ask vs bid no longer changes the shrine total once the value source is the game's market value", async () => {

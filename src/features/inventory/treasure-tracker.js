@@ -1391,11 +1391,15 @@ class TreasureTracker {
      *
      * The tracker reads its settings only in `initialize()`, which a player with the tracker off never runs; the
      * defaults would then count cowbells against a saved "Cowbells at zero". So the choice is read on its own here,
-     * once per character, and null until it arrives (the caller treats cowbells as unpriced meanwhile).
+     * once per character, and null until it arrives or while no character is known (the caller shows no cowbell
+     * worth meanwhile).
      * @returns {boolean|null}
      */
     _cowbellsCounted() {
         const charId = dataManager.getCurrentCharacterId?.() ?? null;
+        // No character yet: nothing to read or cache, since a default cached under a null id would match the
+        // next null lookup and count cowbells against a saved "Cowbells at zero"
+        if (charId === null) return null;
         if (this.settingsLoadedFor === charId) return Boolean(this.settings.valueCowbells);
         if (this.cowbellPreference?.charId === charId) return this.cowbellPreference.value;
         if (this.cowbellPreferenceLoading !== charId) this._readCowbellPreference(charId);

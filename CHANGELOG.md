@@ -10,6 +10,38 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 59 setting descriptions that ran past 300 characters are trimmed to say what the setting does and what you need to know to choose. No setting changed its behavior.
 
+### Chat name links survive turning the setting off and on
+
+Turning the clickable chat names setting off and back on could leave names unstyled and unclickable until a reload. They now come back at once.
+
+### Craft & Enhance sorts by craft cost
+
+The "Craft cost" column header now sorts the board like the other columns. Rows with no craft cost stay at the bottom either way.
+
+### Held materials line is exact with Invigoration
+
+The tooltip line comparing crafting from held materials against selling them now works out each Invigoration outcome before averaging. For Cooking and Brewing with Invigoration the figure moves by about 0.4%.
+
+### Cowbells set to zero are not briefly counted
+
+With "Cowbells at zero" chosen in the treasure tracker, figures drawn before your character finished loading could count cowbells at the default value. They now show no cowbell worth until your choice is read.
+
+### Combat Sim export keeps talismans
+
+Exporting a player from the Combat Sim now writes their slotted combat talismans, so importing that export gives the same build back. Before, the talismans were lost on the way.
+
+### Dungeon ROI caps runs per day at what fits in a day
+
+Typing more runs per day than a dungeon's run time allows used to give an inflated net per day. The what-if now uses the most that fits in 24 hours and shows it as "(max N)".
+
+### Net worth history waits for your exclusion list
+
+A history point taken before your excluded items had loaded counted them and recorded a total that was too high. The point is now taken as soon as the list has loaded.
+
+### A price stamped in the future no longer sticks
+
+A device with a wrong clock could save a market price dated in the future, which then beat every newer price on all synced devices. Such a price now loses to any normally dated one.
+
 ### Holding a labyrinth tile on a phone shows its info window
 
 A long press on a labyrinth tile used to open the Lab Sim, while a tap showed the tile's info window. A hold now shows the info window too; its "Open in sim" button still opens the sim. Right-click on a desktop is unchanged.

@@ -99,6 +99,9 @@ export function getProfileLinkNames(text) {
     return [];
 }
 
+/** Where the one delegated click listener is kept, shared by every bundle's copy of this module */
+const HANDLER_KEY = '__toolashaChatProfileLinkHandler';
+
 class ChatProfileLink {
     constructor() {
         this.stylesActive = false;
@@ -114,16 +117,15 @@ class ChatProfileLink {
      * announcement-decorating observer below (`initialize`) is itself active yet.
      */
     _ensureActive() {
-        if (this.stylesActive) return;
-        this.stylesActive = true;
-
         // The packaged build carries a copy of this module in more than one
         // bundle, and each copy's markAsProfileLink can arrive here first. The
         // listener acts on shared DOM, so a second copy's listener means every
-        // click opens the profile twice — the guard lives on globalThis so all
-        // copies count as one.
-        if (globalThis.__toolashaChatProfileLinkActive) return;
-        globalThis.__toolashaChatProfileLinkActive = true;
+        // click opens the profile twice. The one listener lives on globalThis,
+        // where whichever copy disables can find and remove it: a flag only the
+        // installing copy could clear stayed set after a switch-off, and the
+        // next switch-on found it and installed nothing.
+        this.stylesActive = true;
+        if (globalThis[HANDLER_KEY]) return;
 
         addStyles(
             `.${NAME_CLASS} { color: #4a9eff; cursor: pointer; }
@@ -131,14 +133,16 @@ class ChatProfileLink {
             STYLE_ID
         );
 
-        this.delegatedClickHandler = (e) => {
+        const handler = (e) => {
             const target = e.target.closest(`.${NAME_CLASS}`);
             if (!target) return;
             const name = target.dataset.mwiProfileName;
             if (!name) return;
             openPlayerProfile(name, { logPrefix: 'ChatProfileLink' });
         };
-        document.addEventListener('click', this.delegatedClickHandler);
+        globalThis[HANDLER_KEY] = handler;
+        this.delegatedClickHandler = handler;
+        document.addEventListener('click', handler);
     }
 
     initialize() {
@@ -193,11 +197,12 @@ class ChatProfileLink {
             this.unregisterReady();
             this.unregisterReady = null;
         }
-        if (this.delegatedClickHandler) {
-            document.removeEventListener('click', this.delegatedClickHandler);
-            this.delegatedClickHandler = null;
-            globalThis.__toolashaChatProfileLinkActive = false;
+        // Whichever copy installed it, this copy's disable takes it off
+        if (globalThis[HANDLER_KEY]) {
+            document.removeEventListener('click', globalThis[HANDLER_KEY]);
+            globalThis[HANDLER_KEY] = null;
         }
+        this.delegatedClickHandler = null;
         this.stylesActive = false;
         this.observerActive = false;
         this._undecorate();

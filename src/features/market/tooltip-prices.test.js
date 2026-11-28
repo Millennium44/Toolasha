@@ -751,6 +751,53 @@ describe('held materials: craft vs sell them', () => {
         expect(compared.heldValue).toBeCloseTo(2_592_000, 0);
     });
 
+    describe('with Invigoration worn, each outcome is compared before they are mixed', () => {
+        // The shape calculateProfit returns for two outcomes (profit-calculator.invigoration.test.js checks it): the
+        // mixed figure with the outcomes behind it. One input a craft at 100, sold for 90 when held, no tax.
+        // Normal: no Gourmet, 20 profit and 100 cost an item. Doubled: Gourmet doubles the output, 70 and 50 an item.
+        const outcome = (gourmetBonus, profitPerItem, costPerItem) => ({
+            outputAmount: 1,
+            gourmetBonus,
+            materialCosts: [{ itemHrid: '/items/milk', amount: 1, totalCost: 100 }],
+            teaCosts: [],
+            profitPerItem,
+            costPerItem,
+        });
+        const mixed = (runs) => {
+            const figure = { ...outcome(0.5, 45, 75) };
+            Object.defineProperty(figure, 'outcomeRuns', { value: runs, enumerable: false });
+            return figure;
+        };
+        const runs = [
+            { weight: 0.5, value: outcome(0, 20, 100) },
+            { weight: 0.5, value: outcome(1, 70, 50) },
+        ];
+        const priceOf = (hrid) => (hrid === '/items/milk' ? 90 : null);
+
+        test('weighs the per-outcome answers, not the answer on the averaged figure', () => {
+            taxState.rate = 0;
+            const compared = heldCraftCompare(mixed(runs), null, { sellOf: priceOf });
+            // Normal: 90 held, net 20 + 100 - 90 = 30. Doubled: 45 held, net 70 + 50 - 45 = 75.
+            expect(compared.heldValue).toBeCloseTo(67.5, 9);
+            expect(compared.net).toBeCloseTo(52.5, 9);
+            // The averaged figure divides 90 by 1.5 once: 60 held, net 45 + 75 - 60 = 60
+            const averaged = heldCraftCompare({ ...mixed(runs) }, null, { sellOf: priceOf });
+            expect(averaged.net).toBeCloseTo(60, 9);
+        });
+
+        test('an outcome with an unpriced held material hides the line', () => {
+            taxState.rate = 0;
+            expect(heldCraftCompare(mixed(runs), null, { sellOf: () => null })).toBeNull();
+        });
+
+        test('without Invigoration the figure is unchanged', () => {
+            taxState.rate = 0;
+            const compared = heldCraftCompare(outcome(0.25, 45, 75), null, { sellOf: priceOf });
+            expect(compared.heldValue).toBeCloseTo(72, 9);
+            expect(compared.net).toBeCloseTo(48, 9);
+        });
+    });
+
     test('an unpriced held material hides the line instead of counting as free', () => {
         const compared = heldCraftCompare(data(), null, {
             sellOf: (hrid) => (hrid === '/items/umbral_bracers' ? null : sellOf(hrid)),

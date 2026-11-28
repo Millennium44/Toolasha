@@ -674,6 +674,46 @@ describe('whatIfFigures', () => {
         expect(out.netPerDay).toBe(88_000 * 10);
     });
 
+    test('typed runs per day are capped at what fits in 24 h, and say so', () => {
+        // 20 minute runs: 72 fit in a day
+        const over = whatIfFigures(row(), { minutesPerRun: 20, runsPerDay: 100 });
+        expect(over.runsPerDay).toBe(72);
+        expect(over.runsCappedFrom).toBe(100);
+        expect(over.netPerDay).toBe(88_000 * 72);
+        // Not a whole number of runs: the cap is 1440 / 7, exactly what a blank box fills the day with
+        const seven = whatIfFigures(row(), { minutesPerRun: 7, runsPerDay: 300 });
+        expect(seven.runsPerDay).toBe(1440 / 7);
+        expect(seven.runsPerDay).toBe(whatIfFigures(row(), { minutesPerRun: 7 }).runsPerDay);
+        // Typed 206 is over 205.7, 205 is under it and untouched
+        expect(whatIfFigures(row(), { minutesPerRun: 7, runsPerDay: 206 }).runsCappedFrom).toBe(206);
+        expect(whatIfFigures(row(), { minutesPerRun: 7, runsPerDay: 205 }).runsPerDay).toBe(205);
+        // A run longer than a day: the cap is below one run, not zero
+        const long = whatIfFigures(row(), { minutesPerRun: 2000, runsPerDay: 3 });
+        expect(long.runsPerDay).toBeCloseTo(0.72, 9);
+        expect(long.runsCappedFrom).toBe(3);
+        // The row's own 10 minute clear applies when only runs are typed: 144 fit
+        const own = whatIfFigures(row(), { runsPerDay: 500 });
+        expect(own.runsPerDay).toBe(144);
+        expect(own.runsCappedFrom).toBe(500);
+    });
+
+    test('typed runs exactly at the cap, under it, zero and empty are not capped', () => {
+        const at = whatIfFigures(row(), { minutesPerRun: 20, runsPerDay: 72 });
+        expect(at.runsPerDay).toBe(72);
+        expect(at.runsCappedFrom).toBeNull();
+        expect(whatIfFigures(row(), { minutesPerRun: 20, runsPerDay: 10 }).runsCappedFrom).toBeNull();
+        // 1.2 min is 1200 runs; float division must not cap a typed 1200
+        expect(whatIfFigures(row(), { minutesPerRun: 1.2, runsPerDay: 1200 }).runsCappedFrom).toBeNull();
+        expect(whatIfFigures(row(), { minutesPerRun: 20, runsPerDay: 0 })).toBeNull();
+        expect(whatIfFigures(row(), { minutesPerRun: 20, runsPerDay: '' }).runsCappedFrom).toBeNull();
+    });
+
+    test('with no run time known the typed runs stand and nothing is capped', () => {
+        const out = whatIfFigures(row({ clearSeconds: null }), { runsPerDay: 5000 });
+        expect(out.runsPerDay).toBe(5000);
+        expect(out.runsCappedFrom).toBeNull();
+    });
+
     test('a row with no clear time is priced once minutes are typed, and unknown without them', () => {
         const noClear = row({ clearSeconds: null });
         expect(whatIfFigures(noClear, { minutesPerRun: 12 }).netPerRun).toBe(100_000 - 10_000 - 1_200);

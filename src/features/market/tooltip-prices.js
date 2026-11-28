@@ -482,6 +482,36 @@ export function ownUseLine(comparison) {
  *   estimate
  */
 export function heldCraftCompare(profitData, actionDetail = null, { sellOf, held = null } = {}) {
+    // A mixed Invigoration figure divides the held value by its averaged Gourmet, which is not the average of the
+    // per-outcome divisions (about 0.4% off for Cooking and Brewing). Compare each outcome, then weigh the answers.
+    const runs = profitData?.outcomeRuns;
+    if (Array.isArray(runs) && runs.length > 1) {
+        const parts = runs.map(({ weight, value }) => ({
+            weight,
+            compared: heldCraftCompareOutcome(value, actionDetail, { sellOf, held }),
+        }));
+        if (parts.some((part) => !part.compared)) return null;
+        const total = parts.reduce((sum, part) => sum + part.weight, 0);
+        if (!(total > 0)) return null;
+        const mix = (field) => parts.reduce((sum, part) => sum + (part.weight / total) * part.compared[field], 0);
+        return {
+            net: mix('net'),
+            heldValue: mix('heldValue'),
+            partlyUnpriced: parts.some((part) => part.compared.partlyUnpriced),
+            estimated: parts.some((part) => part.compared.estimated),
+        };
+    }
+    return heldCraftCompareOutcome(profitData, actionDetail, { sellOf, held });
+}
+
+/**
+ * One outcome of {@link heldCraftCompare}: a profit figure with a single set of drinks.
+ * @param {Object|null} profitData - A single-outcome profit figure
+ * @param {Object|null} actionDetail - As heldCraftCompare
+ * @param {Object} opts - As heldCraftCompare
+ * @returns {{net: number, heldValue: number, partlyUnpriced: boolean, estimated: boolean}|null}
+ */
+function heldCraftCompareOutcome(profitData, actionDetail, { sellOf, held }) {
     if (!profitData || typeof sellOf !== 'function') return null;
     if ((actionDetail?.outputItems?.length ?? 0) > 1) return null;
     // An enhanced upgrade input: the line would need that level's sale price, which a +0
