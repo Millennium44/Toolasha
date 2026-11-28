@@ -10,8 +10,6 @@ import { settingsGroups } from './settings-schema.js';
 
 const MAX_HELP_LENGTH = 300;
 
-const BULK = 'pre-existing; trim when next touched';
-
 /**
  * Settings whose help is allowed to exceed MAX_HELP_LENGTH, each with the reason.
  * A stale entry (help now short enough, or the setting is gone) fails the test, so delete it when you trim.
@@ -26,67 +24,11 @@ const LONG_HELP_ALLOWED = {
     sync_token: 'discloses plain-text token storage and the scope needed; keep',
     sync_passphrase: 'discloses plain-text passphrase storage and no recovery; keep',
 
+    // Documented guarantees: the margin and quiet conditions are pinned against the code in
+    // alchemy-catalyst-check.test.js, so shortening them would drop real behavior.
+    alchemyCatalystCheck: 'states the exact 10K / 5% margin and every quiet condition, pinned against the code',
+
     // Bulk: over the limit when this lint was added.
-    startupRecovery_autoReload: BULK,
-    takeoverAutoReload: BULK,
-    reloadLog_enabled: BULK,
-    dataChangeAutoReload: BULK,
-    teaRecommendation_xpFloor: BULK,
-    actionQueue_showXp: BULK,
-    alchemy_catalystWhatIf: BULK,
-    alchemy_bestItems_sortMode: BULK,
-    alchemyCatalystMark: BULK,
-    alchemyCatalystCheck: BULK,
-    actions_arbitrageBoard: BULK,
-    actions_craftEnhance: BULK,
-    actions_craftEnhance_ownedDrops: BULK,
-    craftingPlan_guidedWalk: BULK,
-    inventoryReservations: BULK,
-    actions_artisanMaterialMode: BULK,
-    upgradeAdvisor_compareRoutes: BULK,
-    lootLogPivot: BULK,
-    itemTooltip_heldCraftCompare: BULK,
-    itemTooltip_craftCostSubMaterials: BULK,
-    itemTooltip_selfUseAlchemy: BULK,
-    selfUse_markMeaning: BULK,
-    itemTooltip_alchemyInsteadOfBuying: BULK,
-    itemTooltip_alchemyInsteadOfSelling: BULK,
-    dungeonTokenTooltips_crafts: BULK,
-    shopTokenValues: BULK,
-    enhancementTracker_autoResume: BULK,
-    market_raiseBuyPriceToCoverQuantity: BULK,
-    market_consumableBuyOpenRecommended: BULK,
-    market_overbidPanel: BULK,
-    market_listingAge: BULK,
-    profitCalc_pricingSideBuy: BULK,
-    profitCalc_pricingSideSell: BULK,
-    untradableCapeBaseValue: BULK,
-    profitCalc_ironCowValuation: BULK,
-    profitCalc_keyPricingMode: BULK,
-    profitCalc_liquidityCap: BULK,
-    profitCalc_excludeSellTax: BULK,
-    inv_valueBadges: BULK,
-    networth_valueSource: BULK,
-    skillTiles_simulatedScrolls: BULK,
-    combatDpsGraph: BULK,
-    combatMeterHistory: BULK,
-    combatSim_taskDamage: BULK,
-    taskCombatEstimatePercentile: BULK,
-    taskCombatGoTier: BULK,
-    tasks_rerollWalk: BULK,
-    tasks_mergedCraftingWalk: BULK,
-    sessionBriefing: BULK,
-    talismanRerollAdvisor: BULK,
-    ironCowFarm: BULK,
-    ui_textScale: BULK,
-    ui_gameText: BULK,
-    loadoutTalismanCheck: BULK,
-    tabVersionSync: BULK,
-    guildTrialsInfo: BULK,
-    guildTrialLedger: BULK,
-    notifications_savingsGoalReached: BULK,
-    notifications_priceTargetReached: BULK,
-    achievementFinisher: BULK,
 };
 
 /**

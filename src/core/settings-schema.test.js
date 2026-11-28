@@ -425,7 +425,7 @@ describe('advisor route pricing setting', () => {
         expect(setting.default).toBe(true);
         expect(setting.label).not.toContain('experimental');
         expect(setting.label).toContain('preferred route');
-        expect(setting.help).toContain('Cost, ranking and shopping buttons follow that route');
+        expect(setting.help).toContain('Supported means one tradable item of your own');
         expect(setting.help).toContain('Rerun the analysis');
     });
 });
