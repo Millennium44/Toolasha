@@ -575,22 +575,28 @@ describe('mergePrices and a skewed clock', () => {
     const MIN = 60_000;
     const price = (ask, at) => ({ ask, bid: ask - 1, askQty: 0, bidQty: 0, at });
 
-    test('a stored entry stamped far in the future does not beat a real reading', () => {
-        const merged = mergePrices({ k: price(999, NOW + 3 * 3_600_000) }, { k: price(5, NOW - MIN) }, NOW);
-        // The stored one counts as stamped now, so it is the newer of the two here; what matters is that its
-        // stamp is stored as now, so the next real reading beats it
-        expect(merged.k.at).toBeLessThanOrEqual(NOW);
-        const next = mergePrices(merged, { k: price(6, NOW + MIN) }, NOW + MIN);
-        expect(next.k.ask).toBe(6);
+    test('a skewed entry loses to a real reading even when the reading is older than the flush', () => {
+        // The device read the book 30 s before the flush; the stored entry is stamped 3 h ahead
+        const skewed = price(999, NOW + 3 * 3_600_000);
+        const real = price(5, NOW - 30_000);
+        const storedSkewed = mergePrices({ k: skewed }, { k: real }, NOW);
+        expect(storedSkewed.k.ask).toBe(5);
+        expect(storedSkewed.k.at).toBe(NOW - 30_000);
+        // Symmetric: the same winner with stored and held swapped
+        const heldSkewed = mergePrices({ k: real }, { k: skewed }, NOW);
+        expect(heldSkewed.k.ask).toBe(5);
+        expect(heldSkewed.k.at).toBe(NOW - 30_000);
     });
 
-    test('a future-dated entry is stored with at clamped to now, on either side', () => {
+    test('a sole skewed entry is stored stamped now, on either side', () => {
         const fromStored = mergePrices({ k: price(7, NOW + 3_600_000) }, {}, NOW);
         expect(fromStored.k.at).toBe(NOW);
         expect(fromStored.k.ask).toBe(7);
         const fromMemory = mergePrices({}, { k: price(8, NOW + 3_600_000) }, NOW);
         expect(fromMemory.k.at).toBe(NOW);
-        // Held and stored both skewed: tie at now, the held one wins
+    });
+
+    test('two skewed entries keep the held one, stamped now', () => {
         const both = mergePrices({ k: price(1, NOW + 2 * 3_600_000) }, { k: price(2, NOW + 3_600_000) }, NOW);
         expect(both.k.ask).toBe(2);
         expect(both.k.at).toBe(NOW);
@@ -635,6 +641,8 @@ describe('mergePrices and a skewed clock', () => {
                 orderBooks: [{ asks: [{ price: 100, quantity: 1 }], bids: [] }],
             },
         });
+        // The book was read 30 s before the flush
+        vi.advanceTimersByTime(30_000);
         await marketPriceStore.flush();
         expect(storageMock.saved.mooketPrices['/items/cheese:0'].ask).toBe(100);
     });

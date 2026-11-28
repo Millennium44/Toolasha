@@ -58,36 +58,42 @@ const SAVE_INTERVAL_MS = 60 * 1000;
 const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
 
 /**
- * An entry whose `at` is past now plus the tolerance, stamped now instead. A device with a fast clock wrote
- * such a stamp; left as it is, it wins every later newer-wins comparison until real time catches up. A copy,
- * so the held entry is not changed under its readers. An entry with no numeric `at` is returned as is.
+ * Whether an entry's `at` is past now plus the tolerance: a stamp from a device with a fast clock.
  * @param {Object} entry - A stored or held price entry
  * @param {number} now - Current time (ms)
- * @returns {Object} The entry, or a copy stamped `now`
+ * @returns {boolean}
  */
-function clampFuture(entry, now) {
-    if (!entry || typeof entry.at !== 'number' || !(entry.at > now + FUTURE_TOLERANCE_MS)) return entry;
-    return { ...entry, at: now };
+function isFuture(entry, now) {
+    return Boolean(entry) && typeof entry.at === 'number' && entry.at > now + FUTURE_TOLERANCE_MS;
 }
 
 /**
- * Fold a stored cache under the one in memory: per item, the reading taken
- * later wins, and anything past its age goes. A stamp beyond now plus five
- * minutes counts as, and is stored as, now, on both sides.
+ * Fold a stored cache under the one in memory: per item, the reading taken later wins, and anything past its
+ * age goes. An entry stamped beyond now plus five minutes (a skewed clock) loses to any entry that is not,
+ * whatever their stamps, and is stored stamped now only when it is the sole entry for its key. Two skewed
+ * entries keep the held one, stamped now. Entries are copied when restamped, never changed in place.
  * @param {Object} stored - key → entry, as read back
  * @param {Object} memory - key → entry, as held
  * @param {number} [now] - Current time (ms); injectable for tests
  * @returns {Object} The merged cache
  */
 export function mergePrices(stored, memory, now = Date.now()) {
-    const merged = {};
-    for (const [key, entry] of Object.entries(stored && typeof stored === 'object' ? stored : {})) {
-        merged[key] = clampFuture(entry, now);
-    }
-    for (const [key, held] of Object.entries(memory && typeof memory === 'object' ? memory : {})) {
-        const entry = clampFuture(held, now);
+    const merged = { ...(stored && typeof stored === 'object' ? stored : {}) };
+    for (const [key, entry] of Object.entries(memory && typeof memory === 'object' ? memory : {})) {
         const theirs = merged[key];
-        if (!theirs || !(theirs.at > (entry?.at ?? -Infinity))) merged[key] = entry;
+        if (!theirs) {
+            merged[key] = entry;
+            continue;
+        }
+        const theirsFuture = isFuture(theirs, now);
+        const heldFuture = isFuture(entry, now);
+        if (theirsFuture && !heldFuture) merged[key] = entry;
+        else if (heldFuture && !theirsFuture) continue;
+        else if (heldFuture && theirsFuture) merged[key] = entry;
+        else if (!(theirs.at > (entry?.at ?? -Infinity))) merged[key] = entry;
+    }
+    for (const [key, entry] of Object.entries(merged)) {
+        if (isFuture(entry, now)) merged[key] = { ...entry, at: now };
     }
     return pruneStale(merged, now - PRICE_MAX_AGE_MS);
 }
