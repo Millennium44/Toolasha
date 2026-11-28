@@ -2059,35 +2059,37 @@ describe('Stop or failure before anything is drawn', () => {
         expect(mocks.store.get(KEY).data.results[0].candidate.description).toBe('Older gear');
     });
 
-    test('stopped in the food search with every candidate measured: saved, flagged food-stopped', async () => {
-        mocks.store.set(KEY, record());
+    test('stopped in the food search with every candidate measured: shown, not saved, record untouched', async () => {
+        const full = record();
+        full.data.food = { best: { description: 'Cheapest viable food' } };
+        mocks.store.set(KEY, full);
         holdSelf();
         await open();
+        // Read after the panel drew the record: drawing adds its own score fields to the stored object
+        const before = JSON.stringify(mocks.store.get(KEY));
         ui.panel.querySelector('[data-upgrade-mode="food"]').checked = true;
         pressStopDuringRun();
         mocks.upgradeResult = { ...result('Whole gear'), candidateCount: 1 };
         await pressAnalyze();
         expect(rows().textContent).toContain('Whole gear');
-        const stored = mocks.store.get(KEY);
-        expect(stored.savedAt).not.toBe(5);
-        expect(stored.data.results[0].candidate.description).toBe('Whole gear');
-        expect(stored.data.foodStopped).toBe(true);
-        expect(stored.data.stopped).toBeUndefined();
+        expect(status()).toContain('Analysis cancelled — showing 1 completed candidate.');
+        expect(rows().textContent).not.toContain('Showing results remembered');
+        expect(JSON.stringify(mocks.store.get(KEY))).toBe(before);
     });
 
-    test('stopped in the Ability order pass with every candidate measured: saved, flagged stopped', async () => {
+    test('stopped in the Ability order pass with every candidate measured: shown, not saved', async () => {
         mocks.store.set(KEY, record());
         holdSelf();
         await open();
+        // Read after the panel drew the record: drawing adds its own score fields to the stored object
+        const before = JSON.stringify(mocks.store.get(KEY));
         ui.panel.querySelector('[data-upgrade-mode="ability_order"]').checked = true;
         pressStopDuringRun();
         mocks.upgradeResult = { ...result('Whole gear'), candidateCount: 1 };
         await pressAnalyze();
-        const stored = mocks.store.get(KEY);
-        expect(stored.savedAt).not.toBe(5);
-        expect(stored.data.results[0].candidate.description).toBe('Whole gear');
-        expect(stored.data.abilityOrder.stopped).toBe(true);
-        expect(stored.data.stopped).toBeUndefined();
+        expect(rows().textContent).toContain('Whole gear');
+        expect(rows().textContent).not.toContain('Showing results remembered');
+        expect(JSON.stringify(mocks.store.get(KEY))).toBe(before);
     });
 
     test('a run that finishes is saved as before', async () => {

@@ -14173,11 +14173,15 @@ class CombatSimUI {
             // Only a roster that held the live character is the owner's analysis. An imported profile's or a
             // pasted party's run is shown but never remembered: the record is replaced whole and has no undo,
             // so it would take the owner's own analysis (and restore under their name on the next reload)
-            // A run with candidates missing (`stopped`, stamped when Stop cut it short) is shown for this session but
-            // never remembered, so the previous full record survives a Stop and a reload. A Stop in a later phase
-            // (food search, close-call re-sims, Ability order) leaves every candidate measured and is saved, carrying
-            // its own foodStopped / abilityOrder.stopped flags
-            if ((completed || emptyOrderRun) && ownRoster && !results?.stopped && this._stillSameCharacter(ownerId)) {
+            // A run stopped in any phase (candidates, close-call re-sims, food search, Ability order) is shown for this
+            // session but never remembered: even with every upgrade measured it lacks what the Stop cut (the food
+            // block, the order pass), and the record is replaced whole, so the previous full run is kept
+            if (
+                (completed || emptyOrderRun) &&
+                ownRoster &&
+                !this._upgradeAborted &&
+                this._stillSameCharacter(ownerId)
+            ) {
                 // Who and where, so a restored set can say whose run it was -
                 // the selector may hold a different player, or another zone,
                 // by the time these come back
