@@ -2603,10 +2603,10 @@ export const settingsGroups = {
                     { value: 'craft', label: 'What it costs you to craft one' },
                 ],
                 help:
-                    'How a dungeon key is valued everywhere Toolasha prices one, such as tooltips, net worth, combat ' +
-                    'stats and the combat simulator. Ask and Bid use that market price. Crafting cost uses your own ' +
-                    'cost, falling back to market price. The last option follows the buy side of the profit pricing ' +
-                    'mode.',
+                    'How a dungeon key is valued wherever Toolasha prices one, such as tooltips, net worth and the sims. ' +
+                    'Ask and Bid use that market price. "What it costs you to craft one" uses your own cost, or ' +
+                    'the market price if unknown. "Same as the profit calculation pricing mode" follows that mode\'s buy ' +
+                    'side.',
             },
             profitCalc_liquidityCap: {
                 id: 'profitCalc_liquidityCap',
