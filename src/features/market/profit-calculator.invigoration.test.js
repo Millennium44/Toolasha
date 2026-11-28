@@ -5,7 +5,13 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ initData: null, itemDetails: {}, efficiencyContext: () => ({}), marketPrices: {} }));
+const mocks = vi.hoisted(() => ({
+    initData: null,
+    itemDetails: {},
+    efficiencyContext: () => ({}),
+    marketPrices: {},
+    context: null,
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => undefined, getSettingValue: (key, fallback) => fallback },
@@ -25,7 +31,7 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null } }));
 vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
+    resolveActionContext: () => mocks.context ?? { equipment: new Map(), drinks: [] },
 }));
 vi.mock('../../utils/efficiency.js', () => ({
     getActionEfficiencyContext: (_action, options) => mocks.efficiencyContext(options.actionContext?.drinkOutcome),
@@ -48,6 +54,12 @@ vi.mock('../../utils/market-data.js', () => ({
     getPricingMode: () => 'ask',
 }));
 vi.mock('../../utils/profit-constants.js', () => ({ MARKET_TAX: 0.02 }));
+// The tooltip path: no tile scrolls are assumed, so calculateTooltipCraftProfit calls calculateProfit straight
+vi.mock('../actions/tile-scrolls.js', () => ({
+    getTileScrolls: () => new Set(),
+    runWithTileScrolls: (_type, fn) => ({ result: fn(), simulated: [] }),
+    runWithoutScrolls: (_type, fn) => fn(),
+}));
 vi.mock('../../utils/profit-helpers.js', () => ({
     calculateActionsPerHour: (t) => (t > 0 ? 3600 / Math.max(3, t) : 0),
     calculatePriceAfterTax: (price, tax = 0.02) => price * (1 - tax),
@@ -93,6 +105,7 @@ function outcomeContext(equipment, outcome) {
 }
 
 beforeEach(() => {
+    mocks.context = null;
     mocks.itemDetails = { '/items/cooking_cheese': { name: 'Cheese' }, '/items/milk': { name: 'Milk' } };
     mocks.initData = {
         actionDetailMap: {
@@ -180,5 +193,32 @@ describe('calculateProfit with Invigoration', () => {
             totalTeaCostPerHour: 0,
         });
         expect(totals.totalMaterialCost).toBeCloseTo(88.8, 9);
+    });
+});
+
+describe('the held-materials line reads the real calculateProfit figure through the tooltip path', () => {
+    test('each outcome is compared before the mix, so a figure that lost its outcomes on the way reads differently', async () => {
+        const equipment = wearing({ invigoration: 0.5 });
+        mocks.efficiencyContext = (outcome) => outcomeContext(equipment, outcome);
+        mocks.initData.actionDetailMap['/actions/cooking/cheese'].inputItems = [{ itemHrid: '/items/milk', count: 10 }];
+        mocks.marketPrices['/items/milk'] = 10;
+        const { calculateTooltipCraftProfit } = await import('./tooltip-tile-scrolls.js');
+        const { heldCraftCompare } = await import('./tooltip-prices.js');
+
+        // The tooltip passes no context, so the worn drinks come from the resolver
+        mocks.context = { equipment, drinks: [] };
+        const { profitData } = await calculateTooltipCraftProfit('/items/cooking_cheese');
+        expect(profitData.outcomeRuns).toHaveLength(2);
+
+        const sellOf = () => 9;
+        const compared = heldCraftCompare(profitData, null, { sellOf });
+        const perOutcome = profitData.outcomeRuns.reduce(
+            (sum, run) => sum + run.weight * heldCraftCompare(run.value, null, { sellOf }).net,
+            0
+        );
+        expect(compared.net).toBeCloseTo(perOutcome, 9);
+        // The averaged figure gives a different answer, which is what a lost property would silently fall back to
+        const averaged = heldCraftCompare({ ...profitData }, null, { sellOf });
+        expect(Math.abs(averaged.net - compared.net)).toBeGreaterThan(1e-6);
     });
 });
