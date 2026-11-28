@@ -3135,6 +3135,8 @@ describe('the Retransmute/hr sort', () => {
         market.bids['/items/dust'] = 1;
         settings.values[GOLD_RATE] = 10_000;
         bestItems.createModal();
+        // Open, as the live handlers require
+        bestItems.modal.style.display = 'flex';
         bestItems.currentType = 'transmute';
         // Profit/hr order puts the plain winner first
         bestItems.cachedRankings.transmute = [row('/items/dud', 9000), row('/items/invincible', 5000)];
@@ -3196,5 +3198,51 @@ describe('the Retransmute/hr sort', () => {
         bestItems.renderTable();
         expect(sortButton().style.display).toBe('none');
         expect(bestItems.effectiveSortMode()).toBe('profit');
+    });
+
+    test('a market update re-ranks the open table, so the plain figures under it are not stale', () => {
+        fixture();
+        sortButton().click();
+        const reload = vi.spyOn(bestItems, 'loadRankings').mockImplementation(() => Promise.resolve());
+
+        // The market listener the module registered, called as the market API calls it
+        bestItems._onMarketUpdate();
+
+        expect(reload).toHaveBeenCalledWith('transmute');
+        reload.mockRestore();
+    });
+
+    test('a market update leaves a table in a plain sort to the cheap redraw', () => {
+        fixture();
+        const reload = vi.spyOn(bestItems, 'loadRankings').mockImplementation(() => Promise.resolve());
+
+        bestItems._onMarketUpdate();
+
+        expect(reload).not.toHaveBeenCalled();
+        reload.mockRestore();
+    });
+
+    test('changing the gold rate or the setting redraws the open table through the setting listeners', () => {
+        fixture();
+        bestItems.subscribePricingChanges();
+        try {
+            sortButton().click();
+            const before = cells().map((td) => td.textContent);
+
+            // A change made in Settings: time costs more, so the retransmuted books are worth less
+            settings.values[GOLD_RATE] = 40_000;
+            for (const cb of settings.changeListeners[GOLD_RATE] || []) cb(40_000);
+            const after = cells().map((td) => td.textContent);
+            expect(after[0]).not.toBe(before[0]);
+
+            // Turned off while sorted by it: back to Profit/hr, the column gone
+            settings.values.alchemy_retransmute = false;
+            for (const cb of settings.changeListeners.alchemy_retransmute || []) cb(false);
+            expect(cells()).toHaveLength(0);
+            expect(names()).toEqual(['dud', 'invincible']);
+            expect(bestItems.effectiveSortMode()).toBe('profit');
+        } finally {
+            bestItems.unsubscribePricingChanges();
+        }
     });
 });

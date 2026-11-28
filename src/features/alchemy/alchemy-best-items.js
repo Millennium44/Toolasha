@@ -81,6 +81,9 @@ export const SHOP_PRICES_SETTING = 'alchemy_bestItems_shopPrices';
 /** The setting for hiding every Decompose row whose item is not gear (default off) */
 export const GEAR_ONLY_SETTING = 'alchemy_bestItems_gearOnly';
 
+/** Your gold per hour (the id the crafting plan and the retransmute figure share) */
+const GOLD_RATE_SETTING = 'actionPanel_craftingPlanGoldPerHour';
+
 /** The sort that ranks Transmute by the retransmute figure */
 const RETRANSMUTE_MODE = 'retransmutePerHour';
 
@@ -314,7 +317,12 @@ class AlchemyBestItems {
     handleMarketUpdate() {
         try {
             this.clearChainCaches();
-            if (this.modal && this.modal.style.display !== 'none' && this.isChainMode()) {
+            const open = this.modal && this.modal.style.display !== 'none';
+            if (open && this.isRetransmuteMode()) {
+                // The figure builds on each row's plain result, which was priced before this update
+                this.invalidateCache();
+                this.loadRankings(this.currentType);
+            } else if (open && this.isChainMode()) {
                 this.renderTable();
                 this.refreshOwnStock();
             }
@@ -360,11 +368,30 @@ class AlchemyBestItems {
             config.onSettingChange(SORT_MODE_SETTING, () => this.handleSortSettingChange()),
             // Shop prices change what every row costs, so it re-ranks like a pricing change
             config.onSettingChange(SHOP_PRICES_SETTING, () => this.handlePricingChange()),
+            // The retransmute figure charges time at the gold rate, and its sort follows its setting
+            config.onSettingChange(RETRANSMUTE_SETTING, () => this.handleRetransmuteSettingChange()),
+            config.onSettingChange(GOLD_RATE_SETTING, () => this.handleRetransmuteSettingChange()),
             // Gear only hides rows before any chain is worked out: a redraw is all it takes
             config.onSettingChange(GEAR_ONLY_SETTING, () => {
                 if (this.modal && this.modal.style.display !== 'none') this.renderTable();
             }),
         ];
+    }
+
+    /**
+     * The gold rate or the retransmute setting changed: forget the figures and redraw. With the setting off while the
+     * table is sorted by the figure, the redraw falls back to Profit/hr (the stored choice is kept).
+     */
+    handleRetransmuteSettingChange() {
+        try {
+            clearRetransmuteCaches();
+            this.retransmuteResults.clear();
+            if (this.modal && this.modal.style.display !== 'none' && this.sortMode === RETRANSMUTE_MODE) {
+                this.renderTable();
+            }
+        } catch (error) {
+            console.error('[AlchemyBestItems] Redrawing after a retransmute setting change failed:', error);
+        }
     }
 
     /**

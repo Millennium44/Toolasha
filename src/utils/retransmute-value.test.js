@@ -350,6 +350,75 @@ describe('books and tables that are not in the closed group', () => {
     });
 });
 
+describe('divergence, tea and the gain arithmetic', () => {
+    test('a two-book cycle that returns more than it costs has no figure, never a huge one', () => {
+        engine.itemDetails[hridOf('root')] = {
+            alchemyDetail: { transmuteSuccessRate: 1, transmuteDropTable: [row('a', 1)] },
+        };
+        // Each book yields two of the other: every round doubles the value
+        engine.itemDetails[hridOf('a')] = {
+            alchemyDetail: { transmuteSuccessRate: 1, transmuteDropTable: [row('b', 1, 2)] },
+        };
+        engine.itemDetails[hridOf('b')] = {
+            alchemyDetail: { transmuteSuccessRate: 1, transmuteDropTable: [row('a', 1, 2)] },
+        };
+        engine.sells = { [hridOf('a')]: 10, [hridOf('b')]: 10 };
+        // An attempt costs 1, and returns two books worth 10 each: positive margin, no fixed point
+        engine.settings[GOLD_RATE] = 1000;
+        engine.terms[hridOf('a')] = terms({ successRate: 1 });
+        engine.terms[hridOf('b')] = terms({ successRate: 1 });
+
+        const result = retransmuteValue(plainFor('root', { successRate: 1 }));
+
+        expect(result.status).toBe('noFigure');
+        expect(result.reason).toBe('did not settle');
+    });
+
+    test('drinks are paid on every extra attempt', () => {
+        engine.itemDetails[hridOf('root')] = {
+            alchemyDetail: { transmuteSuccessRate: 1, transmuteDropTable: [row('keep', 1)] },
+        };
+        engine.itemDetails[hridOf('keep')] = {
+            alchemyDetail: { transmuteSuccessRate: 1, transmuteDropTable: [row('gem', 1)] },
+        };
+        engine.sells = { [hridOf('keep')]: 10, [hridOf('gem')]: 100 };
+        engine.settings[GOLD_RATE] = 1000;
+        // 10 for the time of an attempt at 100 an hour, and 5 of tea: 100 - 15
+        engine.terms[hridOf('keep')] = terms({ successRate: 1, actionsPerHour: 100, teaCostPerAttempt: 5 });
+
+        const result = retransmuteValue(plainFor('root', { successRate: 1, actionsPerHour: 100 }));
+
+        expect(named(result, 'keep').retransmuteValue).toBeCloseTo(85, 9);
+    });
+
+    test('the gain counts the root bulk and an output count above one, by hand', () => {
+        engine.itemDetails[hridOf('root')] = {
+            alchemyDetail: {
+                transmuteSuccessRate: 0.8,
+                transmuteDropTable: [{ itemHrid: hridOf('keep'), dropRate: 0.5, minCount: 1, maxCount: 3 }],
+            },
+        };
+        engine.itemDetails[hridOf('keep')] = {
+            alchemyDetail: { transmuteSuccessRate: 1, transmuteDropTable: [row('gem', 1)] },
+        };
+        engine.sells = { [hridOf('keep')]: 10, [hridOf('gem')]: 100 };
+        engine.settings[GOLD_RATE] = 1000;
+        engine.terms[hridOf('keep')] = terms({ successRate: 1, actionsPerHour: 100 });
+        // keep retransmutes at 100 - 10 = 90, a lift of 80 over its sale. Per attempt: 0.8 success x 3 copies in
+        // x (0.5 x average count 2 x 80) = 192; at 100 attempts an hour that is 19,200 over the plain figure
+        const plain = plainFor('root', {
+            successRate: 0.8,
+            actionsPerHour: 100,
+            profitPerHour: 1000,
+            requirementCosts: [{ itemHrid: hridOf('root'), count: 3, price: 5 }],
+        });
+
+        const result = retransmuteValue(plain);
+
+        expect(result.adjustedPerHour).toBeCloseTo(1000 + 19_200, 6);
+    });
+});
+
 describe('gold rate and cache', () => {
     test('a gold rate of 0 gives the note, not a figure', () => {
         eightBooks();
@@ -411,6 +480,25 @@ describe('gold rate and cache', () => {
             plainFor('invincible', { winningCatalystHrid: '/items/prime_catalyst', winningTeaUsed: true })
         );
         expect(engine.termsCalls.at(-1)[1]).toEqual({ catalystHrid: '/items/prime_catalyst', usesTea: true });
+    });
+
+    test('a plain result with another catalyst or drinks is not served the old setup terms', () => {
+        eightBooks();
+        priceBooks();
+        const live = { useLiveSetup: true };
+        retransmuteValue(plainFor('invincible', { catalystCost: { itemHrid: '/items/prime_catalyst' } }), live);
+        const calls = engine.termsCalls.length;
+
+        // Same live setup, same root figures: only the slotted catalyst changed
+        retransmuteValue(plainFor('invincible', { catalystCost: { itemHrid: null } }), live);
+        expect(engine.termsCalls.length).toBeGreaterThan(calls);
+        const afterCatalyst = engine.termsCalls.length;
+
+        retransmuteValue(
+            plainFor('invincible', { catalystCost: { itemHrid: null }, consumableCosts: [{ itemHrid: '/items/tea' }] }),
+            live
+        );
+        expect(engine.termsCalls.length).toBeGreaterThan(afterCatalyst);
     });
 
     test('the setting id is the one the schema declares', () => {

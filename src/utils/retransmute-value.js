@@ -17,7 +17,7 @@
  * counts (essence and rare drops, tea, the buy price, a self-return credited at the buy price) is left as it is, so
  * the two are the same number when nothing is worth transmuting again, and the first attempt's time stays in the
  * hourly rate rather than being charged at the gold rate as well. Attempts after the first are charged at the gold
- * rate, because their time is not in that rate. Their tea and bonus drops are not counted.
+ * rate, because their time is not in that rate. They pay for tea, but their bonus drops are not counted.
  *
  * A book with no real sell order is left out of every sum, and the result is then partial (a lower bound).
  */
@@ -124,7 +124,7 @@ export function describeRetransmutePolicy(result) {
         `A book is retransmuted when that beats selling it, with each extra attempt's time charged at your gold rate ` +
             `(${Math.round(result.goldRate).toLocaleString('en-US')}/hr). The first attempt's time is in the rate.`
     );
-    lines.push('Tea and bonus drops on the extra attempts are not counted. Not capped by market volume.');
+    lines.push('Extra attempts pay for tea but their bonus drops are not counted. Not capped by market volume.');
     if (result.partial) lines.push('A lower bound: some books are left out of the sums.');
     if (result.nodeCapHit) lines.push(`Stopped after ${MAX_NODES} books.`);
     if (!result.converged) lines.push('The values had not settled after the iteration limit.');
@@ -206,7 +206,18 @@ export function retransmuteValue(plain, setup = {}, options = {}) {
         cacheSignature = signature;
     }
     const calcSetup = setupFor(plain, setup);
-    const setupKey = JSON.stringify(calcSetup);
+    // Everything of the plain result that a book's success rate and speed depend on: the slotted catalyst and
+    // drinks, the character's efficiency, and the root's own success and attempt rate (which move with gear and
+    // level), so a swapped catalyst or tea never serves another book's terms from the old setup
+    const setupKey = JSON.stringify([
+        calcSetup,
+        plain.catalystCost?.itemHrid ?? plain.winningCatalystHrid ?? null,
+        Boolean(plain.winningTeaUsed),
+        (plain.consumableCosts ?? []).map((cost) => cost?.itemHrid).filter(Boolean),
+        plain.efficiency ?? null,
+        plain.successRate,
+        plain.actionsPerHour,
+    ]);
     const maxNodes = options.maxNodes ?? MAX_NODES;
     const key = [
         rootHrid,
@@ -290,9 +301,10 @@ function work(plain, calcSetup, setupKey, goldRate, { rootHrid, rootTable, buyPr
     const runners = priced.filter((node) => node.table && node.terms);
     // Value one copy's retransmute: the cost of an attempt is shared by the copies it consumes
     const retransmuteOf = (node) => {
-        const { successRate, actionsPerHour, catalystCostPerAttempt, coinCost, bulkMultiplier } = node.terms;
+        const { successRate, actionsPerHour, catalystCostPerAttempt, coinCost, teaCostPerAttempt, bulkMultiplier } =
+            node.terms;
         const timeCost = actionsPerHour > 0 ? goldRate / actionsPerHour : 0;
-        const cost = (catalystCostPerAttempt + coinCost + timeCost) / (bulkMultiplier || 1);
+        const cost = (catalystCostPerAttempt + coinCost + (teaCostPerAttempt || 0) + timeCost) / (bulkMultiplier || 1);
         const { rest, self } = restOf(node);
         const q = successRate * self;
         if (q >= 1) return null;
@@ -313,6 +325,8 @@ function work(plain, calcSetup, setupKey, goldRate, { rootHrid, rootTable, buyPr
         }
         converged = change < TOLERANCE;
     }
+    // A cycle whose books each return more than they cost grows without bound; its "value" is no figure
+    if (!converged) return { status: 'noFigure', reason: 'did not settle', partial: true };
 
     // The first attempt's gain over what the plain figure already counts, per attempt: each other output at its
     // value less its sell value, and a self-return at its value above the buy price the plain figure credits

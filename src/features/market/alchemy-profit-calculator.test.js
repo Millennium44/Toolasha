@@ -866,6 +866,7 @@ describe('official alchemy rules', () => {
             actionsPerHour: (3600 / 20) * 1.25,
             catalystCostPerAttempt: 0,
             coinCost: 50,
+            teaCostPerAttempt: 0,
             bulkMultiplier: 1,
         });
         // A search leaves nothing behind that narrows the next full search
@@ -878,6 +879,55 @@ describe('official alchemy rules', () => {
             .find((result) => result.winningCatalystHrid === null && !result.winningTeaUsed);
         expect(full.successRate).toBe(terms.successRate);
         expect(full.actionsPerHour).toBe(terms.actionsPerHour);
+    });
+
+    test('transmute attempt terms match a real result with a self-return, a winning catalyst and a tea', () => {
+        mocks.itemPrices = {
+            '/items/cheese': 500,
+            '/items/selfy': 100,
+            '/items/prime_catalyst': 1000,
+            '/items/alchemy_tea': 10,
+        };
+        mocks.initClientData.itemDetailMap['/items/selfy'] = {
+            name: 'Selfy',
+            itemLevel: 50,
+            sellPrice: 20,
+            alchemyDetail: {
+                bulkMultiplier: 2,
+                transmuteSuccessRate: 0.5,
+                transmuteDropTable: [
+                    { itemHrid: '/items/selfy', dropRate: 0.3, minCount: 1, maxCount: 1 },
+                    { itemHrid: '/items/cheese', dropRate: 0.7, minCount: 1, maxCount: 1 },
+                ],
+            },
+        };
+        mocks.initClientData.itemDetailMap['/items/alchemy_tea'] = {
+            name: 'Alchemy Tea',
+            consumableDetail: { usableSlots: ['/action_types/alchemy'], buffs: [], defaultCombatTriggers: [] },
+        };
+        mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
+        mocks.alchemyTeaBonus = 0.1;
+
+        const full = alchemyProfitCalculator
+            .calculateCandidateResults('transmute', '/items/selfy')
+            .find((result) => result.winningCatalystHrid === '/items/prime_catalyst' && result.winningTeaUsed);
+        expect(full).toBeDefined();
+        const terms = alchemyProfitCalculator.calculateTransmuteAttemptTerms('/items/selfy', {
+            catalystHrid: '/items/prime_catalyst',
+            usesTea: true,
+        });
+
+        expect(full.requirementCosts[0].selfReturnRate).toBe(0.3);
+        expect(terms).toEqual({
+            successRate: full.successRate,
+            actionsPerHour: full.actionsPerHour,
+            catalystCostPerAttempt: full.catalystCost.costPerAttempt,
+            coinCost: full.requirementCosts.find((cost) => cost.itemHrid === '/items/coin')?.costPerAction || 0,
+            teaCostPerAttempt: full.totalTeaCostPerHour / full.actionsPerHour,
+            bulkMultiplier: 2,
+        });
+        expect(terms.catalystCostPerAttempt).toBeGreaterThan(0);
+        expect(terms.teaCostPerAttempt).toBeGreaterThan(0);
     });
 
     test('transmute attempt terms are null when the action cannot run on the item', () => {

@@ -418,9 +418,9 @@ class AlchemyProfitCalculator {
     constructor() {
         // Cache for item detail map
         this._itemDetailMap = null;
-        // Set only for the duration of one synchronous calculateCandidateResults() call: narrows
-        // _bestCatalystCombo to a single candidate. Null everywhere else, so every other
-        // caller gets the full search.
+        // Set only for the duration of one synchronous calculateCandidateResults() or
+        // calculateTransmuteAttemptTerms() call: narrows _bestCatalystCombo to a single candidate.
+        // Null everywhere else, so every other caller gets the full search.
         this._comboFilter = null;
     }
 
@@ -2257,6 +2257,8 @@ class AlchemyProfitCalculator {
             actionsPerHour: result.actionsPerHour,
             catalystCostPerAttempt: result.catalystCost?.costPerAttempt || 0,
             coinCost: coin?.costPerAction || 0,
+            // Drinks run on every attempt, and buy the success bonus the terms already carry
+            teaCostPerAttempt: (result.totalTeaCostPerHour || 0) / result.actionsPerHour,
             bulkMultiplier: result.requirementCosts?.[0]?.count || 1,
         };
     }

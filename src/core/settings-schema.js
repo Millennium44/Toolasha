@@ -614,8 +614,8 @@ export const settingsGroups = {
                 default: true,
                 help:
                     'Under Net Profit, shows what a Transmute earns if you transmute the outputs worth more ' +
-                    'transmuted again than sold and sell the rest. Time is charged at your gold rate (set it in ' +
-                    'Settings); with no rate there is no figure. Adds a Retransmute/hr sort to Best Items.',
+                    'transmuted again than sold and sell the rest. Shown only when it differs from Net Profit. Time ' +
+                    'is charged at your gold rate; at 0 there is no figure. Adds a Retransmute/hr sort to Best Items.',
             },
             alchemy_bestItems: {
                 id: 'alchemy_bestItems',
@@ -889,9 +889,9 @@ export const settingsGroups = {
                 default: 0,
                 min: 0,
                 help:
-                    'Your time value: what an hour of your time earns elsewhere, in gold. The crafting plan uses it to decide whether ' +
-                    'crafting an intermediate is worth the time, and "Instead of buying" alchemy routes charge their time ' +
-                    'at it. Use your typical hourly profit (3m, 500k, 1.5b). 0 leaves time free.',
+                    'What an hour of your time earns elsewhere, in gold. The crafting plan and "Instead of buying" ' +
+                    'alchemy routes charge time at it. At 0 time is free and there is no Transmute retransmute ' +
+                    'figure. Use your typical hourly profit (3m, 500k, 1.5b).',
             },
             actionPanel_craftingPlanThinMarket: {
                 id: 'actionPanel_craftingPlanThinMarket',
