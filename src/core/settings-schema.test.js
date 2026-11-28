@@ -269,8 +269,8 @@ describe('startup recovery defaults', () => {
         expect(setting.default).toBe(false);
         expect(setting.type).toBe('checkbox');
         // Off means "ask me", never "do nothing", and the help has to say so
-        expect(setting.help).toMatch(/turn this on/i);
-        expect(setting.help).toMatch(/reload button/i);
+        expect(setting.help).toMatch(/On, the connection is dropped/);
+        expect(setting.help).toMatch(/reload notice/i);
     });
 });
 
@@ -341,8 +341,8 @@ describe('takeover auto-reload defaults', () => {
         expect(setting.default).toBe('off');
         expect(setting.options.map((o) => o.value)).toEqual(['off', '5', '10', '15', '30', '60']);
         expect(setting.options.find((o) => o.value === '15').label).toMatch(/recommended/i);
-        expect(setting.help).toMatch(/another device or window/);
-        expect(setting.help).toMatch(/never reloads while you are using the page/);
+        expect(setting.help).toMatch(/game opened elsewhere/);
+        expect(setting.help).toMatch(/never reloads while you use the page/);
     });
 });
 
@@ -425,7 +425,7 @@ describe('advisor route pricing setting', () => {
         expect(setting.default).toBe(true);
         expect(setting.label).not.toContain('experimental');
         expect(setting.label).toContain('preferred route');
-        expect(setting.help).toContain('Cost, ranking and shopping buttons follow that route');
+        expect(setting.help).toContain('Supported means one tradable item of your own');
         expect(setting.help).toContain('Rerun the analysis');
     });
 });

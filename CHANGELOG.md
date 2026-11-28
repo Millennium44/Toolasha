@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Shorter setting descriptions
+
+59 setting descriptions that ran past 300 characters are trimmed to say what the setting does and what you need to know to choose. No setting changed its behavior.
+
 ### Chat name links survive turning the setting off and on
 
 Turning the clickable chat names setting off and back on could leave names unstyled and unclickable until a reload. They now come back at once.
