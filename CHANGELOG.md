@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Shorter setting descriptions
+
+59 setting descriptions that ran past 300 characters are trimmed to say what the setting does and what you need to know to choose. No setting changed its behavior.
+
 ### Holding a labyrinth tile on a phone shows its info window
 
 A long press on a labyrinth tile used to open the Lab Sim, while a tap showed the tile's info window. A hold now shows the info window too; its "Open in sim" button still opens the sim. Right-click on a desktop is unchanged.
