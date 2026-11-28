@@ -28,6 +28,8 @@ const storageMock = vi.hoisted(() => ({
 }));
 
 const dataManagerMock = vi.hoisted(() => ({ currentCharacterId: 'char-1' }));
+const exclusionsMock = vi.hoisted(() => ({ initExclusions: vi.fn(async () => {}) }));
+vi.mock('./networth-exclusions.js', () => exclusionsMock);
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -379,22 +381,84 @@ describe('the compact series is stored one record per month', () => {
 });
 
 describe('a reading priced before the exclusion list loaded', () => {
-    test('is not recorded, and the next reading with the list loaded is', async () => {
-        const data = fakeNetworthData();
-        networthHistory.networthFeature = { currentData: { ...data, exclusionsLoaded: false } };
-        await networthHistory.takeSnapshot();
-        expect(networthHistory.history).toHaveLength(0);
-        expect(storageMock.set).not.toHaveBeenCalled();
+    /** A feature whose recalculate() republishes data with the given exclusion status */
+    const featureWith = (status, after = 'loaded') => {
+        const feature = {
+            currentData: { ...fakeNetworthData(), exclusionsStatus: status },
+            recalculate: vi.fn(async () => {
+                feature.currentData = { ...fakeNetworthData(), exclusionsStatus: after };
+            }),
+        };
+        return feature;
+    };
 
-        networthHistory.networthFeature = { currentData: { ...data, exclusionsLoaded: true } };
+    beforeEach(() => {
+        exclusionsMock.initExclusions.mockReset();
+        exclusionsMock.initExclusions.mockImplementation(async () => {});
+    });
+
+    test('while pending it is skipped, then recorded as soon as the list loads, with no hour wait', async () => {
+        const feature = featureWith('pending');
+        networthHistory.networthFeature = feature;
+        let finishLoading;
+        exclusionsMock.initExclusions.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    finishLoading = resolve;
+                })
+        );
+
+        const taken = networthHistory.takeSnapshot();
+        await Promise.resolve();
+        expect(networthHistory.history).toHaveLength(0);
+
+        finishLoading();
+        await taken;
+        expect(feature.recalculate).toHaveBeenCalledTimes(1);
+        expect(networthHistory.history).toHaveLength(1);
+    });
+
+    test('an unreadable list (failed) is recorded as before, with no wait', async () => {
+        networthHistory.networthFeature = featureWith('failed');
+        await networthHistory.takeSnapshot();
+        expect(exclusionsMock.initExclusions).not.toHaveBeenCalled();
+        expect(networthHistory.history).toHaveLength(1);
+    });
+
+    test('a loaded list, empty or not, and data that does not say, are recorded', async () => {
+        networthHistory.networthFeature = featureWith('loaded');
+        await networthHistory.takeSnapshot();
+        expect(networthHistory.history).toHaveLength(1);
+
+        networthHistory.history = [];
+        networthHistory.networthFeature = { currentData: fakeNetworthData() };
         await networthHistory.takeSnapshot();
         expect(networthHistory.history).toHaveLength(1);
     });
 
-    test('data from a calculator that does not say is recorded as before', async () => {
-        networthHistory.networthFeature = { currentData: fakeNetworthData() };
+    test('a read that retried and is still pending records nothing and does not loop', async () => {
+        const feature = featureWith('pending', 'pending');
+        networthHistory.networthFeature = feature;
         await networthHistory.takeSnapshot();
-        expect(networthHistory.history).toHaveLength(1);
+        expect(feature.recalculate).toHaveBeenCalledTimes(1);
+        expect(exclusionsMock.initExclusions).toHaveBeenCalledTimes(1);
+        expect(networthHistory.history).toHaveLength(0);
+    });
+
+    test('a character switch while the list loads records nothing under the wrong character', async () => {
+        const feature = featureWith('pending');
+        networthHistory.networthFeature = feature;
+        exclusionsMock.initExclusions.mockImplementation(async () => {
+            // The switch lands inside the read: the feature is torn down and the arriving character is current
+            networthHistory._generation += 1;
+            dataManagerMock.currentCharacterId = 'char-2';
+        });
+
+        await networthHistory.takeSnapshot();
+
+        expect(feature.recalculate).not.toHaveBeenCalled();
+        expect(networthHistory.history).toHaveLength(0);
+        expect(storageMock.set).not.toHaveBeenCalled();
     });
 });
 

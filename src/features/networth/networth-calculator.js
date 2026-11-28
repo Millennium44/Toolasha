@@ -42,7 +42,7 @@ import { readValuationSignature } from './networth-markers.js';
 import { officialValueOverride } from '../../utils/official-value-override.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { validateNetworthCache } from './networth-cache-validation.js';
-import { isExcluded, getExclusions, areExclusionsLoaded } from './networth-exclusions.js';
+import { isExcluded, getExclusions, exclusionsStatus } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { getArtisanBonus } from '../../utils/artisan-bonus.js';
@@ -1084,8 +1084,8 @@ export async function calculateNetworth() {
     // change against the settings a reading was actually valued with, not the ones set by the time it is stored
     const valuation = readValuationSignature();
     // Whether the exclusion list was read when this run started: until it is, every exclusion reads as absent and
-    // the figures count excluded items, so the history must not record them
-    const exclusionsLoadedAtStart = areExclusionsLoaded();
+    // the figures count excluded items, so the history waits (see takeSnapshot)
+    const exclusionsAtStart = exclusionsStatus();
     // Where the time went, phase by phase, for the last run — readable at
     // `Toolasha.Market.networthCalculator.lastCalcPhases` when hunting a stall. Kept always-on
     // because recording eight numbers costs nothing and the 2026-08-29 stutter
@@ -1664,8 +1664,9 @@ export async function calculateNetworth() {
     return {
         totalNetworth,
         valuation,
-        // False when the exclusion list was not loaded during this run (or the character changed under it)
-        exclusionsLoaded: exclusionsLoadedAtStart && areExclusionsLoaded(),
+        // 'pending' when the list was still unread at either end of this run (or the character changed under it),
+        // 'failed' when a read was attempted and the list is unreadable, else 'loaded'
+        exclusionsStatus: combineExclusionStatus(exclusionsAtStart, exclusionsStatus()),
         // What the character holds that decides whether some settings can matter at all
         valuationFacts: { capeHeld: characterItems.some((item) => isUntradableCape(item.itemHrid)), switchedBooks },
         // Counted items valued on a crafting bill with an input nothing can price: the total
@@ -1747,6 +1748,18 @@ function buildTokenBreakdown(entries, itemDetailMap = {}) {
     }
     items.sort((a, b) => b.value - a.value);
     return { value: countedValue, items };
+}
+
+/**
+ * One status for a run that saw the exclusion list at two moments: pending if either was, else failed if either was.
+ * @param {'loaded'|'pending'|'failed'} start
+ * @param {'loaded'|'pending'|'failed'} end
+ * @returns {'loaded'|'pending'|'failed'}
+ */
+function combineExclusionStatus(start, end) {
+    if (start === 'pending' || end === 'pending') return 'pending';
+    if (start === 'failed' || end === 'failed') return 'failed';
+    return 'loaded';
 }
 
 /**
