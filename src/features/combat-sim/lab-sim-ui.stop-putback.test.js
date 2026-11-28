@@ -606,6 +606,17 @@ describe('an Upgrade run stopped or failed before any row puts the previous view
         expect(section().innerHTML).toBe(shown);
     });
 
+    test('the cancelled note is added once however many Stops in a row', async () => {
+        const before = await firstRun('all');
+        expect(before.status).toContain('Queued note: kept.');
+        for (let i = 0; i < 3; i++) {
+            stopDuringRun();
+            await run('all');
+            expect(status()).toBe(before.status + CANCELLED);
+            expect(status().split('Upgrade analysis cancelled.').length).toBe(2);
+        }
+    });
+
     test('a previous view of another kind comes back as it was, not the stopped run’s kind', async () => {
         const order = await firstRun('order');
         stopDuringRun();

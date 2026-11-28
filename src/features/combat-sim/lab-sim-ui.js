@@ -6478,7 +6478,10 @@ class LabSimUI {
         this._upgradeOrderSection = prev.section;
         this._drawUpgradeAbilityOrder();
         // The restored footer, plus the word that the run was stopped
-        if (!keepStatus) this._setStatus(`${prev.status} Upgrade analysis cancelled.`.trim());
+        // Once however many Stops in a row: a footer put back by an earlier Stop already ends with it
+        const cancelled = 'Upgrade analysis cancelled.';
+        if (!keepStatus)
+            this._setStatus(prev.status.endsWith(cancelled) ? prev.status : `${prev.status} ${cancelled}`.trim());
         return true;
     }
 
