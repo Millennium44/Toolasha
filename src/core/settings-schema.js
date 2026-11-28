@@ -484,9 +484,10 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help:
-                    'Adds the tea setup with the best gold/hr that still keeps a set share of the top XP/hr, and ' +
-                    'states the XP given up and gold/hr gained. Pinned and banned teas apply in single-goal popups. ' +
-                    'Alchemy Both shows the unconstrained choice. Unpriced items are marked.',
+                    'On a single-action tea recommendation (or Alchemy popup), adds the setup with the best gold/hr ' +
+                    'that keeps a set share of top XP/hr, and states the XP given up and gold/hr gained. Pinned and ' +
+                    'banned teas apply in single-goal popups. Alchemy Both shows the unconstrained pick. Unpriced ' +
+                    'items are marked.',
             },
             teaRecommendation_xpFloorPercent: {
                 id: 'teaRecommendation_xpFloorPercent',
@@ -602,7 +603,7 @@ export const settingsGroups = {
                 help:
                     'Adds a picker to Profitability that recomputes it as if no catalyst, the type catalyst or a ' +
                     'Prime Catalyst were slotted, even ones you do not own. Your real catalyst is unchanged. Figures ' +
-                    'are marked what-if until you pick Equipped again.',
+                    'are marked what-if until you pick Equipped again, and Missing Mats includes the picked catalyst.',
             },
             alchemy_bestItems: {
                 id: 'alchemy_bestItems',
@@ -906,10 +907,9 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help:
-                    'A plan records what it has claimed from your bag and other plans plan against what is left, so ' +
-                    'two plans needing the same 500 logs no longer both count them. The goal planner and crafting ' +
-                    'plan hold claims until you change or delete them. Missing-materials and budget panels hold them ' +
-                    'only while open.',
+                    'On, a plan records what it has claimed from your bag and other plans plan against what is left, ' +
+                    'so two plans needing the same 500 logs no longer both count them. Goal planner and crafting plan ' +
+                    'claims last until changed or deleted; budget and missing-materials claims only while open.',
             },
             actions_artisanMaterialMode: {
                 id: 'actions_artisanMaterialMode',
@@ -1151,10 +1151,10 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help:
-                    'Adds a "Best plan" row to the detailed materials table that prices the craft by buying or ' +
-                    'crafting each ingredient, whichever is cheaper. Shown only when it differs from Total. An ' +
-                    'unpriced sub-material marks it as a floor (≥). Profit/hr always uses Total. Needs "Show detailed ' +
-                    'materials breakdown".',
+                    'Adds a "Best plan" row to the detailed materials table, pricing the craft by buying or crafting ' +
+                    'each ingredient, whichever is cheaper. Shown only when it differs from Total. An unpriced ' +
+                    'sub-material marks it a floor (≥). Profit/hr uses Total. Off with "direct recipe only". Needs ' +
+                    'the breakdown.',
                 requires: 'itemTooltip_detailedProfit',
             },
             itemTooltip_detailedProfitFlat: {
@@ -2603,10 +2603,9 @@ export const settingsGroups = {
                     { value: 'craft', label: 'What it costs you to craft one' },
                 ],
                 help:
-                    'How a dungeon key is valued wherever Toolasha prices one, such as tooltips, net worth and the sims. ' +
-                    'Ask and Bid use that market price. "What it costs you to craft one" uses your own cost, or ' +
-                    'the market price if unknown. "Same as the profit calculation pricing mode" follows that mode\'s buy ' +
-                    'side.',
+                    'How a dungeon key is valued wherever Toolasha prices one. Ask and Bid use that market price. ' +
+                    '"What it costs you to craft one" uses your crafting cost, or market price if you cannot craft it ' +
+                    'or a material is unpriced. "Same as the profit calculation pricing mode" follows its buy side.',
             },
             profitCalc_liquidityCap: {
                 id: 'profitCalc_liquidityCap',
@@ -5315,8 +5314,8 @@ export const settingsGroups = {
                 default: false,
                 help:
                     'Notifies the first time a target on the Equipment Savings list (gear, ability level or house ' +
-                    'room) costs less than what you can spend. The message states the age of the prices. Once per ' +
-                    'goal. Re-arms when you spend back below the cost or change the target. Goals reached by leveling ' +
+                    'room) costs less than you can spend. The message states the price age. Once per goal. Re-arms ' +
+                    'when you spend back below the cost or change the target. Goals reached by leveling or building ' +
                     'are skipped.',
             },
             notifications_priceTargetReached: {
@@ -5325,10 +5324,9 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help:
-                    'Notifies when a pinned item on the price history panel reaches the target you set with the ◎ ' +
-                    'button on its chip. Needs "Market: Price history panel" on and stays quiet without its pooled ' +
-                    'data. Sightings older than 15 minutes fire nothing. Once per target. Re-arms when the price ' +
-                    'moves back.',
+                    'Notifies when a pinned item on the price history panel hits the target set with its chip ◎ ' +
+                    'button (ask at or under, bid at or above). Needs "Market: Price history panel" on. Sightings ' +
+                    'over 15 minutes old fire nothing. Once per target; re-arms on a price move back or new target.',
             },
             notifications_otherCharacterIdle: {
                 id: 'notifications_otherCharacterIdle',
