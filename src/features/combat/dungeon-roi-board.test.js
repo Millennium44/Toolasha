@@ -680,8 +680,17 @@ describe('whatIfFigures', () => {
         expect(over.runsPerDay).toBe(72);
         expect(over.runsCappedFrom).toBe(100);
         expect(over.netPerDay).toBe(88_000 * 72);
-        // Not a whole number of runs: 1440 / 7 = 205.7, so 205
-        expect(whatIfFigures(row(), { minutesPerRun: 7, runsPerDay: 300 }).runsPerDay).toBe(205);
+        // Not a whole number of runs: the cap is 1440 / 7, exactly what a blank box fills the day with
+        const seven = whatIfFigures(row(), { minutesPerRun: 7, runsPerDay: 300 });
+        expect(seven.runsPerDay).toBe(1440 / 7);
+        expect(seven.runsPerDay).toBe(whatIfFigures(row(), { minutesPerRun: 7 }).runsPerDay);
+        // Typed 206 is over 205.7, 205 is under it and untouched
+        expect(whatIfFigures(row(), { minutesPerRun: 7, runsPerDay: 206 }).runsCappedFrom).toBe(206);
+        expect(whatIfFigures(row(), { minutesPerRun: 7, runsPerDay: 205 }).runsPerDay).toBe(205);
+        // A run longer than a day: the cap is below one run, not zero
+        const long = whatIfFigures(row(), { minutesPerRun: 2000, runsPerDay: 3 });
+        expect(long.runsPerDay).toBeCloseTo(0.72, 9);
+        expect(long.runsCappedFrom).toBe(3);
         // The row's own 10 minute clear applies when only runs are typed: 144 fit
         const own = whatIfFigures(row(), { runsPerDay: 500 });
         expect(own.runsPerDay).toBe(144);
@@ -693,7 +702,7 @@ describe('whatIfFigures', () => {
         expect(at.runsPerDay).toBe(72);
         expect(at.runsCappedFrom).toBeNull();
         expect(whatIfFigures(row(), { minutesPerRun: 20, runsPerDay: 10 }).runsCappedFrom).toBeNull();
-        // 1.2 min is exactly 1200 runs; float division must not floor it to 1199
+        // 1.2 min is 1200 runs; float division must not cap a typed 1200
         expect(whatIfFigures(row(), { minutesPerRun: 1.2, runsPerDay: 1200 }).runsCappedFrom).toBeNull();
         expect(whatIfFigures(row(), { minutesPerRun: 20, runsPerDay: 0 })).toBeNull();
         expect(whatIfFigures(row(), { minutesPerRun: 20, runsPerDay: '' }).runsCappedFrom).toBeNull();

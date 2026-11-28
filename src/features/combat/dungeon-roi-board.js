@@ -600,7 +600,7 @@ const MINUTES_PER_DAY = 1440;
  *
  * Either input may be left out: no minutes uses the row's own clear time, no runs per day fills the day with
  * back-to-back runs at that pace. Typed runs per day are cut to the most that fit in 24 h at the run time
- * (floor); `runsCappedFrom` carries what was typed when that happened.
+ * (the same 1440 / minutes the blank box uses, not floored); `runsCappedFrom` carries what was typed when that happened.
  *
  * @param {Object} row - From `buildDungeonRoiRows`
  * @param {Object} [what] - The player's figures
@@ -621,8 +621,9 @@ export function whatIfFigures(row, { minutesPerRun = null, runsPerDay = null } =
     const minutes = hasMinutes ? typedMinutes : row.clearSeconds > 0 ? row.clearSeconds / 60 : null;
     // Runs typed for a day cannot exceed what fits in 24 h at this run time; with no run time there is nothing to
     // cap against, so the typed number stands
-    const maxRunsPerDay = minutes ? Math.floor(MINUTES_PER_DAY / minutes + 1e-9) : null;
-    const runsCapped = hasRuns && maxRunsPerDay !== null && typedRuns > maxRunsPerDay;
+    // Not floored: the blank box fills the day with 1440 / minutes runs, and the cap is that same figure
+    const maxRunsPerDay = minutes ? MINUTES_PER_DAY / minutes : null;
+    const runsCapped = hasRuns && maxRunsPerDay !== null && typedRuns > maxRunsPerDay + 1e-9;
     const perDay = hasRuns ? (runsCapped ? maxRunsPerDay : typedRuns) : minutes ? MINUTES_PER_DAY / minutes : null;
 
     const consumableCostPerRun =

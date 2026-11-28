@@ -430,7 +430,12 @@ describe('drawing', () => {
         type('#mwi-dt-roi-whatif-minutes', '20');
         type('#mwi-dt-roi-whatif-runs', '100');
         expect(den0().lastChild.title).toContain('Capped: 100 runs a day do not fit in 24 h at 20.0 min/run');
-        expect(den0().lastChild.textContent).toContain('(max 72)');
+        expect(den0().lastChild.textContent).toContain('(max 72.0)');
+        // 7 minute runs: 1440 / 7 = 205.7, shown as the blank box shows it
+        type('#mwi-dt-roi-whatif-minutes', '7');
+        type('#mwi-dt-roi-whatif-runs', '206');
+        expect(den0().lastChild.textContent).toContain('(max 205.7)');
+        type('#mwi-dt-roi-whatif-minutes', '20');
         type('#mwi-dt-roi-whatif-runs', '72');
         expect(den0().lastChild.title).not.toContain('Capped');
         expect(den0().lastChild.textContent).not.toContain('max');
