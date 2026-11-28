@@ -57,6 +57,7 @@ import {
 } from './marketplace-tabs.js';
 import { createAutofillManager } from './marketplace-autofill.js';
 import { unclaimedBoughtCount } from './material-calculator.js';
+import { snapshotOrderCredit, orderCreditState } from './order-credit.js';
 
 /**
  * How long to keep putting the tabs back.
@@ -112,8 +113,12 @@ function ownedNow(itemHrid) {
  * @returns {number} Remaining count
  */
 function remainingFor(item) {
+    // Units the open orders have delivered since the open are in the held stock but were never purchases
+    // (`openFilled`); orders that ended without delivering are a shortfall again (`addBack`). Without a
+    // credit both are 0 and this is the plain baseline count
+    const { openFilled, addBack } = orderCreditState(item.credit);
     const gained = ownedNow(item.itemHrid) - item.baseline;
-    return Math.max(0, item.count - Math.max(0, gained));
+    return Math.max(0, item.count + addBack - Math.max(0, gained - openFilled));
 }
 
 /** Redraw every built tab's badge from what has been bought since the open */
@@ -179,18 +184,22 @@ export function openShoppingList(items, { heading: headingText = '' } = {}) {
     // Each line remembers the holdings it opened against, so what is bought
     // from here on moves its badge — and only what is bought from here on:
     // the caller already netted (or chose not to net) what was held before
-    // A line may carry `onOrder`: open buy-order units the caller already netted off `count`. Their fills
-    // would otherwise read as purchases and come off the count a second time, so they sit in the baseline
-    watchedItems = wanted.map((item) => ({
-        ...item,
-        baseline: ownedNow(item.itemHrid) + Math.max(0, Math.floor(Number(item.onOrder) || 0)),
-        remaining: item.count,
-    }));
+    // A line may carry `onOrder`: open buy-order units the caller already netted off `count`. The open orders
+    // are snapshotted (see order-credit.js) so their own fills are not counted as purchases, and an order that
+    // ends without filling is added back; a purchase made while they are open still moves the badge.
+    watchedItems = wanted.map((item) => {
+        const entry = {
+            ...item,
+            baseline: ownedNow(item.itemHrid),
+            credit: snapshotOrderCredit(item.itemHrid, item.onOrder),
+        };
+        return { ...entry, remaining: remainingFor(entry) };
+    });
     startInventoryWatch();
 
     // The first item opens the marketplace, and the tabs are put in behind it
     navigateToMarketplace(wanted[0].itemHrid, 0);
-    autofill.setQuantity(wanted[0].count, { itemHrid: wanted[0].itemHrid });
+    autofill.setQuantity(watchedItems[0].remaining, { itemHrid: watchedItems[0].itemHrid });
     watchForTabBar(watchedItems);
 }
 

@@ -1425,6 +1425,29 @@ describe('the Buy all craft bill', () => {
     });
 });
 
+describe('the Buy all craft bill with buy orders resting', () => {
+    test('hands the bill the orders its total was netted by, so their fills are credited per order', async () => {
+        const openCraftBill = vi.fn();
+        window.Toolasha = { Actions: { missingMaterialsButton: { openCraftBill } } };
+        game.actionDetail = { outputItems: [{ itemHrid: '/items/key', count: 1 }] };
+        const row = {
+            itemHrid: '/items/key',
+            name: 'Key',
+            craftActionHrid: '/actions/x',
+            rateKnown: true,
+            perDay: 1e9,
+            held: 0,
+            price: 1,
+        };
+        // 1,000 wanted, 400 on order: the panel's count is 600
+        await consumablesPanel._openKeyMaterials(
+            [row],
+            [{ itemHrid: '/items/cheese', count: 600, held: 0, onOrder: 400 }]
+        );
+        expect(openCraftBill.mock.calls[0][1]).toEqual([{ itemHrid: '/items/cheese', count: 600, onOrder: 400 }]);
+    });
+});
+
 describe('the labyrinth buy all', () => {
     beforeEach(() => {
         consumablesPanel._tab = 'labyrinth';

@@ -100,6 +100,7 @@ import * as alchemyNavigation from '../utils/alchemy-navigation.js';
 import * as marketplaceTabs from '../utils/marketplace-tabs.js';
 import * as marketplaceAutofill from '../utils/marketplace-autofill.js';
 import * as shoppingList from '../utils/shopping-list.js';
+import * as orderCredit from '../utils/order-credit.js';
 import * as scrollBuffValues from '../utils/scroll-buff-values.js';
 import * as toast from '../utils/toast.js';
 // The display-side market-volume cap, shared so the actions and sim bundles
@@ -320,6 +321,7 @@ toolashaRoot.Utils = {
     marketplaceTabs,
     marketplaceAutofill,
     shoppingList,
+    orderCredit,
     scrollBuffValues,
     toast,
     liquidityCap,

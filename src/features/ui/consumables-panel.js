@@ -1663,6 +1663,9 @@ class ConsumablesPanel {
                         Math.floor(Number(item.held) || 0) +
                         ownBuyOrders(dataManager.getMarketListings?.(), item.itemHrid).unclaimed +
                         item.count,
+                    // The orders the total was netted by: the bill credits them by order, so their own
+                    // fills are not subtracted again when they land
+                    ...(Number(item.onOrder) > 0 ? { onOrder: Math.floor(Number(item.onOrder)) } : {}),
                 }));
             this.hide();
             await openBill(crafts, direct);

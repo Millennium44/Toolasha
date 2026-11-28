@@ -209,6 +209,8 @@ const utilsExternalGlobals = new Map([
     // in the ui bundle and the goal planner is in actions; a copy each meant two
     // `watchTimer`s tearing down each other's tabs for six seconds after an open.
     [normalize(join(__dirname, 'src/utils/shopping-list.js')), 'Toolasha.Utils.shoppingList'],
+    // Shopping list (utils library) and the craft bill (actions) both read it; stateless, bundled once
+    [normalize(join(__dirname, 'src/utils/order-credit.js')), 'Toolasha.Utils.orderCredit'],
     [normalize(join(__dirname, 'src/utils/scroll-buff-values.js')), 'Toolasha.Utils.scrollBuffValues'],
     [normalize(join(__dirname, 'src/utils/command-registry.js')), 'Toolasha.Utils.commandRegistry'],
     [normalize(join(__dirname, 'src/utils/overlay-rows.js')), 'Toolasha.Utils.overlayRows'],

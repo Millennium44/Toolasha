@@ -15,7 +15,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const tabsModule = vi.hoisted(() => ({ navigations: [], cleanupObservers: 0, badgeUpdates: [] }));
-const game = vi.hoisted(() => ({ inventory: [], unclaimed: {}, wsHandlers: new Set(), quantities: [] }));
+const game = vi.hoisted(() => ({ inventory: [], unclaimed: {}, listings: [], wsHandlers: new Set(), quantities: [] }));
 
 vi.mock('../core/websocket.js', () => ({
     default: {
@@ -24,7 +24,7 @@ vi.mock('../core/websocket.js', () => ({
     },
 }));
 vi.mock('../core/data-manager.js', () => ({
-    default: { getInventory: () => game.inventory },
+    default: { getInventory: () => game.inventory, getMarketListings: () => game.listings },
 }));
 vi.mock('./material-calculator.js', () => ({
     unclaimedBoughtCount: (itemHrid) => game.unclaimed[itemHrid] || 0,
@@ -92,6 +92,7 @@ beforeEach(() => {
     tabsModule.badgeUpdates = [];
     game.inventory = [];
     game.unclaimed = {};
+    game.listings = [];
     game.quantities = [];
     vi.useFakeTimers();
 });
@@ -224,12 +225,26 @@ describe('purchases move the badges', () => {
     });
 
     test('an open order the caller already netted off does not come off again when it fills', () => {
+        // The resting order the 400 came from (its fills are the order-credit tests' business)
+        game.listings = [
+            {
+                id: 1,
+                isSell: false,
+                itemHrid: '/items/cheese',
+                enhancementLevel: 0,
+                status: '/market_listing_status/active',
+                orderQuantity: 400,
+                filledQuantity: 0,
+                unclaimedItemCount: 0,
+            },
+        ];
         tabBar();
         openShoppingList([{ itemHrid: '/items/cheese', name: 'Cheese', count: 600, onOrder: 400 }]);
         vi.advanceTimersByTime(200);
         expect(tabText()).toContain('Cheese: 600');
 
         game.unclaimed = { '/items/cheese': 400 };
+        game.listings = [{ ...game.listings[0], filledQuantity: 400, unclaimedItemCount: 400 }];
         fireWs({ type: 'market_listings_updated' });
         expect(tabText()).toContain('Cheese: 600');
 
