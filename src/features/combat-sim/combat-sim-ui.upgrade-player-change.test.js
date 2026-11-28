@@ -1949,6 +1949,25 @@ describe('Stop or failure before anything is drawn', () => {
         expect(mocks.store.get(KEY).data.results[0].candidate.description).toBe('Older gear');
     });
 
+    test('stopped before any row: the table comes back with its verify verdicts and basket confirmation', async () => {
+        holdSelf();
+        await open();
+        await analyze('Live gear');
+        const verdicts = { profit: { someRow: { verdict: 'confirmed', mean: 1, se: 0, seeds: 3 } } };
+        const confirm = { key: 'basket', status: 'done', result: { ok: true }, error: null };
+        ui._upgradeResultsData.verifyVerdicts = verdicts;
+        ui._budgetConfirm = confirm;
+        const table = ui._upgradeResultsData;
+        // A different object from the table on screen, as a real run returns
+        mocks.upgradeResult = result(null);
+        mocks.onRun = () => ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+        ui.panel.querySelector('#mwi-csim-upgrade-run').click();
+        await settle();
+        expect(ui._upgradeResultsData).toBe(table);
+        expect(table.verifyVerdicts).toBe(verdicts);
+        expect(ui._budgetConfirm).toBe(confirm);
+    });
+
     test('a run that fails puts the table back too', async () => {
         holdSelf();
         await open();
@@ -2174,6 +2193,23 @@ describe('Stop or failure before anything is drawn', () => {
             expect(ui._allPlayersRun).toBe(prev);
             expect(rows().textContent).toContain('player1 gear');
             expect(rows().querySelectorAll('[data-allp-head]').length).toBe(2);
+        });
+
+        test('stopped before any row: the previous table keeps its verify verdicts and basket confirmation', async () => {
+            mocks.upgradeResultFor = perPlayer;
+            await press();
+            const verdicts = { profit: { someRow: { verdict: 'confirmed', mean: 1, se: 0, seeds: 3 } } };
+            const confirm = { key: 'basket', status: 'done', result: { ok: true }, error: null };
+            const table = ui._upgradeResultsData;
+            table.verifyVerdicts = verdicts;
+            ui._budgetConfirm = confirm;
+            choose('all');
+            mocks.onRun = stop;
+            mocks.upgradeResultFor = empty;
+            await press();
+            expect(ui._upgradeResultsData).toBe(table);
+            expect(table.verifyVerdicts).toBe(verdicts);
+            expect(ui._budgetConfirm).toBe(confirm);
         });
 
         test('stopped before any row: the previous single-player table comes back', async () => {

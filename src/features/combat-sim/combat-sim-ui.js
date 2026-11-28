@@ -13356,6 +13356,8 @@ class CombatSimUI {
             meta: this._restoredUpgradeMeta,
             remembered: this._rememberedResults,
             allPlayers: this._allPlayersRun,
+            verdicts: this._upgradeResultsData?.verifyVerdicts,
+            budgetConfirm: this._budgetConfirm,
         };
         resultsEl.innerHTML = '';
         this._setTuneButtonBusy(true);
@@ -13982,6 +13984,8 @@ class CombatSimUI {
             meta: this._restoredUpgradeMeta,
             remembered: this._rememberedResults,
             allPlayers: this._allPlayersRun,
+            verdicts: this._upgradeResultsData?.verifyVerdicts,
+            budgetConfirm: this._budgetConfirm,
         };
         resultsEl.innerHTML = '';
         // A single-player run replaces an All players view
@@ -17490,7 +17494,8 @@ class CombatSimUI {
      * is exactly what it was. A table a roster replacement or Clear has taken meanwhile is not put back, and the
      * stale-build banner is worked out afresh against the build now loaded.
      * (This is not the delayed read `_restoreUpgradeResults` guards against drawing over a run.)
-     * @param {Object} prev - `{data, restoredAt, meta, remembered, allPlayers}` as the run found them
+     * @param {Object} prev - `{data, restoredAt, meta, remembered, allPlayers, verdicts, budgetConfirm}` as the run
+     *   found them
      * @private
      */
     _putBackUpgradeView(prev) {
@@ -17500,6 +17505,11 @@ class CombatSimUI {
         this._restoredUpgradeAt = prev.restoredAt;
         this._restoredUpgradeMeta = prev.meta;
         this._rememberedResults = prev.remembered;
+        // A run start takes the table's verify verdicts and the basket confirmation; both describe this same
+        // analysis object, which is what comes back. A confirmation still running cannot have been taken (a run
+        // does not start under one), and the Confirm button re-checks the build when pressed
+        if (prev.verdicts && !prev.data.verifyVerdicts) prev.data.verifyVerdicts = prev.verdicts;
+        if (prev.budgetConfirm && prev.budgetConfirm.status !== 'running') this._budgetConfirm = prev.budgetConfirm;
         if (prev.allPlayers) {
             this._allPlayersRun = prev.allPlayers;
             this._renderUpgradeAllPlayers();
