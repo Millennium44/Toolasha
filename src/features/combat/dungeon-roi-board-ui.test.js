@@ -412,6 +412,30 @@ describe('drawing', () => {
         expect(container.querySelector('th[data-column="whatIf"]')).toBeNull();
     });
 
+    test('typed runs per day beyond what fits in a day are capped, with a note on the row', async () => {
+        state.runs = [run('Chimerical Den', 0, 600_000)];
+        state.sessions = [sessionWithConsumable(10)];
+        const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
+        const container = panel();
+        await board.render(container);
+        const type = (id, value) => {
+            const input = container.querySelector(id);
+            input.value = value;
+            input.dispatchEvent(new Event('change'));
+        };
+        const den0 = () =>
+            [...container.querySelectorAll('.mwi-dt-roi-row')].find((tr) =>
+                tr.firstChild.textContent.includes('Den T0')
+            );
+        type('#mwi-dt-roi-whatif-minutes', '20');
+        type('#mwi-dt-roi-whatif-runs', '100');
+        expect(den0().lastChild.title).toContain('Capped: 100 runs a day do not fit in 24 h at 20.0 min/run');
+        expect(den0().lastChild.textContent).toContain('(max 72)');
+        type('#mwi-dt-roi-whatif-runs', '72');
+        expect(den0().lastChild.title).not.toContain('Capped');
+        expect(den0().lastChild.textContent).not.toContain('max');
+    });
+
     test('a what-if row that cannot be priced says why instead of showing a number', async () => {
         state.runs = [run('Chimerical Den', 0, 600_000)];
         // No sessions and no snapshot: the food bill is unknown
