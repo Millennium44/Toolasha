@@ -927,8 +927,7 @@ export const settingsGroups = {
                 help:
                     'How missing materials counts Artisan Tea savings. Expected value averages them (long queues; can ' +
                     'under-buy short ones). Worst-case rounds every craft up (few actions; over-buys long ones). ' +
-                    'Hybrid: worst-case below 100 actions, then expected value. Craft & Enhance always averages, even ' +
-                    'on Hybrid.',
+                    'Hybrid: worst-case below 100 actions, then expected value; in Craft & Enhance it always averages.',
             },
         },
     },
