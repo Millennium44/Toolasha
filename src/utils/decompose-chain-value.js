@@ -65,7 +65,7 @@ const PRICING_MODE_SETTING = 'profitCalc_pricingMode';
  * bump); a chain priced while it was empty must not outlive the refill, so both counters are keyed.
  * @returns {string}
  */
-function pricingSignature() {
+export function pricingSignature() {
     const calculator = expectedValueCalculator();
     const generation = `${calculator?.generation ?? 0}.${calculator?.completions ?? 0}`;
     return `${config.getSettingValue(PRICING_MODE_SETTING, '')}|${isPatientTickOn('buy')}|${isPatientTickOn('sell')}|${getCustomPriceVersion()}|${generation}`;

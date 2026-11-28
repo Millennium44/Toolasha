@@ -606,6 +606,17 @@ export const settingsGroups = {
                     'Prime Catalyst were slotted, even ones you do not own. Your real catalyst is unchanged. Figures ' +
                     'are marked what-if until you pick Equipped again, and Missing Mats includes the picked catalyst.',
             },
+            alchemy_retransmute: {
+                id: 'alchemy_retransmute',
+                needsPrices: true,
+                label: 'Alchemy panel: Retransmute figure for Transmute',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Under Net Profit, shows what a Transmute earns if you transmute the outputs worth more ' +
+                    'transmuted again than sold and sell the rest. Time is charged at your gold rate (set it in ' +
+                    'Settings); with no rate there is no figure. Adds a Retransmute/hr sort to Best Items.',
+            },
             alchemy_bestItems: {
                 id: 'alchemy_bestItems',
                 needsPrices: true,
@@ -624,12 +635,12 @@ export const settingsGroups = {
                     { value: 'xp', label: 'XP per hour' },
                     { value: 'decomposeChainPerHour', label: 'Full decompose chain per hour (Decompose tab)' },
                     { value: 'chainOwnStock', label: 'Full decompose chain per hour, items you hold (Decompose tab)' },
+                    { value: 'retransmutePerHour', label: 'Retransmute per hour (Transmute tab)' },
                 ],
                 help:
-                    'Which figure the best items table ranks by. The chain modes decompose the item and everything it ' +
-                    'yields, then sell what is left after tax, on the sides your Buy/Sell pricing uses. The full ' +
-                    'chain buys the item. The items-you-hold chain uses copies you already hold. The table buttons ' +
-                    'change this too.',
+                    'Which figure the best items table ranks by. The chain modes decompose the item and all it yields, ' +
+                    'then sell the rest after tax. The full chain buys the item; the items-you-hold chain uses ' +
+                    'copies you have. Retransmute ranks Transmute at your gold rate. The table buttons change this too.',
                 requires: 'alchemy_bestItems',
             },
             alchemy_bestItems_shopPrices: {

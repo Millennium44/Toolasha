@@ -173,6 +173,7 @@ export const IRON_COW_UNLOCKED_PRICED = new Set([
     'consumables_idleLoadoutPlan',
     'teaRecommendation_xpFloor',
     'alchemy_catalystWhatIf',
+    'alchemy_retransmute',
     'alchemy_bestItems_shopPrices',
     'actions_arbitrageBoard',
     'actions_craftEnhance',

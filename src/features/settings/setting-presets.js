@@ -290,6 +290,7 @@ const MARKET_EXTRAS = [
     'invCategoryTotals',
     // Alchemy & crafting economics
     'alchemy_profitDisplay',
+    'alchemy_retransmute',
     'alchemy_bestItems',
     'alchemy_transmuteHistory',
     'alchemy_coinifyHistory',

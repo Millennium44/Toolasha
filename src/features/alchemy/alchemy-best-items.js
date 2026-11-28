@@ -60,6 +60,13 @@ import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import { findAlchemyTablist, getAlchemyTabElements, readAlchemyTabType } from './alchemy-tabs.js';
 import { decomposeChain, clearDecomposeChainCaches, describeChainPricing } from '../../utils/decompose-chain-value.js';
+import {
+    RETRANSMUTE_SETTING,
+    retransmuteValue,
+    clearRetransmuteCaches,
+    describeRetransmutePolicy,
+    retransmuteGoldRate,
+} from '../../utils/retransmute-value.js';
 import { effectiveInventory, onReservationsChanged } from '../../utils/inventory-reservations.js';
 import tooltipPrices from '../market/tooltip-prices.js';
 import selfUseWanted from '../market/self-use-wanted.js';
@@ -74,10 +81,14 @@ export const SHOP_PRICES_SETTING = 'alchemy_bestItems_shopPrices';
 /** The setting for hiding every Decompose row whose item is not gear (default off) */
 export const GEAR_ONLY_SETTING = 'alchemy_bestItems_gearOnly';
 
+/** The sort that ranks Transmute by the retransmute figure */
+const RETRANSMUTE_MODE = 'retransmutePerHour';
+
 /**
  * The table's sort modes, in button order. `decomposeOnly` modes rank the Decompose tab
  * alone: the whole chain only exists for a decompose, so on the other tabs the stored
- * choice is kept but the table falls back to profit.
+ * choice is kept but the table falls back to profit. `transmuteOnly` does the same for
+ * Transmute, and a mode with a `setting` also falls back to profit while that setting is off.
  */
 export const SORT_MODES = [
     { value: 'profit', label: 'Profit/hr' },
@@ -108,6 +119,17 @@ export const SORT_MODES = [
             'decomposed on the best setup, and the outputs at your own-use pricing. The figure matches the ' +
             "tooltip's Full decompose chain line. The count beside the name is the copies you hold, less any " +
             'claimed by a goal or plan.',
+    },
+    {
+        value: RETRANSMUTE_MODE,
+        label: 'Retransmute/hr',
+        transmuteOnly: true,
+        setting: RETRANSMUTE_SETTING,
+        title:
+            'Ranks Transmute by what it earns when you retransmute the outputs worth more transmuted again than ' +
+            "sold and sell the rest, on the pricing sides your Buy/Sell dropdowns use. Each extra attempt's time is " +
+            'charged at your gold rate (Settings), so it needs one. A leading ≥ marks a figure with some output ' +
+            'left out for want of a real sell order. Not capped by market volume. Items with no figure sort last.',
     },
 ];
 
@@ -218,6 +240,8 @@ class AlchemyBestItems {
         this.sortMode = 'profit'; // a SORT_MODES id
         // Whole-chain figures by item hrid for the current rankings (null = unpriced)
         this.chainValues = new Map();
+        // The retransmute sort's results by item hrid (null-safe; see retransmuteFor)
+        this.retransmuteResults = new Map();
         this.chainTops = new Map();
         // Why a chain is partial or unpriced, by item hrid: {partial: string[], unpriced: string[]}
         this.chainNotes = new Map();
@@ -1075,6 +1099,8 @@ class AlchemyBestItems {
      */
     clearChainCaches() {
         this.chainValues.clear();
+        this.retransmuteResults.clear();
+        clearRetransmuteCaches();
         this.chainTops.clear();
         this.chainNotes.clear();
         this.chainDetails.clear();
@@ -1118,8 +1144,54 @@ class AlchemyBestItems {
      */
     effectiveSortMode() {
         const mode = SORT_MODES.find((entry) => entry.value === this.sortMode);
-        if (mode?.decomposeOnly && this.currentType !== 'decompose') return 'profit';
+        if (this.sortModeUnavailable(mode)) return 'profit';
         return mode ? mode.value : 'profit';
+    }
+
+    /**
+     * Whether a sort mode cannot be used right now: it belongs to another tab, or the setting that gates it is off.
+     * @param {Object|undefined} mode - A SORT_MODES entry
+     * @returns {boolean}
+     */
+    sortModeUnavailable(mode) {
+        if (!mode) return false;
+        if (mode.decomposeOnly && this.currentType !== 'decompose') return true;
+        if (mode.transmuteOnly && this.currentType !== 'transmute') return true;
+        return Boolean(mode.setting) && !config.getSetting(mode.setting);
+    }
+
+    /**
+     * Whether the table is ranking by the retransmute figure.
+     * @returns {boolean}
+     */
+    isRetransmuteMode() {
+        return this.effectiveSortMode() === RETRANSMUTE_MODE;
+    }
+
+    /**
+     * The retransmute figure of a Transmute row: the row's plain result plus what retransmuting the outputs worth it
+     * adds, memoised for the current rankings.
+     * @param {Object} item - A ranking row
+     * @returns {Object|null} The result of `retransmuteValue`, or null without a plain result
+     */
+    retransmuteFor(item) {
+        if (!item.profitData) return null;
+        // The gold rate is part of the key: it changes from the settings page while the table is open
+        const key = `${item.itemHrid}|${retransmuteGoldRate()}`;
+        if (this.retransmuteResults.has(key)) return this.retransmuteResults.get(key);
+        const result = retransmuteValue(item.profitData);
+        this.retransmuteResults.set(key, result);
+        return result;
+    }
+
+    /**
+     * The retransmute figure of a row as a number, or null when it has none (no gold rate, an unpriced group).
+     * @param {Object} item - A ranking row
+     * @returns {number|null}
+     */
+    retransmuteFigure(item) {
+        const result = this.retransmuteFor(item);
+        return result?.status === 'ok' && Number.isFinite(result.adjustedPerHour) ? result.adjustedPerHour : null;
     }
 
     /**
@@ -1709,9 +1781,17 @@ class AlchemyBestItems {
         const chainMode = CHAIN_MODES.has(sortMode);
         const ownMode = sortMode === 'chainOwnStock';
         // The range filters the figure the chain sort ranks on, so name it
-        if (this.profitFilterLabel) this.profitFilterLabel.textContent = chainMode ? 'Chain/hr:' : 'Profit/hr:';
+        const retransmuteMode = sortMode === RETRANSMUTE_MODE;
+        if (this.profitFilterLabel) {
+            this.profitFilterLabel.textContent = chainMode
+                ? 'Chain/hr:'
+                : retransmuteMode
+                  ? 'Retransmute/hr:'
+                  : 'Profit/hr:';
+        }
         // The figure the profit filters work on
-        const profitOf = (r) => (chainMode ? this.chainPerHour(r.itemHrid) : r.profitPerHour);
+        const profitOf = (r) =>
+            chainMode ? this.chainPerHour(r.itemHrid) : retransmuteMode ? this.retransmuteFigure(r) : r.profitPerHour;
         const passes = (value, test) => value !== null && test(value);
 
         // Filter
@@ -1764,6 +1844,17 @@ class AlchemyBestItems {
                 const primary = chainB - chainA;
                 return primary !== 0 ? primary : this.rowProfitPerHour(b) - this.rowProfitPerHour(a);
             }
+            if (retransmuteMode) {
+                // A row with no figure (no gold rate, nothing priced) sorts last
+                const figureA = this.retransmuteFigure(a);
+                const figureB = this.retransmuteFigure(b);
+                if (figureA === null || figureB === null) {
+                    if (figureA === figureB) return b.profitPerHour - a.profitPerHour;
+                    return figureA === null ? 1 : -1;
+                }
+                const primary = figureB - figureA;
+                return primary !== 0 ? primary : b.profitPerHour - a.profitPerHour;
+            }
             if (sortMode === 'xp') {
                 const primary = b.xpPerHour - a.xpPerHour;
                 return primary !== 0 ? primary : b.profitPerHour - a.profitPerHour;
@@ -1811,10 +1902,8 @@ class AlchemyBestItems {
         this.modal.querySelectorAll('[data-mwi-sort-btn]').forEach((btn) => {
             const isActive = btn.getAttribute('data-mwi-sort-btn') === sortMode;
             setButtonVariant(btn, isActive ? 'primary' : 'quiet');
-            const onlyDecompose = SORT_MODES.find(
-                (m) => m.value === btn.getAttribute('data-mwi-sort-btn')
-            )?.decomposeOnly;
-            btn.style.display = onlyDecompose && this.currentType !== 'decompose' ? 'none' : '';
+            const buttonMode = SORT_MODES.find((m) => m.value === btn.getAttribute('data-mwi-sort-btn'));
+            btn.style.display = this.sortModeUnavailable(buttonMode) ? 'none' : '';
         });
 
         const shopBox = this.modal.querySelector('[data-mwi-shop-prices]');
@@ -1845,16 +1934,21 @@ class AlchemyBestItems {
 
         const columns = ['#', 'Item', 'Lvl', 'Catalyst', 'Profit/hr', 'XP/hr'];
         if (chainMode) columns.splice(4, 0, 'Chain/hr');
+        if (retransmuteMode) columns.splice(4, 0, 'Retransmute/hr');
         for (const col of columns) {
             const th = document.createElement('th');
             th.textContent = col;
-            if (col === 'Chain/hr') th.title = SORT_MODES.find((m) => m.value === sortMode).title;
+            if (col === 'Chain/hr' || col === 'Retransmute/hr') {
+                th.title = SORT_MODES.find((m) => m.value === sortMode).title;
+            }
             if (col === 'Item' && ownMode) {
                 th.title = 'The number beside a name is the copies you hold, less any claimed by a plan';
             }
             th.style.cssText = 'padding: 6px 8px; text-align: left; color: #aaa; font-weight: 500;';
             if (col === '#' || col === 'Lvl') th.style.textAlign = 'center';
-            if (col === 'Profit/hr' || col === 'XP/hr' || col === 'Chain/hr') th.style.textAlign = 'right';
+            if (col === 'Profit/hr' || col === 'XP/hr' || col === 'Chain/hr' || col === 'Retransmute/hr') {
+                th.style.textAlign = 'right';
+            }
             // The ranking's track record against finished runs, once measured
             if (col === 'Profit/hr') {
                 appendCalibrationBadge(th, 'alchemy', {
@@ -2032,6 +2126,29 @@ class AlchemyBestItems {
                     chainTd.style.cssText = `padding: 4px 8px; text-align: right; color: ${chainValue >= 0 ? '#4ade80' : '#f87171'};`;
                 }
                 row.appendChild(chainTd);
+            }
+
+            // Retransmute/hr — the plain figure plus the first attempt's gain from retransmuting, only while that is the sort
+            if (retransmuteMode) {
+                const retransmuteTd = document.createElement('td');
+                retransmuteTd.setAttribute('data-mwi-retransmute', 'true');
+                const outcome = this.retransmuteFor(item);
+                const figure = this.retransmuteFigure(item);
+                if (figure === null) {
+                    retransmuteTd.textContent = '—';
+                    retransmuteTd.title =
+                        outcome?.status === 'noGoldRate'
+                            ? 'Set your gold rate in Settings: the time of each extra attempt is charged at it'
+                            : outcome?.reason === 'every output is unpriced'
+                              ? 'No figure: none of its outputs has a real sell order on the side your pricing uses'
+                              : 'No figure: this transmute has nothing to retransmute';
+                    retransmuteTd.style.cssText = 'padding: 4px 8px; text-align: right; color: #555;';
+                } else {
+                    retransmuteTd.textContent = `${outcome.partial ? '≥' : ''}${formatKMB(Math.round(figure))}`;
+                    retransmuteTd.title = describeRetransmutePolicy(outcome);
+                    retransmuteTd.style.cssText = `padding: 4px 8px; text-align: right; color: ${figure >= 0 ? '#4ade80' : '#f87171'};`;
+                }
+                row.appendChild(retransmuteTd);
             }
 
             // Profit/hr — the raw figure, always; a volume-bounded one always

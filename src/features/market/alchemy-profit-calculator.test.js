@@ -851,6 +851,41 @@ describe('official alchemy rules', () => {
         expect(alchemyProfitCalculator.calculateTransmuteProfit('/items/milk').successRateBreakdown.base).toBe(0.5);
     });
 
+    test('transmute attempt terms need no price for the item and match the full result under the same setup', () => {
+        mocks.itemPrices = { '/items/cheese': 500, '/items/milk': null, '/items/alchemy_tea': 10 };
+        mocks.actionStats = { actionTime: 20, totalEfficiency: 25, efficiencyBreakdown: {} };
+
+        // The plain calculator refuses an unpriced input; the terms do not read its price
+        expect(alchemyProfitCalculator.calculateTransmuteProfit('/items/milk')).toBeNull();
+        const terms = alchemyProfitCalculator.calculateTransmuteAttemptTerms('/items/milk', {
+            catalystHrid: null,
+            usesTea: false,
+        });
+        expect(terms).toEqual({
+            successRate: 0.5,
+            actionsPerHour: (3600 / 20) * 1.25,
+            catalystCostPerAttempt: 0,
+            coinCost: 50,
+            bulkMultiplier: 1,
+        });
+        // A search leaves nothing behind that narrows the next full search
+        expect(alchemyProfitCalculator._comboFilter).toBeNull();
+
+        // Priced, the full result under the same single candidate agrees
+        mocks.itemPrices['/items/milk'] = 100;
+        const full = alchemyProfitCalculator
+            .calculateCandidateResults('transmute', '/items/milk')
+            .find((result) => result.winningCatalystHrid === null && !result.winningTeaUsed);
+        expect(full.successRate).toBe(terms.successRate);
+        expect(full.actionsPerHour).toBe(terms.actionsPerHour);
+    });
+
+    test('transmute attempt terms are null when the action cannot run on the item', () => {
+        expect(
+            alchemyProfitCalculator.calculateTransmuteAttemptTerms('/items/cheese', { useLiveSetup: true })
+        ).toBeNull();
+    });
+
     test.each(paths)('%s: a no-tea candidate does not keep the success rate an Alchemy Tea lifted', (_name, run) => {
         // Level 48 against a level 50 item: the tea's +2 levels cancel the penalty, a no-tea run does not
         mocks.skills = [{ skillHrid: '/skills/alchemy', level: 48 }];

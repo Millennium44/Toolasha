@@ -24,6 +24,12 @@ import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { pricesMoved } from '../../utils/price-change.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { maxLevel } from '../../utils/game-maximums.js';
+import {
+    RETRANSMUTE_SETTING,
+    retransmuteValue,
+    hasRetransmutableOutput,
+    describeRetransmutePolicy,
+} from '../../utils/retransmute-value.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import {
     getCatalystWhatIf,
@@ -184,7 +190,13 @@ class AlchemyProfitDisplay {
             config.onSettingsLoaded(onPricingChange),
             // The two section switches are read only when the panel is built, so a change
             // has to force a rebuild of a panel already on screen
-            ...['actionPanel_showSpeedTime', 'actionPanel_showLevelProgress', 'alchemy_catalystWhatIf'].map((key) =>
+            ...[
+                'actionPanel_showSpeedTime',
+                'actionPanel_showLevelProgress',
+                'alchemy_catalystWhatIf',
+                RETRANSMUTE_SETTING,
+                'actionPanel_craftingPlanGoldPerHour',
+            ].map((key) =>
                 config.onSettingChange(key, () => {
                     this.lastFingerprint = null;
                     if (this.isActive) this.checkAndUpdateDisplay();
@@ -722,6 +734,37 @@ class AlchemyProfitDisplay {
             },
             { predicted: profitData?.successRate }
         );
+    }
+
+    /**
+     * The extra line under Net Profit for a Transmute: what it earns when the outputs worth more transmuted again than
+     * sold are retransmuted. Only drawn when that differs from the plain figure; with no gold rate set, a short note
+     * says so for an item whose outputs can be transmuted at all.
+     * @param {Object} profitData - The forecast being shown (the what-if's when one is)
+     * @param {Object|null} whatIf - From `_computeWhatIf`; its catalyst choice is the setup the figure is worked under
+     * @returns {HTMLElement|null}
+     */
+    buildRetransmuteLine(profitData, whatIf) {
+        if (!config.getSetting(RETRANSMUTE_SETTING)) return null;
+        const choice = whatIf?.data ? whatIf.choice : null;
+        const result = retransmuteValue(profitData, { useLiveSetup: true, catalystChoice: choice });
+        const line = document.createElement('div');
+        line.setAttribute('data-mwi-retransmute', result.status);
+        line.style.cssText = 'margin-bottom: 8px;';
+        if (result.status === 'noGoldRate') {
+            if (!hasRetransmutableOutput(profitData.itemHrid)) return null;
+            line.style.cssText += 'color: #888; font-size: 0.85em;';
+            line.textContent = 'Retransmute figure: set your gold rate in Settings to see it.';
+            return line;
+        }
+        if (result.status !== 'ok' || !result.differs) return null;
+        const color = result.adjustedPerHour >= 0 ? '#4ade80' : config.getSetting('color_loss') || '#f87171';
+        line.style.cssText += `color: ${color}; font-weight: 500;`;
+        line.textContent =
+            `Retransmuting what beats your gold rate: ${result.partial ? '≥' : ''}` +
+            `${formatLargeNumber(Math.round(result.adjustedPerHour))}/hr`;
+        line.title = describeRetransmutePolicy(result);
+        return line;
     }
 
     /**
@@ -1277,6 +1320,8 @@ class AlchemyProfitDisplay {
         // How the alchemy forecast has fared against finished runs, when measured
         appendCalibrationBadge(netProfitLine, 'alchemy', { actionHrid: `/actions/alchemy/${actionType}` });
         topLevelContent.appendChild(netProfitLine);
+        const retransmuteLine = actionType === 'transmute' ? this.buildRetransmuteLine(profitData, whatIf) : null;
+        if (retransmuteLine) topLevelContent.appendChild(retransmuteLine);
 
         // Add pricing mode label
         const pricingMode = profitData.pricingMode || 'hybrid';
