@@ -176,7 +176,7 @@ push to `main` or merge.
   the PR's own entries (`node scripts/changelog-pr-entries.mjs --pr <ref> [--base origin/main] [--write]`, which also
   fixes a conflicted changelog by hand: a union merge has attached a body to the wrong heading), checks the merge changed nothing outside `CHANGELOG.md` beyond the PR's own diff against main, and pushes
   only `main`; the PR head is then contained in `main`, so GitHub marks it merged. Such a PR cannot be stacked on
-  another PR.
+  another PR. A PR with no CI because it conflicts with main on `CHANGELOG.md` alone is synced first: with `--push` the script merges main into its branch (fast-forward push, never forced) and stops with exit 3 so CI runs; rerun once green. Any other conflicting file refuses.
 - **`CHANGELOG.md` merges** use the `changelog` merge driver (`scripts/changelog-merge-driver.mjs`): a union merge that
   keeps both sides' entries, then Prettier, so merging `main` into a PR branch no longer needs a "restore the blank
   line" commit. `npm install` registers it in the clone's git config; without it git falls back to a text merge
@@ -222,6 +222,10 @@ Every brief to a sub-agent carries these lines:
   the brief, and logs one real message for any field it names. Reading the minified source is not enough: on
   2026-11-25 a brief said `handleViewProfile(characterId)` and `profile_shared.characterID`, while the handler
   takes the name and the raw message is only `{type, profile}`, which cost two live rounds.
+- **A leftover whose premise is a data shape gets one live probe before any builder is spawned.** If the
+  bug only exists when the game sends a certain shape (a missing row, a field at zero, a status), read it
+  in a test tab first. If Chrome is down, wait or ask; never build on the reading of the code. #1057 was
+  built and reviewed, then dropped once a probe showed the shape never occurs.
 - **Consumer sweep**: list every reader and writer of the state you change, check each, and put the list
   in the report. Most bugs reviewers caught were in a reader, not the changed function.
 - **Report the enumeration, not just the findings**, so nobody pays to re-derive it.
@@ -288,7 +292,9 @@ Every brief to a sub-agent carries these lines:
     - A panel with an Overlay tile is already in Ctrl+K; a panel without one registers a command, and a
       command for a tiled panel carries `row: '<tile key>'` so the palette lists it once.
     - `help` stays at 300 characters or fewer, in American spelling, or goes in `LONG_HELP_ALLOWED`
-      with a reason.
+      with a reason. An edit to any `help` string runs every test file that reads `.help`
+      (`grep -rlE "\.help" --include=*.test.js src scripts`): a test pinning a phrase in
+      `price-target-alerts.test.js` failed only in CI (2026-11-28).
     - Guards: `setting-presets.test.js`, `settings-schema.test.js`, `feature-registry-gates.test.js`,
       `panel-command-coverage.test.js`, `iron-cow-mode.priced.test.js`, `settings-help-lint.test.js`.
 - **Pull with `git pull --rebase`**, never a merge.

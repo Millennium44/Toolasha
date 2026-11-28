@@ -25,6 +25,7 @@ import {
 import { upgradeLevelForPanel } from '../../utils/upgrade-slot.js';
 import { artisanTeaShortfall } from '../../utils/drink-calculator.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
+import { snapshotOrderCredit, orderCreditState } from '../../utils/order-credit.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createAutofillManager, findQuantityInput } from '../../utils/marketplace-autofill.js';
 import {
@@ -125,6 +126,8 @@ const CONTROLS_ID = 'mwi-missing-mats-controls';
 const ADJUST_GUARD = 1e9;
 /** A plain bill of materials opened from elsewhere (a house level), kept for live updates */
 let storedMaterialList = null;
+/** What a line with no order credit reads: nothing delivered by open orders, nothing to add back */
+const NO_CREDIT = Object.freeze({ openFilled: 0, addBack: 0 });
 /** The level the open bill's upgrade item is wanted at, kept so live updates do not lose it */
 let storedUpgradeBaseAcquisition = null;
 let storedUpgradeItemLevel = 0; // null: the panel's upgrade slot was empty
@@ -2340,10 +2343,15 @@ export function materialsFromList(lines, ownerId = null, ownedInBag = new Map())
     const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
     const out = [];
     for (const line of lines || []) {
-        const required = Math.max(0, Math.floor(Number(line?.count) || 0));
-        if (!line?.itemHrid || required <= 0) continue;
+        const baseRequired = Math.max(0, Math.floor(Number(line?.count) || 0));
+        if (!line?.itemHrid || baseRequired <= 0) continue;
         const details = itemDetailMap[line.itemHrid];
         const level = Math.max(0, Math.floor(Number(line.enhancementLevel) || 0));
+        // A line opened with an `orderCredit` was netted by buy orders that were then resting: the units
+        // those orders deliver are held stock but were never purchases (`openFilled`), and an order that
+        // ended undelivered is a shortfall again (`addBack`). Both are 0 for every other line
+        const { openFilled, addBack } = level > 0 ? NO_CREDIT : orderCreditState(line.orderCredit);
+        const required = baseRequired + addBack;
         // Bought-but-unclaimed units on the player's own buy orders count as
         // held — it is what makes the Missing figure fall while the order
         // fills instead of only after a trip to My Listings
@@ -2354,16 +2362,19 @@ export function materialsFromList(lines, ownerId = null, ownedInBag = new Map())
         // piece or one on the auction. A row with no location at all (a test
         // fixture, or a source that never carried the field) is kept, so this
         // stays the same for every caller that predates location mattering.
-        const have =
+        const have = Math.max(
+            0,
             (level > 0 ? 0 : unclaimedBoughtCount(line.itemHrid)) +
-            inventory
-                .filter(
-                    (i) =>
-                        i.itemHrid === line.itemHrid &&
-                        (i.enhancementLevel || 0) === level &&
-                        (!i.itemLocationHrid || i.itemLocationHrid === INVENTORY_LOCATION)
-                )
-                .reduce((sum, i) => sum + (i.count || 0), 0);
+                inventory
+                    .filter(
+                        (i) =>
+                            i.itemHrid === line.itemHrid &&
+                            (i.enhancementLevel || 0) === level &&
+                            (!i.itemLocationHrid || i.itemLocationHrid === INVENTORY_LOCATION)
+                    )
+                    .reduce((sum, i) => sum + (i.count || 0), 0) -
+                openFilled
+        );
         const queued = Math.max(0, Math.floor(Number(line.queued) || 0));
         const key = level > 0 ? `${line.itemHrid}@${level}` : line.itemHrid;
         const owned = ownedInBag.get(key) || 0;
@@ -2480,7 +2491,9 @@ function assertOwnedListAvailable(materials) {
  * action panel button builds, from a list instead of a recipe. A line that
  * names an enhancement level opens that level's listing.
  *
- * @param {Array<{itemHrid: string, count: number, enhancementLevel?: number}>} lines - Totals needed
+ * @param {Array<{itemHrid: string, count: number, enhancementLevel?: number, onOrder?: number}>} lines - Totals
+ *   needed. A line's `onOrder` is the resting buy-order units its `count` was already netted by (the total is
+ *   what is wanted less those); they are credited by order, see order-credit.js
  * @param {Object} [options] - Options
  * @param {string|null} [options.ownerId] - The caller's reservation-ledger owner id, when it
  *   keeps a claim of its own; without one the open tabs claim the bill themselves
@@ -2493,6 +2506,13 @@ export async function openMaterialsList(lines, { ownerId = null, ownedInputs = [
     if (!wanted.length) return false;
     const characterId = dataManager.getCurrentCharacterId?.();
     const context = structuredClone({ lines: wanted, ownerId, ownedInputs, characterId });
+    // A line may carry `onOrder`, resting buy-order units its count was already netted by. Snapshot those
+    // orders now, before anything awaits, so their own fills are not subtracted a second time as stock
+    for (const line of context.lines) {
+        if (!(Number(line.enhancementLevel) > 0) && Number(line.onOrder) > 0) {
+            line.orderCredit = snapshotOrderCredit(line.itemHrid, line.onOrder);
+        }
+    }
     const materials = listMaterials(context);
     // A stale quote must leave the existing bill and its claim intact.
     assertOwnedListAvailable(materials);
@@ -2592,8 +2612,9 @@ export async function openMissingMaterials(
  * twice.
  *
  * @param {Array<{actionHrid: string, numActions: number}>} crafts - What to craft and how many actions of each
- * @param {Array<{itemHrid: string, count: number}>} [direct] - Items wanted as such, as required totals (what
- *   is held plus what is short), for a caller that wants one list rather than two
+ * @param {Array<{itemHrid: string, count: number, onOrder?: number}>} [direct] - Items wanted as such, as
+ *   required totals (what is held plus what is short), for a caller that wants one list rather than two.
+ *   `onOrder` is the resting buy-order units the total was already netted by
  * @returns {Promise<boolean>} Whether the marketplace opened with at least one line
  */
 export async function openCraftBill(crafts, direct = []) {
@@ -2616,6 +2637,8 @@ export async function openCraftBill(crafts, direct = []) {
         const key = `${item.itemHrid}@0`;
         const total = totals.get(key) || { itemHrid: item.itemHrid, enhancementLevel: 0, count: 0 };
         total.count += count;
+        const onOrder = Math.max(0, Math.floor(Number(item?.onOrder) || 0));
+        if (onOrder > 0) total.onOrder = (total.onOrder || 0) + onOrder;
         totals.set(key, total);
     }
     // What the finite action queue has already committed, deducted once per
@@ -2633,6 +2656,7 @@ export async function openCraftBill(crafts, direct = []) {
             count: line.count,
             ...(line.enhancementLevel > 0 ? { enhancementLevel: line.enhancementLevel } : {}),
             ...(queued > 0 ? { queued } : {}),
+            ...(line.onOrder > 0 ? { onOrder: line.onOrder } : {}),
         };
     });
     return openMaterialsList(lines);

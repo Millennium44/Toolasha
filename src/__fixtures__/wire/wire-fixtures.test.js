@@ -8,7 +8,18 @@ import { buildNewBattle } from './new-battle.js';
 import { buildBattleUpdated, BATTLE_UPDATED_SHAPES } from './battle-updated.js';
 import { buildBattleConsumableAbilityUpdated } from './battle-consumable-ability-updated.js';
 import { buildItemsUpdated } from './items-updated.js';
-import { buildListingPlaced, buildListingCancelled, buildOrderBooksUpdated } from './market.js';
+import {
+    buildListingPlaced,
+    buildListingCancelled,
+    buildOrderBooksUpdated,
+    buildPartlyFilledBuy,
+    buildRestingBuy,
+    buildFilledBuyUncollected,
+    buildCollectedBuy,
+    buildBuyFilledLater,
+    buildCancelledPartlyFilledBuy,
+    buildOrderBookWithOwnBid,
+} from './market.js';
 import { buildCharacterAction } from './character-actions.js';
 import { buildGuildMember, buildSignedUpGuildMember } from './guild-members.js';
 import {
@@ -129,6 +140,49 @@ describe('wire fixtures keep the captured field names', () => {
         expect(placed.id).toBe(cancelled.id);
         expect(placed.createdTimestamp).toMatch(/\.\d{9}Z$/);
         expect(cancelled.createdTimestamp).toMatch(/\.\d{2}Z$/);
+    });
+
+    test('a buy order is placed already partly filled, and a cancel keeps the fill but zeroes what is unclaimed', () => {
+        const placed = buildPartlyFilledBuy();
+        const cancelled = buildCancelledPartlyFilledBuy();
+        expect(Object.keys(placed).sort()).toEqual(Object.keys(buildListingPlaced().endMarketListings[0]).sort());
+        expect(placed).toMatchObject({ isSell: false, orderQuantity: 10, filledQuantity: 4, unclaimedItemCount: 4 });
+        expect(placed.unclaimedCoinCount).toBe((584 - 574) * 4);
+        expect(cancelled.id).toBe(placed.id);
+        expect(cancelled).toMatchObject({
+            status: '/market_listing_status/cancelled',
+            filledQuantity: 4,
+            coinsAvailable: 0,
+            unclaimedItemCount: 0,
+            unclaimedCoinCount: 0,
+        });
+    });
+
+    test('a buy that fills at placement or later is filled with the units unclaimed until collected', () => {
+        const resting = buildRestingBuy();
+        const later = buildBuyFilledLater();
+        const uncollected = buildFilledBuyUncollected();
+        const collected = buildCollectedBuy();
+        expect(resting).toMatchObject({ status: '/market_listing_status/active', filledQuantity: 0 });
+        expect(later.id).toBe(resting.id);
+        expect(later).toMatchObject({
+            status: '/market_listing_status/filled',
+            filledQuantity: 10,
+            unclaimedItemCount: 10,
+        });
+        expect(uncollected).toMatchObject({ filledQuantity: uncollected.orderQuantity, unclaimedItemCount: 1 });
+        expect(collected.id).toBe(uncollected.id);
+        expect(collected).toMatchObject({
+            status: '/market_listing_status/filled',
+            unclaimedItemCount: 0,
+            unclaimedCoinCount: 0,
+        });
+    });
+
+    test('the own open remainder of a buy order is a bid carrying the listing id', () => {
+        const { bids } = buildOrderBookWithOwnBid().marketItemOrderBooks.orderBooks[0];
+        expect(bids).toEqual([{ listingId: buildPartlyFilledBuy().id, quantity: 6, price: 584 }]);
+        expect(Object.keys(bids[0]).sort()).toEqual(['listingId', 'price', 'quantity']);
     });
 
     test('an order book is arrays indexed by enhancement level, and bids may be empty', () => {
