@@ -6978,7 +6978,17 @@ class LabyrinthClearRate {
         badge.addEventListener('mouseleave', () => this.hidePreview());
         badge.addEventListener('contextmenu', (e) => {
             const res = badge.__mwiPreviewResult;
-            if (!res || !this.canOpenSim(res)) return;
+            if (!res) return;
+            // A long press on a phone fires contextmenu. Treat the hold like a tap (the info preview, which
+            // carries the "Open in sim" button) instead of opening the sim, and suppress the browser's own
+            // long-press menu. The lifted finger raises no pointerdown, so _armPreviewDismiss keeps it open.
+            if (hasCoarsePointer()) {
+                e.preventDefault();
+                this.showPreview(res, e.clientX, e.clientY, badge);
+                this._armPreviewDismiss(badge);
+                return;
+            }
+            if (!this.canOpenSim(res)) return;
             e.preventDefault();
             this.openSimFromPreview(res);
         });

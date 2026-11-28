@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Holding a labyrinth tile on a phone shows its info window
+
+A long press on a labyrinth tile used to open the Lab Sim, while a tap showed the tile's info window. A hold now shows the info window too; its "Open in sim" button still opens the sim. Right-click on a desktop is unchanged.
+
 ### Marketplace Action and Add to Tab work on a phone
 
 In an item's menu, the Marketplace Action options (Sell Now, Buy Now, New Sell Listing, New Buy Listing) and the Add to Tab list did nothing when pressed with a finger: the game closed the menu before the press landed. They now work on touch screens.
