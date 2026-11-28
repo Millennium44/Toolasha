@@ -203,9 +203,10 @@ export const settingsGroups = {
                     { value: '120', label: 'After 2 minutes' },
                 ],
                 help:
-                    'After a sync pull or backup restore, stored records refuse new saves until the page reloads. On, ' +
-                    'a notice counts down with Reload now and Cancel, then reloads once pending saves are written. It ' +
-                    'waits while you click, type or run a sim. After 3 automatic reloads within 10 minutes it stops.',
+                    'After a sync pull or backup restore, stored records refuse saves until a reload. On, a notice ' +
+                    'counts down with Cancel, then reloads once pending saves are written. A click, key or scroll ' +
+                    'makes it an offer; a sim, focused text box or sync delays it. Stops after 3 automatic reloads ' +
+                    'within 10 minutes.',
             },
             // Toggled by the PFormance panel's header button, never listed as a row. It
             // has to exist here: the config store only writes keys the schema declares,
@@ -626,8 +627,9 @@ export const settingsGroups = {
                 ],
                 help:
                     'Which figure the best items table ranks by. The chain modes decompose the item and everything it ' +
-                    'yields, then sell what is left after tax. The full chain buys the item. The items-you-hold chain ' +
-                    'uses copies you already hold. The table buttons change this too.',
+                    'yields, then sell what is left after tax, on the sides your Buy/Sell pricing uses. The full ' +
+                    'chain buys the item. The items-you-hold chain uses copies you already hold. The table buttons ' +
+                    'change this too.',
                 requires: 'alchemy_bestItems',
             },
             alchemy_bestItems_shopPrices: {
@@ -669,8 +671,8 @@ export const settingsGroups = {
                 default: true,
                 help:
                     'When you open the catalyst picker, adds a line naming the catalyst (none, type or Prime) that ' +
-                    'earns the most per hour for the selected item, what it earns and whether you own it, and stars ' +
-                    'its tile. Information only. It never picks the slot. Uses your pricing mode.',
+                    'earns the most per hour for the selected item, what it earns and whether you own it. A clear ' +
+                    'winner gets a star on its tile; a tie gets none. Information only. Uses your pricing mode.',
             },
             alchemyCatalystCheck: {
                 id: 'alchemyCatalystCheck',
@@ -789,9 +791,9 @@ export const settingsGroups = {
                 default: true,
                 help:
                     'Adds an "Arbitrage" button to the cheesesmithing, crafting, tailoring, cooking and brewing ' +
-                    'pages. It opens one ranked table of every recipe with material cost, sale value after tax, ' +
-                    'margin, profit per hour and day (bounded by market volume) and a data-quality flag. Click a row ' +
-                    'to open the action.',
+                    'pages. It opens a ranked table of every recipe: material cost, sale after tax, margin, profit ' +
+                    'per hour and day (bounded by market volume), level (unmet flagged) and a data-quality flag. ' +
+                    'Click a row to open it.',
             },
             actions_craftEnhance: {
                 id: 'actions_craftEnhance',
@@ -800,10 +802,10 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help:
-                    'Adds a "Craft & Enhance" button to the cheesesmithing, crafting and tailoring pages. It opens a ' +
+                    'Adds a "Craft & Enhance" button to the cheesesmithing, crafting and tailoring pages. Opens a ' +
                     'window ranking gear whose recipe uses a dungeon drop or token shop item by craft cost, enhancing ' +
-                    'cost, sale after tax, and profit and XP per hour. Missing prices show as "-". Hidden for Iron ' +
-                    'Cow.',
+                    'cost, sale after tax, profit and XP per hour. Missing prices show as a dash, never 0. Hidden for ' +
+                    'Iron Cow.',
             },
             actions_craftEnhance_targetLevel: {
                 id: 'actions_craftEnhance_targetLevel',
@@ -827,9 +829,9 @@ export const settingsGroups = {
                 ],
                 requires: 'actions_craftEnhance',
                 help:
-                    'How the window prices drops and token-shop items. Units you hold count as owned, the rest are ' +
-                    "bought at your pricing mode's buy side, untaxed (token-shop items take the cheaper of that and " +
-                    "token value). Sale value uses owned units' sell price. Nothing counts them as free. Buy price " +
+                    'How the window prices drops and token items. Held units count as owned; the rest are bought at ' +
+                    'your buy side, untaxed (token items: the cheaper of that and token value). Sale value after tax ' +
+                    'prices owned units at after-tax sale. Nothing counts them free (badged "sunk"). Buy price ' +
                     'ignores holdings.',
             },
             actionPanel_bestCraftingPlan: {
@@ -907,9 +909,10 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help:
-                    'On, a plan records what it has claimed from your bag and other plans plan against what is left, ' +
-                    'so two plans needing the same 500 logs no longer both count them. Goal planner and crafting plan ' +
-                    'claims last until changed or deleted; budget and missing-materials claims only while open.',
+                    'On, a plan claims what it needs from your bag and other plans plan against what is left, so two ' +
+                    'plans needing the same 500 logs no longer both count them. Goal claims last until the goal goes, ' +
+                    'crafting plan claims 7 days. Queued sales claim too. Budget and missing-materials claims last ' +
+                    'while open.',
             },
             actions_artisanMaterialMode: {
                 id: 'actions_artisanMaterialMode',
@@ -922,9 +925,10 @@ export const settingsGroups = {
                     { value: 'hybrid', label: 'Hybrid (ceil below 100 actions, average at 100+)' },
                 ],
                 help:
-                    'How missing materials accounts for Artisan Tea savings. Expected value averages the saving (long ' +
-                    'queues, can under-buy short ones). Worst-case rounds every craft up (few actions, over-buys long ' +
-                    'ones). Hybrid: worst-case below 100 actions, then expected value. Craft & Enhance follows it.',
+                    'How missing materials counts Artisan Tea savings. Expected value averages them (long queues; can ' +
+                    'under-buy short ones). Worst-case rounds every craft up (few actions; over-buys long ones). ' +
+                    'Hybrid: worst-case below 100 actions, then expected value. Craft & Enhance always averages, even ' +
+                    'on Hybrid.',
             },
         },
     },
@@ -1151,10 +1155,10 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help:
-                    'Adds a "Best plan" row to the detailed materials table, pricing the craft by buying or crafting ' +
-                    'each ingredient, whichever is cheaper. Shown only when it differs from Total. An unpriced ' +
-                    'sub-material marks it a floor (≥). Profit/hr uses Total. Off with "direct recipe only". Needs ' +
-                    'the breakdown.',
+                    'Adds a "Best plan" row to the materials breakdown: buy or craft each ingredient, whichever is ' +
+                    'cheaper. Shown only if it differs from Total; an unpriced sub-material marks it a floor (≥). ' +
+                    'Profit/hr uses Total. Not with "direct recipe only". Needs "Show detailed materials breakdown in ' +
+                    'profit display".',
                 requires: 'itemTooltip_detailedProfit',
             },
             itemTooltip_detailedProfitFlat: {
@@ -1219,10 +1223,10 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help:
-                    'On an item you might buy, names the best items to buy and decompose or transmute to get it for ' +
-                    'less, and the saving per unit. Other outputs are sold after tax, or valued at your buy price ' +
-                    'when kept ("What a K mark means"). Estimated prices are left out. Alchemy time uses your gold ' +
-                    'rate.',
+                    'On an item you might buy, names the best items to buy and decompose or transmute to get it ' +
+                    'cheaper, and the saving per unit. Prices follow your profit pricing mode. Other outputs sell ' +
+                    'after tax, or count at your buy price when kept. Estimated prices are left out. Alchemy time ' +
+                    'uses your gold rate.',
             },
             itemTooltip_alchemyInsteadHeadline: {
                 id: 'itemTooltip_alchemyInsteadHeadline',
@@ -1806,9 +1810,10 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help:
-                    'A new enhancing run with the same item, target level and protection setup as your most recent ' +
-                    'session, starting at the level it ended at, adds to that session instead of starting a new one. ' +
-                    'Only active enhancing time counts. Another copy of the item at that level also resumes it.',
+                    'A new enhancing run with the same item, target level and protect-from level as your latest ' +
+                    'session, starting where it ended, adds to that session. Only active enhancing time counts. A ' +
+                    'different protection item still resumes it unless the option below is off. Another copy of the ' +
+                    'item also resumes it.',
                 requires: 'enhancementTracker',
             },
             enhancementTracker_autoCombine: {
@@ -2208,8 +2213,8 @@ export const settingsGroups = {
                 default: true,
                 help:
                     'A Buy link in the Consumables panel opens the order form its recommendation points at (Buy Now ' +
-                    'or New Buy Listing) with the quantity filled in. Nothing is bought until you confirm; in the Buy ' +
-                    'all walk, the Buy button presses confirm once, on your press. Off, it opens the item in the ' +
+                    "or New Buy Listing), quantity filled in. Nothing is bought until you confirm. The Buy all walk's " +
+                    'Buy button needs this on and is unavailable for Iron Cow. Off, it opens the item in the ' +
                     'marketplace.',
             },
             market_bulkSellVendorCheck: {
@@ -2514,10 +2519,10 @@ export const settingsGroups = {
                     { value: 'decompose', label: 'Its decompose value' },
                 ],
                 help:
-                    'Capes cannot be traded. Sets what an unrefined cape is worth in alchemy, enhancement costs, net ' +
-                    "worth and chests, and what the base cape adds to a refined (★) cape's cost: nothing, one Mirror " +
-                    'of Protection, or its decompose value after tax. On Mirror and Decompose a missing price marks a ' +
-                    'floor.',
+                    'Capes cannot be traded. Sets what an unrefined cape is worth in alchemy, enhancement, net worth ' +
+                    'and chests, and what the base adds to a refined (★) cape: nothing, a Mirror of Protection, or ' +
+                    'its decompose value after tax. Nothing counts an unrefined cape as 0; that or a missing price ' +
+                    'marks a floor.',
             },
             profitCalc_patientTickBuy: {
                 id: 'profitCalc_patientTickBuy',
@@ -2603,9 +2608,10 @@ export const settingsGroups = {
                     { value: 'craft', label: 'What it costs you to craft one' },
                 ],
                 help:
-                    'How a dungeon key is valued wherever Toolasha prices one. Ask and Bid use that market price. ' +
-                    '"What it costs you to craft one" uses your crafting cost, or market price if you cannot craft it ' +
-                    'or a material is unpriced. "Same as the profit calculation pricing mode" follows its buy side.',
+                    'How a dungeon key is valued wherever it is priced. Ask and Bid use that market price. "What it ' +
+                    'costs you to craft one" uses your crafting cost, or market price if you cannot craft it or a ' +
+                    'material is unpriced. "Same as the profit calculation pricing mode" follows its buy side and ' +
+                    'patient tick.',
             },
             profitCalc_liquidityCap: {
                 id: 'profitCalc_liquidityCap',
@@ -2704,10 +2710,10 @@ export const settingsGroups = {
                     { value: 'prices', label: 'Per-item ask and bid prices on the icons' },
                 ],
                 help:
-                    'Stack value is one number per stack, priced on the side you sort by, or the side chosen here ' +
-                    'when sort is None. Per-item ask and bid prices are the other badge, two small unit prices on the ' +
-                    'icon. They overlap on the same tile, so it is one choice. Custom-tab and category totals always ' +
-                    'show.',
+                    'Stack value is one number per stack, priced on the side you sort by. With no sort it shows only ' +
+                    'for the two "always" choices (Ask or Bid); None hides it. Per-item ask and bid prices is the ' +
+                    'other badge, two small unit prices on the icon, and overlaps it. Custom-tab and category totals ' +
+                    'always show.',
             },
             invSort_netOfTax: {
                 id: 'invSort_netOfTax',
@@ -3006,8 +3012,9 @@ export const settingsGroups = {
                 requires: 'simulateScrollEffects',
                 help:
                     'Needs "Simulate missing scroll effects" on. Profit/hr, Exp/hr and Eff. XP/hr on every action ' +
-                    'tile then assume your chosen scrolls, marked with a scroll icon. A scroll already active in the ' +
-                    'game is not counted twice. A "Scrolls" button on the skill page flips this setting.',
+                    'tile assume your chosen scrolls, marked with a scroll icon. A scroll active in the game is not ' +
+                    'counted twice. The skill page\'s Scrolls button opens a menu whose "Use on tiles" box turns this ' +
+                    'on or off.',
             },
             xpTracker: {
                 id: 'xpTracker',
@@ -3696,9 +3703,10 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help:
-                    'A small line chart above the rows on the Damage tab: the party and each player in their own ' +
-                    'color. The Per-player panel has five-minute and whole-session views with boss fights shaded. The ' +
-                    'trial board shows the recorder readings. Needs the Per-player panel on for normal fights.',
+                    'A line chart above the rows on the Damage tab: the party and each player in their own color. ' +
+                    'Per-player panel: five-minute and whole-session views, boss fights shaded; the trial board shows ' +
+                    'recorder readings. Also the party DPS line in the panel header. Needs the Per-player panel for ' +
+                    'normal fights.',
             },
             combatDpsHitTape: {
                 id: 'combatDpsHitTape',
@@ -4178,7 +4186,7 @@ export const settingsGroups = {
                 help:
                     'How many fights the zone estimates plan for. At 90% the slowest task in the zone is finished by ' +
                     'then nine times in ten. The median shows on hover. Go and zone rows use the larger of this and ' +
-                    'the zone padded by Combat pre-fill confidence.',
+                    'the zone padded by Combat pre-fill confidence, and never less than the Go count buffer.',
             },
             taskEfficiencyRating: {
                 id: 'taskEfficiencyRating',
@@ -4355,10 +4363,10 @@ export const settingsGroups = {
                     { value: 'best', label: 'Best Score (simulates every tier)' },
                 ],
                 help:
-                    'Which difficulty tier combat task estimates simulate and Go opens the zone at. "The tier ' +
-                    'selected in the game" uses the zone\'s Difficulty box and Go never changes it. "Best Score" ' +
-                    'simulates every tier, picks the best Combat Sim Score and Go sets the box to it. Estimates take ' +
-                    'several times longer.',
+                    'Tier for combat task estimates and Go. "The tier selected in the game" uses the zone\'s ' +
+                    'Difficulty box; Go never changes it. "Best Score" simulates every tier, skips tiers where you ' +
+                    'die or never kill the task monster, picks the best Combat Sim Score, and Go sets the box to it. ' +
+                    'Slower.',
             },
             taskCombatGoBuffer: {
                 id: 'taskCombatGoBuffer',
@@ -4531,10 +4539,9 @@ export const settingsGroups = {
                 default: true,
                 hidden: !isTestServer(),
                 help:
-                    'Test server only. Pick up to six lines you want, how many you need and which are required. The ' +
-                    'advisor shows the next move (which orb, when to lock a line, whether to use a new roll) and the ' +
-                    'average orbs the best strategy spends. Do next step presses the advised game button, one action ' +
-                    'per click.',
+                    'Test server only. Pick up to six lines, how many you need and which are required. Shows the next ' +
+                    'move (which orb, when to lock a line, or a new roll), the average orbs spent and a coin cost ' +
+                    'only when every orb has a price. Do next step presses the advised button, one action per click.',
             },
             overlayPanel: {
                 id: 'overlayPanel',
@@ -4601,10 +4608,10 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help:
-                    'A floating panel (Ctrl+K, Iron Bell Farming) with the iron cow route to gold for cowbells, each ' +
-                    'stage ticking off against your levels, gear and house. Shows bells per hour, day and week, and ' +
-                    'adds a line under the action bar with the bells you can buy now. All gold is coinify output, ' +
-                    'never sold.',
+                    'Panel (Ctrl+K, Iron Bell Farming) with the iron cow route to gold for cowbells, each stage ' +
+                    'checked against your levels, gear and house. Shows bells per hour, day and week. While a loop ' +
+                    'leg runs, action-bar lines show bells you can buy now and when the queued cycle ends. Gold is ' +
+                    'coinify, never sold.',
             },
             draggableModals: {
                 id: 'draggableModals',
@@ -4895,9 +4902,10 @@ export const settingsGroups = {
                     { value: 'off', label: 'Off' },
                 ],
                 help:
-                    'When another tab of this site loads a newer Toolasha, this tab shows a notice with a Reload ' +
-                    'button. With background reload on, a tab hidden for 2 minutes reloads itself once pending saves ' +
-                    'are written. A tab you are looking at still asks. Off opens no channel between tabs.',
+                    'When another tab loads a newer Toolasha, this tab shows a Reload notice. With "Background tabs ' +
+                    'reload", a tab hidden for 2 minutes reloads itself once pending saves are written, if connected; ' +
+                    'the tab in use still asks. "Always reload" reloads that one too. Off opens no channel between ' +
+                    'tabs.',
             },
             updateCheckHours: {
                 id: 'updateCheckHours',
@@ -5824,10 +5832,10 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help:
-                    'Adds a line under each unfinished card on your own Achievements tab. When it names an action, ' +
-                    'zone or item it shows whether your level is met and what the inputs cost, with a Go button that ' +
-                    'only opens the screen and a Missing Mats button that opens the marketplace. Neither starts, ' +
-                    'queues or buys.',
+                    'Adds a line under each unfinished card on your Achievements tab: whether your level is met and ' +
+                    'what the inputs cost, plus Go (opens the screen) and Missing Mats (opens the marketplace) ' +
+                    'buttons. Neither starts, queues or buys. Also toggled by the Toolasha hints box beside Show ' +
+                    'Incomplete Only.',
             },
             collectionOptimizer: {
                 id: 'collectionOptimizer',

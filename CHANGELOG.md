@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Setting descriptions checked against the code
+
+23 of the shortened setting descriptions said something the setting does not do, or dropped a caveat you need, such as when the auto-reload waits, how long plan reservations last, and when an enhancing run resumes. Each one was checked against what the code does and corrected.
+
 ### A stopped Upgrade analysis no longer replaces your saved one
 
 Stopping a Combat Sim or Lab Sim Upgrade analysis could save the stopped run over the full analysis you had remembered. The table from the stopped run still shows, but the saved one is kept, whichever step Stop was pressed in. Only a run that finishes is remembered.
