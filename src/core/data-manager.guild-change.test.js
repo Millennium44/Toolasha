@@ -181,6 +181,22 @@ describe('guild membership changes after login', () => {
         expect(dataManager.getGuildBuildingLevel(SHRINE)).toBe(4);
     });
 
+    test('a guild message during a character switch is not written into the outgoing character', async () => {
+        const dataManager = await loginInOldGuild(socketA);
+        const before = dataManager.characterData;
+        const guildBefore = before.guild;
+        dataManager.isCharacterSwitching = true;
+        try {
+            deliver(buildGuildLeftUpdated(), { socket: socketA });
+            deliver(buildGuildLeftCharacters(), { socket: socketA });
+        } finally {
+            dataManager.isCharacterSwitching = false;
+        }
+
+        expect(before.guild).toBe(guildBefore);
+        expect(Object.keys(before.guildCharacterMap)).toHaveLength(2);
+    });
+
     test('a guild message before any character is loaded is ignored without throwing', async () => {
         const { default: dataManager } = await import('./data-manager.js');
         dataManager.characterData = null;

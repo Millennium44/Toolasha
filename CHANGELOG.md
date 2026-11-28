@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Toolasha follows a guild change without a reload
+
+After you left, joined or created a guild, Toolasha kept using the guild you logged in with until a reload. That affected the Upgrade analysis's shrine cap, which party members count as guild-mates, and the guild trial panels. It now follows the change as it happens.
+
 ### A stopped Upgrade analysis no longer replaces your saved one
 
 Stopping a Combat Sim or Lab Sim Upgrade analysis could save the stopped run over the full analysis you had remembered. The table from the stopped run still shows, but the saved one is kept, whichever step Stop was pressed in. Only a run that finishes is remembered.

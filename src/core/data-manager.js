@@ -1973,8 +1973,12 @@ class DataManager {
         // `guild: null` and `{}` are real data (a guildless character), not "not loaded". Each message
         // replaces its whole map. The shrine building levels are not written here: the shape-matched
         // wildcard handler (captureGuildShrineData) owns them and their persistence.
+        // isFromInitializedCharacter, not just the active socket: between a new login binding its socket
+        // and init swapping characterData, a guild message must not land in the previous character.
+        // These handlers must register before the feature listeners that compare a frame's guild with
+        // characterData.guild (guild-trials.js, guild-trial-damage.js); data-manager sets up first.
         this.webSocketHook.on('guild_updated', (data, context) => {
-            if (!this._isFromActiveSocket(context) || !this.characterData || !data) return;
+            if (!this.isFromInitializedCharacter(context) || !this.characterData || !data) return;
             if (data.guild !== undefined) this.characterData.guild = data.guild;
             if (data.guildWeeklyTrialSet !== undefined) {
                 this.characterData.guildWeeklyTrialSet = data.guildWeeklyTrialSet;
@@ -1985,7 +1989,7 @@ class DataManager {
         });
 
         this.webSocketHook.on('guild_characters_updated', (data, context) => {
-            if (!this._isFromActiveSocket(context) || !this.characterData || !data) return;
+            if (!this.isFromInitializedCharacter(context) || !this.characterData || !data) return;
             const isMap = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
             if (isMap(data.guildCharacterMap)) this.characterData.guildCharacterMap = data.guildCharacterMap;
             if (isMap(data.guildSharableCharacterMap)) {
