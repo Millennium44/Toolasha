@@ -125,6 +125,10 @@ export function describeRetransmutePolicy(result) {
             `(${Math.round(result.goldRate).toLocaleString('en-US')}/hr). The first attempt's time is in the rate.`
     );
     lines.push('Extra attempts pay for tea but their bonus drops are not counted. Not capped by market volume.');
+    if (result.estimated) {
+        const estimated = (result.estimatedItems ?? []).map(nameOf).join(', ');
+        lines.push(`Includes an estimated price for ${estimated}, counted as the Net Profit figure counts it.`);
+    }
     if (result.partial) lines.push('A lower bound: some books are left out of the sums.');
     if (result.nodeCapHit) lines.push(`Stopped after ${MAX_NODES} books.`);
     if (!result.converged) lines.push('The values had not settled after the iteration limit.');
@@ -228,6 +232,7 @@ export function retransmuteValue(plain, setup = {}, options = {}) {
         plain.actionsPerHour,
         plain.successRate,
         plain.profitPerHour,
+        (plain.estimatedOutputs ?? []).join(','),
         plain.netProfitPerAttempt,
         maxNodes,
         Math.floor(Date.now() / CACHE_BUCKET_MS),
@@ -252,6 +257,9 @@ function work(plain, calcSetup, setupKey, goldRate, { rootHrid, rootTable, buyPr
     // Every book reachable through the drop tables, breadth first, up to the cap
     const nodes = new Map();
     const partialItems = new Set();
+    const estimatedItems = new Set();
+    const rootOutputHrids = new Set(rootTable.map((drop) => drop.itemHrid));
+    const estimatedByPlain = new Set(Array.isArray(plain.estimatedOutputs) ? plain.estimatedOutputs : []);
     let nodeCapHit = false;
     const queue = rootTable.map((drop) => drop.itemHrid);
     while (queue.length > 0) {
@@ -268,7 +276,10 @@ function work(plain, calcSetup, setupKey, goldRate, { rootHrid, rootTable, buyPr
         nodes.set(hrid, node);
         // A book with no price cannot be sold, and one with neither price nor table is nothing to value
         if (sell === null) {
-            partialItems.add(hrid);
+            // A root output the plain figure counts at an estimate is not missing from it: the figure keeps that
+            // revenue, so it is flagged estimated, where a book the plain figure also lacks is a real gap
+            if (rootOutputHrids.has(hrid) && estimatedByPlain.has(hrid)) estimatedItems.add(hrid);
+            else partialItems.add(hrid);
             continue;
         }
         if (table) {
@@ -360,6 +371,9 @@ function work(plain, calcSetup, setupKey, goldRate, { rootHrid, rootTable, buyPr
         differs: improves,
         partial: partialItems.size > 0,
         partialItems: [...partialItems],
+        // Root outputs with only an estimated price: the plain figure counts them, so this figure does too
+        estimated: estimatedItems.size > 0,
+        estimatedItems: [...estimatedItems],
         converged,
         nodeCapHit,
         goldRate,

@@ -48,7 +48,7 @@ vi.mock('./market-data.js', () => ({
 vi.mock('./profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * engine.taxKeep }));
 vi.mock('./decompose-chain-value.js', () => ({ pricingSignature: () => engine.signature }));
 
-const { retransmuteValue, clearRetransmuteCaches, RETRANSMUTE_SETTING, MAX_NODES } =
+const { retransmuteValue, clearRetransmuteCaches, describeRetransmutePolicy, RETRANSMUTE_SETTING, MAX_NODES } =
     await import('./retransmute-value.js');
 
 const GOLD_RATE = 'actionPanel_craftingPlanGoldPerHour';
@@ -263,6 +263,27 @@ describe('books and tables that are not in the closed group', () => {
         const priced = retransmuteValue(plainFor('invincible'));
         expect(full.adjustedPerHour).toBeLessThan(priced.adjustedPerHour);
         expect(full.adjustedPerHour).toBeGreaterThan(5000);
+    });
+
+    test('a root output the plain figure counts at an estimate is flagged estimated, not a lower bound', () => {
+        eightBooks();
+        priceBooks();
+        engine.estimated.add(hridOf('mystic_aura'));
+
+        const result = retransmuteValue(plainFor('invincible', { estimatedOutputs: [hridOf('mystic_aura')] }));
+
+        expect(result.status).toBe('ok');
+        expect(result.estimated).toBe(true);
+        expect(result.estimatedItems).toEqual([hridOf('mystic_aura')]);
+        expect(result.partial).toBe(false);
+        expect(describeRetransmutePolicy(result)).toContain('estimated price for mystic_aura');
+        expect(describeRetransmutePolicy(result)).not.toContain('lower bound');
+
+        // A book the plain figure does not count either is a real gap, and stays a lower bound
+        clearRetransmuteCaches();
+        const gap = retransmuteValue(plainFor('invincible'));
+        expect(gap.estimated).toBe(false);
+        expect(gap.partial).toBe(true);
     });
 
     test('an estimated price is not an order, so that book is left out', () => {

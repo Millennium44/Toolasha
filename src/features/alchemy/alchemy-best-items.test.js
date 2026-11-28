@@ -3179,6 +3179,19 @@ describe('the Retransmute/hr sort', () => {
         expect(cells()[0].title).toContain('Left out, no real sell order: mystic_aura');
     });
 
+    test('an estimate-only output the plain figure counts is marked estimated, never a lower bound', () => {
+        fixture();
+        market.estimated.add('/items/mystic_aura');
+        bestItems.cachedRankings.transmute.find((r) => r.itemHrid === '/items/invincible').profitData.estimatedOutputs =
+            ['/items/mystic_aura'];
+        bestItems.clearChainCaches();
+        sortButton().click();
+
+        expect(cells()[0].textContent.startsWith('≥')).toBe(false);
+        expect(cells()[0].title).toContain('estimated price for mystic_aura');
+        expect(cells()[0].title).not.toContain('lower bound');
+    });
+
     test('the button and the sort are gone with the setting off, and on the other tabs', () => {
         fixture();
         bestItems.sortMode = 'retransmutePerHour';
