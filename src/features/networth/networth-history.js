@@ -10,6 +10,7 @@ import connectionState from '../../core/connection-state.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createChunkedHistory, registerCharacterScopedPrefix, timeChunkId } from '../../utils/chunked-history.js';
 import { onSyncPullApplied, registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge-registry.js';
+import { initExclusions } from './networth-exclusions.js';
 import networthMovers, { buildRows, exclusionsOf } from './networth-movers.js';
 import {
     diffSignatures,
@@ -491,9 +492,31 @@ class NetworthHistory {
     }
 
     /**
-     * Take a snapshot of the current networth data
+     * Read the exclusion list (retrying a failed read), reprice, and take the point that was skipped. Dropped
+     * when the character or generation changed meanwhile, so nothing lands under the wrong character. A second
+     * pending result does not loop: the hourly tick tries again.
+     * @private
      */
-    async takeSnapshot() {
+    async _snapshotAfterExclusions() {
+        const generation = this._generation;
+        const characterId = this.characterId;
+        try {
+            await initExclusions();
+            if (this._generation !== generation || this.characterId !== characterId) return;
+            if (dataManager.getCurrentCharacterId() !== characterId) return;
+            await this.networthFeature?.recalculate?.();
+            if (this._generation !== generation || this.characterId !== characterId) return;
+            await this.takeSnapshot(true);
+        } catch (error) {
+            console.warn('[NetworthHistory] Retrying after the exclusion list loaded failed:', error);
+        }
+    }
+
+    /**
+     * Take a snapshot of the current networth data
+     * @param {boolean} [retried] - Set by the retry after a skipped reading, so it cannot loop
+     */
+    async takeSnapshot(retried = false) {
         if (!connectionState.isConnected()) return;
         if (!this.networthFeature?.currentData) return;
         if (!this.characterId) return;
@@ -506,6 +529,13 @@ class NetworthHistory {
         // here would draw a cliff on the chart and a day's loss of everything
         // on the calendar, and the next reading would book it all back as gain
         if (data.unavailable) return;
+        // Priced while the exclusion list was still unread: excluded items are counted, so the point would be
+        // inflated. Wait for the read (which retries a failed one), reprice, and take the point then. A list
+        // whose read was attempted and failed is not waited on: recording as before beats a silent gap.
+        if (data.exclusionsStatus === 'pending') {
+            if (!retried) await this._snapshotAfterExclusions();
+            return;
+        }
 
         const snapshot = {
             t: Date.now(),

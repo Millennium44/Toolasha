@@ -527,14 +527,6 @@ export function combatSimUI() {
     return toolashaRoot()?.Sim?.combatSimUI || null;
 }
 
-/**
- * The labyrinth simulator's panel instance, when one has been published.
- * @returns {Object|null} The panel, or null when there is none
- */
-export function labSimUI() {
-    return toolashaRoot()?.Sim?.labSimUI || null;
-}
-
 // ---------------------------------------------------------------------------
 // UI bundle singletons (the ui bundle loads last, so everything below is
 // reached at call time — usually a panel behind an overlay tile)

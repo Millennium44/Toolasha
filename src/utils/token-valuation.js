@@ -10,6 +10,7 @@ import { getItemPrice, getItemPriceInfo, getItemPrices, getModeBookSellPrice } f
 import { isPatientTickOn, patientTickPrice } from './patient-tick.js';
 import { isTesterShopEntry } from './shop-index.js';
 import { testerShopEnabled } from './tester-shop.js';
+import { SCROLL_TOKEN_COST } from './token-worth.js';
 
 /** Essence a dungeon token falls back to when its shop prices nothing. */
 const TOKEN_ESSENCE_MAP = {
@@ -183,11 +184,8 @@ export const SEAL_HRIDS = new Set([
 /** Items valued through the labyrinth shop rather than the market: the token itself and the seals */
 export const LABYRINTH_VALUED_HRIDS = new Set([LABYRINTH_TOKEN, ...SEAL_HRIDS]);
 
-/** Tokens one seal costs when the shop data has no line for it (what the shop charged when this was written) */
-const SEAL_TOKEN_COST_FALLBACK = 30;
-
 /**
- * Tokens one seal costs: its own labyrinth shop line when the game data has one, else the fallback.
+ * Tokens one seal costs: its own labyrinth shop line when the game data has one, else what the shop charged when this was written (SCROLL_TOKEN_COST).
  * @param {string} sealHrid - A member of SEAL_HRIDS
  * @param {Object} [shopMap] - The game's `labyrinthShopItemDetailMap`
  * @returns {number}
@@ -195,7 +193,7 @@ const SEAL_TOKEN_COST_FALLBACK = 30;
 function sealTokenCost(sealHrid, shopMap) {
     const line = Object.values(shopMap || {}).find((entry) => entry?.itemHrid === sealHrid);
     const cost = line?.cost?.count || 0;
-    return cost > 0 ? cost / (line.outputCount || 1) : SEAL_TOKEN_COST_FALLBACK;
+    return cost > 0 ? cost / (line.outputCount || 1) : SCROLL_TOKEN_COST;
 }
 
 /**

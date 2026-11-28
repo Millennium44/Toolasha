@@ -800,8 +800,14 @@ class DungeonRoiBoardUI {
                 title =
                     `${gold(what.netPerRun)} per run × ${what.runsPerDay.toFixed(1)} runs at ` +
                     `${what.minutesPerRun.toFixed(1)} min/run`;
+                if (what.runsCappedFrom !== null) {
+                    title +=
+                        `\nCapped: ${what.runsCappedFrom} runs a day do not fit in 24 h at ` +
+                        `${what.minutesPerRun.toFixed(1)} min/run, so ${what.runsPerDay.toFixed(1)} is used`;
+                }
             }
-            cell(known ? gold(what.netPerDay) : '—', {
+            const capMark = known && what.runsCappedFrom !== null ? ` (max ${what.runsPerDay.toFixed(1)})` : '';
+            cell(known ? `${gold(what.netPerDay)}${capMark}` : '—', {
                 color: !known ? '#666' : what.netPerDay >= 0 ? '#5fda5f' : '#ff6b6b',
                 title,
             });

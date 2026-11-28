@@ -599,13 +599,14 @@ const MINUTES_PER_DAY = 1440;
  * row could not see (no reward table, an unpriced key, an unknown food bill) stays unknown here too, never zero.
  *
  * Either input may be left out: no minutes uses the row's own clear time, no runs per day fills the day with
- * back-to-back runs at that pace.
+ * back-to-back runs at that pace. Typed runs per day are cut to the most that fit in 24 h at the run time
+ * (the same 1440 / minutes the blank box uses, not floored); `runsCappedFrom` carries what was typed when that happened.
  *
  * @param {Object} row - From `buildDungeonRoiRows`
  * @param {Object} [what] - The player's figures
  * @param {number|null} [what.minutesPerRun] - Minutes one run takes
  * @param {number|null} [what.runsPerDay] - Runs in a day
- * @returns {{minutesPerRun: number|null, runsPerDay: number|null, consumableCostPerRun: number|null,
+ * @returns {{minutesPerRun: number|null, runsPerDay: number|null, runsCappedFrom: number|null, consumableCostPerRun: number|null,
  *   netPerRun: number|null, netPerDay: number|null, costGap: string|null}|null} Null when neither figure was
  *   typed, or the typed ones are not positive numbers
  */
@@ -618,7 +619,12 @@ export function whatIfFigures(row, { minutesPerRun = null, runsPerDay = null } =
     if ((hasMinutes && !(typedMinutes > 0)) || (hasRuns && !(typedRuns > 0))) return null;
 
     const minutes = hasMinutes ? typedMinutes : row.clearSeconds > 0 ? row.clearSeconds / 60 : null;
-    const perDay = hasRuns ? typedRuns : minutes ? MINUTES_PER_DAY / minutes : null;
+    // Runs typed for a day cannot exceed what fits in 24 h at this run time; with no run time there is nothing to
+    // cap against, so the typed number stands
+    // Not floored: the blank box fills the day with 1440 / minutes runs, and the cap is that same figure
+    const maxRunsPerDay = minutes ? MINUTES_PER_DAY / minutes : null;
+    const runsCapped = hasRuns && maxRunsPerDay !== null && typedRuns > maxRunsPerDay + 1e-9;
+    const perDay = hasRuns ? (runsCapped ? maxRunsPerDay : typedRuns) : minutes ? MINUTES_PER_DAY / minutes : null;
 
     const consumableCostPerRun =
         minutes !== null && row.consumableCostPerHour !== null && row.consumableCostPerHour !== undefined
@@ -632,6 +638,8 @@ export function whatIfFigures(row, { minutesPerRun = null, runsPerDay = null } =
     return {
         minutesPerRun: minutes,
         runsPerDay: perDay,
+        // What was typed, when it was cut to the most that fit in a day; null otherwise
+        runsCappedFrom: runsCapped ? typedRuns : null,
         consumableCostPerRun,
         netPerRun,
         netPerDay: netPerRun !== null && perDay !== null ? netPerRun * perDay : null,

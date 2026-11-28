@@ -937,7 +937,7 @@ class CraftEnhanceBoard {
             [null, '#', 'center'],
             [null, 'Item', 'left'],
             [null, 'Lvl', 'center'],
-            [null, 'Craft cost', 'right'],
+            ['craft', 'Craft cost', 'right'],
             [null, `Enhance to +${target}`, 'right'],
             [null, `Sale +${target} (after tax)`, 'right'],
             ['unit', `Profit/item +${target}`, 'right'],
