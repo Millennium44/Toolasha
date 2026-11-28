@@ -6466,16 +6466,17 @@ class LabSimUI {
         // The panel is back to what it showed before this run, so a pull or a Clear treats it as it did then: a
         // remembered table's Clear works again, and a pull may still replace a table that is itself remembered
         this._upgradeRunStarted = prev.runStarted;
-        if (prev.area) prev.area.redraw();
-        else resultsEl.innerHTML = '';
-        this._upgradeOrderSection = prev.section;
-        this._drawUpgradeAbilityOrder();
-        // The run's own clearing dropped the verdicts and their live analysis; they belong to what is back
+        // The run's own clearing dropped the verdicts and their live analysis; they belong to what is back, and
+        // the redraws below read them while drawing
         this._verify.all = prev.verify.all;
         this._verify.order = prev.verify.order;
         this._verify.notes = { ...prev.verify.notes };
         this._verifyLive.all = prev.verifyLive.all;
         this._verifyLive.order = prev.verifyLive.order;
+        if (prev.area) prev.area.redraw();
+        else resultsEl.innerHTML = '';
+        this._upgradeOrderSection = prev.section;
+        this._drawUpgradeAbilityOrder();
         // The restored footer, plus the word that the run was stopped
         if (!keepStatus) this._setStatus(`${prev.status} Upgrade analysis cancelled.`.trim());
         return true;

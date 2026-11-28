@@ -559,6 +559,53 @@ describe('an Upgrade run stopped or failed before any row puts the previous view
         });
     });
 
+    test('the put-back all-fights table carries its verdict chip, note and live Verify control', async () => {
+        await firstRun('all');
+        const row = ui._allFightsResult.results[0];
+        ui._verify.all.set(ui._allRowKey(row), { verdict: 'confirmed', mean: -0.5, se: 0.1, seeds: 4 });
+        ui._verify.notes.all = 'Verified three rows.';
+        ui._verifyLive.all = { analysis: ui._allFightsResult, context: {}, pairing: {}, ownerId: 'me' };
+        ui._renderAllFightsResults(ui._allFightsResult, results(), { quiet: true });
+        expect(results().querySelector('[data-verify-chip="confirmed"]')).toBeTruthy();
+        expect(results().querySelector('[data-af-verify-top]')).toBeTruthy();
+        const shown = results().innerHTML;
+        stopDuringRun();
+        await run('all');
+        expect(results().querySelector('[data-verify-chip="confirmed"]')).toBeTruthy();
+        expect(results().querySelector('[data-verify-note]').textContent).toBe('Verified three rows.');
+        expect(results().querySelector('[data-af-verify-top]')).toBeTruthy();
+        expect(results().textContent).not.toContain('re-run the analysis to verify');
+        expect(results().innerHTML).toBe(shown);
+    });
+
+    test('the put-back Ability order section carries its verdict chip and note', async () => {
+        await firstRun('order');
+        const group = ui._upgradeOrderSection.groups[0];
+        ui._verify.order.set(ui._orderRowKey(0, group.orders[0]), {
+            verdict: 'confirmed',
+            mean: -0.4,
+            se: 0.1,
+            seeds: 4,
+        });
+        ui._verify.notes.order = 'Verified the top orders.';
+        ui._verifyLive.order = {
+            section: ui._upgradeOrderSection,
+            context: {},
+            pairing: {},
+            rows: [],
+            groupIdx: [],
+            ownerId: 'me',
+        };
+        ui._drawUpgradeAbilityOrder();
+        expect(section().querySelector('[data-verify-chip="confirmed"]')).toBeTruthy();
+        const shown = section().innerHTML;
+        stopDuringRun();
+        await run('order');
+        expect(section().querySelector('[data-verify-chip="confirmed"]')).toBeTruthy();
+        expect(section().querySelector('[data-verify-note]').textContent).toBe('Verified the top orders.');
+        expect(section().innerHTML).toBe(shown);
+    });
+
     test('a previous view of another kind comes back as it was, not the stopped run’s kind', async () => {
         const order = await firstRun('order');
         stopDuringRun();
