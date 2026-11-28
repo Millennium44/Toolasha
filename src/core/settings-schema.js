@@ -5325,8 +5325,9 @@ export const settingsGroups = {
                 default: false,
                 help:
                     'Notifies when a pinned item on the price history panel hits the target set with its chip ◎ ' +
-                    'button (ask at or under, bid at or above). Needs "Market: Price history panel" on. Sightings ' +
-                    'over 15 minutes old fire nothing. Once per target; re-arms on a price move back or new target.',
+                    'button (ask at or under, bid at or above). Needs "Market: Price history panel" on and stays ' +
+                    'quiet without its pooled data. Sightings over 15 minutes old fire nothing. Once per target; ' +
+                    're-arms on a move back.',
             },
             notifications_otherCharacterIdle: {
                 id: 'notifications_otherCharacterIdle',
