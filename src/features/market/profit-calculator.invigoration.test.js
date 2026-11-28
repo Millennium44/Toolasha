@@ -124,6 +124,27 @@ describe('calculateProfit with Invigoration', () => {
         expect(result.revenuePerHour).not.toBeCloseTo(67500, 0);
     });
 
+    test('the outcomes behind the mix are exposed, but not as an enumerable key', async () => {
+        const equipment = wearing({ invigoration: 0.5 });
+        mocks.efficiencyContext = (outcome) => outcomeContext(equipment, outcome);
+        const result = await profitCalculator.calculateProfit('/items/cooking_cheese', {
+            actionContext: { equipment, drinks: [] },
+        });
+        expect(result.outcomeRuns.map((run) => run.weight)).toEqual([0.5, 0.5]);
+        expect(result.outcomeRuns.map((run) => run.value.gourmetBonus)).toEqual([0, 0.5]);
+        expect(Object.keys(result)).not.toContain('outcomeRuns');
+        expect({ ...result }.outcomeRuns).toBeUndefined();
+    });
+
+    test('without the line, one outcome: the plain figure and no outcome list', async () => {
+        const equipment = wearing({});
+        mocks.efficiencyContext = (outcome) => outcomeContext(equipment, outcome);
+        const result = await profitCalculator.calculateProfit('/items/cooking_cheese', {
+            actionContext: { equipment, drinks: [] },
+        });
+        expect(result.outcomeRuns).toBeUndefined();
+    });
+
     test('without the line, one outcome: the plain figure', async () => {
         const equipment = wearing({});
         mocks.efficiencyContext = (outcome) => outcomeContext(equipment, outcome);

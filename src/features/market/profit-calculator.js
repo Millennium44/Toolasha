@@ -124,11 +124,16 @@ class ProfitCalculator {
                             actionContext: { ...resolved, drinkOutcome: outcome },
                         })
                     );
-                    return Promise.all(runs).then((values) =>
-                        values.some((value) => !value)
-                            ? null
-                            : mixOutcomes(values.map((value, index) => ({ weight: outcomes[index].weight, value })))
-                    );
+                    return Promise.all(runs).then((values) => {
+                        if (values.some((value) => !value)) return null;
+                        const parts = values.map((value, index) => ({ weight: outcomes[index].weight, value }));
+                        const mixed = mixOutcomes(parts);
+                        // The outcomes behind the mix, for a reader whose arithmetic is not linear in them (the
+                        // held-materials line divides by Gourmet). Not enumerable, so a spread or a further mix
+                        // never carries it and every other reader sees the same object as before.
+                        Object.defineProperty(mixed, 'outcomeRuns', { value: parts, enumerable: false });
+                        return mixed;
+                    });
                 }
             }
         }
