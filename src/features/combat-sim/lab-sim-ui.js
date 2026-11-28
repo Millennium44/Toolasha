@@ -6024,7 +6024,10 @@ class LabSimUI {
         let ending = null;
         // Whether this run drew a row of its own: those stay, a stopped run's partial table included
         let drewRows = false;
-        const endedWithoutRows = () => !drewRows && !this._upgradeOrderSection && (ending || this._upgradeAborted);
+        // Whether the table pass ran to its end (an empty result is then a result, whatever stops a later pass)
+        let tableDone = false;
+        const endedWithoutRows = () =>
+            !drewRows && !tableDone && !this._upgradeOrderSection && (ending || this._upgradeAborted);
 
         if (isAllFights) {
             try {
@@ -6163,6 +6166,7 @@ class LabSimUI {
                     this._registerVerifyLive('all', analysisResult, ownerId);
                     this._renderAllFightsResults(analysisResult, resultsEl);
                     drewRows = Boolean(analysisResult?.baseline && analysisResult.results?.length);
+                    tableDone = !this._upgradeAborted;
                     // Marked, so a reload draws it with the all-fights renderer rather than the single-fight one
                     if (analysisResult?.results?.length) allFightsAnalysis = { ...analysisResult, allFights: true };
                     // Remembered here unless the order pass follows, which saves this table with its section.
@@ -6322,6 +6326,7 @@ class LabSimUI {
                 if (analysisResult?.roomLevels) analysisResult.roomLevels.targetFloor = this._getTargetFloor();
                 this._renderUpgradeResults(analysisResult, resultsEl);
                 drewRows = Boolean(analysisResult?.results?.length);
+                tableDone = !this._upgradeAborted;
                 singleAnalysis = analysisResult;
                 if (queued && !analysisResult?.results?.length) {
                     const note = this._describeQueuedRun(queued, analysisResult, gameData);
@@ -6349,7 +6354,8 @@ class LabSimUI {
                 // The remembered set is per character and has no undo: writing this
                 // run under the character who arrived mid-analysis would delete the
                 // analysis they were keeping
-                if (analysisResult?.results?.length && this._stillSameCharacter(ownerId)) {
+                // Not a stopped run's partial rows: they would replace a complete remembered run
+                if (analysisResult?.results?.length && !this._upgradeAborted && this._stillSameCharacter(ownerId)) {
                     const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
                     this._saveLabUpgradeResults(analysisResult, {
                         characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
@@ -6446,7 +6452,7 @@ class LabSimUI {
      * @param {Object} prev - From `_captureUpgradeView`
      * @param {HTMLElement} resultsEl - The Upgrade results container
      * @param {{keepStatus?: boolean}} [options] - `keepStatus`: leave the footer line the run set (a failure or a
-     *   refusal says why nothing ran); a Stop restores the footer it found
+     *   refusal says why nothing ran); a Stop restores the footer it found and says the run was cancelled
      * @returns {boolean} Whether the view was put back
      * @private
      */
@@ -6470,7 +6476,8 @@ class LabSimUI {
         this._verify.notes = { ...prev.verify.notes };
         this._verifyLive.all = prev.verifyLive.all;
         this._verifyLive.order = prev.verifyLive.order;
-        if (!keepStatus) this._setStatus(prev.status);
+        // The restored footer, plus the word that the run was stopped
+        if (!keepStatus) this._setStatus(`${prev.status} Upgrade analysis cancelled.`.trim());
         return true;
     }
 

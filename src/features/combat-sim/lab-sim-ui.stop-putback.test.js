@@ -27,6 +27,7 @@ const game = vi.hoisted(() => ({
     abilityDetailMap: {},
     editedDTOs: null,
     characterId: 'me',
+    remember: false,
 }));
 const sim = vi.hoisted(() => ({ cancelled: 0 }));
 const storage = vi.hoisted(() => ({ written: {}, values: {} }));
@@ -34,7 +35,7 @@ const storage = vi.hoisted(() => ({ written: {}, values: {} }));
 vi.mock('../../core/config.js', () => ({
     default: {
         Z_FLOATING_PANEL: 100,
-        getSetting: () => false,
+        getSetting: (key) => key === 'combatSim_rememberUpgradeResults' && game.remember,
         getSettingValue: (_key, fallback) => fallback,
         setSetting: () => {},
         setSettingValue: () => {},
@@ -209,6 +210,12 @@ describe('an Upgrade run stopped or failed before any row puts the previous view
     const results = () => ui.panel.querySelector('#mwi-labsim-upgrade-results');
     const section = () => ui.panel.querySelector('#mwi-labsim-upgrade-order');
     const status = () => ui.panel.querySelector('#mwi-labsim-status').textContent;
+    /** The real Analyze button; the run is over once the panel releases its guard */
+    const pressAnalyze = async () => {
+        ui.panel.querySelector('#mwi-labsim-upgrade-run').click();
+        for (let i = 0; i < 50 && ui._upgradeRunning; i++) await settle();
+    };
+    const CANCELLED = ' Upgrade analysis cancelled.';
     const pressStop = () => ui.panel.querySelector('#mwi-labsim-upgrade-stop').click();
 
     const fightRow = (i) => ({
@@ -312,7 +319,7 @@ describe('an Upgrade run stopped or failed before any row puts the previous view
             setScope('single');
             tick('ability_order');
         }
-        await ui._onUpgradeAnalyze();
+        await pressAnalyze();
     };
 
     beforeEach(async () => {
@@ -376,7 +383,7 @@ describe('an Upgrade run stopped or failed before any row puts the previous view
         expect(results().innerHTML).toBe(snapshot.tableHtml);
         expect(section().innerHTML).toBe(snapshot.orderHtml);
         expect(section().style.display).toBe(snapshot.orderShown);
-        expect(status()).toBe(snapshot.status);
+        expect(status()).toBe(snapshot.status + CANCELLED);
     };
     /** Stop pressed through the real button while the analysis is running; it returns what a stopped run does */
     const stopDuringRun = () => {
@@ -488,9 +495,68 @@ describe('an Upgrade run stopped or failed before any row puts the previous view
         };
         setScope('single');
         tick('equipment', 'ability_order');
-        await ui._onUpgradeAnalyze();
+        await pressAnalyze();
         expect(results().textContent).toContain('Rows → Boots');
         expect(section().style.display).not.toBe('block');
+    });
+
+    test('a table pass that completed empty keeps that result when Stop lands in the Ability order pass', async () => {
+        await firstRun('single');
+        onSingle = async () => ({ baseline: { winRate: 0.5 }, results: [] });
+        onAll = async () => {
+            pressStop();
+            return { baseline: null, results: [] };
+        };
+        setScope('single');
+        tick('equipment', 'ability_order');
+        await pressAnalyze();
+        expect(results().textContent).toContain('No upgrade candidates found');
+        expect(results().textContent).not.toContain('Fancy Boots');
+    });
+
+    describe('the remembered single-fight record', () => {
+        const KEY_WRITES = () => Object.values(storage.written);
+        beforeEach(() => {
+            storage.written = {};
+            game.remember = true;
+        });
+        afterEach(() => {
+            game.remember = false;
+        });
+
+        test('a Stop after some rows leaves the stored record as it was', async () => {
+            await run('single');
+            await settle();
+            const before = KEY_WRITES();
+            expect(before.length).toBeGreaterThan(0);
+            storage.written = {};
+            onSingle = async () => {
+                pressStop();
+                return singleTable('Partial → Boots');
+            };
+            await run('single');
+            await settle();
+            expect(results().textContent).toContain('Partial → Boots');
+            expect(KEY_WRITES()).toEqual([]);
+        });
+
+        test('a full run is saved', async () => {
+            await run('single');
+            await settle();
+            expect(JSON.stringify(KEY_WRITES())).toContain('Fancy Boots');
+        });
+
+        test('a table that finished before Stop landed in the order pass is still saved', async () => {
+            onAll = async () => {
+                pressStop();
+                return { baseline: null, results: [] };
+            };
+            setScope('single');
+            tick('equipment', 'ability_order');
+            await pressAnalyze();
+            await settle();
+            expect(JSON.stringify(KEY_WRITES())).toContain('Fancy Boots');
+        });
     });
 
     test('a previous view of another kind comes back as it was, not the stopped run’s kind', async () => {
@@ -507,7 +573,7 @@ describe('an Upgrade run stopped or failed before any row puts the previous view
         await run('all');
         expect(results().innerHTML).toBe(table.html);
         expect(section().innerHTML).toBe(table.order);
-        expect(status()).toBe(table.status);
+        expect(status()).toBe(table.status + CANCELLED);
     });
 
     test('a refused run (no fights) puts the table back and says why', async () => {
